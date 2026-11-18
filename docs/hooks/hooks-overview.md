@@ -1,0 +1,313 @@
+# Session hooks
+
+Hooks allow you to intercept and customize the behavior of Copilot sessions at key points in the conversation lifecycle. Use hooks to:
+
+* **Control tool execution** - approve, deny, or modify tool calls
+* **Transform results** - modify tool outputs before they're processed
+* **Add context** - inject additional information at session start
+* **Handle errors** - implement custom error handling
+* **Audit and log** - track all interactions for compliance
+
+For filesystem hooks loaded from additional startup directories rather than
+registered SDK callbacks, see [Repository hooks from additional directories](../features/hooks.md#repository-hooks-from-additional-directories).
+
+## Available hooks
+
+| Hook | Trigger | Use Case |
+|------|---------|----------|
+| [`onPreToolUse`](./pre-tool-use.md) | Before a tool executes | Permission control, argument validation |
+| [`onPreMcpToolCall`](./pre-mcp-tool-call.md) | Before an MCP tool call is sent | Attach or remove MCP request metadata |
+| [`onPostToolUse`](./post-tool-use.md) | After a tool executes (success only) | Result transformation, logging |
+| [`onPostToolUseFailure`](./post-tool-use.md#failure-variant) | After a tool execution whose result was a failure | Inject retry guidance, log failures |
+| [`onUserPromptSubmitted`](./user-prompt-submitted.md) | When user sends a message | Prompt modification, filtering |
+| [`onUserPromptTransformed`](./user-prompt-transformed.md) | After runtime prompt transformation | Inspect or replace model-facing content |
+| [`onSessionStart`](./session-lifecycle.md#session-start-hook) | Session begins | Add context, configure session |
+| [`onSessionEnd`](./session-lifecycle.md#session-end-hook) | Session ends | Cleanup, analytics |
+| [`onErrorOccurred`](./error-handling.md) | Error happens | Custom error handling |
+| [`onAgentStop`](./session-lifecycle.md#agent-stop-hook) | Top-level agent naturally stops | Validate completion or request another turn |
+| [`onSubagentStart`](../features/fleet-mode.md#lifecycle-hooks) | Before a sub-agent's first turn | Prepend context to its prompt |
+| [`onSubagentStop`](../features/fleet-mode.md#lifecycle-hooks) | After a sub-agent completes a turn | Request another turn or replace its response |
+
+## Hook metadata
+
+The TypeScript, Python, Go, .NET, Rust, and Java SDKs expose the existing model
+tool-call ID for `preToolUse`, `postToolUse`, and `postToolUseFailure`.
+In TypeScript and Python this is optional `toolCallId`; .NET uses nullable
+`ToolCallId`, and Go uses `ToolCallID` (empty when absent). Java exposes nullable
+`getToolCallId()`.
+
+Correlate calls using `(input.sessionId, input.toolCallId)`, not tool names or
+arguments. This ID also matches tool-execution events and
+`preMcpToolCall.toolCallId`, and argument changes do not change it. Use the
+input's session ID, not the hook invocation's session ID: the callback owner can
+differ from the child session reported in the input.
+
+`postToolUse` observes successful results; `postToolUseFailure` observes failures.
+Other outcomes can invoke neither, so a pre-hook does not guarantee a matching
+post-hook.
+
+TypeScript, Python, Go, Rust, and Java also expose optional W3C `traceparent` and
+`tracestate` (`Traceparent` and `Tracestate` in Go). .NET hook inputs do not expose
+these fields. They describe existing trace context, not tool-call identity.
+Older runtimes can omit these fields and the tool-call ID.
+
+Java uses `getTraceparent()` and `getTracestate()` on class-based hook inputs,
+and `traceparent()` and `tracestate()` on record-based inputs. Existing record
+constructors remain available and leave tracing metadata `null`.
+
+In Rust, access this metadata through `HookActor::tool_call_id()`,
+`traceparent()`, and `tracestate()` in `SessionHooks::on_hook_with_actor`.
+The existing input structs and callback signatures remain unchanged.
+
+## Quick start
+
+<details open>
+<summary><strong>Node.js / TypeScript</strong></summary>
+
+```typescript
+import { CopilotClient } from "@github/copilot-sdk";
+
+const client = new CopilotClient();
+
+const session = await client.createSession({
+  hooks: {
+    onPreToolUse: async (input) => {
+      console.log(`Tool called: ${input.toolName}`);
+      // Allow all tools
+      return { permissionDecision: "allow" };
+    },
+    onPostToolUse: async (input) => {
+      console.log(`Tool result: ${JSON.stringify(input.toolResult)}`);
+      return null; // No modifications
+    },
+    onSessionStart: async (input) => {
+      return { additionalContext: "User prefers concise answers." };
+    },
+  },
+});
+```
+
+</details>
+
+<details>
+<summary><strong>Python</strong></summary>
+
+```python
+from copilot import CopilotClient
+from copilot.session import PermissionHandler
+
+async def main():
+    client = CopilotClient()
+    await client.start()
+
+    async def on_pre_tool_use(input_data, invocation):
+        print(f"Tool called: {input_data['toolName']}")
+        return {"permissionDecision": "allow"}
+
+    async def on_post_tool_use(input_data, invocation):
+        print(f"Tool result: {input_data['toolResult']}")
+        return None
+
+    async def on_session_start(input_data, invocation):
+        return {"additionalContext": "User prefers concise answers."}
+
+    session = await client.create_session(on_permission_request=PermissionHandler.approve_all, hooks={
+            "on_pre_tool_use": on_pre_tool_use,
+            "on_post_tool_use": on_post_tool_use,
+            "on_session_start": on_session_start,
+        })
+```
+
+</details>
+
+<details>
+<summary><strong>Go</strong></summary>
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    copilot "github.com/github/copilot-sdk/go"
+)
+
+func main() {
+    client := copilot.NewClient(nil)
+
+    session, _ := client.CreateSession(context.Background(), &copilot.SessionConfig{
+        Hooks: &copilot.SessionHooks{
+            OnPreToolUse: func(input copilot.PreToolUseHookInput, inv copilot.HookInvocation) (*copilot.PreToolUseHookOutput, error) {
+                fmt.Printf("Tool called: %s\n", input.ToolName)
+                return &copilot.PreToolUseHookOutput{
+                    PermissionDecision: "allow",
+                }, nil
+            },
+            OnPostToolUse: func(input copilot.PostToolUseHookInput, inv copilot.HookInvocation) (*copilot.PostToolUseHookOutput, error) {
+                fmt.Printf("Tool result: %v\n", input.ToolResult)
+                return nil, nil
+            },
+            OnSessionStart: func(input copilot.SessionStartHookInput, inv copilot.HookInvocation) (*copilot.SessionStartHookOutput, error) {
+                return &copilot.SessionStartHookOutput{
+                    AdditionalContext: "User prefers concise answers.",
+                }, nil
+            },
+        },
+    })
+    _ = session
+}
+```
+
+</details>
+
+<details>
+<summary><strong>.NET</strong></summary>
+
+```csharp
+using GitHub.Copilot;
+
+var client = new CopilotClient();
+
+var session = await client.CreateSessionAsync(new SessionConfig
+{
+    Hooks = new SessionHooks
+    {
+        OnPreToolUse = (input, invocation) =>
+        {
+            Console.WriteLine($"Tool called: {input.ToolName}");
+            return Task.FromResult<PreToolUseHookOutput?>(
+                new PreToolUseHookOutput { PermissionDecision = "allow" }
+            );
+        },
+        OnPostToolUse = (input, invocation) =>
+        {
+            Console.WriteLine($"Tool result: {input.ToolResult}");
+            return Task.FromResult<PostToolUseHookOutput?>(null);
+        },
+        OnSessionStart = (input, invocation) =>
+        {
+            return Task.FromResult<SessionStartHookOutput?>(
+                new SessionStartHookOutput { AdditionalContext = "User prefers concise answers." }
+            );
+        },
+    },
+});
+```
+
+</details>
+
+<details>
+<summary><strong>Java</strong></summary>
+
+```java
+import com.github.copilot.*;
+import com.github.copilot.rpc.*;
+import java.util.concurrent.CompletableFuture;
+
+try (var client = new CopilotClient()) {
+    client.start().get();
+
+    var hooks = new SessionHooks()
+        .setOnPreToolUse((input, invocation) -> {
+            System.out.println("Tool called: " + input.getToolName());
+            return CompletableFuture.completedFuture(PreToolUseHookOutput.allow());
+        })
+        .setOnPostToolUse((input, invocation) -> {
+            System.out.println("Tool result: " + input.getToolResult());
+            return CompletableFuture.completedFuture(null);
+        })
+        .setOnSessionStart((input, invocation) -> {
+            return CompletableFuture.completedFuture(
+                new SessionStartHookOutput("User prefers concise answers.", null)
+            );
+        });
+
+    var session = client.createSession(
+        new SessionConfig()
+            .setHooks(hooks)
+            .setOnPermissionRequest(PermissionHandler.APPROVE_ALL)
+    ).get();
+}
+```
+
+</details>
+
+## Hook invocation context
+
+Every hook receives an `invocation` parameter with context about the current session:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `sessionId` | string | The callback owner's session ID, which can differ from `input.sessionId` for a child session |
+
+This allows hooks to maintain state or perform session-specific logic.
+
+## Common patterns
+
+### Logging all tool calls
+
+```typescript
+const session = await client.createSession({
+  hooks: {
+    onPreToolUse: async (input) => {
+      console.log(`[${new Date().toISOString()}] Tool: ${input.toolName}, Args: ${JSON.stringify(input.toolArgs)}`);
+      return { permissionDecision: "allow" };
+    },
+    onPostToolUse: async (input) => {
+      console.log(`[${new Date().toISOString()}] Result: ${JSON.stringify(input.toolResult)}`);
+      return null;
+    },
+  },
+});
+```
+
+### Blocking dangerous tools
+
+```typescript
+const BLOCKED_TOOLS = ["shell", "bash", "exec"];
+
+const session = await client.createSession({
+  hooks: {
+    onPreToolUse: async (input) => {
+      if (BLOCKED_TOOLS.includes(input.toolName)) {
+        return {
+          permissionDecision: "deny",
+          permissionDecisionReason: "Shell access is not permitted",
+        };
+      }
+      return { permissionDecision: "allow" };
+    },
+  },
+});
+```
+
+### Adding user context
+
+```typescript
+const session = await client.createSession({
+  hooks: {
+    onSessionStart: async () => {
+      const userPrefs = await loadUserPreferences();
+      return {
+        additionalContext: `User preferences: ${JSON.stringify(userPrefs)}`,
+      };
+    },
+  },
+});
+```
+
+## Hook guides
+
+* **[Pre-Tool Use Hook](./pre-tool-use.md)** - Control tool execution permissions
+* **[Post-Tool Use Hook](./post-tool-use.md)** - Transform tool results
+* **[User Prompt Submitted Hook](./user-prompt-submitted.md)** - Modify user prompts
+* **[User Prompt Transformed Hook](./user-prompt-transformed.md)** - Replace model-facing prompts
+* **[Session Lifecycle Hooks](./session-lifecycle.md)** - Session start and end
+* **[Agent Stop Hook](./session-lifecycle.md#agent-stop-hook)** - Validate completion before the agent stops
+* **[Error Handling Hook](./error-handling.md)** - Custom error handling
+
+## See also
+
+* [Getting Started Guide](../getting-started.md)
+* [Custom Tools](../getting-started.md#step-4-add-a-custom-tool)
+* [Debugging Guide](../troubleshooting/debugging.md)

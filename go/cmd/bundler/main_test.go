@@ -1,0 +1,457 @@
+package main
+
+import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
+	"crypto/sha256"
+	"fmt"
+	"go/parser"
+	"go/token"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+func TestDetectCLIVersionFromV1ConsumerAfterRepositoryTransfer(t *testing.T) {
+	bundlerDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sdkDir := filepath.ToSlash(filepath.Clean(filepath.Join(bundlerDir, "..", "..")))
+	for _, tc := range []struct {
+		version, ref, runtime string
+	}{
+		{"v1.0.16", "v1.0.16", "1.2.3"},
+		{"v1.0.16-preview.4", "v1.0.16-preview.4", "1.2.3-4"},
+		{"v1.0.17-preview.0", "v1.0.17-preview.0", "1.2.3-4.unstable.r123.gabcdef0"},
+		{"v1.0.17-0.20261116120000-abcdef123456", "abcdef123456", "1.2.3-4.unstable.r123.gabcdef0"},
+	} {
+		t.Run(tc.version, func(t *testing.T) {
+			consumer := t.TempDir()
+			manifest := fmt.Sprintf("module example.com/consumer\n\ngo 1.26.0\n\nrequire github.com/github/copilot-sdk/go %s\n\nreplace github.com/github/copilot-sdk/go => %q\n", tc.version, sdkDir)
+			if err := os.WriteFile(filepath.Join(consumer, "go.mod"), []byte(manifest), 0600); err != nil {
+				t.Fatal(err)
+			}
+			t.Chdir(consumer)
+			t.Setenv("GOWORK", "off")
+			t.Setenv("GOFLAGS", "")
+			t.Setenv("GOPROXY", "off")
+			t.Setenv("GOSUMDB", "off")
+			original := http.DefaultClient
+			t.Cleanup(func() { http.DefaultClient = original })
+			requests := 0
+			http.DefaultClient = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				requests++
+				want := "https://raw.githubusercontent.com/microsoft/copilot-sdk/" + tc.ref + "/nodejs/package.json"
+				if got := request.URL.String(); got != want {
+					t.Errorf("metadata URL = %q, want %q", got, want)
+				}
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(fmt.Sprintf(`{"copilotCliVersion":%q}`, tc.runtime))),
+					Header:     make(http.Header),
+				}, nil
+			})}
+			got, err := detectCLIVersion()
+			if err != nil || got != tc.runtime {
+				t.Fatalf("detected runtime = %q, %v; want %q", got, err, tc.runtime)
+			}
+			if requests != 1 {
+				t.Fatalf("metadata requests = %d, want 1", requests)
+			}
+		})
+	}
+}
+
+func TestCreateRuntimeAssetsArchiveRetainsUnknownAssetsAndFiltersCLIContent(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "package.tgz")
+	output := filepath.Join(dir, "assets.tgz")
+	writeTarGz(t, source, map[string]string{
+		"package/prebuilds/linux-x64/runtime.node":    "runtime",
+		"package/prebuilds/linux-x64/copilot-runtime": "wrapper",
+		"package/ripgrep/bin/linux-x64/rg":            "ripgrep",
+		"package/definitions/future.json":             "{}",
+		"package/copilot-sdk/extension.js":            "extension",
+		"package/preloads/extension_bootstrap.mjs":    "preload",
+		"package/sdk/factory.js":                      "factory",
+		"package/app.js":                              "excluded",
+		"package/cli-main.js":                         "excluded",
+		"package/LICENSE.md":                          "excluded",
+		"package/README.md":                           "excluded",
+	})
+
+	if err := createRuntimeAssetsArchive(source, output, platformInfo{
+		runtimePlatform: "linux-x64",
+		binaryName:      "copilot",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	files := readTarGz(t, output)
+	if files["ripgrep/bin/linux-x64/rg"] != "ripgrep" ||
+		files["definitions/future.json"] != "{}" ||
+		files["copilot-sdk/extension.js"] != "extension" ||
+		files["preloads/extension_bootstrap.mjs"] != "preload" ||
+		files["sdk/factory.js"] != "factory" {
+		t.Fatalf("retained assets = %#v", files)
+	}
+	for _, excluded := range []string{
+		"runtime.node", "copilot-runtime", "app.js", "cli-main.js", "LICENSE.md", "README.md",
+	} {
+		if _, ok := files[excluded]; ok {
+			t.Fatalf("excluded asset %q was retained", excluded)
+		}
+	}
+}
+
+func TestDownloadCLIBinaryUsesVerifiedReleasePackage(t *testing.T) {
+	for _, version := range []string{"1.2.3", "1.2.3-4.unstable.r123.gabcdef0"} {
+		t.Run(version, func(t *testing.T) {
+			dir := t.TempDir()
+			archivePath := filepath.Join(dir, "source.tgz")
+			writeTarGz(t, archivePath, map[string]string{
+				"package/prebuilds/linux-x64/copilot-runtime": "runtime wrapper",
+			})
+			archive, err := os.ReadFile(archivePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			checksum := fmt.Sprintf("%x", sha256.Sum256(archive))
+			tag := "v" + version
+			if strings.Contains(version, ".unstable.") {
+				tag = "runtime-" + version
+			}
+			assetName := releaseAssetName(version, "linux-x64")
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				switch request.URL.Path {
+				case "/" + tag + "/SHA256SUMS.txt":
+					fmt.Fprintf(writer, "%s  %s\n", checksum, assetName)
+				case "/" + tag + "/" + assetName:
+					writer.Write(archive)
+				default:
+					http.NotFound(writer, request)
+				}
+			}))
+			defer server.Close()
+			t.Setenv(cliDownloadBaseURLEnvironment, server.URL)
+			releaseChecksumCache = map[string]map[string]string{}
+
+			binaryPath, downloadedArchive, err := downloadCLIBinary(
+				"linux-x64",
+				"copilot",
+				version,
+				t.TempDir(),
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, err := os.ReadFile(binaryPath); err != nil || string(got) != "runtime wrapper" {
+				t.Fatalf("downloaded CLI = %q, %v", got, err)
+			}
+			if filepath.Base(downloadedArchive) != assetName {
+				t.Fatalf("downloaded archive = %q, want basename %q", downloadedArchive, assetName)
+			}
+		})
+	}
+}
+
+func TestReleaseDownloadURL(t *testing.T) {
+	for _, tc := range []struct{ version, repository, tag string }{
+		{"1.2.3", "github/copilot-cli", "v1.2.3"},
+		{"1.2.3-4", "github/copilot-cli", "v1.2.3-4"},
+		{"1.2.3-unstable.r123.gabcdef0", "microsoft/copilot-sdk", "runtime-1.2.3-unstable.r123.gabcdef0"},
+		{"1.2.3-4.unstable.r123.gabcdef0", "microsoft/copilot-sdk", "runtime-1.2.3-4.unstable.r123.gabcdef0"},
+		{"0.0.0-0.unstable.r1.g0000000", "microsoft/copilot-sdk", "runtime-0.0.0-0.unstable.r1.g0000000"},
+		{"01.2.3-unstable.r123.gabcdef0", "github/copilot-cli", "v01.2.3-unstable.r123.gabcdef0"},
+		{"1.02.3-unstable.r123.gabcdef0", "github/copilot-cli", "v1.02.3-unstable.r123.gabcdef0"},
+		{"1.2.03-unstable.r123.gabcdef0", "github/copilot-cli", "v1.2.03-unstable.r123.gabcdef0"},
+		{"1.2.3-04.unstable.r123.gabcdef0", "github/copilot-cli", "v1.2.3-04.unstable.r123.gabcdef0"},
+	} {
+		t.Run(tc.version, func(t *testing.T) {
+			t.Setenv(cliDownloadBaseURLEnvironment, "")
+			for _, asset := range []string{"SHA256SUMS.txt", releaseAssetName(tc.version, "linux-x64")} {
+				want := "https://github.com/" + tc.repository + "/releases/download/" + tc.tag + "/" + asset
+				if got := releaseDownloadURL(tc.version, asset); got != want {
+					t.Fatalf("releaseDownloadURL() = %q, want %q", got, want)
+				}
+			}
+			t.Setenv(cliDownloadBaseURLEnvironment, "https://mirror.example/releases/")
+			want := "https://mirror.example/releases/" + tc.tag + "/SHA256SUMS.txt"
+			if got := releaseDownloadURL(tc.version, "SHA256SUMS.txt"); got != want {
+				t.Fatalf("mirror URL = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestDownloadCLIBinaryRejectsChecksumMismatch(t *testing.T) {
+	dir := t.TempDir()
+	archivePath := filepath.Join(dir, "source.tgz")
+	writeTarGz(t, archivePath, map[string]string{
+		"package/prebuilds/linux-x64/copilot-runtime": "runtime wrapper",
+	})
+	archive, err := os.ReadFile(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	version := "1.2.3"
+	assetName := releaseAssetName(version, "linux-x64")
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/v1.2.3/SHA256SUMS.txt":
+			fmt.Fprintf(writer, "%s  %s\n", strings.Repeat("0", 64), assetName)
+		case "/v1.2.3/" + assetName:
+			_, _ = writer.Write(archive)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+	t.Setenv(cliDownloadBaseURLEnvironment, server.URL)
+	releaseChecksumCache = map[string]map[string]string{}
+
+	_, _, err = downloadCLIBinary("linux-x64", "copilot", version, t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("downloadCLIBinary() error = %v, want checksum mismatch", err)
+	}
+}
+
+func TestParseReleaseChecksums(t *testing.T) {
+	hash := strings.Repeat("a", 64)
+	checksums := parseReleaseChecksums(
+		"invalid\n" +
+			strings.ToUpper(hash) + " *github-copilot-1.2.3-linux-x64.tgz\n",
+	)
+	if got := checksums["github-copilot-1.2.3-linux-x64.tgz"]; got != hash {
+		t.Fatalf("checksum = %q, want %q", got, hash)
+	}
+}
+
+func writeTarGz(t *testing.T, path string, files map[string]string) {
+	t.Helper()
+	var buffer bytes.Buffer
+	gzipWriter := gzip.NewWriter(&buffer)
+	tarWriter := tar.NewWriter(gzipWriter)
+	for name, content := range files {
+		header := &tar.Header{Name: name, Mode: 0755, Size: int64(len(content)), Typeflag: tar.TypeReg}
+		if err := tarWriter.WriteHeader(header); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tarWriter.Write([]byte(content)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tarWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gzipWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, buffer.Bytes(), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readTarGz(t *testing.T, path string) map[string]string {
+	t.Helper()
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	gzipReader, err := gzip.NewReader(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{}
+	tarReader := tar.NewReader(gzipReader)
+	for {
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			return files
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		content, err := io.ReadAll(tarReader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files[header.Name] = string(content)
+	}
+}
+
+func TestDetectPackageName(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"app_linux.go":                "package application\n",
+		"app_test.go":                 "package application_test\n",
+		"app_windows.go":              "package windowsapplication\n",
+		"tagged.go":                   "//go:build windows\n\npackage windowsapplication\n",
+		"zcopilot_linux_amd64.go":     "package main\n",
+		"_ignored.go":                 "package ignored\n",
+		"zcopilot_inprocess_linux.go": "package main\n",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, test := range []struct {
+		goos string
+		want string
+	}{
+		{goos: "linux", want: "application"},
+		{goos: "windows", want: "windowsapplication"},
+	} {
+		t.Run(test.goos, func(t *testing.T) {
+			got, err := detectPackageName(dir, test.goos, "amd64")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != test.want {
+				t.Fatalf("detectPackageName() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestDetectPackageNameFallsBackForMultiplePackages(t *testing.T) {
+	dir := t.TempDir()
+	for name, content := range map[string]string{
+		"one.go": "package one\n",
+		"two.go": "package two\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := detectPackageName(dir, "linux", "amd64")
+	if err == nil {
+		t.Fatal("detectPackageName() succeeded for a directory containing multiple packages")
+	}
+	if got != defaultPackageName {
+		t.Fatalf("detectPackageName() = %q, want fallback %q", got, defaultPackageName)
+	}
+}
+
+func TestGenerateGoFileEmbedsRuntimeWrapperPair(t *testing.T) {
+	dir := t.TempDir()
+	binaryPath := filepath.Join(dir, "copilot.zst")
+	runtimePath := filepath.Join(dir, "runtime.node.zst")
+	wrapperPath := filepath.Join(dir, "copilot-runtime.zst")
+	assetsPath := filepath.Join(dir, "runtime-assets.tgz")
+	muslBinaryPath := filepath.Join(dir, "copilot-musl.zst")
+	muslRuntimePath := filepath.Join(dir, "runtime-musl.node.zst")
+	muslWrapperPath := filepath.Join(dir, "copilot-runtime-musl.zst")
+	muslAssetsPath := filepath.Join(dir, "runtime-assets-musl.tgz")
+	for _, path := range []string{
+		binaryPath,
+		licensePathForOutput(binaryPath),
+		runtimePath,
+		wrapperPath,
+		assetsPath,
+		muslBinaryPath,
+		muslRuntimePath,
+		muslWrapperPath,
+		muslAssetsPath,
+	} {
+		if err := os.WriteFile(path, []byte("test"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	hash := make([]byte, 32)
+	if err := generateGoFile(
+		"linux",
+		"amd64",
+		binaryPath,
+		"1.2.3",
+		hash,
+		runtimePath,
+		hash,
+		wrapperPath,
+		hash,
+		assetsPath,
+		hash,
+		muslBinaryPath,
+		hash,
+		muslRuntimePath,
+		hash,
+		muslWrapperPath,
+		hash,
+		muslAssetsPath,
+		hash,
+		"main",
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	defaultSource, err := os.ReadFile(filepath.Join(dir, "zcopilot_linux_amd64.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(defaultSource), "//go:build !copilot_inprocess") {
+		t.Fatal("default embed file does not exclude copilot_inprocess builds")
+	}
+	if !strings.Contains(string(defaultSource), "localEmbeddedCopilotRuntimeExecutable") {
+		t.Fatal("default embed file does not include the runtime wrapper")
+	}
+	if !strings.Contains(string(defaultSource), "RuntimeNode:") {
+		t.Fatal("default embed file does not configure runtime.node")
+	}
+	if !strings.Contains(string(defaultSource), "RuntimeAssets:") {
+		t.Fatal("default embed file does not configure retained runtime assets")
+	}
+	if !strings.Contains(string(defaultSource), "localEmbeddedCopilotCLILinuxMusl") {
+		t.Fatal("default embed file does not include the Linux musl CLI")
+	}
+	if !strings.Contains(string(defaultSource), "localEmbeddedCopilotRuntimeLibLinuxMusl") {
+		t.Fatal("default embed file does not include the Linux musl runtime")
+	}
+	if strings.Contains(string(defaultSource), "zstd.NewReader(bytes.NewReader(localEmbedded") || !strings.Contains(string(defaultSource), "func (r *zstdReader) Seek(") {
+		t.Fatal("default embed file must build its readers through the rewindable zstdReader")
+	}
+	if _, err := parser.ParseFile(token.NewFileSet(), "zcopilot_linux_amd64.go", defaultSource, parser.AllErrors); err != nil {
+		t.Fatalf("default generated source is invalid: %v", err)
+	}
+
+	inProcessSource, err := os.ReadFile(filepath.Join(dir, "zcopilot_inprocess_linux_amd64.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(inProcessSource), "//go:build copilot_inprocess") {
+		t.Fatal("in-process embed file does not require the copilot_inprocess tag")
+	}
+	if !strings.Contains(string(inProcessSource), "localEmbeddedCopilotRuntimeLib") {
+		t.Fatal("in-process embed file does not include the native runtime")
+	}
+	if !strings.Contains(string(inProcessSource), "localEmbeddedCopilotCLILinuxMusl") {
+		t.Fatal("in-process embed file does not include the Linux musl CLI")
+	}
+	if !strings.Contains(string(inProcessSource), "localEmbeddedCopilotRuntimeLibLinuxMusl") {
+		t.Fatal("in-process embed file does not include the Linux musl runtime")
+	}
+	if _, err := parser.ParseFile(token.NewFileSet(), "zcopilot_inprocess_linux_amd64.go", inProcessSource, parser.AllErrors); err != nil {
+		t.Fatalf("in-process generated source is invalid: %v", err)
+	}
+	for _, source := range [][]byte{defaultSource, inProcessSource} {
+		if !bytes.Contains(source, []byte(`"github.com/github/copilot-sdk/go/embeddedcli"`)) {
+			t.Fatal("generated source does not retain the V1 embedded runtime installer import")
+		}
+	}
+}

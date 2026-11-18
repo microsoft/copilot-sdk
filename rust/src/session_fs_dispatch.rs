@@ -1,0 +1,733 @@
+//! Inbound `sessionFs.*` JSON-RPC request dispatch helpers.
+//!
+//! Internal — public-facing trait lives in `crate::session_fs`. Each helper
+//! deserializes the typed request, calls the [`SessionFsProvider`] method,
+//! and serializes the schema response with `FsError` mapped onto the wire's
+//! `SessionFsError` variant.
+
+use std::sync::Arc;
+
+use base64::Engine as _;
+use serde::Serialize;
+use serde_json::Value;
+use tracing::warn;
+
+use crate::generated::api_types::{
+    SessionFsAppendFileRequest, SessionFsError, SessionFsErrorCode, SessionFsExistsRequest,
+    SessionFsExistsResult, SessionFsMkdirRequest, SessionFsReadFileBytesRequest,
+    SessionFsReadFileBytesResult, SessionFsReadFileRangeRequest, SessionFsReadFileRangeResult,
+    SessionFsReadFileRequest, SessionFsReadFileResult, SessionFsReaddirRequest,
+    SessionFsReaddirResult, SessionFsReaddirWithTypesRequest, SessionFsReaddirWithTypesResult,
+    SessionFsRenameRequest, SessionFsRmRequest, SessionFsSqliteExistsParams,
+    SessionFsSqliteExistsResult, SessionFsSqliteQueryRequest,
+    SessionFsSqliteQueryResult as GeneratedSqliteQueryResult,
+    SessionFsSqliteTransactionError as GeneratedSqliteTransactionError,
+    SessionFsSqliteTransactionErrorClass, SessionFsSqliteTransactionRequest,
+    SessionFsSqliteTransactionResult as GeneratedSqliteTransactionResult, SessionFsStatRequest,
+    SessionFsStatResult, SessionFsWriteFileBytesRequest, SessionFsWriteFileRequest,
+};
+use crate::session_fs::{FsError, FsErrorKind, SessionFsProvider};
+use crate::{Client, JsonRpcRequest, JsonRpcResponse, error_codes};
+
+const MAX_BINARY_BYTES: usize = (64 * 1024 * 1024 - 1024) / 4 * 3;
+
+/// The success response [`respond`] encodes: [`JsonRpcResponse`]'s fields and
+/// their names, with the typed result in place of a `serde_json::Value`.
+#[derive(Serialize)]
+struct TypedResponse<'a, T: Serialize> {
+    jsonrpc: &'static str,
+    id: u64,
+    result: &'a T,
+}
+
+/// Helper: serialize a typed result, send the response.
+///
+/// The result is encoded straight into its frame, with no `serde_json::Value`
+/// copy of it, and dropped before the frame is written. A large reply, such as
+/// a `readFile` of a long session's `events.jsonl` on resume, is then held
+/// once, escaped, while the frame is written.
+///
+/// The frame skips [`Client::send_response`]'s depth check: each typed result
+/// has a fixed, shallow shape. A result holding values the app supplies goes
+/// through [`respond_sorted`].
+async fn respond<T: Serialize>(client: &Client, request_id: u64, result: T) {
+    let frame = match crate::jsonrpc::encode_frame(&TypedResponse {
+        jsonrpc: "2.0",
+        id: request_id,
+        result: &result,
+    }) {
+        Ok(frame) => frame,
+        Err(e) => {
+            warn!(error = %e, "failed to serialize sessionFs response");
+            send_error(client, request_id, "serialization failure").await;
+            return;
+        }
+    };
+    drop(result);
+    let _ = client.send_frame(frame).await;
+}
+
+/// [`respond`] for a result holding `HashMap` rows (the sqlite replies). It
+/// goes through a `serde_json::Value` first, so each row's keys keep the
+/// sorted order a `Value` writes; typed, they would go out in hash order.
+///
+/// A row's cells are values the app's provider returns, so a reply can nest
+/// deeper than the CLI reads; [`Client::send_response`] answers that request
+/// with an error instead.
+async fn respond_sorted<T: Serialize>(client: &Client, request_id: u64, result: T) {
+    match serde_json::to_value(&result) {
+        Ok(value)
+            if crate::jsonrpc::nests_deeper_than(&value, crate::jsonrpc::PEER_MAX_NESTING - 1) =>
+        {
+            let _ = client
+                .send_response(&JsonRpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id: request_id,
+                    result: Some(value),
+                    error: None,
+                })
+                .await;
+        }
+        Ok(value) => respond(client, request_id, value).await,
+        Err(e) => {
+            warn!(error = %e, "failed to serialize sessionFs response");
+            send_error(client, request_id, "serialization failure").await;
+        }
+    }
+}
+
+async fn send_error(client: &Client, request_id: u64, message: &str) {
+    let _ = client
+        .send_response(&JsonRpcResponse {
+            jsonrpc: "2.0".to_string(),
+            id: request_id,
+            result: None,
+            error: Some(crate::JsonRpcError {
+                code: error_codes::INTERNAL_ERROR.into(),
+                message: message.to_string(),
+                data: None,
+            }),
+        })
+        .await;
+}
+
+fn parse_params<T: serde::de::DeserializeOwned>(request: &mut JsonRpcRequest) -> Option<T> {
+    request
+        .params
+        .take()
+        .and_then(|p| serde_json::from_value(p).ok())
+}
+
+pub(crate) async fn read_file(
+    client: &Client,
+    provider: &Arc<dyn SessionFsProvider>,
+    mut request: JsonRpcRequest,
+) {
+    let params: SessionFsReadFileRequest = match parse_params(&mut request) {
+        Some(p) => p,
+        None => {
+            send_error(client, request.id, "invalid sessionFs.readFile params").await;
+            return;
+        }
+    };
+    let id = request.id;
+    let result = match provider.read_file(&params.path).await {
+        Ok(content) => SessionFsReadFileResult {
+            content,
+            error: None,
+        },
+        Err(e) => SessionFsReadFileResult {
+            content: String::new(),
+            error: Some(e.into_wire()),
+        },
+    };
+    respond(client, id, result).await;
+}
+
+pub(crate) async fn read_file_bytes(
+    client: &Client,
+    provider: &Arc<dyn SessionFsProvider>,
+    mut request: JsonRpcRequest,
+) {
+    let params: SessionFsReadFileBytesRequest = match parse_params(&mut request) {
+        Some(params) => params,
+        None => {
+            send_error(client, request.id, "invalid sessionFs.readFileBytes params").await;
+            return;
+        }
+    };
+    let result = match provider.binary() {
+        Some(binary) => binary.read_file_bytes(&params.path).await,
+        None => Err(crate::session_fs::FsError::with_message(
+            crate::session_fs::FsErrorKind::Other,
+            "binary reads are not supported",
+        )),
+    };
+    respond(client, request.id, binary_read_response(result)).await;
+}
+
+fn binary_read_response(
+    result: Result<Vec<u8>, crate::session_fs::FsError>,
+) -> SessionFsReadFileBytesResult {
+    match result {
+        Ok(bytes) if bytes.len() > MAX_BINARY_BYTES => SessionFsReadFileBytesResult {
+            content: String::new(),
+            error: Some(
+                crate::session_fs::FsError::with_message(
+                    crate::session_fs::FsErrorKind::Other,
+                    "sessionFs.readFileBytes content exceeds the binary read limit",
+                )
+                .into_wire(),
+            ),
+        },
+        Ok(bytes) => SessionFsReadFileBytesResult {
+            content: base64::engine::general_purpose::STANDARD.encode(bytes),
+            error: None,
+        },
+        Err(error) => SessionFsReadFileBytesResult {
+            content: String::new(),
+            error: Some(error.into_wire()),
+        },
+    }
+}
+
+pub(crate) async fn read_file_range(
+    client: &Client,
+    provider: &Arc<dyn SessionFsProvider>,
+    mut request: JsonRpcRequest,
+) {
+    let Some(params) = parse_params::<SessionFsReadFileRangeRequest>(&mut request) else {
+        send_error(client, request.id, "invalid sessionFs.readFileRange params").await;
+        return;
+    };
+    respond(
+        client,
+        request.id,
+        read_file_range_response(provider.as_ref(), &params).await,
+    )
+    .await;
+}
+
+async fn read_file_range_response(
+    provider: &dyn SessionFsProvider,
+    params: &SessionFsReadFileRangeRequest,
+) -> SessionFsReadFileRangeResult {
+    let result = if !(0..=9_007_199_254_740_991).contains(&params.offset)
+        || params
+            .length
+            .is_some_and(|length| !(0..=9_007_199_254_740_991).contains(&length))
+    {
+        Err(FsError::with_message(
+            FsErrorKind::Other,
+            "SessionFs byte offset and length must be non-negative safe integers",
+        ))
+    } else {
+        match provider.byte_ranges() {
+            Some(ranges) => {
+                ranges
+                    .read_file_range(&params.path, params.offset, params.length)
+                    .await
+            }
+            None => Err(FsError::with_message(
+                FsErrorKind::Other,
+                "read_file_range not supported",
+            )),
+        }
+    };
+    let result = result.and_then(|range| {
+        if !(0..=9_007_199_254_740_991).contains(&range.byte_length) {
+            return Err(FsError::with_message(
+                FsErrorKind::Other,
+                "SessionFs byte length must be a non-negative safe integer",
+            ));
+        }
+        let available = range.byte_length.saturating_sub(params.offset).max(0);
+        let expected = available.min(params.length.unwrap_or(available));
+        if i64::try_from(range.content.len()).ok() != Some(expected) {
+            return Err(FsError::with_message(
+                FsErrorKind::Other,
+                "SessionFs returned an incorrect byte range length",
+            ));
+        }
+        Ok(SessionFsReadFileRangeResult {
+            content: base64::engine::general_purpose::STANDARD.encode(range.content),
+            byte_length: range.byte_length,
+            error: None,
+        })
+    });
+    match result {
+        Ok(result) => result,
+        Err(error) => SessionFsReadFileRangeResult {
+            content: String::new(),
+            byte_length: 0,
+            error: Some(error.into_wire()),
+        },
+    }
+}
+
+pub(crate) async fn write_file(
+    client: &Client,
+    provider: &Arc<dyn SessionFsProvider>,
+    mut request: JsonRpcRequest,
+) {
+    let params: SessionFsWriteFileRequest = match parse_params(&mut request) {
+        Some(p) => p,
+        None => {
+            send_error(client, request.id, "invalid sessionFs.writeFile params").await;
+            return;
+        }
+    };
+    let id = request.id;
+    match provider
+        .write_file(&params.path, &params.content, params.mode)
+        .await
+    {
+        Ok(()) => respond(client, id, Value::Null).await,
+        Err(e) => respond(client, id, e.into_write_wire()).await,
+    }
+}
+
+pub(crate) async fn write_file_bytes(
+    client: &Client,
+    provider: &Arc<dyn SessionFsProvider>,
+    mut request: JsonRpcRequest,
+) {
+    let params: SessionFsWriteFileBytesRequest = match parse_params(&mut request) {
+        Some(params) => params,
+        None => {
+            send_error(
+                client,
+                request.id,
+                "invalid sessionFs.writeFileBytes params",
+            )
+            .await;
+            return;
+        }
+    };
+    let result = if params.content.len() > MAX_BINARY_BYTES.div_ceil(3) * 4 {
+        Err(crate::session_fs::FsError::with_message(
+            crate::session_fs::FsErrorKind::Other,
+            "sessionFs.writeFileBytes content exceeds the binary write limit",
+        ))
+    } else {
+        match base64::engine::general_purpose::STANDARD.decode(&params.content) {
+            Ok(content) => match provider.binary() {
+                Some(binary) => {
+                    binary
+                        .write_file_bytes(&params.path, &content, params.mode)
+                        .await
+                }
+                None => Err(crate::session_fs::FsError::with_message(
+                    crate::session_fs::FsErrorKind::Other,
+                    "binary writes are not supported",
+                )),
+            },
+            Err(error) => Err(crate::session_fs::FsError::with_message(
+                crate::session_fs::FsErrorKind::Other,
+                format!("invalid sessionFs.writeFileBytes base64 content: {error}"),
+            )),
+        }
+    };
+    match result {
+        Ok(()) => respond(client, request.id, Value::Null).await,
+        Err(error) => respond(client, request.id, error.into_wire()).await,
+    }
+}
+
+pub(crate) async fn append_file(
+    client: &Client,
+    provider: &Arc<dyn SessionFsProvider>,
+    mut request: JsonRpcRequest,
+) {
+    let params: SessionFsAppendFileRequest = match parse_params(&mut request) {
+        Some(p) => p,
+        None => {
+            send_error(client, request.id, "invalid sessionFs.appendFile params").await;
+            return;
+        }
+    };
+    let id = request.id;
+    match provider
+        .append_file(&params.path, &params.content, params.mode)
+        .await
+    {
+        Ok(()) => respond(client, id, Value::Null).await,
+        Err(e) => respond(client, id, e.into_wire()).await,
+    }
+}
+
+pub(crate) async fn exists(
+    client: &Client,
+    provider: &Arc<dyn SessionFsProvider>,
+    mut request: JsonRpcRequest,
+) {
+    let params: SessionFsExistsRequest = match parse_params(&mut request) {
+        Some(p) => p,
+        None => {
+            send_error(client, request.id, "invalid sessionFs.exists params").await;
+            return;
+        }
+    };
+    let id = request.id;
+    let exists_value = provider.exists(&params.path).await.unwrap_or(false);
+    respond(
+        client,
+        id,
+        SessionFsExistsResult {
+            exists: exists_value,
+        },
+    )
+    .await;
+}
+
+pub(crate) async fn stat(
+    client: &Client,
+    provider: &Arc<dyn SessionFsProvider>,
+    mut request: JsonRpcRequest,
+) {
+    let params: SessionFsStatRequest = match parse_params(&mut request) {
+        Some(p) => p,
+        None => {
+            send_error(client, request.id, "invalid sessionFs.stat params").await;
+            return;
+        }
+    };
+    let id = request.id;
+    let result = match provider.stat(&params.path).await {
+        Ok(info) => info.into_wire(),
+        Err(e) => SessionFsStatResult {
+            is_file: false,
+            is_directory: false,
+            size: 0,
+            mtime: String::new(),
+            birthtime: String::new(),
+            error: Some(e.into_wire()),
+        },
+    };
+    respond(client, id, result).await;
+}
+
+pub(crate) async fn mkdir(
+    client: &Client,
+    provider: &Arc<dyn SessionFsProvider>,
+    mut request: JsonRpcRequest,
+) {
+    let params: SessionFsMkdirRequest = match parse_params(&mut request) {
+        Some(p) => p,
+        None => {
+            send_error(client, request.id, "invalid sessionFs.mkdir params").await;
+            return;
+        }
+    };
+    let id = request.id;
+    let recursive = params.recursive.unwrap_or(false);
+    match provider.mkdir(&params.path, recursive, params.mode).await {
+        Ok(()) => respond(client, id, Value::Null).await,
+        Err(e) => respond(client, id, e.into_wire()).await,
+    }
+}
+
+pub(crate) async fn readdir(
+    client: &Client,
+    provider: &Arc<dyn SessionFsProvider>,
+    mut request: JsonRpcRequest,
+) {
+    let params: SessionFsReaddirRequest = match parse_params(&mut request) {
+        Some(p) => p,
+        None => {
+            send_error(client, request.id, "invalid sessionFs.readdir params").await;
+            return;
+        }
+    };
+    let id = request.id;
+    let result = match provider.readdir(&params.path).await {
+        Ok(entries) => SessionFsReaddirResult {
+            entries,
+            error: None,
+        },
+        Err(e) => SessionFsReaddirResult {
+            entries: Vec::new(),
+            error: Some(e.into_wire()),
+        },
+    };
+    respond(client, id, result).await;
+}
+
+pub(crate) async fn readdir_with_types(
+    client: &Client,
+    provider: &Arc<dyn SessionFsProvider>,
+    mut request: JsonRpcRequest,
+) {
+    let params: SessionFsReaddirWithTypesRequest = match parse_params(&mut request) {
+        Some(p) => p,
+        None => {
+            send_error(
+                client,
+                request.id,
+                "invalid sessionFs.readdirWithTypes params",
+            )
+            .await;
+            return;
+        }
+    };
+    let id = request.id;
+    let result = match provider.readdir_with_types(&params.path).await {
+        Ok(entries) => SessionFsReaddirWithTypesResult {
+            entries: entries.into_iter().map(|e| e.into_wire()).collect(),
+            error: None,
+        },
+        Err(e) => SessionFsReaddirWithTypesResult {
+            entries: Vec::new(),
+            error: Some(e.into_wire()),
+        },
+    };
+    respond(client, id, result).await;
+}
+
+pub(crate) async fn rm(
+    client: &Client,
+    provider: &Arc<dyn SessionFsProvider>,
+    mut request: JsonRpcRequest,
+) {
+    let params: SessionFsRmRequest = match parse_params(&mut request) {
+        Some(p) => p,
+        None => {
+            send_error(client, request.id, "invalid sessionFs.rm params").await;
+            return;
+        }
+    };
+    let id = request.id;
+    let recursive = params.recursive.unwrap_or(false);
+    let force = params.force.unwrap_or(false);
+    match provider.rm(&params.path, recursive, force).await {
+        Ok(()) => respond(client, id, Value::Null).await,
+        Err(e) => respond(client, id, e.into_wire()).await,
+    }
+}
+
+pub(crate) async fn rename(
+    client: &Client,
+    provider: &Arc<dyn SessionFsProvider>,
+    mut request: JsonRpcRequest,
+) {
+    let params: SessionFsRenameRequest = match parse_params(&mut request) {
+        Some(p) => p,
+        None => {
+            send_error(client, request.id, "invalid sessionFs.rename params").await;
+            return;
+        }
+    };
+    let id = request.id;
+    match provider.rename(&params.src, &params.dest).await {
+        Ok(()) => respond(client, id, Value::Null).await,
+        Err(e) => respond(client, id, e.into_wire()).await,
+    }
+}
+
+pub(crate) async fn sqlite_query(
+    client: &Client,
+    provider: &Arc<dyn SessionFsProvider>,
+    mut request: JsonRpcRequest,
+) {
+    let params: SessionFsSqliteQueryRequest = match parse_params(&mut request) {
+        Some(p) => p,
+        None => {
+            send_error(client, request.id, "invalid sessionFs.sqliteQuery params").await;
+            return;
+        }
+    };
+    let id = request.id;
+    let sqlite = match provider.sqlite() {
+        Some(s) => s,
+        None => {
+            // SQLite not supported — return a result-level error, not a
+            // transport error, so the CLI can surface it gracefully.
+            respond(
+                client,
+                id,
+                GeneratedSqliteQueryResult {
+                    columns: Vec::new(),
+                    error: Some(SessionFsError {
+                        code: SessionFsErrorCode::UNKNOWN,
+                        message: Some(
+                            "SQLite is not supported by this SessionFs provider".to_string(),
+                        ),
+                        write_changed: None,
+                    }),
+                    last_insert_rowid: None,
+                    rows: Vec::new(),
+                    rows_affected: 0,
+                },
+            )
+            .await;
+            return;
+        }
+    };
+    let sqlite_params = params.params.as_ref().filter(|p| !p.is_empty());
+    let result = match sqlite
+        .sqlite_query(params.query_type, &params.query, sqlite_params)
+        .await
+    {
+        Ok(Some(result)) => GeneratedSqliteQueryResult {
+            columns: result.columns,
+            rows: result.rows,
+            rows_affected: result.rows_affected,
+            last_insert_rowid: result.last_insert_rowid,
+            error: None,
+        },
+        Ok(None) => GeneratedSqliteQueryResult {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            rows_affected: 0,
+            last_insert_rowid: None,
+            error: None,
+        },
+        Err(e) => GeneratedSqliteQueryResult {
+            columns: Vec::new(),
+            error: Some(e.into_wire()),
+            last_insert_rowid: None,
+            rows: Vec::new(),
+            rows_affected: 0,
+        },
+    };
+    respond_sorted(client, id, result).await;
+}
+
+pub(crate) async fn sqlite_transaction(
+    client: &Client,
+    provider: &Arc<dyn SessionFsProvider>,
+    mut request: JsonRpcRequest,
+) {
+    let params: SessionFsSqliteTransactionRequest = match parse_params(&mut request) {
+        Some(p) => p,
+        None => {
+            send_error(
+                client,
+                request.id,
+                "invalid sessionFs.sqliteTransaction params",
+            )
+            .await;
+            return;
+        }
+    };
+    let id = request.id;
+    let sqlite = match provider.sqlite() {
+        Some(s) => s,
+        None => {
+            // SQLite not supported — return a result-level error, not a
+            // transport error, so the CLI can surface it gracefully.
+            respond(
+                client,
+                id,
+                GeneratedSqliteTransactionResult {
+                    results: Vec::new(),
+                    error: Some(GeneratedSqliteTransactionError {
+                        error_class: SessionFsSqliteTransactionErrorClass::Fatal,
+                        message: "SQLite is not supported by this SessionFs provider".to_string(),
+                    }),
+                },
+            )
+            .await;
+            return;
+        }
+    };
+    let result = match sqlite.sqlite_transaction(&params.statements).await {
+        Ok(results) => GeneratedSqliteTransactionResult {
+            results: results
+                .into_iter()
+                .map(|result| GeneratedSqliteQueryResult {
+                    columns: result.columns,
+                    rows: result.rows,
+                    rows_affected: result.rows_affected,
+                    last_insert_rowid: result.last_insert_rowid,
+                    error: None,
+                })
+                .collect(),
+            error: None,
+        },
+        Err(e) => GeneratedSqliteTransactionResult {
+            results: Vec::new(),
+            error: Some(GeneratedSqliteTransactionError {
+                error_class: e.error_class,
+                message: e.message,
+            }),
+        },
+    };
+    respond_sorted(client, id, result).await;
+}
+
+pub(crate) async fn sqlite_exists(
+    client: &Client,
+    provider: &Arc<dyn SessionFsProvider>,
+    mut request: JsonRpcRequest,
+) {
+    let _params: SessionFsSqliteExistsParams = match parse_params(&mut request) {
+        Some(p) => p,
+        None => {
+            send_error(client, request.id, "invalid sessionFs.sqliteExists params").await;
+            return;
+        }
+    };
+    let id = request.id;
+    let result = match provider.sqlite() {
+        Some(sqlite) => match sqlite.sqlite_exists().await {
+            Ok(exists) => SessionFsSqliteExistsResult { exists },
+            Err(_) => SessionFsSqliteExistsResult { exists: false },
+        },
+        None => SessionFsSqliteExistsResult { exists: false },
+    };
+    respond(client, id, result).await;
+}
+
+/// Dispatch a `sessionFs.*` request to the appropriate handler. Returns
+/// `true` if the request was a session-fs method (whether or not a provider
+/// was registered), `false` otherwise (caller should continue matching).
+pub(crate) async fn dispatch(
+    client: &Client,
+    provider: Option<&Arc<dyn SessionFsProvider>>,
+    request: JsonRpcRequest,
+) -> bool {
+    let method = request.method.as_str();
+    if !method.starts_with("sessionFs.") {
+        return false;
+    }
+    let provider = match provider {
+        Some(p) => p.clone(),
+        None => {
+            warn!(method = %method, "sessionFs request without registered provider");
+            send_error(
+                client,
+                request.id,
+                "no sessionFs provider registered for this session",
+            )
+            .await;
+            return true;
+        }
+    };
+    match method {
+        "sessionFs.readFile" => read_file(client, &provider, request).await,
+        "sessionFs.readFileBytes" => read_file_bytes(client, &provider, request).await,
+        "sessionFs.readFileRange" => read_file_range(client, &provider, request).await,
+        "sessionFs.writeFileBytes" => write_file_bytes(client, &provider, request).await,
+        "sessionFs.writeFile" => write_file(client, &provider, request).await,
+        "sessionFs.appendFile" => append_file(client, &provider, request).await,
+        "sessionFs.exists" => exists(client, &provider, request).await,
+        "sessionFs.stat" => stat(client, &provider, request).await,
+        "sessionFs.mkdir" => mkdir(client, &provider, request).await,
+        "sessionFs.readdir" => readdir(client, &provider, request).await,
+        "sessionFs.readdirWithTypes" => readdir_with_types(client, &provider, request).await,
+        "sessionFs.rm" => rm(client, &provider, request).await,
+        "sessionFs.rename" => rename(client, &provider, request).await,
+        "sessionFs.sqliteQuery" => sqlite_query(client, &provider, request).await,
+        "sessionFs.sqliteTransaction" => sqlite_transaction(client, &provider, request).await,
+        "sessionFs.sqliteExists" => sqlite_exists(client, &provider, request).await,
+        _ => {
+            warn!(method = %method, "unknown sessionFs.* method");
+            send_error(client, request.id, "unknown sessionFs method").await;
+        }
+    }
+    true
+}
+
+#[cfg(test)]
+mod tests;

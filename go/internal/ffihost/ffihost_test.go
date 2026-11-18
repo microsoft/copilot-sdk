@@ -1,0 +1,264 @@
+//go:build copilot_inprocess && (darwin || linux || windows)
+
+package ffihost
+
+import (
+	"encoding/json"
+	"sync/atomic"
+	"testing"
+	"time"
+	"unsafe"
+)
+
+func TestDisposeUnregistersOutboundTarget(t *testing.T) {
+	token := uintptr(nextOutboundToken.Add(1))
+	host := &Host{
+		recv:          newReceiveBuffer(),
+		callbackToken: token,
+	}
+	outboundTargets.Store(token, host)
+
+	host.Dispose()
+
+	if _, ok := outboundTargets.Load(token); ok {
+		t.Fatal("Expected disposed host to be removed from outbound callback registry")
+	}
+}
+
+func TestUiActionsAreSynchronousConnectionScopedAndRejectAfterDisposal(t *testing.T) {
+	configured := false
+	executed := false
+	host := &Host{
+		lib: &ffiLibrary{
+			connectionSetUiThreadHandler: func(connectionID uint32, enabled bool) bool {
+				configured = connectionID == 21 && enabled
+				return configured
+			},
+			connectionRunUiAction: func(connectionID, actionID uint32) bool {
+				executed = connectionID == 21 && actionID == 42
+				return executed
+			},
+			connectionClose: func(_ uint32) bool { return true },
+		},
+		recv:         newReceiveBuffer(),
+		connectionID: 21,
+	}
+	defer host.Dispose()
+	if err := host.ConfigureUiThread(true); err != nil || !configured {
+		t.Fatalf("UI dispatcher was not configured: %v", err)
+	}
+	if err := host.RunUiAction(42); err != nil || !executed {
+		t.Fatalf("UI action did not execute synchronously: %v", err)
+	}
+	if err := host.RunUiAction(43); err == nil {
+		t.Fatal("Expected a rejected native UI action to fail")
+	}
+	host.Dispose()
+	if err := host.RunUiAction(42); err == nil {
+		t.Fatal("Expected a disposed UI connection to fail")
+	}
+}
+
+func TestDisposeRetainsOutboundTargetUntilConnectionCloseSucceeds(t *testing.T) {
+	token := uintptr(nextOutboundToken.Add(1))
+	var allowClose atomic.Bool
+	var closeCalls atomic.Int32
+	var shutdownCalls atomic.Int32
+	host := &Host{
+		lib: &ffiLibrary{
+			connectionClose: func(_ uint32) bool {
+				closeCalls.Add(1)
+				return allowClose.Load()
+			},
+			hostShutdown: func(_ uint32) bool {
+				shutdownCalls.Add(1)
+				return true
+			},
+		},
+		recv:          newReceiveBuffer(),
+		serverID:      11,
+		connectionID:  21,
+		callbackToken: token,
+	}
+	outboundTargets.Store(token, host)
+
+	host.Dispose()
+
+	pendingCleanup.Lock()
+	cleanupDone := pendingCleanup.idle
+	pendingCleanup.Unlock()
+	t.Cleanup(func() {
+		allowClose.Store(true)
+		<-cleanupDone
+	})
+
+	if _, ok := outboundTargets.Load(token); !ok {
+		t.Fatal("Expected callback target to remain registered after connection close reported non-quiescence")
+	}
+	if got := shutdownCalls.Load(); got != 0 {
+		t.Fatalf("Expected host shutdown to be deferred, got %d calls", got)
+	}
+	select {
+	case <-cleanupDone:
+		t.Fatal("Expected cleanup to remain pending before connection close succeeds")
+	default:
+	}
+	if WaitForCleanup(0) {
+		t.Fatal("Expected cleanup wait to remain pending before connection close succeeds")
+	}
+
+	allowClose.Store(true)
+	<-cleanupDone
+	// A timed-out observation cannot overturn the cleanup acknowledgment.
+	for !WaitForCleanup(5 * time.Second) {
+	}
+
+	if _, ok := outboundTargets.Load(token); ok {
+		t.Fatal("Expected callback target to be removed after connection close succeeded")
+	}
+	if got := closeCalls.Load(); got < 2 {
+		t.Fatalf("Expected connection close to be retried, got %d calls", got)
+	}
+	if got := shutdownCalls.Load(); got != 1 {
+		t.Fatalf("Expected exactly one host shutdown, got %d", got)
+	}
+
+	closeCallsAfterCleanup := closeCalls.Load()
+	host.Dispose()
+	time.Sleep(150 * time.Millisecond)
+	if got := closeCalls.Load(); got != closeCallsAfterCleanup {
+		t.Fatalf("Expected repeated disposal to be a no-op, got %d additional close calls", got-closeCallsAfterCleanup)
+	}
+	if got := shutdownCalls.Load(); got != 1 {
+		t.Fatalf("Expected exactly one host shutdown after repeated disposal, got %d", got)
+	}
+}
+
+func TestBuildEnvPreservesExplicitEmptyEnvironment(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{name: "ambient", want: ""},
+		{name: "empty", env: map[string]string{}, want: "{}"},
+		{name: "configured", env: map[string]string{"TOKEN": "host-token"}, want: `{"TOKEN":"host-token"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			host := &Host{environment: tc.env}
+			if got := string(host.buildEnv()); got != tc.want {
+				t.Fatalf("Native environment JSON = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBuildArgvWithoutEntrypointContainsOnlyManagedOptions(t *testing.T) {
+	host := &Host{
+		args: []string{"--log-level", "debug", "--remote"},
+	}
+
+	var argv []string
+	if err := json.Unmarshal(host.buildArgv(), &argv); err != nil {
+		t.Fatal(err)
+	}
+
+	expected := []string{"--log-level", "debug", "--remote"}
+	if len(argv) != len(expected) {
+		t.Fatalf("Expected %d arguments, got %d: %v", len(expected), len(argv), argv)
+	}
+	for i := range expected {
+		if argv[i] != expected[i] {
+			t.Fatalf("Expected argument %d to be %q, got %q", i, expected[i], argv[i])
+		}
+	}
+}
+
+func TestBuildArgvPreservesExplicitEntrypoint(t *testing.T) {
+	host := &Host{cliEntrypoint: "copilot", args: []string{"--remote"}}
+
+	var argv []string
+	if err := json.Unmarshal(host.buildArgv(), &argv); err != nil {
+		t.Fatal(err)
+	}
+
+	expected := []string{"copilot", "--embedded-host", "--no-auto-update", "--remote"}
+	if len(argv) != len(expected) {
+		t.Fatalf("Expected %d arguments, got %d: %v", len(expected), len(argv), argv)
+	}
+	for i := range expected {
+		if argv[i] != expected[i] {
+			t.Fatalf("Expected argument %d to be %q, got %q", i, expected[i], argv[i])
+		}
+	}
+}
+
+func TestBuildArgvUsesNodeForExplicitJavaScriptEntrypoint(t *testing.T) {
+	host := &Host{cliEntrypoint: "copilot.js"}
+
+	var argv []string
+	if err := json.Unmarshal(host.buildArgv(), &argv); err != nil {
+		t.Fatal(err)
+	}
+
+	expected := []string{"node", "copilot.js", "--embedded-host", "--no-auto-update"}
+	if len(argv) != len(expected) {
+		t.Fatalf("Expected %d arguments, got %d: %v", len(expected), len(argv), argv)
+	}
+	for i := range expected {
+		if argv[i] != expected[i] {
+			t.Fatalf("Expected argument %d to be %q, got %q", i, expected[i], argv[i])
+		}
+	}
+}
+
+func TestDisposeWaitsForStartBeforeShuttingDown(t *testing.T) {
+	started := make(chan struct{})
+	releaseStart := make(chan struct{})
+	startDone := make(chan error, 1)
+	disposeDone := make(chan struct{})
+	var shutdownID atomic.Uint32
+
+	host := &Host{
+		lib: &ffiLibrary{
+			hostStart: func(_ unsafe.Pointer, _ uintptr, _ unsafe.Pointer, _ uintptr) uint32 {
+				close(started)
+				<-releaseStart
+				return 41
+			},
+			hostShutdown: func(serverID uint32) bool {
+				shutdownID.Store(serverID)
+				return true
+			},
+			connectionOpen: func(_ uint32, _ uintptr, _ uintptr, _ unsafe.Pointer, _ uintptr, _ unsafe.Pointer, _ uintptr, _ unsafe.Pointer, _ uintptr) uint32 {
+				return 42
+			},
+			connectionClose: func(_ uint32) bool { return true },
+		},
+		recv: newReceiveBuffer(),
+	}
+
+	go func() { startDone <- host.Start() }()
+	<-started
+	go func() {
+		host.Dispose()
+		close(disposeDone)
+	}()
+
+	select {
+	case <-disposeDone:
+		t.Fatal("Dispose returned before native startup completed")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	close(releaseStart)
+	if err := <-startDone; err != nil {
+		t.Fatal(err)
+	}
+	<-disposeDone
+
+	if got := shutdownID.Load(); got != 41 {
+		t.Fatalf("Expected shutdown of server 41, got %d", got)
+	}
+}

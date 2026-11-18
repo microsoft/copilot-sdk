@@ -1,0 +1,3320 @@
+// Package copilot provides a Go SDK for interacting with the GitHub Copilot CLI.
+package copilot
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
+	"slices"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/github/copilot-sdk/go/internal/jsonrpc2"
+	"github.com/github/copilot-sdk/go/rpc"
+)
+
+// toolSearchToolName is the fixed name of the runtime's built-in tool-search
+// tool. A client can replace its behavior by registering a [Tool] with this
+// exact name and OverridesBuiltInTool set to true.
+const toolSearchToolName = "tool_search_tool"
+
+type sessionHandler struct {
+	id uint64
+	fn SessionEventHandler
+}
+
+// Session represents a single conversation session with the Copilot CLI.
+//
+// A session maintains conversation state, handles events, and manages tool execution.
+// Sessions are created via [Client.CreateSession] or resumed via [Client.ResumeSession].
+//
+// The session provides methods to send messages, subscribe to events, retrieve
+// conversation history, and manage the session lifecycle. All methods are safe
+// for concurrent use.
+//
+// Example usage:
+//
+//	session, err := client.CreateSession(copilot.SessionConfig{
+//	    Model: "gpt-5.4",
+//	})
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	defer session.Disconnect()
+//
+//	// Subscribe to events
+//	unsubscribe := session.On(func(event copilot.SessionEvent) {
+//	    if d, ok := event.Data.(*copilot.AssistantMessageData); ok {
+//	        fmt.Println("Assistant:", d.Content)
+//	    }
+//	})
+//	defer unsubscribe()
+//
+//	// Send a message
+//	messageID, err := session.Send(copilot.MessageOptions{
+//	    Prompt: "Hello, world!",
+//	})
+type Session struct {
+	// SessionID is the unique identifier for this session.
+	SessionID                          string
+	workspacePath                      string
+	transcriptRecovery                 *TranscriptRecoveryReport
+	permissionModeResult               *rpc.PermissionsSetModeResult
+	client                             *jsonrpc2.Client
+	clientSessionAPIs                  *rpc.ClientSessionAPIHandlers
+	handlers                           []*sessionHandler
+	nextHandlerID                      uint64
+	handlerMutex                       sync.RWMutex
+	gracefulRetirement                 bool
+	toolHandlers                       map[string]ToolHandler
+	toolHandlersM                      sync.RWMutex
+	setToolsOnce                       sync.Once
+	setToolsGate                       chan struct{}
+	pendingExternalTools               map[string]*pendingExternalTool
+	pendingExternalToolsM              sync.Mutex
+	externalToolsClosed                bool
+	permissionHandler                  permissionHandlerFunc
+	permissionMux                      sync.RWMutex
+	managedSettings                    bool
+	mcpAuthHandler                     MCPAuthHandler
+	mcpAuthRefreshHandler              MCPAuthRuntimeRefreshHandler
+	mcpAuthMu                          sync.RWMutex
+	userInputHandler                   AttributedUserInputHandler
+	userInputMux                       sync.RWMutex
+	shellAuthenticationHandler         ShellAuthenticationHandler
+	pendingShellAuthenticationRequests map[string]context.CancelFunc
+	shellAuthenticationMux             sync.RWMutex
+	exitPlanModeHandler                AttributedExitPlanModeRequestHandler
+	exitPlanModeMu                     sync.RWMutex
+	autoModeSwitchHandler              AutoModeSwitchRequestHandler
+	autoModeSwitchRecoveryHandler      AutoModeSwitchRequestHandlerWithAutoModeRecovery
+	autoModeSwitchMu                   sync.RWMutex
+	hooks                              *SessionHooks
+	hooksMux                           sync.RWMutex
+	transformCallbacks                 map[string]SectionTransformFn
+	transformMu                        sync.Mutex
+	commandHandlers                    map[string]CommandHandler
+	commandHandlersMu                  sync.RWMutex
+	elicitationHandler                 AttributedElicitationHandler
+	elicitationMu                      sync.RWMutex
+	canvasHandler                      CanvasHandler
+	canvasMu                           sync.RWMutex
+	skillProvider                      SkillProvider
+	skillProviderMu                    sync.RWMutex
+	memoryStore                        func(context.Context, StoredMemory) error
+	memoryStoreMu                      sync.RWMutex
+	bearerTokenProviders               map[string]BearerTokenProvider
+	bearerTokenMu                      sync.RWMutex
+	releaseGitHubTokenProvider         func()
+	releaseFromClient                  func()
+	gitHubTokenProviderMu              sync.Mutex
+	gitHubTokenProviderReleased        bool
+	openCanvases                       []rpc.OpenCanvasInstance
+	openCanvasesMu                     sync.RWMutex
+	capabilities                       SessionCapabilities
+	autoModeRecoverySupported          bool
+	capabilitiesMu                     sync.RWMutex
+
+	// eventCh serializes user event handler dispatch. dispatchEvent enqueues;
+	// a single goroutine (processEvents) dequeues and invokes handlers in FIFO order.
+	// eventDone stops both sides without closing eventCh while a sender may be active.
+	// eventBacklog holds, in arrival order, events that arrived while eventCh was
+	// full; while eventBacklogActive is set, one goroutine moves them into eventCh
+	// and every new event joins the backlog behind them.
+	eventCh                  chan SessionEvent
+	eventDone                chan struct{}
+	eventBacklogMu           sync.Mutex
+	eventBacklog             []SessionEvent
+	eventBacklogActive       bool
+	closeOnce                sync.Once
+	detached                 atomic.Bool
+	completionRPCUnsupported atomic.Bool
+
+	// RPC provides typed session-scoped RPC methods.
+	RPC *rpc.SessionRPC
+}
+
+type pendingExternalTool struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+}
+
+// WorkspacePath returns the path to the session workspace directory when infinite
+// sessions are enabled. Contains checkpoints/, plan.md, and files/ subdirectories.
+// Returns empty string if infinite sessions are disabled.
+func (s *Session) WorkspacePath() string {
+	return s.workspacePath
+}
+
+// TranscriptRecovery returns the report from session.resume, or nil if no
+// transcript repair was reported. The returned value is independent of session state.
+func (s *Session) TranscriptRecovery() *TranscriptRecoveryReport {
+	if s.transcriptRecovery == nil {
+		return nil
+	}
+	report := *s.transcriptRecovery
+	report.InvalidLineNumbers = append([]int(nil), report.InvalidLineNumbers...)
+	return &report
+}
+
+// PermissionModeResult reports the outcome of the PermissionMode requested when
+// the session was created or resumed: whether it was applied, and the
+// authoritative mode the session started in. It returns nil when no mode was
+// requested. The returned value is independent of session state.
+func (s *Session) PermissionModeResult() *rpc.PermissionsSetModeResult {
+	if s.permissionModeResult == nil {
+		return nil
+	}
+	result := *s.permissionModeResult
+	return &result
+}
+
+// OpenCanvases returns the open-canvas snapshot last reported by the runtime.
+// The snapshot is populated from session.resume and live session.canvas.opened
+// and session.canvas.closed events. The returned slice is a copy and is safe to
+// mutate by the caller.
+func (s *Session) OpenCanvases() []rpc.OpenCanvasInstance {
+	s.openCanvasesMu.RLock()
+	defer s.openCanvasesMu.RUnlock()
+	if len(s.openCanvases) == 0 {
+		return nil
+	}
+	out := make([]rpc.OpenCanvasInstance, len(s.openCanvases))
+	copy(out, s.openCanvases)
+	return out
+}
+
+func (s *Session) setOpenCanvases(canvases []rpc.OpenCanvasInstance) {
+	s.openCanvasesMu.Lock()
+	defer s.openCanvasesMu.Unlock()
+	s.openCanvases = canvases
+}
+
+func (s *Session) upsertOpenCanvas(canvas rpc.OpenCanvasInstance) {
+	s.openCanvasesMu.Lock()
+	defer s.openCanvasesMu.Unlock()
+	for i := range s.openCanvases {
+		if s.openCanvases[i].InstanceID == canvas.InstanceID {
+			s.openCanvases[i] = canvas
+			return
+		}
+	}
+	s.openCanvases = append(s.openCanvases, canvas)
+}
+
+func (s *Session) removeOpenCanvas(instanceID string) {
+	s.openCanvasesMu.Lock()
+	defer s.openCanvasesMu.Unlock()
+	filtered := make([]rpc.OpenCanvasInstance, 0, len(s.openCanvases))
+	for _, canvas := range s.openCanvases {
+		if canvas.InstanceID != instanceID {
+			filtered = append(filtered, canvas)
+		}
+	}
+	s.openCanvases = filtered
+}
+
+func (s *Session) updateOpenCanvasesFromEvent(event SessionEvent) {
+	switch data := event.Data.(type) {
+	case *SessionCanvasOpenedData:
+		if data.InstanceID == "" || data.CanvasID == "" || data.ExtensionID == "" {
+			fmt.Printf("failed to deserialize session.canvas.opened payload\n")
+			return
+		}
+		s.upsertOpenCanvas(rpc.OpenCanvasInstance{
+			CanvasID:      data.CanvasID,
+			ExtensionID:   data.ExtensionID,
+			ExtensionName: data.ExtensionName,
+			Input:         data.Input,
+			InstanceID:    data.InstanceID,
+			Status:        data.Status,
+			Title:         data.Title,
+			Icon:          data.Icon,
+			URL:           data.URL,
+		})
+	case *SessionCanvasClosedData:
+		if data.InstanceID == "" {
+			fmt.Printf("failed to deserialize session.canvas.closed payload\n")
+			return
+		}
+		s.removeOpenCanvas(data.InstanceID)
+	}
+}
+
+func (s *Session) registerCanvasHandler(handler CanvasHandler) {
+	s.canvasMu.Lock()
+	defer s.canvasMu.Unlock()
+	s.canvasHandler = handler
+}
+
+func (s *Session) getCanvasHandler() CanvasHandler {
+	s.canvasMu.RLock()
+	defer s.canvasMu.RUnlock()
+	return s.canvasHandler
+}
+
+func (s *Session) registerSkillProvider(provider SkillProvider) {
+	s.skillProviderMu.Lock()
+	defer s.skillProviderMu.Unlock()
+	s.skillProvider = provider
+}
+
+func (s *Session) getSkillProvider() SkillProvider {
+	s.skillProviderMu.RLock()
+	defer s.skillProviderMu.RUnlock()
+	return s.skillProvider
+}
+
+func (s *Session) clearSkillProvider() {
+	s.skillProviderMu.Lock()
+	s.skillProvider = nil
+	s.skillProviderMu.Unlock()
+}
+
+func (s *Session) registerMemoryStore(store func(context.Context, StoredMemory) error) {
+	s.memoryStoreMu.Lock()
+	defer s.memoryStoreMu.Unlock()
+	s.memoryStore = store
+}
+
+func (s *Session) getMemoryStore() func(context.Context, StoredMemory) error {
+	s.memoryStoreMu.RLock()
+	defer s.memoryStoreMu.RUnlock()
+	return s.memoryStore
+}
+
+func (s *Session) clearMemoryStore() {
+	s.memoryStoreMu.Lock()
+	s.memoryStore = nil
+	s.memoryStoreMu.Unlock()
+}
+
+// registerBearerTokenProviders installs per-provider [BearerTokenProvider] callbacks
+// for BYOK providers configured with managed-identity / on-demand bearer-token
+// auth, keyed by provider name.
+//
+// The runtime never receives the callback itself; the SDK strips it from the
+// provider config and instead sends `hasBearerTokenProvider: true`. When the
+// runtime needs a token it issues a session-scoped `providerToken.getToken`
+// request, which the session's provider-token adapter routes to the matching
+// per-provider callback.
+func (s *Session) registerBearerTokenProviders(providers map[string]BearerTokenProvider) {
+	s.bearerTokenMu.Lock()
+	defer s.bearerTokenMu.Unlock()
+	s.bearerTokenProviders = make(map[string]BearerTokenProvider, len(providers))
+	for name, callback := range providers {
+		if callback == nil {
+			continue
+		}
+		s.bearerTokenProviders[name] = callback
+	}
+}
+
+func (s *Session) getBearerTokenProvider(providerName string) BearerTokenProvider {
+	s.bearerTokenMu.RLock()
+	defer s.bearerTokenMu.RUnlock()
+	return s.bearerTokenProviders[providerName]
+}
+
+type providerTokenClientSessionAdapter struct {
+	session *Session
+}
+
+func newProviderTokenClientSessionAdapter(session *Session) rpc.ProviderTokenHandler {
+	return &providerTokenClientSessionAdapter{session: session}
+}
+
+func (a *providerTokenClientSessionAdapter) GetToken(request *rpc.ProviderTokenAcquireRequest) (*rpc.ProviderTokenAcquireResult, error) {
+	if request == nil {
+		return nil, providerTokenJSONRPCError("missing provider token request")
+	}
+	if a.session == nil || a.session.SessionID != request.SessionID {
+		return nil, providerTokenJSONRPCError(fmt.Sprintf("unknown session %s", request.SessionID))
+	}
+	callback := a.session.getBearerTokenProvider(request.ProviderName)
+	if callback == nil {
+		return nil, providerTokenJSONRPCError(fmt.Sprintf("No bearer-token provider registered for provider %q", request.ProviderName))
+	}
+	token, err := callback(ProviderTokenArgs{ProviderName: request.ProviderName, SessionID: request.SessionID})
+	if err != nil {
+		return nil, providerTokenJSONRPCError(err.Error())
+	}
+	return &rpc.ProviderTokenAcquireResult{Token: token}, nil
+}
+
+func providerTokenJSONRPCError(message string) *jsonrpc2.Error {
+	return &jsonrpc2.Error{
+		Code:    -32603,
+		Message: message,
+	}
+}
+
+type canvasClientSessionAdapter struct {
+	session *Session
+}
+
+func newCanvasClientSessionAdapter(session *Session) rpc.CanvasHandler {
+	return &canvasClientSessionAdapter{session: session}
+}
+
+func (a *canvasClientSessionAdapter) Close(request *rpc.CanvasProviderCloseRequest) (*rpc.CanvasCloseResult, error) {
+	if request == nil {
+		return nil, canvasJSONRPCError(NewCanvasError("canvas_handler_unset", "missing canvas close request"))
+	}
+	handler, err := a.resolveHandler(canvasProviderSessionID(request))
+	if err != nil {
+		return nil, err
+	}
+	if err := handler.OnClose(context.Background(), *request); err != nil {
+		return nil, canvasResultError(err)
+	}
+	return nil, nil
+}
+
+func (a *canvasClientSessionAdapter) Invoke(request *rpc.CanvasProviderInvokeActionRequest) (any, error) {
+	if request == nil {
+		return nil, canvasJSONRPCError(NewCanvasError("canvas_handler_unset", "missing canvas action request"))
+	}
+	handler, err := a.resolveHandler(canvasProviderSessionID(request))
+	if err != nil {
+		return nil, err
+	}
+	result, actionErr := handler.OnAction(context.Background(), *request)
+	if actionErr != nil {
+		return nil, canvasResultError(actionErr)
+	}
+	return canvasActionResult(result), nil
+}
+
+// canvasActionResult gives a ToolResult returned by OnAction the ResultType
+// default a tool handler's result gets. Without a ResultType, the model would
+// get the whole value as JSON text and none of its images.
+func canvasActionResult(result any) any {
+	var toolResult ToolResult
+	switch r := result.(type) {
+	case ToolResult:
+		toolResult = r
+	case *ToolResult:
+		if r == nil {
+			return result
+		}
+		toolResult = *r
+	default:
+		return result
+	}
+	toolResult.ResultType = toolResultTypeOrDefault(toolResult)
+	return toolResult
+}
+
+func (a *canvasClientSessionAdapter) Open(request *rpc.CanvasProviderOpenRequest) (*rpc.CanvasProviderOpenResult, error) {
+	if request == nil {
+		return nil, canvasJSONRPCError(NewCanvasError("canvas_handler_unset", "missing canvas open request"))
+	}
+	handler, err := a.resolveHandler(canvasProviderSessionID(request))
+	if err != nil {
+		return nil, err
+	}
+	result, openErr := handler.OnOpen(context.Background(), *request)
+	if openErr != nil {
+		return nil, canvasResultError(openErr)
+	}
+	return &result, nil
+}
+
+func (a *canvasClientSessionAdapter) resolveHandler(sessionID string) (CanvasHandler, error) {
+	if sessionID == "" {
+		return nil, canvasJSONRPCError(NewCanvasError("canvas_handler_unset", "missing session ID"))
+	}
+	if a.session == nil || a.session.SessionID != sessionID {
+		return nil, canvasJSONRPCError(NewCanvasError("canvas_handler_unset", fmt.Sprintf("unknown session %s", sessionID)))
+	}
+	handler := a.session.getCanvasHandler()
+	if handler == nil {
+		return nil, canvasJSONRPCError(NewCanvasError(
+			"canvas_handler_unset",
+			"No CanvasHandler installed on this session; install one via SessionConfig.CanvasHandler before creating the session.",
+		))
+	}
+	return handler, nil
+}
+
+func canvasProviderSessionID(request any) string {
+	switch req := request.(type) {
+	case *rpc.CanvasProviderCloseRequest:
+		if req != nil {
+			return req.SessionID
+		}
+	case *rpc.CanvasProviderInvokeActionRequest:
+		if req != nil {
+			return req.SessionID
+		}
+	case *rpc.CanvasProviderOpenRequest:
+		if req != nil {
+			return req.SessionID
+		}
+	}
+	return ""
+}
+
+func canvasJSONRPCError(cerr *CanvasError) *jsonrpc2.Error {
+	data, _ := json.Marshal(map[string]string{
+		"code":    cerr.Code,
+		"message": cerr.Message,
+	})
+	return &jsonrpc2.Error{
+		Code:    -32603,
+		Message: cerr.Message,
+		Data:    data,
+	}
+}
+
+func canvasResultError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if rpcErr, ok := err.(*jsonrpc2.Error); ok {
+		return rpcErr
+	}
+	if cerr, ok := err.(*CanvasError); ok {
+		return canvasJSONRPCError(cerr)
+	}
+	return canvasJSONRPCError(NewCanvasError("canvas_handler_error", err.Error()))
+}
+
+// newSession creates a new session wrapper with the given session ID and client.
+func newSession(
+	sessionID string,
+	client *jsonrpc2.Client,
+	workspacePath string,
+	managedSettings bool,
+) *Session {
+	s := &Session{
+		SessionID:         sessionID,
+		workspacePath:     workspacePath,
+		managedSettings:   managedSettings,
+		client:            client,
+		clientSessionAPIs: &rpc.ClientSessionAPIHandlers{},
+		handlers:          make([]*sessionHandler, 0),
+		toolHandlers:      make(map[string]ToolHandler),
+		commandHandlers:   make(map[string]CommandHandler),
+		eventCh:           make(chan SessionEvent, 128),
+		eventDone:         make(chan struct{}),
+		RPC:               rpc.NewSessionRPC(client, sessionID),
+	}
+	s.clientSessionAPIs.Canvas = newCanvasClientSessionAdapter(s)
+	s.clientSessionAPIs.ProviderToken = newProviderTokenClientSessionAdapter(s)
+	go s.processEvents()
+	return s
+}
+
+// Send sends a message to this session and waits for the response.
+//
+// The message is processed asynchronously. Subscribe to events via [Session.On]
+// to receive streaming responses and other session events.
+//
+// Parameters:
+//   - options: The message options including the prompt and optional attachments.
+//
+// Returns the message ID of the response, which can be used to correlate events,
+// or an error if the session has been disconnected or the connection fails.
+//
+// Example:
+//
+//	messageID, err := session.Send(context.Background(), copilot.MessageOptions{
+//	    Prompt: "Explain this code",
+//	    Attachments: []copilot.Attachment{
+//	        &copilot.AttachmentFile{DisplayName: "main.go", Path: "./main.go"},
+//	    },
+//	})
+//	if err != nil {
+//	    log.Printf("Failed to send message: %v", err)
+//	}
+func (s *Session) Send(ctx context.Context, options MessageOptions) (string, error) {
+	result, err := s.client.Request(ctx, "session.send", s.createSendRequest(ctx, options))
+	if err != nil {
+		return "", fmt.Errorf("failed to send message: %w", err)
+	}
+
+	var response sessionSendResponse
+	if err := json.Unmarshal(result, &response); err != nil {
+		return "", fmt.Errorf("failed to unmarshal send response: %w", err)
+	}
+	return response.MessageID, nil
+}
+
+func (s *Session) createSendRequest(ctx context.Context, options MessageOptions) sessionSendRequest {
+	traceparent, tracestate := getTraceContext(ctx)
+	req := sessionSendRequest{
+		SessionID:      s.SessionID,
+		Prompt:         options.Prompt,
+		Source:         options.Source,
+		DisplayPrompt:  options.DisplayPrompt,
+		ClientTurnID:   options.ClientTurnID,
+		Attachments:    options.Attachments,
+		Mode:           options.Mode,
+		AgentMode:      options.AgentMode,
+		Traceparent:    traceparent,
+		Tracestate:     tracestate,
+		RequestHeaders: options.RequestHeaders,
+	}
+	if options.ResponseSchema != nil {
+		strict := true
+		req.ResponseFormat = &rpc.ResponseFormat{
+			Type: "json_schema",
+			JSONSchema: rpc.JSONSchemaResponseFormat{
+				Name: "response", Schema: options.ResponseSchema, Strict: &strict,
+			},
+		}
+	}
+
+	return req
+}
+
+// SendPrompt is a convenience wrapper for [Session.Send] that takes a plain
+// prompt string instead of a [MessageOptions] struct. Equivalent to:
+//
+//	session.Send(ctx, copilot.MessageOptions{Prompt: prompt})
+func (s *Session) SendPrompt(ctx context.Context, prompt string) (string, error) {
+	return s.Send(ctx, MessageOptions{Prompt: prompt})
+}
+
+// SendAndWait sends a message and waits for its response to complete.
+//
+// Supported local runtimes correlate completion and the response with this
+// message. Unsupported runtimes retain the legacy non-Autopilot session.idle or
+// request-correlated session.autopilot_stopped wait. Autopilot completion does
+// not wait for or stop attached shells.
+//
+// Events are still delivered to handlers registered via [Session.On] while waiting.
+// Synchronous handlers registered before this call process the terminal event,
+// when present, before it returns successfully, unless the session retires.
+// This does not wait for asynchronous work started by a handler.
+// Sub-agent events with a non-empty AgentID do not complete the wait or supply its reply.
+//
+// Parameters:
+//   - options: The message options including the prompt and optional attachments.
+//   - timeout: How long to wait for completion. Defaults to 60 seconds if zero.
+//     Controls how long to wait; does not abort in-flight agent work.
+//
+// Returns the final assistant message event, or nil if none was received.
+// Returns an error if the request is aborted, the timeout is reached, the
+// session is closed, or the connection fails.
+//
+// Example:
+//
+//	response, err := session.SendAndWait(context.Background(), copilot.MessageOptions{
+//	    Prompt: "What is 2+2?",
+//	}) // Use default 60s timeout
+//	if err != nil {
+//	    log.Printf("Failed: %v", err)
+//	}
+//	if response != nil {
+//	    if d, ok := response.Data.(*AssistantMessageData); ok {
+//	        fmt.Println(d.Content)
+//	    }
+//	}
+func (s *Session) SendAndWait(ctx context.Context, options MessageOptions) (*SessionEvent, error) {
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 60*time.Second)
+		defer cancel()
+	}
+	if event, supported, err := s.sendWithCompletion(ctx, options); supported {
+		return event, err
+	}
+	if options.ResponseSchema != nil {
+		return s.sendAndWaitStructured(ctx, options)
+	}
+
+	return s.sendAndWaitLegacy(ctx, options)
+}
+
+func (s *Session) sendWithCompletion(ctx context.Context, options MessageOptions) (*SessionEvent, bool, error) {
+	if s.completionRPCUnsupported.Load() {
+		return nil, false, nil
+	}
+	requestCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	go func() {
+		select {
+		case <-s.eventDone:
+			cancel(errors.New("session closed before response completed"))
+		case <-requestCtx.Done():
+		}
+	}()
+	var mu sync.Mutex
+	observed := make(map[string]bool)
+	dispatched := make(map[string]bool)
+	boundary := ""
+	drained := make(chan struct{})
+	terminal := func(event SessionEvent) bool {
+		if event.AgentID != nil && *event.AgentID != "" {
+			return false
+		}
+		switch event.Data.(type) {
+		case *SessionIdleData, *SessionAutopilotStoppedData, *SessionErrorData:
+			return true
+		}
+		return false
+	}
+	unobserve := s.on(func(event SessionEvent) {
+		if terminal(event) {
+			mu.Lock()
+			observed[event.ID] = true
+			mu.Unlock()
+		}
+	}, true)
+	defer unobserve()
+	unsubscribe := s.On(func(event SessionEvent) {
+		if terminal(event) {
+			mu.Lock()
+			dispatched[event.ID] = true
+			if boundary == event.ID {
+				close(drained)
+				boundary = ""
+			}
+			mu.Unlock()
+		}
+	})
+	defer unsubscribe()
+	drain := func(id *string) error {
+		if id == nil {
+			return nil
+		}
+		mu.Lock()
+		done := dispatched[*id]
+		boundary = *id
+		mu.Unlock()
+		if done {
+			return nil
+		}
+		select {
+		case <-drained:
+			return nil
+		case <-s.eventDone:
+			s.handlerMutex.RLock()
+			graceful := s.gracefulRetirement
+			s.handlerMutex.RUnlock()
+			mu.Lock()
+			done := dispatched[*id] || (graceful && observed[*id])
+			mu.Unlock()
+			if done {
+				return nil
+			}
+			return errors.New("session closed before response completed")
+		case <-ctx.Done():
+			return context.Cause(ctx)
+		}
+	}
+	result, err := s.client.Request(requestCtx, "session.sendAndWait", s.createSendRequest(ctx, options))
+	if err != nil {
+		var rpcError *jsonrpc2.Error
+		if errors.As(err, &rpcError) {
+			if rpcError.Code == -32601 {
+				s.completionRPCUnsupported.Store(true)
+				select {
+				case <-s.eventDone:
+					return nil, true, errors.New("session closed before response completed")
+				default:
+				}
+				return nil, false, nil
+			}
+			if len(rpcError.Data) > 0 {
+				var data struct {
+					CompletionEventID *string `json:"completionEventId"`
+				}
+				if parseErr := json.Unmarshal(rpcError.Data, &data); parseErr != nil {
+					return nil, true, errors.Join(err, parseErr)
+				}
+				if deliveryErr := drain(data.CompletionEventID); deliveryErr != nil {
+					return nil, true, errors.Join(err, deliveryErr)
+				}
+			}
+		}
+		if cause := context.Cause(requestCtx); cause != nil && errors.Is(err, requestCtx.Err()) {
+			return nil, true, cause
+		}
+		return nil, true, err
+	}
+	var completed rpc.SendAndWaitResult
+	if err := json.Unmarshal(result, &completed); err != nil {
+		return nil, true, fmt.Errorf("decode message completion: %w", err)
+	}
+	if err := drain(completed.CompletionEventID); err != nil {
+		return nil, true, err
+	}
+	if options.ResponseSchema != nil {
+		if completed.Aborted {
+			return nil, true, errors.New("session aborted before structured output completed")
+		}
+		if completed.Response == nil {
+			return nil, true, errors.New("run completed without a structured assistant response")
+		}
+		data, ok := completed.Response.Data.(*AssistantMessageData)
+		if !ok || len(data.ToolRequests) > 0 || strings.TrimSpace(data.Content) == "" {
+			return nil, true, errors.New("run completed without a structured assistant response")
+		}
+	}
+	if completed.Aborted {
+		return nil, true, errors.New("session aborted before response completed")
+	}
+	if completed.Response != nil {
+		if _, ok := completed.Response.Data.(*AssistantMessageData); !ok ||
+			(completed.Response.AgentID != nil && *completed.Response.AgentID != "") {
+			return nil, true, errors.New("the runtime returned a non-assistant response")
+		}
+	}
+	return completed.Response, true, nil
+}
+
+func (s *Session) sendAndWaitLegacy(ctx context.Context, options MessageOptions) (*SessionEvent, error) {
+	type outcome struct {
+		event *SessionEvent
+		err   error
+	}
+	terminalCh := make(chan outcome, 1)
+	dispatchedCh := make(chan struct{}, 1)
+	var lastAssistantMessage *SessionEvent
+	completed := false
+	var waitMu sync.Mutex
+	var messageID string
+	var requestStarted bool
+	var admitted bool
+	var observed, dispatched, completionSequence uint64
+	type recordedEvent struct {
+		event    SessionEvent
+		sequence uint64
+	}
+	var pending []recordedEvent
+	finish := func(result outcome) {
+		if !completed {
+			completed = true
+			terminalCh <- result
+		}
+	}
+
+	process := func(event SessionEvent) {
+		if completed || (event.AgentID != nil && *event.AgentID != "") {
+			return
+		}
+		switch d := event.Data.(type) {
+		case *UserMessageData:
+			if messageID != "" && d.MessageID != nil && *d.MessageID == messageID {
+				requestStarted = true
+			}
+		case *SessionWarningData:
+			if messageID != "" && d.WarningType == "policy_blocked" &&
+				d.OriginatingMessageID != nil && *d.OriginatingMessageID == messageID {
+				requestStarted = true
+			}
+		case *AssistantMessageData:
+			if messageID != "" {
+				if d.OriginatingMessageID != nil && *d.OriginatingMessageID != messageID {
+					return
+				}
+				if d.OriginatingMessageID == nil && !requestStarted {
+					return
+				}
+			}
+			if messageID != "" && d.OriginatingMessageID != nil && *d.OriginatingMessageID == messageID {
+				requestStarted = true
+			}
+			eventCopy := event
+			lastAssistantMessage = &eventCopy
+		case *SessionAutopilotStoppedData:
+			if messageID != "" && d.RequestID != nil && *d.RequestID == messageID {
+				switch d.Reason {
+				case "error":
+					finish(outcome{err: errors.New("autopilot request failed")})
+				case "aborted":
+					finish(outcome{err: errors.New("session aborted before SendAndWait completed")})
+				default:
+					finish(outcome{event: lastAssistantMessage})
+				}
+			}
+		case *SessionIdleData:
+			if d.Mode != nil && *d.Mode == SessionModeAutopilot {
+				break
+			}
+			if !requestStarted {
+				break
+			}
+			if d.Aborted != nil && *d.Aborted {
+				finish(outcome{err: errors.New("session aborted before SendAndWait completed")})
+				break
+			}
+			finish(outcome{event: lastAssistantMessage})
+		case *SessionErrorData:
+			if d.OriginatingMessageID == nil || *d.OriginatingMessageID == "" || *d.OriginatingMessageID == messageID {
+				finish(outcome{err: fmt.Errorf("session error: %s", d.Message)})
+			}
+		}
+	}
+	isWaitEvent := func(event SessionEvent) bool {
+		if event.AgentID != nil && *event.AgentID != "" {
+			return false
+		}
+		switch event.Data.(type) {
+		case *UserMessageData, *SessionWarningData, *AssistantMessageData,
+			*SessionAutopilotStoppedData, *SessionIdleData, *SessionErrorData:
+			return true
+		default:
+			return false
+		}
+	}
+	signalDispatched := func() {
+		if completed && dispatched >= completionSequence {
+			select {
+			case dispatchedCh <- struct{}{}:
+			default:
+			}
+		}
+	}
+	// Observe the result before user callbacks can retire the current dispatch.
+	unobserve := s.on(func(event SessionEvent) {
+		waitMu.Lock()
+		defer waitMu.Unlock()
+		observed++
+		if !isWaitEvent(event) {
+			return
+		}
+		if !admitted {
+			pending = append(pending, recordedEvent{event, observed})
+		} else if !completed {
+			process(event)
+			if completed {
+				completionSequence = observed
+			}
+		}
+	}, true)
+	defer unobserve()
+	unsubscribe := s.On(func(event SessionEvent) {
+		waitMu.Lock()
+		defer waitMu.Unlock()
+		dispatched = observed
+		signalDispatched()
+	})
+	defer unsubscribe()
+
+	id, err := s.Send(ctx, options)
+	if err != nil {
+		return nil, err
+	}
+	waitMu.Lock()
+	messageID, admitted = id, true
+	for _, item := range pending {
+		process(item.event)
+		if completed {
+			completionSequence = item.sequence
+			break
+		}
+	}
+	pending = nil
+	signalDispatched()
+	waitMu.Unlock()
+
+	select {
+	case <-dispatchedCh:
+	case <-s.eventDone:
+		s.handlerMutex.RLock()
+		graceful := s.gracefulRetirement
+		s.handlerMutex.RUnlock()
+		if !graceful {
+			select {
+			case <-dispatchedCh:
+			default:
+				return nil, errors.New("session closed before response completed")
+			}
+		}
+	case <-ctx.Done():
+		return nil, fmt.Errorf("waiting for response completion: %w", ctx.Err())
+	}
+	select {
+	case result := <-terminalCh:
+		return result.event, result.err
+	default:
+		return nil, errors.New("session closed before response completed")
+	}
+}
+
+// SendPromptAndWait is a convenience wrapper for [Session.SendAndWait] that
+// takes a plain prompt string instead of a [MessageOptions] struct. Equivalent
+// to:
+//
+//	session.SendAndWait(ctx, copilot.MessageOptions{Prompt: prompt})
+func (s *Session) SendPromptAndWait(ctx context.Context, prompt string) (*SessionEvent, error) {
+	return s.SendAndWait(ctx, MessageOptions{Prompt: prompt})
+}
+
+// On subscribes to events from this session.
+//
+// Events include assistant messages, tool executions, errors, and session state
+// changes. Multiple handlers can be registered and will all receive events.
+// Handlers are called synchronously in the order they were registered.
+//
+// The returned function can be called to unsubscribe the handler. It is safe
+// to call the unsubscribe function multiple times.
+// Unsubscribing also removes an entry from dispatch snapshots if it has not started.
+// Registration after the session closes is logged and returns a no-op unsubscribe.
+//
+// Example:
+//
+//	unsubscribe := session.On(func(event copilot.SessionEvent) {
+//	    switch d := event.Data.(type) {
+//	    case *copilot.AssistantMessageData:
+//	        fmt.Println("Assistant:", d.Content)
+//	    case *copilot.SessionErrorData:
+//	        fmt.Println("Error:", d.Message)
+//	    }
+//	})
+//
+//	// Later, to stop receiving events:
+//	unsubscribe()
+func (s *Session) On(handler SessionEventHandler) func() {
+	return s.on(handler, false)
+}
+
+func (s *Session) on(handler SessionEventHandler, prepend bool) func() {
+	return s.onWithPermissionEnvelope(legacyPermissionEventHandler(handler), prepend)
+}
+
+// OnWithPermissionEnvelope subscribes to lossless permission events.
+// Permission requests use *PermissionRequestedDataWithEnvelope; other data types
+// match On. Dispatch order and unsubscribe behavior are identical to On.
+func (s *Session) OnWithPermissionEnvelope(handler SessionEventHandler) func() {
+	return s.onWithPermissionEnvelope(handler, false)
+}
+
+func (s *Session) onWithPermissionEnvelope(handler SessionEventHandler, prepend bool) func() {
+	if handler == nil {
+		return s.registerEventHandler(nil, prepend)
+	}
+	return s.registerEventHandler(func(event SessionEvent) {
+		if data, ok := event.Data.(*CapabilitiesChangedDataWithAutoModeRecovery); ok {
+			legacy := data.Legacy()
+			event.Data = &legacy
+		}
+		handler(event)
+	}, prepend)
+}
+
+// OnWithAutoModeRecovery subscribes to recovery-aware events. Capability changes
+// use *CapabilitiesChangedDataWithAutoModeRecovery; On retains legacy data types.
+// Dispatch order and unsubscribe behavior are identical to On.
+func (s *Session) OnWithAutoModeRecovery(handler SessionEventHandler) func() {
+	return s.registerEventHandler(legacyPermissionEventHandler(handler), false)
+}
+
+func (s *Session) registerEventHandler(handler SessionEventHandler, prepend bool) func() {
+	s.handlerMutex.Lock()
+	defer s.handlerMutex.Unlock()
+
+	select {
+	case <-s.eventDone:
+		log.Printf("Cannot register an event handler on closed session %s", s.SessionID)
+		return func() {}
+	default:
+	}
+
+	id := s.nextHandlerID
+	s.nextHandlerID++
+	entry := &sessionHandler{id: id, fn: handler}
+	if prepend {
+		s.handlers = append([]*sessionHandler{entry}, s.handlers...)
+	} else {
+		s.handlers = append(s.handlers, entry)
+	}
+
+	// Return unsubscribe function
+	return func() {
+		s.handlerMutex.Lock()
+		defer s.handlerMutex.Unlock()
+
+		for i, h := range s.handlers {
+			if h.id == id {
+				h.fn = nil
+				s.handlers = append(s.handlers[:i], s.handlers[i+1:]...)
+				break
+			}
+		}
+	}
+}
+
+// registerTools registers tool handlers for this session.
+//
+// Tools with handlers allow the assistant to execute custom functions automatically.
+// Declaration-only tools are surfaced as events and left pending for the consumer.
+//
+// This method is internal and typically called when creating a session with tools.
+func (s *Session) registerTools(tools []Tool) {
+	if err := s.replaceToolHandlers(buildToolHandlerMap(tools)); err != nil {
+		log.Printf("Cannot register tools on session %s: %v", s.SessionID, err)
+	}
+}
+
+func buildToolHandlerMap(tools []Tool) map[string]ToolHandler {
+	handlers := make(map[string]ToolHandler)
+	for _, tool := range tools {
+		if tool.Name == "" || tool.Handler == nil {
+			continue
+		}
+		handlers[tool.Name] = tool.Handler
+	}
+	return handlers
+}
+
+func (s *Session) replaceToolHandlers(handlers map[string]ToolHandler) error {
+	s.toolHandlersM.Lock()
+	defer s.toolHandlersM.Unlock()
+	select {
+	case <-s.eventDone:
+		return errors.New("session closed before tool handlers could be installed")
+	default:
+	}
+	s.toolHandlers = handlers
+	return nil
+}
+
+// getToolHandler retrieves a registered tool handler by name.
+// Returns the handler and true if found, or nil and false if not registered.
+func (s *Session) getToolHandler(name string) (ToolHandler, bool) {
+	s.toolHandlersM.RLock()
+	handler, ok := s.toolHandlers[name]
+	s.toolHandlersM.RUnlock()
+	return handler, ok
+}
+
+type permissionHandlerFunc func(
+	request PermissionRequest,
+	invocation PermissionInvocation,
+	promptRequest rpc.PermissionPromptRequest,
+	assistedApprovalAssessment rpc.AssistedApprovalAssessment,
+	envelope *PermissionRequestEnvelope,
+) (rpc.PermissionDecision, error)
+
+// registerPermissionHandler registers a permission handler for this session.
+//
+// When the assistant needs permission to perform certain actions (e.g., file
+// operations), this handler is called to approve or deny the request.
+//
+// This method is internal and typically called when creating a session.
+func (s *Session) registerPermissionHandler(handler PermissionHandlerFunc) {
+	s.permissionMux.Lock()
+	defer s.permissionMux.Unlock()
+	if handler == nil {
+		s.permissionHandler = nil
+		return
+	}
+	s.permissionHandler = func(
+		request PermissionRequest,
+		invocation PermissionInvocation,
+		_ rpc.PermissionPromptRequest,
+		_ rpc.AssistedApprovalAssessment,
+		_ *PermissionRequestEnvelope,
+	) (rpc.PermissionDecision, error) {
+		return handler(request, invocation)
+	}
+}
+
+func (s *Session) registerPermissionHandlerWithPrompt(handler PermissionHandlerWithPromptFunc) {
+	if handler == nil {
+		return
+	}
+	s.permissionMux.Lock()
+	defer s.permissionMux.Unlock()
+	s.permissionHandler = func(
+		request PermissionRequest,
+		invocation PermissionInvocation,
+		promptRequest rpc.PermissionPromptRequest,
+		assistedApprovalAssessment rpc.AssistedApprovalAssessment,
+		_ *PermissionRequestEnvelope,
+	) (rpc.PermissionDecision, error) {
+		return handler(request, PermissionHandlerInvocation{
+			PermissionInvocation:       invocation,
+			AssistedApprovalAssessment: assistedApprovalAssessment,
+			PromptRequest:              promptRequest,
+		})
+	}
+}
+
+func (s *Session) registerPermissionHandlerWithEnvelope(handler PermissionHandlerWithEnvelopeFunc) {
+	if handler == nil {
+		return
+	}
+	s.permissionMux.Lock()
+	defer s.permissionMux.Unlock()
+	s.permissionHandler = func(
+		request PermissionRequest,
+		invocation PermissionInvocation,
+		promptRequest rpc.PermissionPromptRequest,
+		assistedApprovalAssessment rpc.AssistedApprovalAssessment,
+		envelope *PermissionRequestEnvelope,
+	) (rpc.PermissionDecision, error) {
+		if envelope == nil {
+			envelope = &PermissionRequestEnvelope{Request: request}
+		}
+		return handler(envelope, PermissionHandlerInvocation{
+			PermissionInvocation:       invocation,
+			AssistedApprovalAssessment: assistedApprovalAssessment,
+			PromptRequest:              promptRequest,
+		})
+	}
+}
+
+// getPermissionHandler returns the currently registered permission handler, or nil.
+func (s *Session) getPermissionHandler() permissionHandlerFunc {
+	s.permissionMux.RLock()
+	defer s.permissionMux.RUnlock()
+	return s.permissionHandler
+}
+
+// registerUserInputHandler registers a user input handler for this session.
+//
+// When the assistant needs to ask the user a question (e.g., via ask_user tool),
+// this handler is called to get the user's response.
+//
+// This method is internal and typically called when creating a session.
+func (s *Session) registerUserInputHandler(handler UserInputHandler) {
+	s.registerAttributedUserInputHandler(userInputHandlerFor(handler, nil))
+}
+
+// registerAttributedUserInputHandler registers a user input handler whose
+// answers can say who answered.
+func (s *Session) registerAttributedUserInputHandler(handler AttributedUserInputHandler) {
+	s.userInputMux.Lock()
+	defer s.userInputMux.Unlock()
+	s.userInputHandler = handler
+}
+
+// userInputHandlerFor returns the handler a config selects: the attributed
+// handler when set, otherwise the plain handler, whose answers carry no label.
+func userInputHandlerFor(plain UserInputHandler, attributed AttributedUserInputHandler) AttributedUserInputHandler {
+	if attributed != nil || plain == nil {
+		return attributed
+	}
+	return func(request UserInputRequest, invocation UserInputInvocation) (AttributedUserInputResponse, error) {
+		response, err := plain(request, invocation)
+		return AttributedUserInputResponse{UserInputResponse: response}, err
+	}
+}
+
+// getUserInputHandler returns the currently registered user input handler, or nil.
+func (s *Session) getUserInputHandler() AttributedUserInputHandler {
+	s.userInputMux.RLock()
+	defer s.userInputMux.RUnlock()
+	return s.userInputHandler
+}
+
+// handleUserInputRequest handles a user input request from the Copilot CLI.
+// This is an internal method called by the SDK when the CLI requests user input.
+func (s *Session) handleUserInputRequest(request UserInputRequest) (AttributedUserInputResponse, error) {
+	handler := s.getUserInputHandler()
+
+	if handler == nil {
+		return AttributedUserInputResponse{}, fmt.Errorf("no user input handler registered")
+	}
+
+	invocation := UserInputInvocation{
+		SessionID: s.SessionID,
+	}
+
+	return handler(request, invocation)
+}
+
+// registerShellAuthenticationHandler registers the handler for passwords and other
+// answers that shell commands run by the agent ask for.
+//
+// This method is internal and typically called when creating a session.
+func (s *Session) registerShellAuthenticationHandler(handler ShellAuthenticationHandler) {
+	s.shellAuthenticationMux.Lock()
+	defer s.shellAuthenticationMux.Unlock()
+	s.shellAuthenticationHandler = handler
+}
+
+// shellAuthenticationHandlerPanic reports a shell authentication handler that panicked. It
+// keeps no panic value, which could contain the answer.
+type shellAuthenticationHandlerPanic struct{}
+
+func (shellAuthenticationHandlerPanic) Error() string { return "shell authentication handler panicked" }
+
+// handleShellAuthenticationRequest asks the registered handler for a secret. Any
+// failure, a response that isn't an accept, or ctx ending first cancels the
+// prompt, so the program that asked fails instead of receiving a wrong value.
+// Never logs the answer.
+func (s *Session) handleShellAuthenticationRequest(ctx context.Context, request ShellAuthenticationRequest) ShellAuthenticationResponse {
+	cancelled := ShellAuthenticationResponse{Action: ShellAuthenticationActionCancel}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	s.shellAuthenticationMux.Lock()
+	handler := s.shellAuthenticationHandler
+	if handler == nil || ctx.Err() != nil {
+		s.shellAuthenticationMux.Unlock()
+		return cancelled
+	}
+	if _, ok := s.pendingShellAuthenticationRequests[request.RequestID]; ok {
+		s.shellAuthenticationMux.Unlock()
+		return cancelled
+	}
+	if s.pendingShellAuthenticationRequests == nil {
+		s.pendingShellAuthenticationRequests = make(map[string]context.CancelFunc)
+	}
+	s.pendingShellAuthenticationRequests[request.RequestID] = cancel
+	s.shellAuthenticationMux.Unlock()
+	defer func() {
+		s.shellAuthenticationMux.Lock()
+		delete(s.pendingShellAuthenticationRequests, request.RequestID)
+		s.shellAuthenticationMux.Unlock()
+	}()
+
+	type answer struct {
+		response ShellAuthenticationResponse
+		err      error
+	}
+	answered := make(chan answer, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				answered <- answer{err: shellAuthenticationHandlerPanic{}}
+			}
+		}()
+		response, err := handler(request, ShellAuthenticationInvocation{SessionID: s.SessionID, Context: ctx})
+		answered <- answer{response: response, err: err}
+	}()
+	// A handler that never returns after its prompt closes must not keep the
+	// request open.
+	select {
+	case result := <-answered:
+		// Returning ctx's error after the prompt closed is how a handler stops,
+		// not a failure. The error's text could contain the answer, so only its
+		// type is logged.
+		if result.err != nil && (ctx.Err() == nil || !errors.Is(result.err, context.Canceled)) {
+			log.Printf("shell authentication handler failed: session_id=%s request_id=%s error_type=%T", s.SessionID, request.RequestID, result.err)
+		}
+		if result.err != nil || ctx.Err() != nil || result.response.Action != ShellAuthenticationActionAccept {
+			return cancelled
+		}
+		return ShellAuthenticationResponse{Action: ShellAuthenticationActionAccept, Value: result.response.Value}
+	case <-ctx.Done():
+		return cancelled
+	}
+}
+
+// cancelPendingShellAuthenticationRequests closes every secret prompt this session waits on.
+func (s *Session) cancelPendingShellAuthenticationRequests() {
+	s.shellAuthenticationMux.Lock()
+	pending := s.pendingShellAuthenticationRequests
+	s.pendingShellAuthenticationRequests = nil
+	s.shellAuthenticationMux.Unlock()
+	for _, cancel := range pending {
+		cancel()
+	}
+}
+
+func (s *Session) registerExitPlanModeHandler(handler ExitPlanModeRequestHandler) {
+	s.registerAttributedExitPlanModeHandler(exitPlanModeHandlerFor(handler, nil))
+}
+
+func (s *Session) registerAttributedExitPlanModeHandler(handler AttributedExitPlanModeRequestHandler) {
+	s.exitPlanModeMu.Lock()
+	defer s.exitPlanModeMu.Unlock()
+	s.exitPlanModeHandler = handler
+}
+
+// exitPlanModeHandlerFor returns the handler a config selects: the attributed
+// handler when set, otherwise the plain handler, whose results carry no label.
+func exitPlanModeHandlerFor(plain ExitPlanModeRequestHandler, attributed AttributedExitPlanModeRequestHandler) AttributedExitPlanModeRequestHandler {
+	if attributed != nil || plain == nil {
+		return attributed
+	}
+	return func(request ExitPlanModeRequest, invocation ExitPlanModeInvocation) (AttributedExitPlanModeResult, error) {
+		result, err := plain(request, invocation)
+		return AttributedExitPlanModeResult{ExitPlanModeResult: result}, err
+	}
+}
+
+func (s *Session) handleExitPlanModeRequest(request ExitPlanModeRequest) (AttributedExitPlanModeResult, error) {
+	s.exitPlanModeMu.RLock()
+	select {
+	case <-s.eventDone:
+		s.exitPlanModeMu.RUnlock()
+		return AttributedExitPlanModeResult{}, errors.New("session closed before exit-plan-mode request")
+	default:
+	}
+	handler := s.exitPlanModeHandler
+	s.exitPlanModeMu.RUnlock()
+	if handler == nil {
+		return AttributedExitPlanModeResult{ExitPlanModeResult: ExitPlanModeResult{Approved: true}}, nil
+	}
+
+	return handler(request, ExitPlanModeInvocation{SessionID: s.SessionID})
+}
+
+func (s *Session) registerAutoModeSwitchHandler(handler AutoModeSwitchRequestHandler) {
+	s.autoModeSwitchMu.Lock()
+	defer s.autoModeSwitchMu.Unlock()
+	s.autoModeSwitchHandler = handler
+}
+
+func (s *Session) registerAutoModeSwitchHandlerWithAutoModeRecovery(handler AutoModeSwitchRequestHandlerWithAutoModeRecovery) {
+	s.autoModeSwitchMu.Lock()
+	defer s.autoModeSwitchMu.Unlock()
+	s.autoModeSwitchRecoveryHandler = handler
+}
+
+func (s *Session) handleAutoModeSwitchRequest(request AutoModeSwitchRequestWithAutoModeRecovery) (AutoModeSwitchResponse, error) {
+	s.autoModeSwitchMu.RLock()
+	select {
+	case <-s.eventDone:
+		s.autoModeSwitchMu.RUnlock()
+		return "", errors.New("session closed before auto-mode-switch request")
+	default:
+	}
+	handler := s.autoModeSwitchHandler
+	recoveryHandler := s.autoModeSwitchRecoveryHandler
+	s.autoModeSwitchMu.RUnlock()
+	if recoveryHandler != nil {
+		return recoveryHandler(request, AutoModeSwitchInvocation{SessionID: s.SessionID})
+	}
+	if request.AutoModeRecovery != nil {
+		return "", errors.New("no recovery-aware Auto switch handler registered")
+	}
+	if handler == nil {
+		return AutoModeSwitchResponseNo, nil
+	}
+
+	return handler(request.AutoModeSwitchRequest, AutoModeSwitchInvocation{SessionID: s.SessionID})
+}
+
+// registerHooks registers hook handlers for this session.
+//
+// Hooks are called at various points during session execution to allow
+// customization and observation of the session lifecycle.
+//
+// This method is internal and typically called when creating a session.
+func (s *Session) registerHooks(hooks *SessionHooks) {
+	s.hooksMux.Lock()
+	defer s.hooksMux.Unlock()
+	s.hooks = hooks
+}
+
+// handleHooksInvoke handles a hook invocation from the Copilot CLI.
+// This is an internal method called by the SDK when the CLI invokes a hook.
+func (s *Session) handleHooksInvoke(hookType string, rawInput json.RawMessage) (any, error) {
+	s.hooksMux.RLock()
+	select {
+	case <-s.eventDone:
+		s.hooksMux.RUnlock()
+		return nil, errors.New("session closed before hook invocation")
+	default:
+	}
+	hooks := s.hooks
+	s.hooksMux.RUnlock()
+
+	if hooks == nil {
+		return nil, nil
+	}
+
+	invocation := HookInvocation{
+		SessionID: s.SessionID,
+	}
+
+	switch hookType {
+	case "preToolUse":
+		if hooks.OnPreToolUse == nil {
+			return nil, nil
+		}
+		var input PreToolUseHookInput
+		if err := json.Unmarshal(rawInput, &input); err != nil {
+			return nil, fmt.Errorf("invalid hook input: %w", err)
+		}
+		return hooks.OnPreToolUse(input, invocation)
+
+	case "preMcpToolCall":
+		if hooks.OnPreMCPToolCall == nil {
+			return nil, nil
+		}
+		var input PreMCPToolCallHookInput
+		if err := json.Unmarshal(rawInput, &input); err != nil {
+			return nil, fmt.Errorf("invalid hook input: %w", err)
+		}
+		return hooks.OnPreMCPToolCall(input, invocation)
+
+	case "postToolUse":
+		if hooks.OnPostToolUse == nil {
+			return nil, nil
+		}
+		var input PostToolUseHookInput
+		if err := json.Unmarshal(rawInput, &input); err != nil {
+			return nil, fmt.Errorf("invalid hook input: %w", err)
+		}
+		return hooks.OnPostToolUse(input, invocation)
+
+	case "postToolUseFailure":
+		if hooks.OnPostToolUseFailure == nil {
+			return nil, nil
+		}
+		var input PostToolUseFailureHookInput
+		if err := json.Unmarshal(rawInput, &input); err != nil {
+			return nil, fmt.Errorf("invalid hook input: %w", err)
+		}
+		return hooks.OnPostToolUseFailure(input, invocation)
+
+	case "userPromptSubmitted":
+		if hooks.OnUserPromptSubmitted == nil {
+			return nil, nil
+		}
+		var input UserPromptSubmittedHookInput
+		if err := json.Unmarshal(rawInput, &input); err != nil {
+			return nil, fmt.Errorf("invalid hook input: %w", err)
+		}
+		return hooks.OnUserPromptSubmitted(input, invocation)
+
+	case "userPromptTransformed":
+		if hooks.OnUserPromptTransformed == nil {
+			return nil, nil
+		}
+		var input UserPromptTransformedHookInput
+		if err := json.Unmarshal(rawInput, &input); err != nil {
+			return nil, fmt.Errorf("invalid hook input: %w", err)
+		}
+		return hooks.OnUserPromptTransformed(input, invocation)
+
+	case "sessionStart":
+		if hooks.OnSessionStart == nil {
+			return nil, nil
+		}
+		var input SessionStartHookInput
+		if err := json.Unmarshal(rawInput, &input); err != nil {
+			return nil, fmt.Errorf("invalid hook input: %w", err)
+		}
+		return hooks.OnSessionStart(input, invocation)
+
+	case "sessionEnd":
+		if hooks.OnSessionEnd == nil {
+			return nil, nil
+		}
+		var input SessionEndHookInput
+		if err := json.Unmarshal(rawInput, &input); err != nil {
+			return nil, fmt.Errorf("invalid hook input: %w", err)
+		}
+		return hooks.OnSessionEnd(input, invocation)
+
+	case "errorOccurred":
+		if hooks.OnErrorOccurred == nil {
+			return nil, nil
+		}
+		var input ErrorOccurredHookInput
+		if err := json.Unmarshal(rawInput, &input); err != nil {
+			return nil, fmt.Errorf("invalid hook input: %w", err)
+		}
+		return hooks.OnErrorOccurred(input, invocation)
+
+	case "agentStop":
+		if hooks.OnAgentStop == nil {
+			return nil, nil
+		}
+		var input AgentStopHookInput
+		if err := json.Unmarshal(rawInput, &input); err != nil {
+			return nil, fmt.Errorf("invalid hook input: %w", err)
+		}
+		return hooks.OnAgentStop(input, invocation)
+
+	case "subagentStart":
+		if hooks.OnSubagentStart == nil {
+			return nil, nil
+		}
+		var input SubagentStartHookInput
+		if err := json.Unmarshal(rawInput, &input); err != nil {
+			return nil, fmt.Errorf("invalid hook input: %w", err)
+		}
+		return hooks.OnSubagentStart(input, invocation)
+
+	case "subagentStop":
+		if hooks.OnSubagentStop == nil {
+			return nil, nil
+		}
+		var input SubagentStopHookInput
+		if err := json.Unmarshal(rawInput, &input); err != nil {
+			return nil, fmt.Errorf("invalid hook input: %w", err)
+		}
+		return hooks.OnSubagentStop(input, invocation)
+
+	default:
+		return nil, nil
+	}
+}
+
+// registerTransformCallbacks registers transform callbacks for this session.
+//
+// Transform callbacks are invoked when the CLI requests system message section
+// transforms. This method is internal and typically called when creating a session.
+func (s *Session) registerTransformCallbacks(callbacks map[string]SectionTransformFn) {
+	s.transformMu.Lock()
+	defer s.transformMu.Unlock()
+	s.transformCallbacks = callbacks
+}
+
+type systemMessageTransformSection struct {
+	Content string `json:"content"`
+}
+
+type systemMessageTransformRequest struct {
+	SessionID string                                   `json:"sessionId"`
+	Sections  map[string]systemMessageTransformSection `json:"sections"`
+}
+
+type systemMessageTransformResponse struct {
+	Sections map[string]systemMessageTransformSection `json:"sections"`
+}
+
+// handleSystemMessageTransform handles a system message transform request from the Copilot CLI.
+// This is an internal method called by the SDK when the CLI requests section transforms.
+func (s *Session) handleSystemMessageTransform(sections map[string]systemMessageTransformSection) (systemMessageTransformResponse, error) {
+	s.transformMu.Lock()
+	select {
+	case <-s.eventDone:
+		s.transformMu.Unlock()
+		return systemMessageTransformResponse{}, errors.New("session closed before system message transform")
+	default:
+	}
+	callbacks := s.transformCallbacks
+	s.transformMu.Unlock()
+
+	result := make(map[string]systemMessageTransformSection)
+	for sectionID, data := range sections {
+		var callback SectionTransformFn
+		if callbacks != nil {
+			callback = callbacks[sectionID]
+		}
+		if callback != nil {
+			transformed, err := callback(data.Content)
+			if err != nil {
+				result[sectionID] = systemMessageTransformSection{Content: data.Content}
+			} else {
+				result[sectionID] = systemMessageTransformSection{Content: transformed}
+			}
+		} else {
+			result[sectionID] = systemMessageTransformSection{Content: data.Content}
+		}
+	}
+	return systemMessageTransformResponse{Sections: result}, nil
+}
+
+// registerCommands registers command handlers for this session.
+func (s *Session) registerCommands(commands []CommandDefinition) {
+	s.commandHandlersMu.Lock()
+	defer s.commandHandlersMu.Unlock()
+	s.commandHandlers = make(map[string]CommandHandler)
+	for _, cmd := range commands {
+		if cmd.Name == "" || cmd.Handler == nil {
+			continue
+		}
+		s.commandHandlers[cmd.Name] = cmd.Handler
+	}
+}
+
+// getCommandHandler retrieves a registered command handler by name.
+func (s *Session) getCommandHandler(name string) (CommandHandler, bool) {
+	s.commandHandlersMu.RLock()
+	handler, ok := s.commandHandlers[name]
+	s.commandHandlersMu.RUnlock()
+	return handler, ok
+}
+
+// executeCommandAndRespond dispatches a command.execute event to the registered handler
+// and sends the result (or error) back via the RPC layer.
+func (s *Session) executeCommandAndRespond(requestID, commandName, command, args string) {
+	ctx := context.Background()
+	handler, ok := s.getCommandHandler(commandName)
+	if !ok {
+		errMsg := fmt.Sprintf("Unknown command: %s", commandName)
+		s.RPC.Commands.HandlePendingCommand(ctx, &rpc.CommandsHandlePendingCommandRequest{
+			RequestID: requestID,
+			Error:     &errMsg,
+		})
+		return
+	}
+
+	cmdCtx := CommandContext{
+		SessionID:   s.SessionID,
+		Command:     command,
+		CommandName: commandName,
+		Args:        args,
+	}
+
+	if err := callCommandHandler(handler, cmdCtx); err != nil {
+		errMsg := err.Error()
+		s.RPC.Commands.HandlePendingCommand(ctx, &rpc.CommandsHandlePendingCommandRequest{
+			RequestID: requestID,
+			Error:     &errMsg,
+		})
+		return
+	}
+
+	s.RPC.Commands.HandlePendingCommand(ctx, &rpc.CommandsHandlePendingCommandRequest{
+		RequestID: requestID,
+	})
+}
+
+// callCommandHandler runs a command handler and returns a panic as an error, so
+// the command is answered with that error instead of the panic ending the process.
+func callCommandHandler(handler CommandHandler, cmdCtx CommandContext) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("command panic: %v", r)
+		}
+	}()
+	return handler(cmdCtx)
+}
+
+// registerElicitationHandler registers an elicitation handler for this session.
+func (s *Session) registerElicitationHandler(handler ElicitationHandler) {
+	s.registerAttributedElicitationHandler(elicitationHandlerFor(handler, nil))
+}
+
+// registerAttributedElicitationHandler registers an elicitation handler whose
+// results can say who answered.
+func (s *Session) registerAttributedElicitationHandler(handler AttributedElicitationHandler) {
+	s.elicitationMu.Lock()
+	defer s.elicitationMu.Unlock()
+	s.elicitationHandler = handler
+}
+
+// elicitationHandlerFor returns the handler a config selects: the attributed
+// handler when set, otherwise the plain handler, whose results carry no label.
+func elicitationHandlerFor(plain ElicitationHandler, attributed AttributedElicitationHandler) AttributedElicitationHandler {
+	if attributed != nil || plain == nil {
+		return attributed
+	}
+	return func(ctx ElicitationContext) (AttributedElicitationResult, error) {
+		result, err := plain(ctx)
+		return AttributedElicitationResult{ElicitationResult: result}, err
+	}
+}
+
+// getElicitationHandler returns the currently registered elicitation handler, or nil.
+func (s *Session) getElicitationHandler() AttributedElicitationHandler {
+	s.elicitationMu.RLock()
+	defer s.elicitationMu.RUnlock()
+	return s.elicitationHandler
+}
+
+func (s *Session) registerMCPAuthHandlers(handler MCPAuthHandler, refreshHandler MCPAuthRuntimeRefreshHandler) {
+	s.mcpAuthMu.Lock()
+	defer s.mcpAuthMu.Unlock()
+	s.mcpAuthHandler = handler
+	s.mcpAuthRefreshHandler = refreshHandler
+}
+
+func (s *Session) getMCPAuthHandlers() (MCPAuthHandler, MCPAuthRuntimeRefreshHandler) {
+	s.mcpAuthMu.RLock()
+	defer s.mcpAuthMu.RUnlock()
+	return s.mcpAuthHandler, s.mcpAuthRefreshHandler
+}
+
+func (s *Session) handleMCPAuthRequest(request MCPAuthRequest, runtimeRefreshSupported bool) {
+	handler, refreshHandler := s.getMCPAuthHandlers()
+	if handler == nil && refreshHandler == nil {
+		log.Printf(
+			"Received MCP OAuth request without a registered MCP auth handler. SessionId=%s, RequestId=%s",
+			s.SessionID,
+			request.RequestID,
+		)
+		return
+	}
+
+	ctx := context.Background()
+	cancel := &rpc.MCPOauthPendingRequestResponseCancelled{}
+	invocation := MCPAuthInvocation{SessionID: s.SessionID}
+	var result *MCPAuthResult
+	var err error
+	if refreshHandler != nil {
+		result, err = refreshHandler(request, invocation, runtimeRefreshSupported)
+	} else {
+		result, err = handler(request, invocation)
+	}
+	if err != nil {
+		log.Printf(
+			"MCP OAuth handler failed. SessionId=%s, RequestId=%s, Error=%v",
+			s.SessionID,
+			request.RequestID,
+			err,
+		)
+	}
+	hasToken := result != nil && result.Token != nil && result.Token.AccessToken != ""
+	if err == nil && result != nil && !hasToken && result.Kind == MCPAuthResultKindRuntimeRefresh && runtimeRefreshSupported {
+		s.RPC.MCP.Oauth().HandlePendingRequest(ctx, &rpc.MCPOauthHandlePendingRequest{
+			RequestID: request.RequestID,
+			Result:    &rpc.MCPOauthPendingRequestResponseRuntimeRefresh{},
+		})
+		return
+	}
+	if err != nil || result == nil || result.Kind == MCPAuthResultKindCancelled || !hasToken {
+		s.RPC.MCP.Oauth().HandlePendingRequest(ctx, &rpc.MCPOauthHandlePendingRequest{
+			RequestID: request.RequestID,
+			Result:    cancel,
+		})
+		return
+	}
+
+	s.RPC.MCP.Oauth().HandlePendingRequest(ctx, &rpc.MCPOauthHandlePendingRequest{
+		RequestID: request.RequestID,
+		Result: &rpc.MCPOauthPendingRequestResponseToken{
+			AccessToken: result.Token.AccessToken,
+			TokenType:   result.Token.TokenType,
+			ExpiresIn:   result.Token.ExpiresIn,
+		},
+	})
+}
+
+// handleElicitationRequest dispatches an elicitation.requested event to the registered handler
+// and sends the result back via the RPC layer. Auto-cancels on error.
+func (s *Session) handleElicitationRequest(elicitCtx ElicitationContext, requestID string) {
+	handler := s.getElicitationHandler()
+	if handler == nil {
+		return
+	}
+
+	ctx := context.Background()
+
+	result, err := callElicitationHandler(handler, elicitCtx)
+	if err != nil {
+		// Handler failed — attempt to cancel so the request doesn't hang.
+		s.RPC.UI.HandlePendingElicitation(ctx, &rpc.UIHandlePendingElicitationRequest{
+			RequestID: requestID,
+			Result: rpc.UIElicitationResponse{
+				Action: rpc.UIElicitationResponseActionCancel,
+			},
+		})
+		return
+	}
+
+	var rpcContent map[string]rpc.UIElicitationFieldValue
+	if result.Content != nil {
+		rpcContent = make(map[string]rpc.UIElicitationFieldValue, len(result.Content))
+		for k, v := range result.Content {
+			contentValue, err := toRPCContent(v)
+			if err != nil {
+				s.RPC.UI.HandlePendingElicitation(ctx, &rpc.UIHandlePendingElicitationRequest{
+					RequestID: requestID,
+					Result: rpc.UIElicitationResponse{
+						Action: rpc.UIElicitationResponseActionCancel,
+					},
+				})
+				return
+			}
+			rpcContent[k] = contentValue
+		}
+	}
+
+	s.RPC.UI.HandlePendingElicitationWithOptions(ctx, &rpc.UIHandlePendingElicitationOptions{
+		RequestID: requestID,
+		Result: rpc.UIElicitationResponse{
+			Action:  result.Action,
+			Content: rpcContent,
+		},
+		DecisionContext: result.DecisionContext,
+	})
+}
+
+// callElicitationHandler runs an elicitation handler and returns a panic as an
+// error, so the request is cancelled instead of the panic ending the process.
+func callElicitationHandler(handler AttributedElicitationHandler, elicitCtx ElicitationContext) (result AttributedElicitationResult, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("elicitation handler panic: %v", r)
+		}
+	}()
+	return handler(elicitCtx)
+}
+
+// toRPCContent converts an SDK content value to an RPC elicitation response value.
+func toRPCContent(v any) (rpc.UIElicitationFieldValue, error) {
+	if v == nil {
+		return nil, nil
+	}
+	switch val := v.(type) {
+	case bool:
+		return rpc.UIElicitationBooleanValue(val), nil
+	case float64:
+		return rpc.UIElicitationNumberValue(val), nil
+	case float32:
+		return rpc.UIElicitationNumberValue(float64(val)), nil
+	case int:
+		return rpc.UIElicitationNumberValue(float64(val)), nil
+	case int8:
+		return rpc.UIElicitationNumberValue(float64(val)), nil
+	case int16:
+		return rpc.UIElicitationNumberValue(float64(val)), nil
+	case int32:
+		return rpc.UIElicitationNumberValue(float64(val)), nil
+	case int64:
+		return rpc.UIElicitationNumberValue(float64(val)), nil
+	case uint:
+		return rpc.UIElicitationNumberValue(float64(val)), nil
+	case uint8:
+		return rpc.UIElicitationNumberValue(float64(val)), nil
+	case uint16:
+		return rpc.UIElicitationNumberValue(float64(val)), nil
+	case uint32:
+		return rpc.UIElicitationNumberValue(float64(val)), nil
+	case uint64:
+		return rpc.UIElicitationNumberValue(float64(val)), nil
+	case json.Number:
+		f, err := val.Float64()
+		if err != nil {
+			return nil, err
+		}
+		return rpc.UIElicitationNumberValue(f), nil
+	case string:
+		return rpc.UIElicitationStringValue(val), nil
+	case []string:
+		return rpc.UIElicitationStringArrayValue(val), nil
+	case []any:
+		strs := make([]string, len(val))
+		for i, item := range val {
+			s, ok := item.(string)
+			if !ok {
+				return nil, fmt.Errorf("unsupported elicitation string array item type %T", item)
+			}
+			strs[i] = s
+		}
+		return rpc.UIElicitationStringArrayValue(strs), nil
+	default:
+		return nil, fmt.Errorf("unsupported elicitation content value type %T", v)
+	}
+}
+
+// Capabilities returns the session capabilities reported by the server.
+func (s *Session) Capabilities() SessionCapabilities {
+	s.capabilitiesMu.RLock()
+	defer s.capabilitiesMu.RUnlock()
+	return s.capabilities
+}
+
+// CapabilitiesWithAutoModeRecovery returns the UI snapshot and the runtime's
+// recovery enrollment acknowledgment. Capabilities retains its legacy shape.
+func (s *Session) CapabilitiesWithAutoModeRecovery() SessionCapabilitiesWithAutoModeRecovery {
+	s.capabilitiesMu.RLock()
+	defer s.capabilitiesMu.RUnlock()
+	if s.capabilities.UI == nil {
+		return SessionCapabilitiesWithAutoModeRecovery{}
+	}
+	return SessionCapabilitiesWithAutoModeRecovery{UI: &UICapabilitiesWithAutoModeRecovery{
+		UICapabilities:   *s.capabilities.UI,
+		AutoModeRecovery: s.autoModeRecoverySupported,
+	}}
+}
+
+// setCapabilities updates the session capabilities.
+func (s *Session) setCapabilities(caps *SessionCapabilitiesWithAutoModeRecovery) {
+	s.capabilitiesMu.Lock()
+	defer s.capabilitiesMu.Unlock()
+	s.capabilities = SessionCapabilities{}
+	s.autoModeRecoverySupported = false
+	if caps != nil && caps.UI != nil {
+		ui := caps.UI.UICapabilities
+		s.capabilities.UI = &ui
+		s.autoModeRecoverySupported = caps.UI.AutoModeRecovery
+	}
+}
+
+// applyUICapabilitiesChange applies a capabilities.changed payload, which names
+// only the capabilities that changed: anything it leaves out keeps its value.
+func (s *Session) applyUICapabilitiesChange(changed *CapabilitiesChangedUIWithAutoModeRecovery) {
+	if changed.Elicitation == nil && changed.MCPApps == nil && changed.AutoModeRecovery == nil {
+		return
+	}
+	s.capabilitiesMu.Lock()
+	defer s.capabilitiesMu.Unlock()
+	var ui UICapabilities
+	if s.capabilities.UI != nil {
+		ui = *s.capabilities.UI
+	}
+	if changed.Elicitation != nil {
+		ui.Elicitation = *changed.Elicitation
+	}
+	if changed.MCPApps != nil {
+		ui.MCPApps = *changed.MCPApps
+	}
+	if changed.AutoModeRecovery != nil {
+		s.autoModeRecoverySupported = *changed.AutoModeRecovery
+	}
+	s.capabilities.UI = &ui
+}
+
+// UI returns the interactive UI API for showing elicitation dialogs.
+// Methods on the returned SessionUI will error if the host does not support
+// elicitation (check Capabilities().UI.Elicitation first).
+func (s *Session) UI() *SessionUI {
+	return &SessionUI{session: s}
+}
+
+// assertElicitation checks that the host supports elicitation and returns an error if not.
+func (s *Session) assertElicitation() error {
+	caps := s.Capabilities()
+	if caps.UI == nil || !caps.UI.Elicitation {
+		return fmt.Errorf("elicitation is not supported by the host; check session.Capabilities().UI.Elicitation before calling UI methods")
+	}
+	return nil
+}
+
+// Elicitation shows a generic elicitation dialog with a custom schema.
+func (ui *SessionUI) Elicitation(ctx context.Context, message string, requestedSchema ElicitationSchema) (*ElicitationResult, error) {
+	if err := ui.session.assertElicitation(); err != nil {
+		return nil, err
+	}
+	rpcSchema, err := toRPCUIElicitationSchema(requestedSchema)
+	if err != nil {
+		return nil, err
+	}
+	rpcResult, err := ui.session.RPC.UI.Elicitation(ctx, &rpc.UIElicitationRequest{
+		Message:         message,
+		RequestedSchema: rpcSchema,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return fromRPCElicitationResult(rpcResult), nil
+}
+
+func toRPCUIElicitationSchema(schema ElicitationSchema) (rpc.UIElicitationSchema, error) {
+	var properties map[string]rpc.UIElicitationSchemaProperty
+	if schema.Properties != nil {
+		properties = make(map[string]rpc.UIElicitationSchemaProperty, len(schema.Properties))
+		for name, property := range schema.Properties {
+			rpcProperty, err := toRPCUIElicitationSchemaProperty(name, property)
+			if err != nil {
+				return rpc.UIElicitationSchema{}, err
+			}
+			properties[name] = rpcProperty
+		}
+	}
+
+	return rpc.UIElicitationSchema{
+		Properties: properties,
+		Required:   append([]string(nil), schema.Required...),
+		Type:       rpc.UIElicitationSchemaTypeObject,
+	}, nil
+}
+
+func toRPCUIElicitationSchemaProperty(name string, property any) (rpc.UIElicitationSchemaProperty, error) {
+	if property == nil {
+		return nil, fmt.Errorf("elicitation schema property %q is nil", name)
+	}
+	if rpcProperty, ok := property.(rpc.UIElicitationSchemaProperty); ok {
+		return rpcProperty, nil
+	}
+
+	data, err := json.Marshal(property)
+	if err != nil {
+		return nil, fmt.Errorf("marshal elicitation schema property %q: %w", name, err)
+	}
+	wrapperData, err := json.Marshal(struct {
+		Properties map[string]json.RawMessage  `json:"properties"`
+		Type       rpc.UIElicitationSchemaType `json:"type"`
+	}{
+		Properties: map[string]json.RawMessage{name: data},
+		Type:       rpc.UIElicitationSchemaTypeObject,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal elicitation schema wrapper for property %q: %w", name, err)
+	}
+
+	var rpcSchema rpc.UIElicitationSchema
+	if err := json.Unmarshal(wrapperData, &rpcSchema); err != nil {
+		return nil, fmt.Errorf("decode elicitation schema property %q: %w", name, err)
+	}
+	rpcProperty, ok := rpcSchema.Properties[name]
+	if !ok {
+		return nil, fmt.Errorf("decode elicitation schema property %q: property missing after conversion", name)
+	}
+	return rpcProperty, nil
+}
+
+// Confirm shows a confirmation dialog and returns the user's boolean answer.
+// Returns false if the user declines or cancels.
+func (ui *SessionUI) Confirm(ctx context.Context, message string) (bool, error) {
+	if err := ui.session.assertElicitation(); err != nil {
+		return false, err
+	}
+	rpcResult, err := ui.session.RPC.UI.Elicitation(ctx, &rpc.UIElicitationRequest{
+		Message: message,
+		RequestedSchema: rpc.UIElicitationSchema{
+			Type: rpc.UIElicitationSchemaTypeObject,
+			Properties: map[string]rpc.UIElicitationSchemaProperty{
+				"confirmed": &rpc.UIElicitationSchemaPropertyBoolean{
+					Default: Bool(true),
+				},
+			},
+			Required: []string{"confirmed"},
+		},
+	})
+	if err != nil {
+		return false, err
+	}
+	if rpcResult.Action == rpc.UIElicitationResponseActionAccept {
+		if value, ok := rpcResult.Content["confirmed"].(rpc.UIElicitationBooleanValue); ok {
+			return bool(value), nil
+		}
+	}
+	return false, nil
+}
+
+// Select shows a selection dialog with the given options.
+// Returns the selected string, or empty string and false if the user declines/cancels.
+func (ui *SessionUI) Select(ctx context.Context, message string, options []string) (string, bool, error) {
+	if err := ui.session.assertElicitation(); err != nil {
+		return "", false, err
+	}
+	rpcResult, err := ui.session.RPC.UI.Elicitation(ctx, &rpc.UIElicitationRequest{
+		Message: message,
+		RequestedSchema: rpc.UIElicitationSchema{
+			Type: rpc.UIElicitationSchemaTypeObject,
+			Properties: map[string]rpc.UIElicitationSchemaProperty{
+				"selection": &rpc.UIElicitationStringEnumField{
+					Enum: options,
+				},
+			},
+			Required: []string{"selection"},
+		},
+	})
+	if err != nil {
+		return "", false, err
+	}
+	if rpcResult.Action == rpc.UIElicitationResponseActionAccept {
+		if value, ok := rpcResult.Content["selection"].(rpc.UIElicitationStringValue); ok {
+			return string(value), true, nil
+		}
+	}
+	return "", false, nil
+}
+
+// Input shows a text input dialog. Returns the entered text, or empty string and
+// false if the user declines/cancels.
+func (ui *SessionUI) Input(ctx context.Context, message string, opts *UIInputOptions) (string, bool, error) {
+	if err := ui.session.assertElicitation(); err != nil {
+		return "", false, err
+	}
+	prop := &rpc.UIElicitationSchemaPropertyString{}
+	if opts != nil {
+		if opts.Title != "" {
+			prop.Title = &opts.Title
+		}
+		if opts.Description != "" {
+			prop.Description = &opts.Description
+		}
+		if opts.MinLength != nil {
+			f := int64(*opts.MinLength)
+			prop.MinLength = &f
+		}
+		if opts.MaxLength != nil {
+			f := int64(*opts.MaxLength)
+			prop.MaxLength = &f
+		}
+		if opts.Format != "" {
+			format := rpc.UIElicitationSchemaPropertyStringFormat(opts.Format)
+			prop.Format = &format
+		}
+		if opts.Default != "" {
+			prop.Default = String(opts.Default)
+		}
+	}
+	rpcResult, err := ui.session.RPC.UI.Elicitation(ctx, &rpc.UIElicitationRequest{
+		Message: message,
+		RequestedSchema: rpc.UIElicitationSchema{
+			Type: rpc.UIElicitationSchemaTypeObject,
+			Properties: map[string]rpc.UIElicitationSchemaProperty{
+				"value": prop,
+			},
+			Required: []string{"value"},
+		},
+	})
+	if err != nil {
+		return "", false, err
+	}
+	if rpcResult.Action == rpc.UIElicitationResponseActionAccept {
+		if value, ok := rpcResult.Content["value"].(rpc.UIElicitationStringValue); ok {
+			return string(value), true, nil
+		}
+	}
+	return "", false, nil
+}
+
+// fromRPCElicitationResult converts the RPC result to the SDK ElicitationResult.
+func fromRPCElicitationResult(r *rpc.UIElicitationResponse) *ElicitationResult {
+	if r == nil {
+		return nil
+	}
+	var content map[string]ElicitationFieldValue
+	if r.Content != nil {
+		content = make(map[string]ElicitationFieldValue, len(r.Content))
+		for k, v := range r.Content {
+			content[k] = fromRPCContent(v)
+		}
+	}
+	return &ElicitationResult{
+		Action:  r.Action,
+		Content: content,
+	}
+}
+
+func fromRPCContent(value rpc.UIElicitationFieldValue) ElicitationFieldValue {
+	switch v := value.(type) {
+	case nil:
+		return nil
+	case rpc.UIElicitationBooleanValue:
+		return bool(v)
+	case rpc.UIElicitationNumberValue:
+		return float64(v)
+	case rpc.UIElicitationStringValue:
+		return string(v)
+	case rpc.UIElicitationStringArrayValue:
+		return []string(v)
+	}
+	return nil
+}
+
+func fromRPCElicitationRequestedSchema(schema *rpc.ElicitationRequestedSchema) *ElicitationSchema {
+	if schema == nil {
+		return nil
+	}
+	return &ElicitationSchema{
+		Properties: schema.Properties,
+		Required:   schema.Required,
+	}
+}
+
+// dispatchEventWithPermissionEnvelope enqueues an event for delivery to user handlers and fires
+// broadcast handlers concurrently.
+//
+// Broadcast work (tool calls, permission requests) is fired in a separate
+// goroutine so it does not block the JSON-RPC read loop. User event handlers
+// are delivered by a single consumer goroutine (processEvents), guaranteeing
+// serial, FIFO dispatch without blocking the read loop.
+func (s *Session) dispatchEventWithPermissionEnvelope(event SessionEvent, envelope *PermissionRequestEnvelope, sdkHasHandler *bool) {
+	subscriberEvent := event
+	if data, ok := event.Data.(*PermissionRequestedDataWithEnvelope); ok {
+		event.Data = data.PermissionRequestedData
+	}
+	s.updateOpenCanvasesFromEvent(event)
+
+	broadcastHandled := false
+	switch data := event.Data.(type) {
+	case *CapabilitiesChangedData:
+		// Apply deltas in notification order before subscribers can observe them.
+		if data.UI != nil {
+			s.applyUICapabilitiesChange(&CapabilitiesChangedUIWithAutoModeRecovery{
+				Canvases:    data.UI.Canvases,
+				Elicitation: data.UI.Elicitation,
+				MCPApps:     data.UI.MCPApps,
+			})
+		}
+		broadcastHandled = true
+	case *CapabilitiesChangedDataWithAutoModeRecovery:
+		if data.UI != nil {
+			s.applyUICapabilitiesChange(data.UI)
+		}
+		broadcastHandled = true
+	case *ExternalToolRequestedData:
+		var agentID string
+		if event.AgentID != nil {
+			agentID = *event.AgentID
+		}
+		if sdkHasHandler == nil || *sdkHasHandler {
+			s.startExternalTool(data, agentID)
+		}
+		broadcastHandled = true
+	case *ExternalToolCompletedData:
+		s.cancelExternalTool(data.RequestID)
+		broadcastHandled = true
+	}
+	if !broadcastHandled {
+		go s.handleBroadcastEvent(event, envelope)
+	}
+
+	s.enqueueEvent(subscriberEvent)
+}
+
+// enqueueEvent hands event to processEvents without blocking the caller, which
+// is the JSON-RPC read loop. A handler that is slow, or that waits for an RPC
+// response, must not stop the client from reading the connection. When eventCh
+// is full, the event joins an ordered backlog that a single goroutine moves into
+// eventCh, so handlers still receive events in arrival order.
+func (s *Session) enqueueEvent(event SessionEvent) {
+	s.eventBacklogMu.Lock()
+	defer s.eventBacklogMu.Unlock()
+	if !s.eventBacklogActive {
+		select {
+		case s.eventCh <- event:
+			return
+		case <-s.eventDone:
+			return
+		default:
+		}
+		s.eventBacklogActive = true
+		go s.drainEventBacklog()
+	}
+	s.eventBacklog = append(s.eventBacklog, event)
+}
+
+// drainEventBacklog moves backlogged events into eventCh in order until the
+// backlog is empty. It drops the backlog once event processing stops.
+func (s *Session) drainEventBacklog() {
+	for {
+		s.eventBacklogMu.Lock()
+		batch := s.eventBacklog
+		s.eventBacklog = nil
+		if len(batch) == 0 {
+			s.eventBacklogActive = false
+			s.eventBacklogMu.Unlock()
+			return
+		}
+		s.eventBacklogMu.Unlock()
+
+		for _, event := range batch {
+			select {
+			case s.eventCh <- event:
+			case <-s.eventDone:
+				s.eventBacklogMu.Lock()
+				s.eventBacklog = nil
+				s.eventBacklogActive = false
+				s.eventBacklogMu.Unlock()
+				return
+			}
+		}
+	}
+}
+
+// processEvents is the single consumer goroutine for the event channel.
+// It invokes user handlers serially, in arrival order. Panics in individual
+// handlers are recovered so that one misbehaving handler does not prevent
+// others from receiving the event.
+func (s *Session) processEvents() {
+	for {
+		select {
+		case <-s.eventDone:
+			return
+		default:
+		}
+
+		var event SessionEvent
+		select {
+		case event = <-s.eventCh:
+		case <-s.eventDone:
+			return
+		}
+
+		s.handlerMutex.RLock()
+		handlers := append([]*sessionHandler(nil), s.handlers...)
+		s.handlerMutex.RUnlock()
+
+		for _, entry := range handlers {
+			s.handlerMutex.RLock()
+			select {
+			case <-s.eventDone:
+				s.handlerMutex.RUnlock()
+				return
+			default:
+			}
+			handler := entry.fn
+			s.handlerMutex.RUnlock()
+			if handler == nil {
+				continue
+			}
+
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						fmt.Printf("Error in session event handler: %v\n", r)
+					}
+				}()
+				handler(event)
+			}()
+		}
+	}
+}
+
+// stopEventProcessing signals the consumer to stop without making an RPC or
+// waiting for a user handler that may itself be stopping the client.
+// It releases registered callbacks, including unadmitted event snapshot entries.
+// CreateSession/ResumeSession use this when a locally registered session fails
+// before it can be returned to the caller.
+func (s *Session) stopEventProcessing() {
+	s.retireEventProcessing(false)
+}
+
+func (s *Session) retireEventProcessing(graceful bool) {
+	s.closeOnce.Do(func() {
+		s.handlerMutex.Lock()
+		s.gracefulRetirement = graceful
+		close(s.eventDone)
+		for _, handler := range s.handlers {
+			handler.fn = nil
+		}
+		s.handlers = nil
+		s.handlerMutex.Unlock()
+
+		s.clearSkillProvider()
+		s.clearMemoryStore()
+		s.releaseGitHubTokenProviderRegistration()
+
+		s.toolHandlersM.Lock()
+		s.toolHandlers = nil
+		s.toolHandlersM.Unlock()
+
+		s.permissionMux.Lock()
+		s.permissionHandler = nil
+		s.permissionMux.Unlock()
+
+		s.mcpAuthMu.Lock()
+		s.mcpAuthHandler = nil
+		s.mcpAuthRefreshHandler = nil
+		s.mcpAuthMu.Unlock()
+
+		s.userInputMux.Lock()
+		s.userInputHandler = nil
+		s.userInputMux.Unlock()
+
+		s.shellAuthenticationMux.Lock()
+		s.shellAuthenticationHandler = nil
+		s.shellAuthenticationMux.Unlock()
+		s.cancelPendingShellAuthenticationRequests()
+
+		s.exitPlanModeMu.Lock()
+		s.exitPlanModeHandler = nil
+		s.exitPlanModeMu.Unlock()
+
+		s.autoModeSwitchMu.Lock()
+		s.autoModeSwitchHandler = nil
+		s.autoModeSwitchRecoveryHandler = nil
+		s.autoModeSwitchMu.Unlock()
+
+		s.hooksMux.Lock()
+		s.hooks = nil
+		s.hooksMux.Unlock()
+
+		s.transformMu.Lock()
+		s.transformCallbacks = nil
+		s.transformMu.Unlock()
+
+		s.commandHandlersMu.Lock()
+		s.commandHandlers = nil
+		s.commandHandlersMu.Unlock()
+
+		s.elicitationMu.Lock()
+		s.elicitationHandler = nil
+		s.elicitationMu.Unlock()
+
+		s.canvasMu.Lock()
+		s.canvasHandler = nil
+		s.canvasMu.Unlock()
+
+		s.bearerTokenMu.Lock()
+		s.bearerTokenProviders = nil
+		s.bearerTokenMu.Unlock()
+	})
+}
+
+// handleBroadcastEvent handles broadcast request events by executing local handlers
+// and responding via RPC. This implements the protocol v3 broadcast model where tool
+// calls and permission requests are broadcast as session events to all clients.
+//
+// Handlers are executed in their own goroutine (not the JSON-RPC read loop or the
+// event consumer loop) so that a stalled handler does not block event delivery or
+// cause RPC deadlocks.
+func (s *Session) handleBroadcastEvent(event SessionEvent, envelope *PermissionRequestEnvelope) {
+	switch d := event.Data.(type) {
+	case *PermissionRequestedData:
+		if d.ResolvedByHook != nil && *d.ResolvedByHook {
+			return // Already resolved by a permissionRequest hook; no client action needed.
+		}
+		handler := s.getPermissionHandler()
+		if handler == nil {
+			return
+		}
+		s.executePermissionAndRespond(
+			d.RequestID,
+			d.PermissionRequest,
+			d.PromptRequest,
+			d.AssistedApprovalAssessment,
+			envelope,
+			d.ProgramToolCallID,
+			handler,
+		)
+
+	case *MCPOauthRequiredData:
+		if d.RequestID == "" {
+			return
+		}
+		var staticClientConfig *MCPAuthStaticClientConfig
+		if d.StaticClientConfig != nil {
+			var grantType *string
+			if d.StaticClientConfig.GrantType != nil {
+				value := string(*d.StaticClientConfig.GrantType)
+				grantType = &value
+			}
+			staticClientConfig = &MCPAuthStaticClientConfig{
+				ClientID:     d.StaticClientConfig.ClientID,
+				ClientSecret: d.StaticClientConfig.ClientSecret,
+				GrantType:    grantType,
+				PublicClient: d.StaticClientConfig.PublicClient,
+				Scope:        d.StaticClientConfig.Scope,
+			}
+		}
+		request := MCPAuthRequest{
+			RequestID:          d.RequestID,
+			ServerName:         d.ServerName,
+			ServerURL:          d.ServerURL,
+			Reason:             d.Reason,
+			StaticClientConfig: staticClientConfig,
+		}
+		if d.ResourceMetadata != nil {
+			request.ResourceMetadata = d.ResourceMetadata
+		}
+		if d.WwwAuthenticateParams != nil {
+			request.WwwAuthenticateParams = &MCPAuthWwwAuthenticateParams{
+				ResourceMetadataURL: d.WwwAuthenticateParams.ResourceMetadataURL,
+				Scope:               d.WwwAuthenticateParams.Scope,
+				Error:               d.WwwAuthenticateParams.Error,
+			}
+		}
+		s.handleMCPAuthRequest(request, d.RuntimeRefreshSupported != nil && *d.RuntimeRefreshSupported)
+
+	case *CommandExecuteData:
+		s.executeCommandAndRespond(d.RequestID, d.CommandName, d.Command, d.Args)
+
+	case *ElicitationRequestedData:
+		handler := s.getElicitationHandler()
+		if handler == nil {
+			return
+		}
+		s.handleElicitationRequest(ElicitationContext{
+			SessionID:         s.SessionID,
+			Message:           d.Message,
+			RequestedSchema:   fromRPCElicitationRequestedSchema(d.RequestedSchema),
+			Mode:              d.Mode,
+			ElicitationSource: d.ElicitationSource,
+			URL:               d.URL,
+		}, d.RequestID)
+	}
+}
+
+func (s *Session) startExternalTool(data *ExternalToolRequestedData, agentID string) {
+	handler, ok := s.getToolHandler(data.ToolName)
+	if !ok {
+		return
+	}
+
+	var traceparent, tracestate string
+	if data.Traceparent != nil {
+		traceparent = *data.Traceparent
+	}
+	if data.Tracestate != nil {
+		tracestate = *data.Tracestate
+	}
+	traceCtx := contextWithTraceParent(context.Background(), traceparent, tracestate)
+	ctx, cancel := context.WithCancel(traceCtx)
+	pending := &pendingExternalTool{ctx: ctx, cancel: cancel}
+
+	s.pendingExternalToolsM.Lock()
+	if s.externalToolsClosed {
+		s.pendingExternalToolsM.Unlock()
+		cancel()
+		return
+	}
+	if s.pendingExternalTools == nil {
+		s.pendingExternalTools = make(map[string]*pendingExternalTool)
+	}
+	if _, exists := s.pendingExternalTools[data.RequestID]; exists {
+		s.pendingExternalToolsM.Unlock()
+		cancel()
+		return
+	}
+	s.pendingExternalTools[data.RequestID] = pending
+	s.pendingExternalToolsM.Unlock()
+
+	go s.executeToolAndRespond(data.RequestID, data.ToolName, data.ToolCallID, agentID, data.Arguments, handler, pending)
+}
+
+func (s *Session) cancelExternalTool(requestID string) {
+	s.pendingExternalToolsM.Lock()
+	pending := s.pendingExternalTools[requestID]
+	delete(s.pendingExternalTools, requestID)
+	s.pendingExternalToolsM.Unlock()
+	if pending != nil {
+		pending.cancel()
+	}
+}
+
+func (s *Session) cancelPendingExternalTools() {
+	s.pendingExternalToolsM.Lock()
+	s.externalToolsClosed = true
+	pendingTools := s.pendingExternalTools
+	s.pendingExternalTools = nil
+	s.pendingExternalToolsM.Unlock()
+	for _, pending := range pendingTools {
+		pending.cancel()
+	}
+}
+
+func (s *Session) externalToolsAreClosed() bool {
+	s.pendingExternalToolsM.Lock()
+	defer s.pendingExternalToolsM.Unlock()
+	return s.externalToolsClosed
+}
+
+func (s *Session) claimExternalTool(requestID string, pending *pendingExternalTool) bool {
+	s.pendingExternalToolsM.Lock()
+	defer s.pendingExternalToolsM.Unlock()
+	if s.pendingExternalTools[requestID] != pending {
+		return false
+	}
+	delete(s.pendingExternalTools, requestID)
+	return true
+}
+
+// encodeToolTelemetry encodes each telemetry value once, so the request carries
+// exactly the bytes that were checked. An empty map is returned unchanged to
+// keep the field omitted.
+func encodeToolTelemetry(telemetry map[string]any) (map[string]any, error) {
+	if len(telemetry) == 0 {
+		return telemetry, nil
+	}
+	// Sorted key order is the order encoding/json encodes a map in.
+	keys := make([]string, 0, len(telemetry))
+	for key := range telemetry {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	encoded := make(map[string]any, len(telemetry))
+	for _, key := range keys {
+		data, err := json.Marshal(telemetry[key])
+		if err != nil {
+			return nil, err
+		}
+		encoded[key] = json.RawMessage(data)
+	}
+	return encoded, nil
+}
+
+// toolResultTypeOrDefault returns result.ResultType, or "failure" when it is
+// unset and result.Error is set, or "success" when both are unset.
+func toolResultTypeOrDefault(result ToolResult) string {
+	if result.ResultType != "" {
+		return result.ResultType
+	}
+	if result.Error != "" {
+		return "failure"
+	}
+	return "success"
+}
+
+// executeToolAndRespond executes a tool handler and sends the result back via RPC.
+func (s *Session) executeToolAndRespond(requestID, toolName, toolCallID, agentID string, arguments any, handler ToolHandler, pending *pendingExternalTool) {
+	ctx := pending.ctx
+	defer func() {
+		s.pendingExternalToolsM.Lock()
+		if s.pendingExternalTools[requestID] == pending {
+			delete(s.pendingExternalTools, requestID)
+		}
+		s.pendingExternalToolsM.Unlock()
+		pending.cancel()
+	}()
+	defer func() {
+		if r := recover(); r != nil {
+			if !s.claimExternalTool(requestID, pending) {
+				return
+			}
+			errMsg := fmt.Sprintf("tool panic: %v", r)
+			s.sendToolResponse(ctx, toolName, &rpc.HandlePendingToolCallRequest{
+				RequestID: requestID,
+				Error:     &errMsg,
+			})
+		}
+	}()
+
+	invocation := ToolInvocation{
+		SessionID:    s.SessionID,
+		ToolCallID:   toolCallID,
+		ToolName:     toolName,
+		Arguments:    arguments,
+		TraceContext: ctx,
+		AgentID:      agentID,
+		RequestID:    requestID,
+	}
+
+	// The built-in tool-search tool receives a snapshot of the session's
+	// currently initialized tools so an override can filter the live catalog
+	// without issuing its own RPC. Fetch it only for that tool to avoid a
+	// round-trip on every tool call; a failed fetch leaves the snapshot nil
+	// rather than failing the tool.
+	if toolName == toolSearchToolName {
+		if metadata, mErr := s.RPC.Tools.GetCurrentMetadata(ctx); mErr == nil && metadata != nil {
+			invocation.AvailableTools = metadata.Tools
+		}
+	}
+	if ctx.Err() != nil {
+		return
+	}
+
+	result, err := handler(invocation)
+	if !s.claimExternalTool(requestID, pending) {
+		return
+	}
+	if err != nil {
+		errMsg := err.Error()
+		if errMsg == "" {
+			// An empty error reads as no error, so the call would count as a success.
+			errMsg = fmt.Sprintf("%T", err)
+		}
+		s.sendToolResponse(ctx, toolName, &rpc.HandlePendingToolCallRequest{
+			RequestID: requestID,
+			Error:     &errMsg,
+		})
+		return
+	}
+
+	// Telemetry that cannot be encoded as JSON would stop the result from being
+	// sent at all, leaving the call unanswered, so answer it with the error.
+	// Each value is encoded once here and the encoded bytes are sent, so a
+	// json.Marshaler that is not repeatable cannot succeed now and fail later.
+	telemetry, err := encodeToolTelemetry(result.ToolTelemetry)
+	if err != nil {
+		errMsg := fmt.Sprintf("failed to serialize tool telemetry: %v", err)
+		s.sendToolResponse(ctx, toolName, &rpc.HandlePendingToolCallRequest{
+			RequestID: requestID,
+			Error:     &errMsg,
+		})
+		return
+	}
+
+	effectiveResultType := toolResultTypeOrDefault(result)
+
+	rpcResult := &rpc.ExternalToolTextResultForLlm{
+		TextResultForLlm: result.TextResultForLLM,
+		ToolTelemetry:    telemetry,
+		ResultType:       &effectiveResultType,
+		ToolReferences:   result.ToolReferences,
+	}
+	if result.Error != "" {
+		rpcResult.Error = &result.Error
+	}
+	if result.SessionLog != "" {
+		rpcResult.SessionLog = &result.SessionLog
+	}
+	for _, b := range result.BinaryResultsForLLM {
+		entry := rpc.ExternalToolTextResultForLlmBinaryResultsForLlm{
+			Data:     b.Data,
+			MIMEType: b.MIMEType,
+			Type:     rpc.ExternalToolTextResultForLlmBinaryResultsForLlmType(b.Type),
+		}
+		if b.Description != "" {
+			entry.Description = &b.Description
+		}
+		rpcResult.BinaryResultsForLlm = append(rpcResult.BinaryResultsForLlm, entry)
+	}
+	s.sendToolResponse(ctx, toolName, &rpc.HandlePendingToolCallRequest{
+		RequestID: requestID,
+		Result:    rpcResult,
+	})
+}
+
+func (s *Session) sendToolResponse(ctx context.Context, toolName string, response *rpc.HandlePendingToolCallRequest) {
+	requestID := response.RequestID
+	_, err := s.RPC.Tools.HandlePendingToolCall(ctx, response)
+	if err == nil || ctx.Err() != nil || s.externalToolsAreClosed() {
+		return
+	}
+	// The handler finished but its result never reached the runtime, which is
+	// still waiting on the call. This invocation already owns the request, so
+	// report the failure and answer the call with it. A claimed request is no
+	// longer in the pending map, so Disconnect cannot cancel ctx; the closed
+	// flag is what tells this path the session is shutting down.
+	log.Printf("external tool result delivery failed: session_id=%s request_id=%s tool=%s error=%v", s.SessionID, requestID, toolName, err)
+	errMsg := err.Error()
+	if errMsg == "" {
+		// An empty error reads as no error, so the call would count as a success.
+		errMsg = fmt.Sprintf("%T", err)
+	}
+	s.RPC.Tools.HandlePendingToolCall(ctx, &rpc.HandlePendingToolCallRequest{
+		RequestID: requestID,
+		Error:     &errMsg,
+	})
+}
+
+// executePermissionAndRespond executes a permission handler and sends the result back via RPC.
+func (s *Session) executePermissionAndRespond(
+	requestID string,
+	permissionRequest PermissionRequest,
+	promptRequest rpc.PermissionPromptRequest,
+	assistedApprovalAssessment rpc.AssistedApprovalAssessment,
+	envelope *PermissionRequestEnvelope,
+	programToolCallID *string,
+	handler permissionHandlerFunc,
+) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.RPC.Permissions.HandlePendingPermissionRequest(context.Background(), &rpc.PermissionDecisionRequest{
+				RequestID: requestID,
+				Result:    &rpc.PermissionDecisionUserNotAvailable{},
+			})
+		}
+	}()
+
+	invocation := PermissionInvocation{
+		SessionID:              s.SessionID,
+		ManagedSettingsEnabled: s.managedSettings,
+		ProgramToolCallID:      programToolCallID,
+	}
+
+	decision, err := handler(
+		permissionRequest,
+		invocation,
+		promptRequest,
+		assistedApprovalAssessment,
+		envelope,
+	)
+	if err != nil {
+		log.Printf("permission handler failed: session_id=%s request_id=%s error=%v", s.SessionID, requestID, err)
+		s.RPC.Permissions.HandlePendingPermissionRequest(context.Background(), &rpc.PermissionDecisionRequest{
+			RequestID: requestID,
+			Result:    &rpc.PermissionDecisionUserNotAvailable{},
+		})
+		return
+	}
+	if decision == nil {
+		// Handler returned (nil, nil); treat as user-not-available rather
+		// than sending null on the wire.
+		s.RPC.Permissions.HandlePendingPermissionRequest(context.Background(), &rpc.PermissionDecisionRequest{
+			RequestID: requestID,
+			Result:    &rpc.PermissionDecisionUserNotAvailable{},
+		})
+		return
+	}
+	// Unwrap any attribution so decisionContext travels as a sibling of result,
+	// not nested inside it. The suppression and send logic below operates on the
+	// underlying decision.
+	decision, decisionContext := splitAttribution(decision)
+	if _, ok := decision.(*rpc.PermissionDecisionNoResult); ok {
+		return
+	}
+	if _, ok := decision.(rpc.PermissionDecisionNoResult); ok {
+		return
+	}
+
+	s.RPC.Permissions.HandlePendingPermissionRequest(context.Background(), &rpc.PermissionDecisionRequest{
+		RequestID:       requestID,
+		Result:          decision,
+		DecisionContext: decisionContext,
+	})
+}
+
+// GetEvents retrieves all events from this session's history.
+// For lossless JSON, including task-analytics retries, use GetRawEvents instead.
+//
+// This returns the complete conversation history including user messages,
+// assistant responses, tool executions, and other session events in
+// chronological order.
+//
+// Returns an error if the session has been disconnected or the connection fails.
+//
+// Example:
+//
+//	events, err := session.GetEvents(context.Background())
+//	if err != nil {
+//	    log.Printf("Failed to get events: %v", err)
+//	    return
+//	}
+//	for _, event := range events {
+//	    if d, ok := event.Data.(*copilot.AssistantMessageData); ok {
+//	        fmt.Println("Assistant:", d.Content)
+//	    }
+//	}
+func (s *Session) GetEvents(ctx context.Context) ([]SessionEvent, error) {
+
+	result, err := s.client.Request(ctx, "session.getMessages", sessionGetMessagesRequest{SessionID: s.SessionID})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get events: %w", err)
+	}
+
+	var response sessionGetMessagesResponse
+	if err := json.Unmarshal(result, &response); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal get events response: %w", err)
+	}
+	return response.Events, nil
+}
+
+// GetRawEvents retrieves session history without projecting it into typed events.
+// It preserves timestamp strings, explicit nulls, and unknown fields. Use
+// rpc.SessionEventsAsTrajectory to pass the result to task analytics unchanged.
+func (s *Session) GetRawEvents(ctx context.Context) ([]json.RawMessage, error) {
+	result, err := s.client.Request(ctx, "session.getMessages", sessionGetMessagesRequest{SessionID: s.SessionID})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get events: %w", err)
+	}
+
+	var response struct {
+		Events []json.RawMessage `json:"events"`
+	}
+	if err := json.Unmarshal(result, &response); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal get events response: %w", err)
+	}
+	return response.Events, nil
+}
+
+// Disconnect closes this session and releases all in-memory resources (event
+// handlers, tool handlers, permission handlers).
+//
+// The caller should ensure the session is idle (e.g., [Session.SendAndWait] has
+// returned) before disconnecting. If the session is not idle, in-flight event
+// handlers or tool handlers may observe failures.
+//
+// Session state on disk (conversation history, planning state, artifacts) is
+// preserved, so the conversation can be resumed later by calling
+// [Client.ResumeSession] with the session ID. To permanently remove all
+// session data including files on disk, use [Client.DeleteSession] instead.
+//
+// After calling this method, the session object can no longer be used.
+//
+// Returns an error if the connection fails.
+//
+// Example:
+//
+//	// Clean up when done — session can still be resumed later
+//	if err := session.Disconnect(); err != nil {
+//	    log.Printf("Failed to disconnect session: %v", err)
+//	}
+func (s *Session) Disconnect() error {
+	return s.disconnect(context.Background())
+}
+
+// disconnect sends session.detach under ctx; [Client.Stop] bounds it so an
+// unresponsive runtime cannot keep Stop from shutting the runtime down.
+func (s *Session) disconnect(ctx context.Context) error {
+	s.clearSkillProvider()
+	s.cancelPendingExternalTools()
+	err := s.detachRuntime(ctx)
+
+	// Local cleanup always runs, even if the detach RPC failed, so callers
+	// don't leak in-memory resources (event goroutines, registered
+	// providers/handlers) just because the runtime couldn't be reached.
+	s.retireEventProcessing(true)
+	return err
+}
+
+func (s *Session) detachRuntime(ctx context.Context) error {
+	result, err := s.client.Request(ctx, "session.detach", sessionDetachRequest{SessionID: s.SessionID})
+	if err == nil {
+		var response sessionDetachResponse
+		if decodeErr := json.Unmarshal(result, &response); decodeErr != nil {
+			err = fmt.Errorf("failed to decode session detach response: %w", decodeErr)
+		} else if !response.Success {
+			if response.Error == "" {
+				response.Error = "unknown error"
+			}
+			err = errors.New(response.Error)
+		}
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to disconnect session: %w", err)
+	}
+	// A detached session needs no further routing, so the client stops
+	// tracking it. A failed detach stays tracked so [Client.Stop] retries it.
+	s.detached.Store(true)
+	if s.releaseFromClient != nil {
+		s.releaseFromClient()
+	}
+	return nil
+}
+
+func (s *Session) releaseGitHubTokenProviderRegistration() {
+	s.gitHubTokenProviderMu.Lock()
+	if s.gitHubTokenProviderReleased {
+		s.gitHubTokenProviderMu.Unlock()
+		return
+	}
+	s.gitHubTokenProviderReleased = true
+	release := s.releaseGitHubTokenProvider
+	s.releaseGitHubTokenProvider = nil
+	s.gitHubTokenProviderMu.Unlock()
+	if release != nil {
+		release()
+	}
+}
+
+func (s *Session) setGitHubTokenProviderRegistrationRelease(release func()) {
+	s.gitHubTokenProviderMu.Lock()
+	if !s.gitHubTokenProviderReleased {
+		s.releaseGitHubTokenProvider = release
+		s.gitHubTokenProviderMu.Unlock()
+		return
+	}
+	s.gitHubTokenProviderMu.Unlock()
+	release()
+}
+
+// Abort aborts the currently processing message in this session.
+//
+// Use this to cancel a long-running request. The session remains valid
+// and can continue to be used for new messages.
+//
+// Returns an error if the session has been disconnected or the connection fails.
+//
+// Example:
+//
+//	// Start a long-running request in a goroutine
+//	go func() {
+//	    session.Send(context.Background(), copilot.MessageOptions{
+//	        Prompt: "Write a very long story...",
+//	    })
+//	}()
+//
+//	// Abort after 5 seconds
+//	time.Sleep(5 * time.Second)
+//	if err := session.Abort(context.Background()); err != nil {
+//	    log.Printf("Failed to abort: %v", err)
+//	}
+func (s *Session) Abort(ctx context.Context) error {
+	_, err := s.client.Request(ctx, "session.abort", sessionAbortRequest{SessionID: s.SessionID})
+	if err != nil {
+		return fmt.Errorf("failed to abort session: %w", err)
+	}
+
+	return nil
+}
+
+// SetModelOptions configures optional parameters for SetModel.
+type SetModelOptions struct {
+	// ReasoningEffort sets the reasoning effort level for the new model (e.g., "low", "medium", "high", "xhigh", "max").
+	ReasoningEffort *string
+	// ReasoningSummary sets the reasoning summary mode for the new model.
+	// Use ReasoningSummaryNone to suppress summary output regardless of whether reasoning is enabled.
+	ReasoningSummary *ReasoningSummary
+	// ContextTier explicitly selects a context window tier for models that support it.
+	// Leave nil to use normal model behavior with no explicit tier.
+	ContextTier *ContextTier
+	// ModelCapabilities overrides individual model capabilities resolved by the runtime.
+	// Only non-nil fields are applied over the runtime-resolved capabilities.
+	ModelCapabilities *rpc.ModelCapabilitiesOverride
+	// AutoTier stages an Auto routing preference atomically with selecting the
+	// "auto" model. Leave nil to leave the current preference alone.
+	//
+	// The runtime rejects this option when the model is anything other than
+	// "auto". Use [Session.SetAutoTier] to change the preference without
+	// changing the selected model.
+	//
+	// For Copilot Fusion, prefer FusionTier. The balance, hydrafusion and
+	// hydrafusion-max identifiers it replaces remain accepted but are deprecated.
+	//
+	// Experimental: AutoTier is part of an experimental Auto routing surface and
+	// may change or be removed.
+	AutoTier *AutoTier
+	// ResetAutoTier returns to the provider's default Auto routing as part of
+	// this switch. It is mutually exclusive with AutoTier.
+	//
+	// Experimental: ResetAutoTier is part of an experimental Auto routing surface
+	// and may change or be removed.
+	ResetAutoTier bool
+	// FusionTier stages a Copilot Fusion tier atomically with selecting the
+	// "fusion" or "auto" model, matching the CLI's --fusion-tier. The runtime
+	// resolves the tier to the Auto routing preference it stands for and stages
+	// it exactly like AutoTier. It is mutually exclusive with AutoTier and
+	// ResetAutoTier. Use [Session.SetFusionTier] to change the tier without
+	// changing the selected model.
+	//
+	// Experimental: FusionTier is part of an experimental Auto routing surface
+	// and may change or be removed.
+	FusionTier *FusionTier
+}
+
+// SetModel changes the model for this session.
+// The new model takes effect for the next message. Conversation history is preserved.
+//
+// Example:
+//
+//	if err := session.SetModel(context.Background(), "gpt-5.4", nil); err != nil {
+//	    log.Printf("Failed to set model: %v", err)
+//	}
+//	if err := session.SetModel(context.Background(), "claude-sonnet-4.6", &SetModelOptions{ReasoningEffort: new("high")}); err != nil {
+//	    log.Printf("Failed to set model: %v", err)
+//	}
+//	// Like `copilot --model fusion --fusion-tier high`.
+//	if err := session.SetModel(context.Background(), "fusion", &SetModelOptions{FusionTier: new(FusionTierHigh)}); err != nil {
+//	    log.Printf("Failed to set model: %v", err)
+//	}
+func (s *Session) SetModel(ctx context.Context, model string, opts *SetModelOptions) error {
+	params := &rpc.ModelSwitchToRequest{ModelID: model}
+	if opts != nil {
+		if opts.AutoTier != nil && opts.ResetAutoTier {
+			return errors.New("failed to set model: AutoTier and ResetAutoTier are mutually exclusive")
+		}
+		if opts.FusionTier != nil && (opts.AutoTier != nil || opts.ResetAutoTier) {
+			return errors.New("failed to set model: FusionTier cannot be combined with AutoTier or ResetAutoTier")
+		}
+		params.FusionTier = opts.FusionTier
+		params.ReasoningEffort = opts.ReasoningEffort
+		params.ReasoningSummary = opts.ReasoningSummary
+		params.ContextTier = opts.ContextTier
+		params.ModelCapabilities = opts.ModelCapabilities
+
+		// The generated field is a double pointer so the three cases stay
+		// distinct on the wire: a nil outer pointer omits the field and leaves
+		// any staged preference alone, while a non-nil outer pointer sends the
+		// inner value, including an explicit null.
+		switch {
+		case opts.AutoTier != nil:
+			params.AutoTier = &opts.AutoTier
+		case opts.ResetAutoTier:
+			var providerDefault *AutoTier
+			params.AutoTier = &providerDefault
+		}
+	}
+	_, err := s.RPC.Model.SwitchTo(ctx, params)
+	if err != nil {
+		return fmt.Errorf("failed to set model: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Session) setToolsSemaphore() chan struct{} {
+	s.setToolsOnce.Do(func() {
+		s.setToolsGate = make(chan struct{}, 1)
+		s.setToolsGate <- struct{}{}
+	})
+	return s.setToolsGate
+}
+
+type sdkToolDefinition struct {
+	rpc.ProtocolExternalToolDefinition
+	HasHandler bool `json:"hasHandler"`
+}
+
+func toolDefinitionsForWire(tools []Tool) []sdkToolDefinition {
+	definitions := make([]sdkToolDefinition, 0, len(tools))
+	for _, tool := range tools {
+		definition := sdkToolDefinition{
+			ProtocolExternalToolDefinition: rpc.ProtocolExternalToolDefinition{
+				Name:        tool.Name,
+				Description: tool.Description,
+				Parameters:  tool.Parameters,
+				Metadata:    tool.Metadata,
+			},
+			HasHandler: tool.Handler != nil,
+		}
+		if tool.OverridesBuiltInTool {
+			definition.OverridesBuiltInTool = &tool.OverridesBuiltInTool
+		}
+		if tool.SkipPermission {
+			definition.SkipPermission = &tool.SkipPermission
+		}
+		if tool.IsTerminal {
+			definition.IsTerminal = &tool.IsTerminal
+		}
+		if tool.Idempotent {
+			definition.Idempotent = &tool.Idempotent
+		}
+		if tool.Defer != "" {
+			deferPolicy := rpc.ProtocolExternalToolDefer(tool.Defer)
+			definition.Defer = &deferPolicy
+		}
+		if tool.Namespace != nil {
+			namespace := rpc.ProtocolExternalToolNamespace{Name: tool.Namespace.Name}
+			if tool.Namespace.Description != "" {
+				description := tool.Namespace.Description
+				namespace.Description = &description
+			}
+			definition.Namespace = &namespace
+		}
+		definitions = append(definitions, definition)
+	}
+	return definitions
+}
+
+// SetTools atomically replaces the externally implemented tools supplied by
+// this client connection for the live session. Built-in tools, MCP/plugin tools,
+// extension-discovered tools, subagent tools, and tools supplied by other
+// connections are unchanged.
+//
+// The tools use the same [Tool] definitions and handlers as
+// [Client.CreateSession] and [Client.ResumeSession]. The slice is a complete
+// replacement for this connection: pass an empty slice to remove every tool this
+// connection previously supplied. Tools with nil handlers are declaration-only.
+//
+// Handlers switch after the runtime accepts the replacement. Calls already
+// running finish on the handlers that started them. If the runtime rejects the
+// replacement, the previous handlers remain installed. Concurrent SetTools calls
+// on the same session are sent and applied in call order; an earlier failure does
+// not block later calls. If ctx is done before the request is sent, for example
+// while an earlier SetTools call is still in flight, nothing is sent. Once the
+// request is sent, ctx only bounds the wait: an accepted replacement still
+// installs its handlers unless the session has since closed.
+//
+// The agent sees the new tools from its next model request, which can fall
+// within a turn in progress. A model request already in flight was made with the
+// previous tools, so the agent can still call a tool you removed. If no connected
+// client supplies a tool with that name any more, the call fails with an error
+// that tells the agent the tool is no longer available, and the turn continues.
+// If you don't want the agent to see that failure, replace tools while the
+// session is idle.
+//
+// Experimental: SetTools wraps the experimental session.tools.set RPC and may
+// change or be removed.
+func (s *Session) SetTools(ctx context.Context, tools []Tool) error {
+	definitions := toolDefinitionsForWire(tools)
+	handlers := buildToolHandlerMap(tools)
+
+	gate := s.setToolsSemaphore()
+	select {
+	case <-gate:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
+	if err := ctx.Err(); err != nil {
+		gate <- struct{}{}
+		return err
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		defer func() { gate <- struct{}{} }()
+
+		raw, err := s.client.Request(context.WithoutCancel(ctx), "session.tools.set", map[string]any{
+			"sessionId": s.SessionID,
+			"tools":     definitions,
+		})
+		if err == nil {
+			var result rpc.ToolsSetResult
+			err = json.Unmarshal(raw, &result)
+		}
+		if err != nil {
+			done <- fmt.Errorf("failed to set tools: %w", err)
+			return
+		}
+		done <- s.replaceToolHandlers(handlers)
+	}()
+
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// SetAutoTier changes the Auto routing preference without changing the selected model.
+//
+// The runtime does not apply the preference immediately. It records the request and
+// commits it only when a later user turn using the "auto" model successfully obtains a
+// usable model from the provider. A [rpc.ModelSwitchAutoTierStatusPending] status
+// therefore confirms that the request was accepted, not that it took effect.
+//
+// Watch for the outcome through the session.model_change event on success, or the
+// ephemeral session.auto_tier_switch_failed event on failure. You can also read the
+// current committed and in-flight state at any time with session.RPC.Model.GetCurrent.
+//
+// Only the most recent request survives: issuing a new request replaces any earlier one
+// that has not yet been claimed by a turn.
+//
+// Pass nil to return to the provider's default Auto routing.
+//
+// For Copilot Fusion, prefer [Session.SetFusionTier]. The balance, hydrafusion and
+// hydrafusion-max identifiers it replaces remain accepted but are deprecated.
+//
+// Experimental: SetAutoTier is part of an experimental Auto routing surface and
+// may change or be removed.
+//
+// Example:
+//
+//	tier := copilot.AutoTierIntelligence
+//	result, err := session.SetAutoTier(context.Background(), &tier)
+//	if err != nil {
+//	    log.Printf("Failed to set auto tier: %v", err)
+//	}
+func (s *Session) SetAutoTier(ctx context.Context, autoTier *AutoTier) (*rpc.ModelSwitchAutoTierResult, error) {
+	result, err := s.RPC.Model.SwitchAutoTier(ctx, &rpc.ModelSwitchAutoTierRequest{AutoTier: autoTier})
+	if err != nil {
+		return nil, fmt.Errorf("failed to set auto tier: %w", err)
+	}
+
+	return result, nil
+}
+
+// SetFusionTier changes the Copilot Fusion tier without changing the selected model,
+// naming the tier as the CLI's --fusion-tier does.
+//
+// The runtime resolves the tier to the Auto routing preference it stands for and then
+// handles the request exactly like [Session.SetAutoTier]: it takes effect on a later
+// user turn that uses the "fusion" or "auto" model. To return to the provider's default
+// routing, call SetAutoTier with nil.
+//
+// Experimental: SetFusionTier is part of an experimental Auto routing surface and
+// may change or be removed.
+//
+// Example:
+//
+//	result, err := session.SetFusionTier(context.Background(), copilot.FusionTierMax)
+//	if err != nil {
+//	    log.Printf("Failed to set Fusion tier: %v", err)
+//	}
+func (s *Session) SetFusionTier(ctx context.Context, fusionTier FusionTier) (*rpc.ModelSwitchAutoTierResult, error) {
+	result, err := s.RPC.Model.SwitchFusionTier(ctx, &rpc.ModelSwitchFusionTierRequest{FusionTier: fusionTier})
+	if err != nil {
+		return nil, fmt.Errorf("failed to set Fusion tier: %w", err)
+	}
+
+	return result, nil
+}
+
+type LogOptions struct {
+	// Level sets the log severity. Valid values are [rpc.SessionLogLevelInfo] (default),
+	// [rpc.SessionLogLevelWarning], and [rpc.SessionLogLevelError].
+	Level rpc.SessionLogLevel
+	// Ephemeral marks the message as transient so it is not persisted
+	// to the session event log on disk. When nil the server decides the
+	// default; set to a non-nil value to explicitly control persistence.
+	Ephemeral *bool
+}
+
+// Log sends a log message to the session timeline.
+// The message appears in the session event stream and is visible to SDK consumers
+// and (for non-ephemeral messages) persisted to the session event log on disk.
+//
+// Pass nil for opts to use defaults (info level, non-ephemeral).
+//
+// Example:
+//
+//	// Simple info message
+//	session.Log(ctx, "Processing started")
+//
+//	// Warning with options
+//	session.Log(ctx, "Rate limit approaching", &copilot.LogOptions{Level: rpc.SessionLogLevelWarning})
+//
+//	// Ephemeral message (not persisted)
+//	session.Log(ctx, "Working...", &copilot.LogOptions{Ephemeral: copilot.Bool(true)})
+func (s *Session) Log(ctx context.Context, message string, opts *LogOptions) error {
+	params := &rpc.LogRequest{Message: message}
+
+	if opts != nil {
+		if opts.Level != "" {
+			params.Level = &opts.Level
+		}
+		if opts.Ephemeral != nil {
+			params.Ephemeral = opts.Ephemeral
+		}
+	}
+
+	_, err := s.RPC.Log(ctx, params)
+	if err != nil {
+		return fmt.Errorf("failed to log message: %w", err)
+	}
+
+	return nil
+}

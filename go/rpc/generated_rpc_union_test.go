@@ -1,0 +1,572 @@
+package rpc
+
+import (
+	"encoding/json"
+	"io"
+	"reflect"
+	"testing"
+
+	"github.com/github/copilot-sdk/go/internal/jsonrpc2"
+)
+
+func TestProtocolSectionOverrideEdits(t *testing.T) {
+	t.Run("static content stays editable after decoding", func(t *testing.T) {
+		var section ProtocolSectionOverride
+		if err := json.Unmarshal([]byte(`{"action":"replace","content":"before"}`), &section); err != nil {
+			t.Fatalf("decode section: %v", err)
+		}
+		if section.ProtocolStaticSectionOverride == nil || section.ProtocolMarkerSectionOverride != nil {
+			t.Fatalf("decoded section = %#v, want only a static override", section)
+		}
+		content := "after"
+		section.ProtocolStaticSectionOverride.Content = &content
+		wire, err := json.Marshal(section)
+		if err != nil {
+			t.Fatalf("encode edited section: %v", err)
+		}
+		if string(wire) != `{"action":"replace","content":"after"}` {
+			t.Fatalf("edited section = %s, want replacement content", wire)
+		}
+	})
+
+	t.Run("marker action keeps its typed representation", func(t *testing.T) {
+		var section ProtocolSectionOverride
+		if err := json.Unmarshal([]byte(`{"action":"transform"}`), &section); err != nil {
+			t.Fatalf("decode marker: %v", err)
+		}
+		if _, ok := section.ProtocolMarkerSectionOverride.(*ProtocolMarkerSectionOverrideTransform); !ok {
+			t.Fatalf("decoded marker = %T, want *ProtocolMarkerSectionOverrideTransform", section.ProtocolMarkerSectionOverride)
+		}
+		if section.ProtocolStaticSectionOverride != nil {
+			t.Fatalf("marker also decoded as static: %#v", section)
+		}
+	})
+
+	t.Run("unknown action retains its payload", func(t *testing.T) {
+		const payload = `{"action":"future","option":"retained"}`
+		var section ProtocolSectionOverride
+		if err := json.Unmarshal([]byte(payload), &section); err != nil {
+			t.Fatalf("decode future action: %v", err)
+		}
+		wire, err := json.Marshal(section)
+		if err != nil {
+			t.Fatalf("encode future action: %v", err)
+		}
+		if string(wire) != payload {
+			t.Fatalf("future action = %s, want %s", wire, payload)
+		}
+	})
+}
+
+func TestExternalToolResultJSONUnion(t *testing.T) {
+	var stringResult ExternalToolResult = ExternalToolStringResult("tool result")
+	raw, err := json.Marshal(stringResult)
+	if err != nil {
+		t.Fatalf("marshal string result: %v", err)
+	}
+
+	if string(raw) != `"tool result"` {
+		t.Fatalf("marshal string result = %s", raw)
+	}
+
+	decodedString, err := unmarshalExternalToolResult([]byte(`"tool result"`))
+	if err != nil {
+		t.Fatalf("unmarshal string result: %v", err)
+	}
+	decodedStringValue, ok := decodedString.(ExternalToolStringResult)
+	if !ok || string(decodedStringValue) != "tool result" {
+		t.Fatalf("unmarshal string result = %#v", decodedString)
+	}
+
+	var objectResult ExternalToolResult = &ExternalToolTextResultForLlm{TextResultForLlm: "expanded"}
+	raw, err = json.Marshal(objectResult)
+	if err != nil {
+		t.Fatalf("marshal object result: %v", err)
+	}
+	if string(raw) != `{"textResultForLlm":"expanded"}` {
+		t.Fatalf("marshal object result = %s", raw)
+	}
+
+	decodedObject, err := unmarshalExternalToolResult([]byte(`{"textResultForLlm":"expanded"}`))
+	if err != nil {
+		t.Fatalf("unmarshal object result: %v", err)
+	}
+	decodedObjectValue, ok := decodedObject.(*ExternalToolTextResultForLlm)
+	if !ok || decodedObjectValue.TextResultForLlm != "expanded" {
+		t.Fatalf("unmarshal object result = %#v", decodedObject)
+	}
+}
+
+func TestOptionalNullableFieldsPreserveOmittedAndNull(t *testing.T) {
+	unset, err := json.Marshal(TaskClientUpdateProgress{})
+	if err != nil {
+		t.Fatalf("marshal unset progress: %v", err)
+	}
+	if string(unset) != `{"kind":"progress"}` {
+		t.Fatalf("marshal unset progress = %s", unset)
+	}
+
+	var clearedPercentage *float64
+	var clearedPhase *string
+	cleared, err := json.Marshal(TaskClientUpdateProgress{
+		Percentage: &clearedPercentage,
+		Phase:      &clearedPhase,
+	})
+	if err != nil {
+		t.Fatalf("marshal cleared progress: %v", err)
+	}
+	if string(cleared) != `{"kind":"progress","percentage":null,"phase":null}` {
+		t.Fatalf("marshal cleared progress = %s", cleared)
+	}
+}
+
+func TestPendingPermissionRequestUnmarshalsAssistedApprovalAssessment(t *testing.T) {
+	var result PendingPermissionRequestList
+	err := json.Unmarshal([]byte(`{
+		"items": [{
+			"requestId": "permission-1",
+			"request": {
+				"kind": "commands",
+				"fullCommandText": "git status",
+				"commandIdentifiers": ["git"],
+				"canOfferSessionApproval": false
+			},
+			"assistedApprovalAssessment": {
+				"status": "completed",
+				"recommendation": "requireApproval",
+				"rationale": "The command may change repository state."
+			}
+		}]
+	}`), &result)
+	if err != nil {
+		t.Fatalf("unmarshal pending permission requests: %v", err)
+	}
+	if len(result.Items) != 1 {
+		t.Fatalf("pending permission request count = %d, want 1", len(result.Items))
+	}
+	assessment, ok := result.Items[0].AssistedApprovalAssessment.(*AssistedApprovalAssessmentCompleted)
+	if !ok {
+		t.Fatalf(
+			"pending assessment = %T, want *AssistedApprovalAssessmentCompleted",
+			result.Items[0].AssistedApprovalAssessment,
+		)
+	}
+	if assessment.Recommendation != AssistedApprovalCompletedRecommendationRequireApproval {
+		t.Fatalf("pending recommendation = %q, want requireApproval", assessment.Recommendation)
+	}
+	if assessment.Rationale == nil || *assessment.Rationale != "The command may change repository state." {
+		t.Fatalf("pending rationale = %v", assessment.Rationale)
+	}
+}
+
+func TestFilterMappingJSONUnion(t *testing.T) {
+	var mapping FilterMapping = FilterMappingEnumMap{"secret": ContentFilterModeHiddenCharacters}
+	raw, err := json.Marshal(mapping)
+	if err != nil {
+		t.Fatalf("marshal filter mapping map: %v", err)
+	}
+	if string(raw) != `{"secret":"hidden_characters"}` {
+		t.Fatalf("marshal filter mapping map = %s", raw)
+	}
+
+	decodedMap, err := unmarshalFilterMapping([]byte(`{"secret":"hidden_characters"}`))
+	if err != nil {
+		t.Fatalf("unmarshal filter mapping map: %v", err)
+	}
+	decodedMapValue, ok := decodedMap.(FilterMappingEnumMap)
+	if !ok || decodedMapValue["secret"] != ContentFilterModeHiddenCharacters {
+		t.Fatalf("unmarshal filter mapping map = %#v", decodedMap)
+	}
+
+	var enumValue FilterMapping = ContentFilterModeMarkdown
+	raw, err = json.Marshal(enumValue)
+	if err != nil {
+		t.Fatalf("marshal filter mapping enum: %v", err)
+	}
+	if string(raw) != `"markdown"` {
+		t.Fatalf("marshal filter mapping enum = %s", raw)
+	}
+
+	decodedEnum, err := unmarshalFilterMapping([]byte(`"markdown"`))
+	if err != nil {
+		t.Fatalf("unmarshal filter mapping enum: %v", err)
+	}
+	decodedEnumValue, ok := decodedEnum.(ContentFilterMode)
+	if !ok || decodedEnumValue != ContentFilterModeMarkdown {
+		t.Fatalf("unmarshal filter mapping enum = %#v", decodedEnum)
+	}
+}
+
+func TestMCPServerConfigJSONUnion(t *testing.T) {
+	var localConfig MCPServerConfig = &MCPServerConfigStdio{
+		Args:    []string{"-v"},
+		Command: "node",
+	}
+	raw, err := json.Marshal(localConfig)
+	if err != nil {
+		t.Fatalf("marshal local config: %v", err)
+	}
+	if string(raw) != `{"args":["-v"],"command":"node"}` {
+		t.Fatalf("marshal local config = %s", raw)
+	}
+
+	decodedLocal, err := unmarshalMCPServerConfig([]byte(`{"args":["-v"],"command":"node"}`))
+	if err != nil {
+		t.Fatalf("unmarshal local config: %v", err)
+	}
+	decodedLocalValue, ok := decodedLocal.(*MCPServerConfigStdio)
+	if !ok || decodedLocalValue.Command != "node" || len(decodedLocalValue.Args) != 1 || decodedLocalValue.Args[0] != "-v" {
+		t.Fatalf("unmarshal local config = %#v", decodedLocal)
+	}
+
+	var httpConfig MCPServerConfig = &MCPServerConfigHTTP{URL: "https://example.com/mcp"}
+	raw, err = json.Marshal(httpConfig)
+	if err != nil {
+		t.Fatalf("marshal HTTP config: %v", err)
+	}
+	if string(raw) != `{"url":"https://example.com/mcp"}` {
+		t.Fatalf("marshal HTTP config = %s", raw)
+	}
+
+	decodedHTTP, err := unmarshalMCPServerConfig([]byte(`{"url":"https://example.com/mcp"}`))
+	if err != nil {
+		t.Fatalf("unmarshal HTTP config: %v", err)
+	}
+	decodedHTTPValue, ok := decodedHTTP.(*MCPServerConfigHTTP)
+	if !ok || decodedHTTPValue.URL != "https://example.com/mcp" {
+		t.Fatalf("unmarshal HTTP config = %#v", decodedHTTP)
+	}
+
+	decodedRaw, err := unmarshalMCPServerConfig([]byte(`{"name":"future"}`))
+	if err != nil {
+		t.Fatalf("unmarshal raw config: %v", err)
+	}
+	if _, ok := decodedRaw.(*RawMCPServerConfigData); !ok {
+		t.Fatalf("unmarshal raw config = %T, want *RawMCPServerConfigData", decodedRaw)
+	}
+}
+
+func TestMCPStartServerConfigRoundTrip(t *testing.T) {
+	httpType := MCPServerConfigHTTPTypeHTTP
+	sseType := MCPServerConfigHTTPTypeSSE
+	for _, config := range []MCPStartServerConfig{
+		&MCPServerConfigStdio{Command: "node", Args: []string{"server.js"}},
+		&MCPServerConfigHTTP{URL: "https://example.com/mcp"},
+		&MCPServerConfigHTTP{URL: "https://example.com/mcp", Type: &httpType},
+		&MCPServerConfigHTTP{URL: "https://example.com/sse", Type: &sseType},
+		&MCPServerConfigLocal{
+			Type:       MCPServerConfigLocalTypeLocalHTTP,
+			SocketPath: "/tmp/editor.sock",
+			Ide:        MCPIdeConfig{IdeName: "editor", WorkspaceFolder: "/workspace"},
+		},
+		&RawMCPStartServerConfigData{Raw: json.RawMessage(`{"type":"future"}`)},
+		&RawMCPStartServerConfigData{Raw: json.RawMessage(`{"type":"websocket","url":"wss://example.com/mcp","extra":"preserved"}`)},
+		&RawMCPStartServerConfigData{Raw: json.RawMessage(`{"type":"process","command":"future","extra":"preserved"}`)},
+	} {
+		t.Run(reflect.TypeOf(config).String(), func(t *testing.T) {
+			request := MCPStartServerRequest{ServerName: "ide", Config: config}
+			data, err := json.Marshal(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var decoded MCPStartServerRequest
+			if err := json.Unmarshal(data, &decoded); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(decoded.Config, config) {
+				t.Fatalf("decoded config = %#v (%T), want %#v (%T)", decoded.Config, decoded.Config, config, config)
+			}
+		})
+	}
+}
+
+func TestMCPStartServerAcceptsListedConfig(t *testing.T) {
+	for _, config := range []string{
+		`{"command":"node","args":["server.js"]}`,
+		`{"url":"https://example.com/mcp"}`,
+		`{"type":"future","custom":"preserved"}`,
+		`{"type":"websocket","url":"wss://example.com/mcp","extra":"preserved"}`,
+		`{"type":"process","command":"future","extra":"preserved"}`,
+	} {
+		t.Run(config, func(t *testing.T) {
+			var listed MCPConfigList
+			if err := json.Unmarshal([]byte(`{"servers":{"configured":`+config+`}}`), &listed); err != nil {
+				t.Fatal(err)
+			}
+			request := MCPStartServerRequest{
+				ServerName: "configured",
+				Config:     listed.Servers["configured"],
+			}
+			data, err := json.Marshal(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var payload struct {
+				Config json.RawMessage `json:"config"`
+			}
+			if err := json.Unmarshal(data, &payload); err != nil {
+				t.Fatal(err)
+			}
+			var got, want any
+			if err := json.Unmarshal(payload.Config, &got); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal([]byte(config), &want); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("start config = %s, want %s", payload.Config, config)
+			}
+		})
+	}
+}
+
+func TestMCPToolResultPreservesNestedNumbers(t *testing.T) {
+	var result MCPToolResult
+	if err := json.Unmarshal([]byte(`{
+		"structuredContent": {
+			"id": 9007199254740993,
+			"items": [{"id": -9007199254740993}, 1.234567890123456789]
+		}
+	}`), &result); err != nil {
+		t.Fatalf("unmarshal MCP tool result: %v", err)
+	}
+	want := map[string]any{
+		"id": json.Number("9007199254740993"),
+		"items": []any{
+			map[string]any{"id": json.Number("-9007199254740993")},
+			json.Number("1.234567890123456789"),
+		},
+	}
+	if got := result["structuredContent"]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("structured content = %#v, want %#v", got, want)
+	}
+}
+
+func TestTaskProgressUnmarshalsTaskAgentProgressVariants(t *testing.T) {
+	agentProgress, err := unmarshalTaskProgress([]byte(`{"type":"agent","recentActivity":[],"latestIntent":"Summarizing"}`))
+	if err != nil {
+		t.Fatalf("unmarshal agent task progress: %v", err)
+	}
+	agentValue, ok := agentProgress.(*TaskAgentProgress)
+	if !ok {
+		t.Fatalf("agent task progress = %T, want *TaskAgentProgress", agentProgress)
+	}
+	if agentValue.LatestIntent == nil || *agentValue.LatestIntent != "Summarizing" {
+		t.Fatalf("agent latest intent = %v, want Summarizing", agentValue.LatestIntent)
+	}
+
+	shellProgress, err := unmarshalTaskProgress([]byte(`{"type":"shell","recentOutput":"building","pid":123}`))
+	if err != nil {
+		t.Fatalf("unmarshal shell task progress: %v", err)
+	}
+	shellValue, ok := shellProgress.(*TaskShellProgress)
+	if !ok {
+		t.Fatalf("shell task progress = %T, want *TaskShellProgress", shellProgress)
+	}
+	if shellValue.RecentOutput != "building" {
+		t.Fatalf("shell recent output = %q, want building", shellValue.RecentOutput)
+	}
+	if shellValue.Pid == nil || *shellValue.Pid != 123 {
+		t.Fatalf("shell pid = %v, want 123", shellValue.Pid)
+	}
+}
+
+func TestCommandsInvokeUnmarshalsSlashCommandInvocationResult(t *testing.T) {
+	clientToServerReader, clientToServerWriter := io.Pipe()
+	serverToClientReader, serverToClientWriter := io.Pipe()
+
+	client := jsonrpc2.NewClient(clientToServerWriter, serverToClientReader)
+	server := jsonrpc2.NewClient(serverToClientWriter, clientToServerReader)
+	server.SetRequestHandler("session.commands.invoke", func(params json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
+		var request struct {
+			Input     string `json:"input"`
+			Name      string `json:"name"`
+			SessionID string `json:"sessionId"`
+		}
+		if err := json.Unmarshal(params, &request); err != nil {
+			return nil, &jsonrpc2.Error{Code: -32602, Message: err.Error()}
+		}
+		if request.SessionID != "session-1" || request.Name != "help" || request.Input != "details" {
+			return nil, &jsonrpc2.Error{Code: -32602, Message: "unexpected invoke request"}
+		}
+		return json.RawMessage(`{"kind":"text","text":"hello","markdown":true}`), nil
+	})
+
+	client.Start()
+	server.Start()
+	t.Cleanup(func() {
+		client.Stop()
+		server.Stop()
+		_ = clientToServerWriter.Close()
+		_ = clientToServerReader.Close()
+		_ = serverToClientWriter.Close()
+		_ = serverToClientReader.Close()
+	})
+
+	input := "details"
+	result, err := NewSessionRPC(client, "session-1").Commands.Invoke(t.Context(), &CommandsInvokeRequest{
+		Input: &input,
+		Name:  "help",
+	})
+	if err != nil {
+		t.Fatalf("invoke command: %v", err)
+	}
+	textResult, ok := result.(*SlashCommandTextResult)
+	if !ok {
+		t.Fatalf("invoke result = %T, want *SlashCommandTextResult", result)
+	}
+	if textResult.Text != "hello" {
+		t.Fatalf("invoke result text = %q, want hello", textResult.Text)
+	}
+	if textResult.Markdown == nil || !*textResult.Markdown {
+		t.Fatalf("invoke result markdown = %v, want true", textResult.Markdown)
+	}
+}
+
+func TestQueuedCommandResultBoolDiscriminatorJSONUnion(t *testing.T) {
+	stopProcessingQueue := true
+	var handled QueuedCommandResult = &QueuedCommandHandled{StopProcessingQueue: &stopProcessingQueue}
+	raw, err := json.Marshal(handled)
+	if err != nil {
+		t.Fatalf("marshal handled result: %v", err)
+	}
+	if string(raw) != `{"handled":true,"stopProcessingQueue":true}` {
+		t.Fatalf("marshal handled result = %s", raw)
+	}
+
+	decodedHandled, err := unmarshalQueuedCommandResult([]byte(`{"handled":true,"stopProcessingQueue":true}`))
+	if err != nil {
+		t.Fatalf("unmarshal handled result: %v", err)
+	}
+	decodedHandledValue, ok := decodedHandled.(*QueuedCommandHandled)
+	if !ok {
+		t.Fatalf("unmarshal handled result = %T, want *QueuedCommandHandled", decodedHandled)
+	}
+	if decodedHandledValue.StopProcessingQueue == nil || !*decodedHandledValue.StopProcessingQueue {
+		t.Fatalf("unmarshal handled stopProcessingQueue = %v, want true", decodedHandledValue.StopProcessingQueue)
+	}
+
+	var notHandled QueuedCommandResult = &QueuedCommandNotHandled{}
+	raw, err = json.Marshal(notHandled)
+	if err != nil {
+		t.Fatalf("marshal not handled result: %v", err)
+	}
+	if string(raw) != `{"handled":false}` {
+		t.Fatalf("marshal not handled result = %s", raw)
+	}
+
+	decodedNotHandled, err := unmarshalQueuedCommandResult([]byte(`{"handled":false}`))
+	if err != nil {
+		t.Fatalf("unmarshal not handled result: %v", err)
+	}
+	if _, ok := decodedNotHandled.(*QueuedCommandNotHandled); !ok {
+		t.Fatalf("unmarshal not handled result = %T, want *QueuedCommandNotHandled", decodedNotHandled)
+	}
+}
+
+func TestUIElicitationFieldValueJSONUnion(t *testing.T) {
+	raw, err := json.Marshal(UIElicitationBooleanValue(true))
+	if err != nil {
+		t.Fatalf("marshal bool value: %v", err)
+	}
+	if string(raw) != `true` {
+		t.Fatalf("marshal bool value = %s", raw)
+	}
+
+	var response UIElicitationResponse
+	if err := json.Unmarshal([]byte(`{"action":"accept","content":{"choices":["a","b"]}}`), &response); err != nil {
+		t.Fatalf("unmarshal response with string array value: %v", err)
+	}
+	decodedArray, ok := response.Content["choices"].(UIElicitationStringArrayValue)
+	if !ok {
+		t.Fatalf("unmarshal string array value = %T, want UIElicitationStringArrayValue", response.Content["choices"])
+	}
+	if len(decodedArray) != 2 || decodedArray[0] != "a" || decodedArray[1] != "b" {
+		t.Fatalf("unmarshal string array value = %#v", decodedArray)
+	}
+}
+
+func TestUIElicitationSchemaPropertyJSONUnion(t *testing.T) {
+	var schema UIElicitationSchema
+	if err := json.Unmarshal([]byte(`{
+		"type":"object",
+		"properties":{
+			"confirmed":{"type":"boolean","default":true},
+			"choice":{"type":"string","enum":["a","b"]},
+			"freeform":{"type":"string","minLength":1},
+			"count":{"type":"integer","minimum":0},
+			"arrayChoice":{"type":"array","items":{"type":"string","enum":["a","b"]}},
+			"arrayAnyOf":{"type":"array","items":{"anyOf":[{"const":"a","title":"A"}]}}
+		},
+		"required":["confirmed"]
+	}`), &schema); err != nil {
+		t.Fatalf("unmarshal elicitation schema: %v", err)
+	}
+
+	confirmed, ok := schema.Properties["confirmed"].(*UIElicitationSchemaPropertyBoolean)
+	if !ok {
+		t.Fatalf("confirmed property = %T, want *UIElicitationSchemaPropertyBoolean", schema.Properties["confirmed"])
+	}
+	if confirmed.Default == nil || !*confirmed.Default {
+		t.Fatalf("confirmed default = %v, want true", confirmed.Default)
+	}
+
+	choice, ok := schema.Properties["choice"].(*UIElicitationStringEnumField)
+	if !ok {
+		t.Fatalf("choice property = %T, want *UIElicitationStringEnumField", schema.Properties["choice"])
+	}
+	if len(choice.Enum) != 2 || choice.Enum[0] != "a" || choice.Enum[1] != "b" {
+		t.Fatalf("choice enum = %#v", choice.Enum)
+	}
+
+	freeform, ok := schema.Properties["freeform"].(*UIElicitationSchemaPropertyString)
+	if !ok {
+		t.Fatalf("freeform property = %T, want *UIElicitationSchemaPropertyString", schema.Properties["freeform"])
+	}
+	if freeform.MinLength == nil || *freeform.MinLength != 1 {
+		t.Fatalf("freeform minLength = %v, want 1", freeform.MinLength)
+	}
+
+	count, ok := schema.Properties["count"].(*UIElicitationSchemaPropertyNumber)
+	if !ok {
+		t.Fatalf("count property = %T, want *UIElicitationSchemaPropertyNumber", schema.Properties["count"])
+	}
+	if count.Discriminator != UIElicitationSchemaPropertyNumberTypeInteger {
+		t.Fatalf("count type = %q, want %q", count.Discriminator, UIElicitationSchemaPropertyNumberTypeInteger)
+	}
+
+	arrayChoice, ok := schema.Properties["arrayChoice"].(*UIElicitationArrayEnumField)
+	if !ok {
+		t.Fatalf("arrayChoice property = %T, want *UIElicitationArrayEnumField", schema.Properties["arrayChoice"])
+	}
+	if len(arrayChoice.Items.Enum) != 2 || arrayChoice.Items.Enum[0] != "a" || arrayChoice.Items.Enum[1] != "b" {
+		t.Fatalf("arrayChoice items enum = %#v", arrayChoice.Items.Enum)
+	}
+
+	arrayAnyOf, ok := schema.Properties["arrayAnyOf"].(*UIElicitationArrayAnyOfField)
+	if !ok {
+		t.Fatalf("arrayAnyOf property = %T, want *UIElicitationArrayAnyOfField", schema.Properties["arrayAnyOf"])
+	}
+	if len(arrayAnyOf.Items.AnyOf) != 1 || arrayAnyOf.Items.AnyOf[0].Const != "a" || arrayAnyOf.Items.AnyOf[0].Title != "A" {
+		t.Fatalf("arrayAnyOf items anyOf = %#v", arrayAnyOf.Items.AnyOf)
+	}
+
+	defaultValue := true
+	encoded, err := json.Marshal(UIElicitationSchema{
+		Type: UIElicitationSchemaTypeObject,
+		Properties: map[string]UIElicitationSchemaProperty{
+			"confirmed": &UIElicitationSchemaPropertyBoolean{Default: &defaultValue},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal elicitation schema: %v", err)
+	}
+	var roundTrip UIElicitationSchema
+	if err := json.Unmarshal(encoded, &roundTrip); err != nil {
+		t.Fatalf("unmarshal marshaled elicitation schema: %v", err)
+	}
+	if _, ok := roundTrip.Properties["confirmed"].(*UIElicitationSchemaPropertyBoolean); !ok {
+		t.Fatalf("round-trip confirmed property = %T, want *UIElicitationSchemaPropertyBoolean", roundTrip.Properties["confirmed"])
+	}
+}
