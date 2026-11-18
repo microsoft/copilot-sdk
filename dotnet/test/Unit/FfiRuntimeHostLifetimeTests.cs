@@ -1,0 +1,309 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *--------------------------------------------------------------------------------------------*/
+
+using GitHub.Copilot.Test.Harness;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using System.Reflection;
+using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
+using Xunit;
+
+namespace GitHub.Copilot.Test.Unit;
+
+public sealed class FfiRuntimeHostLifetimeTests
+{
+    private static readonly string[] NoAutoLoginArguments = ["--no-auto-login"];
+
+    [Theory]
+    [InlineData("FfiRuntimeHost started.")]
+    [InlineData("CopilotClient.ConnectToServerAsync transport setup complete.")]
+    [InlineData("CopilotClient.StartAsync transport setup complete.")]
+    public async Task Failed_Startup_Releases_Native_Callback_Target(string checkpoint)
+    {
+        var homeDirectory = Path.Combine(Path.GetTempPath(), $"copilot-ffi-startup-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(homeDirectory);
+        Exception? failure = null;
+        try
+        {
+            var logger = await StartFailingClientAsync(homeDirectory, checkpoint);
+            await TestHelper.WaitForConditionAsync(() =>
+            {
+                CollectGarbage();
+                return !logger.IsAlive;
+            }, timeout: TimeSpan.FromSeconds(5),
+                timeoutMessage: "Failed startup retained the native callback target after force-stop and disposal.");
+        }
+        catch (Exception ex)
+        {
+            failure = ex;
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(homeDirectory, recursive: true);
+            }
+            catch (Exception ex)
+            {
+                failure = failure is null ? ex : new AggregateException(failure, ex);
+            }
+        }
+        if (failure is not null)
+        {
+            ExceptionDispatchInfo.Capture(failure).Throw();
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static async Task<WeakReference> StartFailingClientAsync(string homeDirectory, string checkpoint)
+    {
+        var logger = new FailingStartupLogger(checkpoint);
+        await using var client = new CopilotClient(new CopilotClientOptions
+        {
+            Connection = RuntimeConnection.ForInProcess(),
+            UseLoggedInUser = false,
+            BaseDirectory = homeDirectory,
+            Logger = logger,
+        });
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => client.StartAsync());
+        Assert.Same(logger.Failure, error);
+        await client.ForceStopAsync();
+        await client.DisposeAsync();
+
+        // The native callback's GCHandle roots the host, which retains its logger.
+        return new WeakReference(logger);
+    }
+
+    private sealed class FailingStartupLogger(string checkpoint) : ILogger
+    {
+        public InvalidOperationException Failure { get; } = new("Injected startup failure.");
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => logLevel == LogLevel.Debug;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (formatter(state, exception).StartsWith(checkpoint, StringComparison.Ordinal))
+            {
+                throw Failure;
+            }
+        }
+    }
+
+    [Fact]
+    public void Open_Connection_Keeps_Unreferenced_Host_Reachable_Until_Disposed()
+    {
+        var homeDirectory = Path.Combine(Path.GetTempPath(), $"copilot-ffi-lifetime-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(homeDirectory);
+        try
+        {
+            var host = StartUnreferencedHost(homeDirectory);
+            try
+            {
+                CollectGarbage();
+                // Native code is not a GC root. A host collected while its connection is open
+                // turns the next native callback into a call on a collected delegate.
+                Assert.True(host.IsAlive, "An open native connection must keep its callback target reachable.");
+            }
+            finally
+            {
+                DisposeHost(host);
+            }
+
+            CollectGarbage();
+            Assert.False(host.IsAlive, "Closing the native connection must release its callback target.");
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(homeDirectory, recursive: true);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Best effort: a failed assertion leaves the native host running.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Dispose_Retains_Callback_Until_Connection_Close_Succeeds()
+    {
+        var allowClose = false;
+        var closeCalls = 0;
+        var shutdownCalls = 0;
+        var callbackReleaseCalls = 0;
+        var cleanupCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Func<uint, bool> connectionClose = _ =>
+        {
+            Interlocked.Increment(ref closeCalls);
+            return Volatile.Read(ref allowClose);
+        };
+        Func<uint, bool> hostShutdown = _ =>
+        {
+            Interlocked.Increment(ref shutdownCalls);
+            cleanupCompleted.TrySetResult();
+            return true;
+        };
+        Action releaseCallback = () => Interlocked.Increment(ref callbackReleaseCalls);
+
+        var hostType = typeof(CopilotClient).Assembly.GetType("GitHub.Copilot.FfiRuntimeHost", throwOnError: true)!;
+        var constructor = hostType.GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic)
+            .Single(candidate => candidate.GetParameters().Length == 8);
+        using var host = (IDisposable)constructor.Invoke(
+            [
+                "test-runtime",
+                null,
+                null,
+                Array.Empty<string>(),
+                NullLogger.Instance,
+                connectionClose,
+                hostShutdown,
+                releaseCallback,
+            ]);
+
+        hostType.GetField("_connectionId", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(host, (uint)21);
+        hostType.GetField("_serverId", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(host, (uint)11);
+
+        host.Dispose();
+
+        Assert.Equal(0, Volatile.Read(ref callbackReleaseCalls));
+        Assert.Equal(0, Volatile.Read(ref shutdownCalls));
+
+        Volatile.Write(ref allowClose, true);
+        await cleanupCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        AssertNoCleanupRetryScheduled(hostType, host);
+        Assert.Equal(1, Volatile.Read(ref callbackReleaseCalls));
+        Assert.Equal(1, Volatile.Read(ref shutdownCalls));
+
+        var closeCallsAfterCleanup = Volatile.Read(ref closeCalls);
+        host.Dispose();
+
+        AssertNoCleanupRetryScheduled(hostType, host);
+        Assert.Equal(closeCallsAfterCleanup, Volatile.Read(ref closeCalls));
+        Assert.Equal(1, Volatile.Read(ref callbackReleaseCalls));
+        Assert.Equal(1, Volatile.Read(ref shutdownCalls));
+    }
+
+    [Fact]
+    public void Dispose_Does_Not_Retry_Terminal_Host_Shutdown_Failure()
+    {
+        var closeCalls = 0;
+        var shutdownCalls = 0;
+        var callbackReleaseCalls = 0;
+
+        var hostType = typeof(CopilotClient).Assembly.GetType("GitHub.Copilot.FfiRuntimeHost", throwOnError: true)!;
+        var constructor = hostType.GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic)
+            .Single(candidate => candidate.GetParameters().Length == 8);
+        using var host = (IDisposable)constructor.Invoke(
+            [
+                "test-runtime",
+                null,
+                null,
+                Array.Empty<string>(),
+                NullLogger.Instance,
+                new Func<uint, bool>(_ =>
+                {
+                    Interlocked.Increment(ref closeCalls);
+                    return true;
+                }),
+                new Func<uint, bool>(_ =>
+                {
+                    Interlocked.Increment(ref shutdownCalls);
+                    return false;
+                }),
+                new Action(() => Interlocked.Increment(ref callbackReleaseCalls)),
+            ]);
+
+        hostType.GetField("_connectionId", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(host, (uint)21);
+        hostType.GetField("_serverId", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(host, (uint)11);
+
+        host.Dispose();
+        AssertNoCleanupRetryScheduled(hostType, host);
+        host.Dispose();
+        AssertNoCleanupRetryScheduled(hostType, host);
+
+        Assert.Equal(1, Volatile.Read(ref closeCalls));
+        Assert.Equal(1, Volatile.Read(ref callbackReleaseCalls));
+        Assert.Equal(1, Volatile.Read(ref shutdownCalls));
+    }
+
+    private static void AssertNoCleanupRetryScheduled(Type hostType, IDisposable host)
+    {
+        var lifecycleLock = hostType.GetField("_lifecycleLock", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(host)!;
+        // The callback signals inside the lifecycle lock. Join that iteration before
+        // checking that no delayed cleanup remains, rather than waiting a quiet window.
+        lock (lifecycleLock)
+        {
+            Assert.False((bool)hostType.GetField("_cleanupRetryScheduled", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(host)!);
+        }
+    }
+
+    // Starts a real native host and returns only a weak reference, so nothing in managed
+    // code roots it. Resolves the runtime library the way CopilotClient does, so it loads
+    // the same library as the in-process E2E tests in this process.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static WeakReference StartUnreferencedHost(string homeDirectory)
+    {
+        var hostType = typeof(CopilotClient).Assembly.GetType("GitHub.Copilot.FfiRuntimeHost", throwOnError: true)!;
+        var explicitCliPath = Environment.GetEnvironmentVariable("COPILOT_CLI_PATH");
+        if (string.IsNullOrEmpty(explicitCliPath))
+        {
+            explicitCliPath = null;
+        }
+
+        string libraryPath;
+        if (explicitCliPath is null)
+        {
+            object?[] arguments =
+            [
+                hostType.GetMethod("GetRuntimeLibraryFileName", BindingFlags.Static | BindingFlags.NonPublic)!
+                    .Invoke(null, null),
+                null,
+            ];
+            libraryPath = (string?)typeof(CopilotClient)
+                .GetMethod("GetBundledNativePath", BindingFlags.Static | BindingFlags.NonPublic)!
+                .Invoke(null, arguments)
+                ?? throw new InvalidOperationException($"In-process FFI runtime library not found at '{arguments[1]}'.");
+        }
+        else
+        {
+            libraryPath = (string)typeof(CopilotClient)
+                .GetMethod("ResolveRuntimePathForExplicitCli", BindingFlags.Static | BindingFlags.NonPublic)!
+                .Invoke(null, [explicitCliPath])!;
+        }
+
+        var host = hostType.GetMethod("Create", BindingFlags.Static | BindingFlags.Public)!.Invoke(
+            null,
+            [
+                libraryPath,
+                explicitCliPath,
+                new Dictionary<string, string>
+                {
+                    ["COPILOT_HOME"] = homeDirectory,
+                    ["COPILOT_DISABLE_KEYTAR"] = "1",
+                },
+                NoAutoLoginArguments,
+                NullLogger.Instance,
+            ])!;
+        ((Task)hostType.GetMethod("StartAsync")!.Invoke(host, [CancellationToken.None])!).GetAwaiter().GetResult();
+        return new WeakReference(host);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void DisposeHost(WeakReference host) => (host.Target as IDisposable)?.Dispose();
+
+    private static void CollectGarbage()
+    {
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+    }
+}

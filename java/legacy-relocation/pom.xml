@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ~ Copyright (c) Microsoft Corporation. All rights reserved.
+  -->
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- Standalone: never build or republish the V1 SDK or native runtime. -->
+    <groupId>com.github</groupId>
+    <artifactId>copilot-sdk-java</artifactId>
+    <version>${revision}</version>
+    <packaging>pom</packaging>
+
+    <name>GitHub Copilot Java SDK relocation</name>
+    <description>Deprecated GitHub Copilot SDK. Migrate to com.microsoft:copilot-sdk.</description>
+    <url>https://github.com/github/copilot-sdk</url>
+
+    <licenses>
+        <license>
+            <name>MIT License</name>
+            <url>https://opensource.org/licenses/MIT</url>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <name>GitHub Copilot SDK Team</name>
+            <organization>GitHub</organization>
+            <organizationUrl>https://github.com/github</organizationUrl>
+        </developer>
+    </developers>
+
+    <scm>
+        <connection>scm:git:git@github.com:github/copilot-sdk.git</connection>
+        <developerConnection>scm:git:git@github.com:github/copilot-sdk.git</developerConnection>
+        <url>https://github.com/github/copilot-sdk</url>
+    </scm>
+
+    <distributionManagement>
+        <relocation>
+            <groupId>com.microsoft</groupId>
+            <artifactId>copilot-sdk</artifactId>
+            <version>${project.version}</version>
+            <message>Deprecated: migrate to com.microsoft:copilot-sdk. Migration guide: ${migration.url}</message>
+        </relocation>
+    </distributionManagement>
+
+    <properties>
+        <revision>2.0.0</revision>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>3.7.0</version>
+                <executions>
+                    <execution>
+                        <id>require-v2-relocation</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <requireProperty>
+                                    <property>revision</property>
+                                    <regex>2\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?</regex>
+                                    <regexMessage>Relocation is only for a new 2.x release. Never relocate a V1 version to V2.</regexMessage>
+                                </requireProperty>
+                                <requireReleaseVersion>
+                                    <message>Publish an unused V2 release version, not a SNAPSHOT.</message>
+                                </requireReleaseVersion>
+                                <requireProperty>
+                                    <property>migration.url</property>
+                                    <regex>https://[^\s&lt;&gt;"]+</regex>
+                                    <message>Supply -Dmigration.url with the public migration guide URL.</message>
+                                </requireProperty>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>flatten-maven-plugin</artifactId>
+                <version>1.9.0</version>
+                <configuration>
+                    <flattenMode>ossrh</flattenMode>
+                    <updatePomFile>true</updatePomFile>
+                    <pomElements>
+                        <distributionManagement>expand</distributionManagement>
+                        <build>remove</build>
+                        <profiles>remove</profiles>
+                    </pomElements>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>flatten</id>
+                        <phase>process-resources</phase>
+                        <goals>
+                            <goal>flatten</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>flatten-clean</id>
+                        <phase>clean</phase>
+                        <goals>
+                            <goal>clean</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <profile>
+            <id>release</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-gpg-plugin</artifactId>
+                        <version>3.2.8</version>
+                        <executions>
+                            <execution>
+                                <id>sign-artifacts</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>sign</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.sonatype.central</groupId>
+                        <artifactId>central-publishing-maven-plugin</artifactId>
+                        <version>0.12.0</version>
+                        <extensions>true</extensions>
+                        <configuration>
+                            <publishingServerId>central</publishingServerId>
+                            <autoPublish>true</autoPublish>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+</project>

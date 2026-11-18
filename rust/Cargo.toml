@@ -1,0 +1,244 @@
+# Copyright (c) Microsoft Corporation. All rights reserved.
+
+[package]
+name = "github-copilot-sdk"
+version = "0.0.0-dev"
+edition = "2024"
+rust-version = "1.94.0"
+description = "Deprecated GitHub Copilot SDK. Migrate to copilot-sdk."
+keywords = ["copilot", "github", "ai", "json-rpc", "sdk"]
+categories = ["api-bindings", "development-tools"]
+repository = "https://github.com/microsoft/copilot-sdk"
+homepage = "https://github.com/microsoft/copilot-sdk"
+documentation = "https://docs.rs/github-copilot-sdk"
+readme = "README.md"
+license = "MIT"
+include = [
+    "src/**/*",
+    "build/**/*",
+    "examples/**/*",
+    "tests/**/*",
+    "build.rs",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE",
+    "cli-version.txt",
+    "cli-version-in-process.txt",
+]
+
+[lib]
+name = "github_copilot_sdk"
+
+[features]
+default = ["bundled-cli"]
+runtime = ["dep:openssl", "dep:rustls", "dep:ureq"]
+bundled-cli = ["runtime", "network-forwarding", "dep:tar", "dep:flate2", "dep:zip"]
+in-process = ["runtime", "dep:libloading"]
+local-runtime = ["in-process"]
+bundled-in-process = ["bundled-cli", "in-process"]
+network-forwarding = ["dep:native-tls", "dep:openssl-sys", "dep:reqwest", "dep:tokio-tungstenite", "dep:tokio-rustls", "dep:rustls-platform-verifier"]
+derive = ["dep:schemars"]
+test-support = []
+
+[package.metadata.cargo-machete]
+# The build script consumes this target dependency's version metadata.
+ignored = ["openssl-sys"]
+
+# Build docs.rs documentation with all features so feature-gated APIs
+# (e.g. `define_tool`, `schema_for`) appear and intra-doc links resolve.
+# Mirror this locally with: `cargo doc --no-deps --all-features`.
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lints.clippy]
+# Threshold lives in clippy.toml; consumers run on 2 MiB Tokio worker stacks.
+large_futures = "warn"
+
+[dependencies]
+async-trait = "0.1"
+indexmap = { version = "2", features = ["serde"] }
+schemars = { version = "1", optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order", "raw_value"] }
+tokio = { version = "1", features = ["io-util", "sync", "rt", "process", "net", "time", "macros"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+tokio-util = { version = "0.7", default-features = false }
+tracing = "0.1"
+libloading = { version = "0.9", optional = true }
+parking_lot = "0.12"
+regex = "1"
+getrandom = "0.4"
+uuid = { version = "1", default-features = false, features = ["v4"] }
+flate2 = { version = "1", optional = true }
+tar = { version = "0.4", optional = true }
+# LLM inference callback transport: idiomatic HTTP/WebSocket forwarding for the
+# `CopilotRequestHandler`, plus base64/byte/stream plumbing for the chunk protocol.
+base64 = "0.23"
+bytes = "1"
+http = "1"
+futures-util = "0.3"
+reqwest = { version = "0.13", default-features = false, features = ["stream", "http2"], optional = true }
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect"], optional = true }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+native-tls = { version = "0.2", optional = true }
+reqwest = { version = "0.13", default-features = false, features = ["native-tls"], optional = true }
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["native-tls"], optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+openssl-sys = { version = "0.9", optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider"], optional = true }
+rustls-platform-verifier = { version = "0.7", optional = true }
+# Forwarding names Rustls through this re-export: `dep:rustls` would also
+# activate acquisition's same-named build dependency, and `runtime`'s would
+# compile this target AWS-LC stack. Cargo rejects renaming one of them.
+tokio-rustls = { version = "0.26", default-features = false, features = ["aws_lc_rs", "tls12"], optional = true }
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["rustls-tls-native-roots"], optional = true }
+
+[target.'cfg(windows)'.dependencies]
+# Archive acquisition only needs flate2; don't compile the Zopfli compressor
+# and second flate2 backend that zip's umbrella `deflate` feature enables.
+zip = { version = "9.4", default-features = false, features = ["deflate-flate2"], optional = true }
+windows-sys = { version = "0.61", default-features = false, features = [
+    "Win32_Foundation",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Diagnostics_ProcessSnapshotting",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_JobObjects",
+    "Win32_System_Kernel",
+    "Win32_System_Threading",
+    "Win32_System_Com",
+    "Win32_UI_Shell",
+] }
+
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.61", default-features = false, features = ["Win32_Security", "Win32_Security_Cryptography"] }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+openssl = "0.10"
+
+[target.'cfg(not(target_os = "macos"))'.dev-dependencies]
+native-tls = "0.2"
+ureq = { version = "3", default-features = false, features = ["native-tls"] }
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+ureq = { version = "3", default-features = false, features = ["rustls-no-provider", "platform-verifier"] }
+
+[dev-dependencies]
+# Offline consumer-graph fixtures exercise local-runtime even when the outer
+# test build only enables acquisition, so its optional source must be fetched.
+libloading = "0.9"
+flate2 = "1"
+hpke = { version = "0.15", default-features = false, features = ["aes", "alloc", "x25519"] }
+rand_chacha = { version = "0.10", default-features = false }
+rand_core = { version = "0.6", features = ["getrandom"] }
+ahp = { git = "https://github.com/microsoft/agent-host-protocol", tag = "rust/v1.0.0" }
+ahp-types = { git = "https://github.com/microsoft/agent-host-protocol", tag = "rust/v1.0.0" }
+ahp-ws = { git = "https://github.com/microsoft/agent-host-protocol", tag = "rust/v1.0.0", default-features = false }
+rusqlite = { version = "0.42", features = ["bundled"] }
+schemars = "1"
+serial_test = "4"
+sha2 = "0.11"
+tar = "0.4"
+tempfile = "3"
+tokio = { version = "1", features = ["fs", "rt-multi-thread", "test-util"] }
+zip = { version = "9.4", default-features = false, features = ["deflate-flate2"] }
+
+# Integration tests that call test-support-only Client methods (e.g.
+# `from_streams_with_connection_token`, `from_streams_with_trace_provider`)
+# require the `test-support` feature because `cfg(test)` is not set on the
+# library when Cargo compiles it for integration tests.
+[[test]]
+name = "session_test"
+required-features = ["test-support"]
+
+[[test]]
+name = "runtime_host_e2e"
+required-features = ["runtime", "test-support"]
+
+[[test]]
+name = "protocol_version_test"
+required-features = ["test-support"]
+
+[[test]]
+name = "extension_launch_provider_test"
+required-features = ["test-support"]
+
+[[test]]
+name = "installation_confirmation_test"
+required-features = ["test-support"]
+
+[[test]]
+name = "extension_launch_provider_runtime_test"
+required-features = ["test-support"]
+
+[[bin]]
+name = "copilot-extension-test-fixture"
+path = "tests/fixtures/extension_fixture.rs"
+required-features = ["test-support"]
+test = false
+bench = false
+
+[[bin]]
+name = "copilot-host-crash-fixture"
+path = "tests/fixtures/host_crash_fixture.rs"
+required-features = ["test-support"]
+test = false
+bench = false
+
+[[bin]]
+name = "copilot-connectors-runtime-fixture"
+path = "tests/fixtures/connector-runtime/src/main.rs"
+required-features = ["test-support", "in-process"]
+test = false
+bench = false
+
+[[test]]
+name = "prepared_session_test"
+required-features = ["test-support"]
+
+[[test]]
+name = "skill_provider_test"
+required-features = ["test-support"]
+
+[[test]]
+name = "network_test"
+required-features = ["runtime"]
+
+[[test]]
+name = "session_management_test"
+required-features = ["test-support"]
+
+[[example]]
+name = "session_fs"
+test = true
+
+[build-dependencies]
+flate2 = "1"
+serde_json = "1"
+tar = "0.4"
+zip = { version = "9.4", default-features = false, features = ["deflate-flate2"] }
+
+[target.'cfg(not(target_os = "macos"))'.build-dependencies]
+ureq = { version = "3", default-features = false, features = ["native-tls"], optional = true }
+
+[target.'cfg(windows)'.build-dependencies]
+windows-sys = { version = "0.61", default-features = false, features = [
+    "Win32_Security_Cryptography",
+    "Win32_System_Com",
+    "Win32_UI_Shell",
+] }
+
+[target.'cfg(target_os = "linux")'.build-dependencies]
+openssl = { version = "0.10", optional = true }
+
+[target.'cfg(target_os = "macos")'.build-dependencies]
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"], optional = true }
+ureq = { version = "3", default-features = false, features = ["rustls-no-provider", "platform-verifier"], optional = true }
+
+[target.'cfg(not(any(windows, target_os = "macos", target_os = "linux")))'.build-dependencies]
+sha2 = "0.11"

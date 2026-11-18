@@ -1,0 +1,49 @@
+load("@rules_rust//crate_universe:defs.bzl", "crate", "crates_vendor")
+load("//bazel:system_openssl.bzl", "system_openssl_annotation")
+
+# Keep the Rust SDK's independent Cargo manifest and lockfile authoritative.
+crates_vendor(
+    name = "vendor",
+    annotations = {
+        "aws-lc-sys": [crate.annotation(
+            build_script_data = crate.select(
+                [],
+                {
+                    "aarch64-pc-windows-msvc": [
+                        "@windows_host_clang_cl//:all",
+                        "@windows_host_clang_cl//:clang_cl",
+                    ],
+                },
+            ),
+            build_script_env = crate.select(
+                {"NUM_JOBS": "8"},
+                {
+                    "aarch64-pc-windows-msvc": {
+                        "CC_aarch64_pc_windows_msvc": "$(execpath @windows_host_clang_cl//:clang_cl)",
+                    },
+                },
+            ),
+            patch_args = ["-p1"],
+            patches = [
+                "@copilot_agent_runtime//bazel/patches:aws-lc-sys_windows_short_jitterentropy_include.patch",
+                "@copilot_agent_runtime//bazel/patches:aws-lc-sys_windows_source_roots.patch",
+            ],
+        )],
+        "openssl-sys": [system_openssl_annotation()],
+    },
+    cargo_lockfile = "//src/sdk/rust:Cargo.lock",
+    generate_build_scripts = True,
+    manifests = ["//src/sdk/rust:Cargo.toml"],
+    mode = "remote",
+    repository_name = "sdk_vendor",
+    supported_platform_triples = [
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+        "aarch64-pc-windows-msvc",
+        "x86_64-pc-windows-msvc",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+    ],
+    tags = ["manual"],
+    vendor_path = "crates",
+)

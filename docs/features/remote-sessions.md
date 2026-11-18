@@ -1,0 +1,171 @@
+# Remote sessions
+
+Session history can be exported to GitHub web and mobile via [Mission Control](https://github.com). This is read-only history export, not remote control of the SDK session.
+
+For running sessions on GitHub-hosted compute, see [Cloud Sessions](./cloud-sessions.md).
+
+## Prerequisites
+
+* The user must be authenticated (GitHub token or logged-in user)
+
+## Enabling remote sessions
+
+### On-demand (per-session toggle)
+
+Use the experimental raw `session.rpc.remote.enable()` API with export mode to start read-only history export mid-session, and `session.rpc.remote.disable()` to stop it. Export mode does not enable AHP connections or remote steering; omitting the mode requests both export and remote steering.
+
+<!-- tabs:start -->
+
+#### TypeScript
+
+<!-- docs-validate: strict -->
+<!-- docs-validate: hidden -->
+```typescript
+import { approveAll } from "@github/copilot-sdk";
+
+const session = await client.createSession({ onPermissionRequest: approveAll });
+
+const result = await session.rpc.remote.enable({ mode: "export" });
+console.log("Remote URL:", result.url);
+
+// Later: stop sharing
+await session.rpc.remote.disable();
+```
+<!-- /docs-validate: hidden -->
+
+```typescript
+const result = await session.rpc.remote.enable({ mode: "export" });
+console.log("Remote URL:", result.url);
+
+// Later: stop sharing
+await session.rpc.remote.disable();
+```
+
+#### Python
+
+<!-- docs-validate: hidden -->
+```python
+from copilot.generated.rpc import RemoteEnableRequest, RemoteSessionMode
+from copilot.session import CopilotSession
+
+async def main(session: CopilotSession):
+    result = await session.rpc.remote.enable(RemoteEnableRequest(mode=RemoteSessionMode.EXPORT))
+    print(f"Remote URL: {result.url}")
+
+    # Later: stop sharing
+    await session.rpc.remote.disable()
+```
+<!-- /docs-validate: hidden -->
+
+```python
+from copilot.generated.rpc import RemoteEnableRequest, RemoteSessionMode
+
+result = await session.rpc.remote.enable(RemoteEnableRequest(mode=RemoteSessionMode.EXPORT))
+print(f"Remote URL: {result.url}")
+
+# Later: stop sharing
+await session.rpc.remote.disable()
+```
+
+#### Go
+
+<!-- docs-validate: hidden -->
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+
+	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/rpc"
+)
+
+func main() {
+	ctx := context.Background()
+	client := copilot.NewClient(nil)
+
+	session, err := client.CreateSession(ctx, &copilot.SessionConfig{
+		OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	mode := rpc.RemoteSessionModeExport
+	result, err := session.RPC.Remote.Enable(ctx, &rpc.RemoteEnableRequest{Mode: &mode})
+	if err != nil {
+		log.Fatal(err)
+	}
+	if result.URL != nil {
+		fmt.Println("Remote URL:", *result.URL)
+	}
+
+	// Later: stop sharing
+	_, err = session.RPC.Remote.Disable(ctx)
+}
+```
+<!-- /docs-validate: hidden -->
+
+```go
+mode := rpc.RemoteSessionModeExport
+result, err := session.RPC.Remote.Enable(ctx, &rpc.RemoteEnableRequest{Mode: &mode})
+if err != nil {
+    log.Fatal(err)
+}
+if result.URL != nil {
+    fmt.Println("Remote URL:", *result.URL)
+}
+
+// Later: stop sharing
+_, err = session.RPC.Remote.Disable(ctx)
+```
+
+#### C#
+
+```csharp
+#pragma warning disable GHCP001 // The remote RPC API is experimental.
+var result = await session.Rpc.Remote.EnableAsync(mode: RemoteSessionMode.Export);
+Console.WriteLine($"Remote URL: {result.Url}");
+
+// Later: stop sharing
+await session.Rpc.Remote.DisableAsync();
+```
+
+#### Rust
+
+```rust
+use github_copilot_sdk::rpc::{RemoteEnableRequest, RemoteSessionMode};
+
+let result = session
+    .rpc()
+    .remote()
+    .enable(RemoteEnableRequest {
+        mode: Some(RemoteSessionMode::Export),
+    })
+    .await?;
+if let Some(url) = &result.url {
+    println!("Remote URL: {url}");
+}
+
+// Later: stop sharing
+session.rpc().remote().disable().await?;
+```
+
+<!-- tabs:end -->
+
+## QR code generation
+
+The remote URL can be rendered as a QR code for easy mobile access. The SDK provides the URL—use your preferred QR code library:
+
+* **TypeScript**: [qrcode](https://www.npmjs.com/package/qrcode)
+* **Python**: [qrcode](https://pypi.org/project/qrcode/)
+* **Go**: [go-qrcode](https://github.com/skip2/go-qrcode)
+* **C#**: [QRCoder](https://www.nuget.org/packages/QRCoder)
+* **Rust**: [qrcode](https://crates.io/crates/qrcode)
+
+## Notes
+
+* If the working directory is not a GitHub repository, on-demand export still starts and returns its URL, but the exported session is not linked to a repository.
+* Remote sessions require authentication. Ensure `gitHubToken` or `useLoggedInUser` is configured.

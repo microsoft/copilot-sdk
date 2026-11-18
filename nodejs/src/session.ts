@@ -1,0 +1,3656 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *--------------------------------------------------------------------------------------------*/
+
+/**
+ * Copilot Session - represents a single conversation session with the Copilot CLI.
+ * @module session
+ */
+
+import { AsyncLocalStorage } from "node:async_hooks";
+import type { CancellationToken, MessageConnection } from "vscode-jsonrpc/node";
+import {
+    CancellationTokenSource,
+    ConnectionError,
+    ErrorCodes,
+    ResponseError,
+} from "vscode-jsonrpc/node";
+import { createInternalSessionRpc, createSessionRpc } from "./generated/rpc.js";
+import type {
+    ClientSessionApiHandlers,
+    CanvasActionInvokeResult,
+    CurrentToolMetadata,
+    McpOauthPendingRequestResponse,
+    ProtocolExternalToolDefinition,
+    WorkflowAgentOptions as WireWorkflowAgentOptions,
+    WorkflowLogLine,
+    WorkflowRunResult as WireWorkflowRunResult,
+    ModelSwitchAutoTierResult,
+    PermissionsSetModeResult,
+    SendAndWaitResult,
+    SessionManagementCreateHostRequest,
+    SessionManagementCreateResult,
+    SessionManagementPolicy,
+} from "./generated/rpc.js";
+import { type Canvas, CanvasError } from "./canvas.js";
+import type { OpenCanvasInstance } from "./generated/rpc.js";
+import { getTraceContext } from "./telemetry.js";
+import { rawHistoryResponse } from "./taskAnalyticsJson.js";
+import type { TrajectoryJsonValue } from "./generated/rpc.js";
+import { isResponseSchema, toJsonSchema } from "./schema.js";
+import { isAttributedPermissionResult } from "./types.js";
+import type {
+    CommandHandler,
+    AutoModeSwitchHandler,
+    AutoModeSwitchRequest,
+    AutoModeSwitchResponse,
+    ElicitationHandler,
+    ElicitationParams,
+    ElicitationResult,
+    ElicitationContext,
+    ExitPlanModeHandler,
+    ExitPlanModeRequest,
+    ExitPlanModeResult,
+    BearerTokenProvider,
+    UiInputOptions,
+    MessageOptions,
+    ResponseSchema,
+    McpAuthHandler,
+    McpAuthRequest,
+    PermissionHandler,
+    PermissionHandlerInvocation,
+    PermissionRequest,
+    PermissionRequestedData,
+    PermissionRequestResult,
+    ContextTier,
+    ReasoningEffort,
+    ReasoningSummary,
+    AutoTier,
+    FusionTier,
+    ModelCapabilitiesOverride,
+    SectionTransformFn,
+    SessionCapabilities,
+    SessionConfig,
+    SessionEvent,
+    SessionEventHandler,
+    SessionEventPayload,
+    SessionEventType,
+    SessionHooks,
+    SessionUiApi,
+    SkillProvider,
+    SkillProviderCallOptions,
+    SkillProviderDescriptor,
+    SessionCreationHandler,
+    Tool,
+    ToolHandler,
+    ToolResult,
+    ToolResultObject,
+    TraceContextProvider,
+    TranscriptRecovery,
+    TypedSessionEventHandler,
+    ShellAuthenticationHandler,
+    ShellAuthenticationRequest,
+    ShellAuthenticationResponse,
+    UserInputHandler,
+    UserInputRequest,
+    UserInputResponse,
+    MemoryConfiguration,
+    StoredMemory,
+} from "./types.js";
+import {
+    WORKFLOW_AGENT_OPTION_KEYS,
+    getWorkflowDefinition,
+    getWorkflowAgentReference,
+    WorkflowResumeError,
+    isWorkflowRunTerminal,
+    type WorkflowResumeErrorCode,
+    type WorkflowListRunsOptions,
+    type WorkflowRunResult,
+    type WorkflowAgentOptions,
+    type WorkflowRunOptions,
+    type SessionWorkflowApi,
+    type WorkflowContext,
+    type WorkflowHandle,
+    type JsonValue,
+    type WorkflowStepOptions,
+} from "./workflow.js";
+
+type PrivateWorkflowAgentTransportOptions = WireWorkflowAgentOptions & {
+    role?: string;
+    timeoutSeconds?: number;
+};
+
+function isWorkflowResumeErrorCode(value: unknown): value is WorkflowResumeErrorCode {
+    return (
+        value === "not_found" ||
+        value === "non_resumable" ||
+        value === "workflow_run_not_resumable" ||
+        value === "already_active" ||
+        value === "workflow_already_running" ||
+        value === "workflow_limits_invalid" ||
+        value === "workflow_session_disposed" ||
+        value === "workflow_storage_unavailable" ||
+        value === "workflow_storage_corrupt" ||
+        value === "workflow_role_definition_mismatch"
+    );
+}
+
+function copyDefinedWorkflowAgentOption<TKey extends Exclude<keyof WorkflowAgentOptions, "agent">>(
+    source: WorkflowAgentOptions,
+    target: PrivateWorkflowAgentTransportOptions,
+    key: TKey
+): void {
+    const value = source[key];
+    if (value !== undefined) {
+        target[key] = value as PrivateWorkflowAgentTransportOptions[TKey];
+    }
+}
+
+/**
+ * The wire definition `session.tools.set` takes for a tool, matching what
+ * session creation and resumption send for the same tool.
+ */
+function toToolDefinition(tool: Tool): ProtocolExternalToolDefinition {
+    return {
+        name: tool.name,
+        title: tool.title,
+        description: tool.description ?? "",
+        parameters: toJsonSchema(tool.parameters) as ProtocolExternalToolDefinition["parameters"],
+        overridesBuiltInTool: tool.overridesBuiltInTool,
+        skipPermission: tool.skipPermission,
+        hasHandler: !!tool.handler,
+        defer: tool.defer,
+        metadata: tool.metadata as ProtocolExternalToolDefinition["metadata"],
+        isTerminal: tool.isTerminal,
+        idempotent: tool.idempotent,
+        namespace: tool.namespace,
+    };
+}
+
+type WorkflowExecutionContext = {
+    active: boolean;
+    helperScope?: "parallel" | "pipeline";
+};
+
+const workflowExecutionStore = new AsyncLocalStorage<WorkflowExecutionContext>();
+
+function throwIfWorkflowExecutionIsActive(): void {
+    if (workflowExecutionStore.getStore()?.active) {
+        throw new Error(
+            "workflow.start, workflow.run, workflow.resume, and workflow.pause are not allowed while a workflow body is running on this call path."
+        );
+    }
+}
+
+function runInWorkflowHelperScope<TResult>(
+    helperScope: "parallel" | "pipeline",
+    callback: () => Promise<TResult> | TResult
+): Promise<TResult> | TResult {
+    const current = workflowExecutionStore.getStore();
+    return workflowExecutionStore.run({ active: current?.active ?? false, helperScope }, callback);
+}
+
+/**
+ * Convert a raw hook input received over the wire into its public-facing shape.
+ * This deserializes the numeric Unix-ms `timestamp` field on BaseHookInput
+ * into a Date and maps the wire `cwd` field to `workingDirectory`.
+ */
+function deserializeHookInput(raw: unknown): unknown {
+    if (
+        !raw ||
+        typeof raw !== "object" ||
+        typeof (raw as { timestamp?: unknown }).timestamp !== "number"
+    ) {
+        return raw;
+    }
+    const obj = raw as Record<string, unknown> & {
+        timestamp: number;
+        cwd?: string;
+        stop_hook_active?: boolean;
+    };
+    const { cwd, stop_hook_active, ...rest } = obj;
+    return {
+        ...rest,
+        timestamp: new Date(obj.timestamp),
+        workingDirectory: cwd,
+        ...(stop_hook_active === undefined ? {} : { stopHookActive: stop_hook_active }),
+    };
+}
+
+/**
+ * The CLI sends the `error` of an errorOccurred or sessionEnd hook input as an
+ * error object (`{ name, message, stack }` or `{ message }`), where the hook
+ * input types declare a string. The object's message becomes the error, and an
+ * object without a string message becomes its JSON. Other values pass through.
+ */
+function normalizeHookError(hookType: string, input: unknown): unknown {
+    if (hookType !== "errorOccurred" && hookType !== "sessionEnd") {
+        return input;
+    }
+    if (!input || typeof input !== "object" || !("error" in input)) {
+        return input;
+    }
+    const { error } = input as { error: unknown };
+    if (!error || typeof error !== "object" || Array.isArray(error)) {
+        return input;
+    }
+    const { message } = error as { message?: unknown };
+    return { ...input, error: typeof message === "string" ? message : JSON.stringify(error) };
+}
+
+function isOpenCanvasInstance(value: unknown): value is OpenCanvasInstance {
+    if (!value || typeof value !== "object") {
+        return false;
+    }
+    const instance = value as Partial<OpenCanvasInstance>;
+    return (
+        typeof instance.instanceId === "string" &&
+        instance.instanceId.length > 0 &&
+        typeof instance.extensionId === "string" &&
+        instance.extensionId.length > 0 &&
+        typeof instance.canvasId === "string" &&
+        instance.canvasId.length > 0
+    );
+}
+
+const WORKFLOW_LOG_FLUSH_DELAY_MS = 10;
+const MAX_WORKFLOW_FANOUT_ITEMS = 4096;
+
+function assertWorkflowFanoutSize(kind: "parallel" | "pipeline", size: number): void {
+    if (size > MAX_WORKFLOW_FANOUT_ITEMS) {
+        throw new Error(
+            `${kind}() accepts at most ${MAX_WORKFLOW_FANOUT_ITEMS} items; got ${size}.`
+        );
+    }
+}
+
+async function runWorkflowParallel<TResult>(
+    thunks: Array<() => Promise<TResult> | TResult>
+): Promise<Array<TResult | null>> {
+    if (!Array.isArray(thunks)) {
+        throw new Error(
+            "parallel() expects an array of functions, not promises. Wrap each call: () => agent(...)"
+        );
+    }
+    assertWorkflowFanoutSize("parallel", thunks.length);
+    if (thunks.some((thunk) => typeof thunk !== "function")) {
+        throw new Error(
+            "parallel() expects an array of functions, not promises. Wrap each call: () => agent(...)"
+        );
+    }
+    return Promise.all(
+        thunks.map((thunk) =>
+            Promise.resolve()
+                .then(() => runInWorkflowHelperScope("parallel", thunk))
+                .catch((error) => {
+                    if (isWorkflowFatalError(error)) {
+                        throw error;
+                    }
+                    return null;
+                })
+        )
+    );
+}
+
+async function runWorkflowPipeline(
+    items: unknown[],
+    ...stages: Array<
+        (previous: unknown, item: unknown, index: number) => Promise<unknown> | unknown
+    >
+): Promise<unknown[]> {
+    if (!Array.isArray(items)) {
+        throw new Error("pipeline(items, ...stages): items must be an array");
+    }
+    assertWorkflowFanoutSize("pipeline", items.length);
+    return Promise.all(
+        items.map(async (item, index) => {
+            let previous = item;
+            for (const stage of stages) {
+                try {
+                    previous = await runInWorkflowHelperScope("pipeline", () =>
+                        stage(previous, item, index)
+                    );
+                } catch (error) {
+                    if (isWorkflowFatalError(error)) {
+                        throw error;
+                    }
+                    return null;
+                }
+            }
+            return previous;
+        })
+    );
+}
+
+class WorkflowProgressBuffer {
+    private nextSeq = 0;
+    private pending: WorkflowLogLine[] = [];
+    private flushTimer?: ReturnType<typeof setTimeout>;
+    private flushTail: Promise<void> = Promise.resolve();
+    private flushError: unknown;
+    private flushFailed = false;
+    private closed = false;
+
+    constructor(private readonly send: (lines: WorkflowLogLine[]) => Promise<void>) {}
+
+    enqueue(kind: WorkflowLogLine["kind"], text: unknown): void {
+        if (this.closed) {
+            throw new Error("Cannot log after the workflow run has settled");
+        }
+        // Reject here rather than at flush time: the runtime refuses the whole batch
+        // for one non-string line, and a failed flush fails every later step.
+        if (typeof text !== "string") {
+            throw new TypeError(
+                `${kind}() expects a string; got ${text === null ? "null" : typeof text}.`
+            );
+        }
+        this.pending.push({ seq: this.nextSeq++, kind, text });
+        this.scheduleFlush();
+    }
+
+    async flush(): Promise<void> {
+        this.clearFlushTimer();
+        const lines = this.pending.splice(0);
+        if (lines.length > 0) {
+            this.flushTail = this.flushTail.then(async () => {
+                try {
+                    await this.send(lines);
+                } catch (error) {
+                    if (!this.flushFailed) {
+                        this.flushFailed = true;
+                        this.flushError = error;
+                    }
+                }
+            });
+        }
+        await this.flushTail;
+        if (this.flushFailed) {
+            throw this.flushError;
+        }
+    }
+
+    async close(): Promise<void> {
+        this.closed = true;
+        this.clearFlushTimer();
+        const lines = this.pending.splice(0);
+        await this.flushTail;
+        if (this.flushFailed) {
+            console.warn(
+                "Ignoring a background workflow progress flush failure after the workflow body settled",
+                this.flushError
+            );
+        }
+        if (lines.length > 0) {
+            try {
+                await this.send(lines);
+            } catch (error) {
+                console.warn(
+                    "Failed to flush final workflow progress after the workflow body settled",
+                    error
+                );
+            }
+        }
+    }
+
+    private scheduleFlush(): void {
+        if (this.flushTimer !== undefined) {
+            return;
+        }
+        this.flushTimer = setTimeout(() => {
+            this.flushTimer = undefined;
+            void this.flush().catch(() => {});
+        }, WORKFLOW_LOG_FLUSH_DELAY_MS);
+        this.flushTimer.unref?.();
+    }
+
+    private clearFlushTimer(): void {
+        if (this.flushTimer !== undefined) {
+            clearTimeout(this.flushTimer);
+            this.flushTimer = undefined;
+        }
+    }
+}
+
+async function awaitWorkflowOperation<TResult>(
+    operation: () => Promise<TResult>,
+    signal: AbortSignal
+): Promise<TResult> {
+    // The operation is a thunk so an already-aborted run never dispatches the
+    // RPC at all, rather than sending it and rejecting locally afterwards.
+    let rejectAbort: ((reason?: unknown) => void) | undefined;
+    const abortPromise = new Promise<never>((_resolve, reject) => {
+        rejectAbort = reject;
+    });
+    const onAbort = () =>
+        rejectAbort?.(signal.reason ?? new DOMException("Workflow run was aborted", "AbortError"));
+    // Register before the abort check and before dispatching, so an abort can
+    // neither be missed by a not-yet-attached listener nor start work on an
+    // already-cancelled run.
+    signal.addEventListener("abort", onAbort, { once: true });
+    try {
+        throwIfWorkflowAborted(signal);
+        return await Promise.race([operation(), abortPromise]);
+    } finally {
+        signal.removeEventListener("abort", onAbort);
+    }
+}
+
+function throwIfWorkflowAborted(signal: AbortSignal): void {
+    if (signal.aborted) {
+        throw signal.reason ?? new DOMException("Workflow run was aborted", "AbortError");
+    }
+}
+
+/**
+ * Whether an error represents workflow run cancellation (an `AbortError`-shaped
+ * rejection from {@link awaitWorkflowOperation}). Cancellation must bubble out of
+ * `parallel`/`pipeline` rather than being flattened into a `null` result.
+ */
+function isWorkflowAbortError(error: unknown): boolean {
+    return (
+        typeof error === "object" &&
+        error !== null &&
+        "name" in error &&
+        (error as { name?: unknown }).name === "AbortError"
+    );
+}
+
+/**
+ * Errors a workflow combinator must never swallow into a `null` item.
+ *
+ * Cooperative cancellation aborts the run, and a rejected RPC is a hard
+ * runtime failure — a reached limit, a durable-state failure, or a dropped
+ * transport — that must terminate the run rather than be reported as a
+ * successfully-`null` item. An ordinary subagent failure does not reject; the
+ * runtime already resolves it as `null`.
+ */
+function isWorkflowFatalError(error: unknown): boolean {
+    return (
+        isWorkflowAbortError(error) ||
+        error instanceof ResponseError ||
+        error instanceof ConnectionError
+    );
+}
+
+/** Node.js fires a timer whose delay exceeds this after 1 ms instead. */
+const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
+
+/**
+ * Like `setTimeout`, but a delay beyond {@link MAX_TIMER_DELAY_MS}, including
+ * `Infinity`, waits its full length instead of firing after 1 ms.
+ * Returns a function that cancels the timer.
+ */
+function setLongTimeout(callback: () => void, delayMs: number): () => void {
+    let timer: ReturnType<typeof setTimeout>;
+    const arm = (remainingMs: number) => {
+        timer =
+            remainingMs > MAX_TIMER_DELAY_MS
+                ? setTimeout(() => arm(remainingMs - MAX_TIMER_DELAY_MS), MAX_TIMER_DELAY_MS)
+                : setTimeout(callback, remainingMs);
+    };
+    arm(delayMs);
+    return () => clearTimeout(timer);
+}
+
+/** Assistant message event - the final response from the assistant. */
+export type AssistantMessageEvent = Extract<SessionEvent, { type: "assistant.message" }>;
+
+const TOOL_SEARCH_TOOL_NAME = "tool_search_tool";
+
+/**
+ * Represents a single conversation session with the Copilot CLI.
+ *
+ * A session maintains conversation state, handles events, and manages tool execution.
+ * Sessions are created via {@link CopilotClient.createSession} or resumed via
+ * {@link CopilotClient.resumeSession}.
+ *
+ * @example
+ * ```typescript
+ * const session = await client.createSession({ model: "gpt-5.4" });
+ *
+ * // Subscribe to events
+ * session.on((event) => {
+ *   if (event.type === "assistant.message") {
+ *     console.log(event.data.content);
+ *   }
+ * });
+ *
+ * // Send a message and wait for completion
+ * await session.sendAndWait({ prompt: "Hello, world!" });
+ *
+ * // Clean up
+ * await session.disconnect();
+ * ```
+ */
+/**
+ * Fixed name of the runtime's built-in tool-search tool. A client can replace
+ * its behavior by registering a {@link Tool} with this exact name and
+ * `overridesBuiltInTool: true`.
+ */
+
+export class CopilotSession {
+    private _transcriptRecovery?: TranscriptRecovery;
+    private _permissionModeResult?: PermissionsSetModeResult;
+    private eventHandlers: Set<SessionEventHandler> = new Set();
+    private typedEventHandlers: Map<SessionEventType, Set<(event: SessionEvent) => void>> =
+        new Map();
+    private toolHandlers: Map<string, ToolHandler> = new Map();
+    /** Settles once every earlier `setTools` call has finished. */
+    private setToolsQueue: Promise<void> = Promise.resolve();
+    private pendingExternalTools: Map<string, AbortController> = new Map();
+    private pendingSessionCreations = new Set<AbortController>();
+    private canvases: Map<string, Canvas> = new Map();
+    private bearerTokenProviders: Map<string, BearerTokenProvider> = new Map();
+    private commandHandlers: Map<string, CommandHandler> = new Map();
+    private workflows = new Map<string, ReturnType<typeof getWorkflowDefinition>>();
+    private workflowAbortControllers = new Map<string, Map<string, AbortController>>();
+    private permissionHandler?: PermissionHandler;
+    private mcpAuthHandler?: McpAuthHandler;
+    private userInputHandler?: UserInputHandler;
+    private shellAuthenticationHandler?: ShellAuthenticationHandler;
+    private pendingShellAuthenticationRequests = new Map<string, AbortController>();
+    private elicitationHandler?: ElicitationHandler;
+    private exitPlanModeHandler?: ExitPlanModeHandler;
+    private autoModeSwitchHandler?: AutoModeSwitchHandler;
+    private skillProvider?: SkillProvider;
+    private sessionCreationHandler?: SessionCreationHandler;
+    private memoryStoreHandler?: MemoryConfiguration["storeMemory"];
+    private hooks?: SessionHooks;
+    private transformCallbacks?: Map<string, SectionTransformFn>;
+    private _rpc: ReturnType<typeof createSessionRpc> | null = null;
+    private _internalRpc: ReturnType<typeof createInternalSessionRpc> | null = null;
+    private traceContextProvider?: TraceContextProvider;
+    private readonly managedSettingsEnabled: boolean;
+    private _capabilities: SessionCapabilities = {};
+    private openCanvasInstances: OpenCanvasInstance[] = [];
+    private disconnected = false;
+    private readonly pendingResponseWaits = new Set<(error: Error) => void>();
+    private readonly pendingStructuredWaits = new Set<(error: Error) => void>();
+    private completionRpcUnsupported = false;
+    private disconnecting = false;
+    private onDisconnected?: () => void;
+    private releaseFromClient?: () => void;
+
+    /** @internal Client session API handlers, populated by CopilotClient during create/resume. */
+    clientSessionApis: ClientSessionApiHandlers = {};
+
+    /**
+     * Friendly workflow API for running registered workflows by name or handle.
+     *
+     * @experimental Part of the experimental Dynamic Workflows surface and may
+     * change or be removed in future SDK or CLI releases.
+     */
+    readonly workflow: SessionWorkflowApi = {
+        start: (async (
+            nameOrHandle: string | WorkflowHandle,
+            options?: WorkflowRunOptions
+        ): Promise<WorkflowRunResult> => {
+            throwIfWorkflowExecutionIsActive();
+            const name =
+                typeof nameOrHandle === "string"
+                    ? nameOrHandle
+                    : getWorkflowDefinition(nameOrHandle).meta.name;
+            return this.rpc.workflow.run({
+                name,
+                args: options?.args === undefined ? {} : options.args,
+                options: {
+                    limits: options?.limits,
+                    notifyOnComplete: options?.notifyOnComplete,
+                    logPhaseNames: options?.logPhaseNames,
+                },
+            });
+        }) as SessionWorkflowApi["start"],
+        run: (async (
+            nameOrHandle: string | WorkflowHandle,
+            options?: WorkflowRunOptions
+        ): Promise<WorkflowRunResult> => {
+            throwIfWorkflowExecutionIsActive();
+            const name =
+                typeof nameOrHandle === "string"
+                    ? nameOrHandle
+                    : getWorkflowDefinition(nameOrHandle).meta.name;
+            const envelope = await this.workflow.start(name, options);
+            return this.settleWorkflowRun(envelope);
+        }) as SessionWorkflowApi["run"],
+        resume: (async (runId: string, options?: Parameters<SessionWorkflowApi["resume"]>[1]) => {
+            throwIfWorkflowExecutionIsActive();
+            let response;
+            try {
+                response = await this.rpc.workflow.resume({
+                    runId,
+                    limits: options?.limits,
+                    notifyOnComplete: options?.notifyOnComplete,
+                    logPhaseNames: options?.logPhaseNames,
+                });
+            } catch (error) {
+                if (
+                    error instanceof ResponseError &&
+                    typeof error.data === "object" &&
+                    error.data !== null
+                ) {
+                    const code = (error.data as { code?: unknown }).code;
+                    if (isWorkflowResumeErrorCode(code)) {
+                        throw new WorkflowResumeError(code, error.message);
+                    }
+                }
+                throw error;
+            }
+            return this.settleWorkflowRun(response.run);
+        }) as SessionWorkflowApi["resume"],
+        getRun: async (runId) => this.rpc.workflow.getRun({ runId }),
+        waitForRun: (runId, options) => this.waitForWorkflowRun(runId, options?.signal),
+        listRuns: (async (options?: WorkflowListRunsOptions) => {
+            const page = await this.rpc.workflow.listRuns(options ?? {});
+            return options === undefined ? page.runs : page;
+        }) as SessionWorkflowApi["listRuns"],
+        getRunDetail: (runId) => this.rpc.workflow.getRunDetail({ runId }),
+        getRunProgress: (runId, options = {}) =>
+            this.rpc.workflow.getRunProgress({ runId, ...options }),
+        pause: async (runId) => {
+            throwIfWorkflowExecutionIsActive();
+            return this.rpc.workflow.pause({ runId });
+        },
+        cancel: async (runId) => this.rpc.workflow.cancel({ runId }),
+    };
+
+    private settleWorkflowRun(envelope: WireWorkflowRunResult): Promise<WorkflowRunResult> {
+        if (isWorkflowRunTerminal(envelope.status)) {
+            return Promise.resolve(envelope);
+        }
+        return this.waitForWorkflowRun(envelope.runId);
+    }
+
+    /**
+     * Resolve when a workflow run reaches a terminal status.
+     *
+     * The subscription is installed *before* the first read so a transition
+     * landing between the two cannot be missed, and re-reads are serialized so
+     * overlapping invalidation events cannot interleave — the run's revision
+     * advances once per operation, so a burst of events is common and must
+     * collapse into a single in-flight read. A bounded periodic re-read keeps a
+     * dropped invalidation from leaving the wait pending forever.
+     */
+    private waitForWorkflowRun(runId: string, signal?: AbortSignal): Promise<WorkflowRunResult> {
+        const abortError = (): unknown =>
+            signal?.reason ?? new DOMException("Workflow run wait was aborted", "AbortError");
+        if (signal?.aborted === true) {
+            return Promise.reject(abortError());
+        }
+
+        return new Promise<WorkflowRunResult>((resolve, reject) => {
+            let settled = false;
+            let reading = false;
+            let rereadRequested = false;
+            let pollHandle: ReturnType<typeof setInterval> | undefined;
+            let unsubscribe: (() => void) | undefined;
+            let onAbort: (() => void) | undefined;
+
+            const finish = (complete: () => void): void => {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                if (pollHandle !== undefined) {
+                    clearInterval(pollHandle);
+                }
+                unsubscribe?.();
+                if (onAbort !== undefined) {
+                    signal?.removeEventListener("abort", onAbort);
+                }
+                complete();
+            };
+
+            const read = async (): Promise<void> => {
+                if (settled) {
+                    return;
+                }
+                if (reading) {
+                    rereadRequested = true;
+                    return;
+                }
+                reading = true;
+                try {
+                    do {
+                        rereadRequested = false;
+                        const envelope = await this.rpc.workflow.getRun({ runId });
+                        if (isWorkflowRunTerminal(envelope.status)) {
+                            finish(() => resolve(envelope));
+                            return;
+                        }
+                    } while (rereadRequested && !settled);
+                } catch (error) {
+                    finish(() => reject(error));
+                } finally {
+                    reading = false;
+                }
+            };
+
+            if (signal !== undefined) {
+                onAbort = (): void => finish(() => reject(abortError()));
+                signal.addEventListener("abort", onAbort, { once: true });
+            }
+
+            unsubscribe = this.on("workflow.run_updated", (event) => {
+                if (event.data.runId === runId) {
+                    void read();
+                }
+            });
+
+            pollHandle = setInterval(() => void read(), 5_000);
+            // The re-read is a safety net, not work the process owes anyone: an
+            // outstanding wait must never keep Node alive on its own.
+            pollHandle.unref?.();
+            void read();
+        });
+    }
+
+    /**
+     * Creates a new CopilotSession instance.
+     *
+     * @param sessionId - The unique identifier for this session
+     * @param connection - The JSON-RPC message connection to the Copilot CLI
+     * @param workspacePath - Path to the session workspace directory (when infinite sessions enabled)
+     * @param traceContextProvider - Optional callback to get W3C Trace Context for outbound RPCs
+     * @internal This constructor is internal. Use {@link CopilotClient.createSession} to create sessions.
+     */
+    constructor(
+        private _sessionId: string,
+        private connection: MessageConnection,
+        private _workspacePath?: string,
+        traceContextProvider?: TraceContextProvider,
+        options?: {
+            mcpAuthHandler?: McpAuthHandler;
+            managedSettingsEnabled?: boolean;
+            onDisconnected?: () => void;
+        }
+    ) {
+        this.traceContextProvider = traceContextProvider;
+        this.mcpAuthHandler = options?.mcpAuthHandler;
+        this.managedSettingsEnabled = options?.managedSettingsEnabled === true;
+        this.onDisconnected = options?.onDisconnected;
+    }
+
+    get sessionId(): string {
+        return this._sessionId;
+    }
+
+    /** @internal */
+    _setSessionId(sessionId: string): void {
+        this._sessionId = sessionId;
+        this._rpc = null;
+        this._internalRpc = null;
+    }
+
+    /**
+     * Typed session-scoped RPC methods.
+     */
+    get rpc(): ReturnType<typeof createSessionRpc> {
+        if (!this._rpc) {
+            this._rpc = createSessionRpc(this.connection, this.sessionId);
+        }
+        return this._rpc;
+    }
+
+    /** @internal */
+    private get internalRpc(): ReturnType<typeof createInternalSessionRpc> {
+        if (!this._internalRpc) {
+            this._internalRpc = createInternalSessionRpc(this.connection, this.sessionId);
+        }
+        return this._internalRpc;
+    }
+
+    /**
+     * Path to the session workspace directory when infinite sessions are enabled.
+     * Contains checkpoints/, plan.md, and files/ subdirectories.
+     * Undefined if infinite sessions are disabled.
+     */
+    get workspacePath(): string | undefined {
+        return this._workspacePath;
+    }
+
+    /** Recovery observed while loading this session; undefined on a clean resume. */
+    get transcriptRecovery(): TranscriptRecovery | undefined {
+        return this._transcriptRecovery;
+    }
+
+    /** @internal */
+    setTranscriptRecovery(recovery: TranscriptRecovery | undefined): void {
+        this._transcriptRecovery = recovery;
+    }
+
+    /**
+     * Outcome of the `permissionMode` requested when this session was created
+     * or resumed: whether it was applied, and the authoritative mode the
+     * session started in. Undefined when no mode was requested.
+     */
+    get permissionModeResult(): PermissionsSetModeResult | undefined {
+        return this._permissionModeResult;
+    }
+
+    /** @internal */
+    setPermissionModeResult(result: PermissionsSetModeResult | undefined): void {
+        this._permissionModeResult = result;
+    }
+
+    /**
+     * Host capabilities reported when the session was created or resumed.
+     * Use this to check feature support before calling capability-gated APIs.
+     */
+    get capabilities(): SessionCapabilities {
+        return this._capabilities;
+    }
+
+    /**
+     * Interactive UI methods for showing dialogs to the user.
+     * Only available when the CLI host supports elicitation
+     * (`session.capabilities.ui?.elicitation === true`).
+     *
+     * @example
+     * ```typescript
+     * if (session.capabilities.ui?.elicitation) {
+     *   const ok = await session.ui.confirm("Deploy to production?");
+     * }
+     * ```
+     */
+    get ui(): SessionUiApi {
+        return {
+            elicitation: (params: ElicitationParams) => this._elicitation(params),
+            confirm: (message: string) => this._confirm(message),
+            select: (message: string, options: string[]) => this._select(message, options),
+            input: (message: string, options?: UiInputOptions) => this._input(message, options),
+        };
+    }
+
+    /**
+     * Sends a message to this session and returns once it is admitted.
+     *
+     * The message is processed asynchronously. Subscribe to events via {@link on}
+     * to receive streaming responses and other session events.
+     *
+     * @param options - The message options including the prompt and optional attachments
+     * @returns The submitted user message's ID, not an assistant response ID.
+     *          When this send starts a run, root assistant messages carry it as originatingMessageId.
+     * @throws Error if the session has been disconnected or the connection fails
+     *
+     * @example
+     * ```typescript
+     * const messageId = await session.send({
+     *   prompt: "Explain this code",
+     *   attachments: [{ type: "file", path: "./src/index.ts" }]
+     * });
+     * ```
+     */
+    async send(prompt: string): Promise<string>;
+    async send(options: MessageOptions): Promise<string>;
+    async send(optionsOrPrompt: MessageOptions | string): Promise<string> {
+        const options: MessageOptions =
+            typeof optionsOrPrompt === "string" ? { prompt: optionsOrPrompt } : optionsOrPrompt;
+        return this.sendMessage(options);
+    }
+
+    private async sendMessage(options: MessageOptions, cancelled?: () => boolean): Promise<string> {
+        const message = await this.createSendParams(options);
+        if (cancelled?.()) {
+            throw new Error("Completion wait cancelled");
+        }
+        const response = await this.connection.sendRequest("session.send", {
+            sessionId: this.sessionId,
+            ...message,
+        });
+
+        return (response as { messageId: string }).messageId;
+    }
+
+    private async createSendParams(options: MessageOptions) {
+        return {
+            ...(await getTraceContext(this.traceContextProvider)),
+            prompt: options.prompt,
+            source: options.source,
+            displayPrompt: options.displayPrompt,
+            clientTurnId: options.clientTurnId,
+            attachments: options.attachments,
+            mode: options.mode,
+            agentMode: options.agentMode,
+            requestHeaders: options.requestHeaders,
+            ...(options.responseSchema
+                ? {
+                      responseFormat: {
+                          type: "json_schema",
+                          jsonSchema: {
+                              name: "response",
+                              strict: true,
+                              schema: toJsonSchema(options.responseSchema),
+                          },
+                      },
+                  }
+                : {}),
+        };
+    }
+
+    /**
+     * Sends a message and waits for its response to complete.
+     *
+     * Supported local runtimes correlate completion and the response with this
+     * message. Unsupported runtimes retain the legacy non-Autopilot `session.idle`
+     * or request-correlated `session.autopilot_stopped` wait. Autopilot completion
+     * does not wait for or stop attached shells.
+     *
+     * Events are still delivered to handlers registered via {@link on} while waiting.
+     * Sub-agent events with a non-empty `agentId` do not complete the wait or supply its reply.
+     * With a schema as the second argument, returns its parsed, validated result.
+     * Provider schema restrictions apply to that schema; see {@link MessageOptions.responseSchema}.
+     * Structured waits select only root-agent output originating from this send;
+     * other queued work may delay session.idle but cannot replace the result.
+     *
+     * @param options - The message options including the prompt and optional attachments
+     * @param timeout - Timeout in milliseconds (default: 60000). Controls how long to wait; does not abort in-flight agent work.
+     * @returns A promise that resolves with this message's final assistant response,
+     *          or undefined if no assistant message was received
+     * @throws Error if the run is aborted before completion
+     * @throws Error if the timeout is reached before completion
+     * @throws Error if the session has been disconnected or the connection fails
+     *
+     * @example
+     * ```typescript
+     * // Send and wait for completion with default 60s timeout
+     * const response = await session.sendAndWait({ prompt: "What is 2+2?" });
+     * console.log(response?.data.content); // "4"
+     * ```
+     */
+    async sendAndWait(prompt: string, timeout?: number): Promise<AssistantMessageEvent | undefined>;
+    async sendAndWait<TResult>(
+        options: MessageOptions | string,
+        responseSchema: ResponseSchema<TResult>,
+        timeout?: number
+    ): Promise<TResult>;
+    async sendAndWait(
+        options: MessageOptions,
+        timeout?: number
+    ): Promise<AssistantMessageEvent | undefined>;
+    async sendAndWait(
+        optionsOrPrompt: MessageOptions | string,
+        schemaOrTimeout?: ResponseSchema | number,
+        timeout?: number
+    ): Promise<unknown> {
+        const options: MessageOptions =
+            typeof optionsOrPrompt === "string" ? { prompt: optionsOrPrompt } : optionsOrPrompt;
+        const typedSchema = isResponseSchema(schemaOrTimeout) ? schemaOrTimeout : undefined;
+        if (schemaOrTimeout !== undefined && typeof schemaOrTimeout !== "number" && !typedSchema) {
+            throw new TypeError(
+                "The second argument must be a timeout or a schema with toJSONSchema() and parse(). " +
+                    "Pass raw JSON Schema in options.responseSchema instead."
+            );
+        }
+        const effectiveTimeout =
+            (typeof schemaOrTimeout === "number" ? schemaOrTimeout : timeout) ?? 60_000;
+
+        if (typedSchema && options.responseSchema) {
+            throw new Error(
+                "Do not specify responseSchema in options when requesting a typed response."
+            );
+        }
+        if (typedSchema && options.mode === "immediate") {
+            throw new Error(
+                "Structured output cannot be requested on an immediate steering message."
+            );
+        }
+        const startedAt = Date.now();
+        const completion = await this.sendWithCompletion(
+            typedSchema ? { ...options, responseSchema: typedSchema } : options,
+            effectiveTimeout
+        );
+        if (completion !== undefined) {
+            const message = completion.response;
+            if (
+                message !== undefined &&
+                (message.type !== "assistant.message" || message.agentId)
+            ) {
+                throw new Error("The runtime returned a non-assistant response.");
+            }
+            if (typedSchema || options.responseSchema) {
+                if (completion.aborted) {
+                    throw new Error(
+                        "The requested run was aborted before a structured result was completed."
+                    );
+                }
+                if (!message || message.data.toolRequests?.length || !message.data.content.trim()) {
+                    throw new Error(
+                        "The requested run completed without a structured assistant response."
+                    );
+                }
+                return typedSchema ? typedSchema.parse(JSON.parse(message.data.content)) : message;
+            }
+            if (completion.aborted) {
+                throw new Error("The requested run was aborted before completion.");
+            }
+            return message;
+        }
+        const remainingTimeout = Math.max(0, effectiveTimeout - (Date.now() - startedAt));
+        if (typedSchema || options.responseSchema) {
+            const message = await this.sendAndWaitForStructuredMessage(
+                typedSchema ? { ...options, responseSchema: typedSchema } : options,
+                remainingTimeout
+            );
+            if (typedSchema) {
+                if (!message) {
+                    throw new Error(
+                        "The requested run completed without a structured assistant response."
+                    );
+                }
+                return typedSchema.parse(JSON.parse(message.data.content));
+            }
+            return message;
+        }
+
+        type SessionOutcome =
+            | { kind: "idle"; message: AssistantMessageEvent | undefined }
+            | { kind: "error"; error: Error };
+        let resolveOutcome: (outcome: SessionOutcome) => void;
+        const outcomePromise = new Promise<SessionOutcome>((resolve) => {
+            resolveOutcome = resolve;
+        });
+
+        let lastAssistantMessage: AssistantMessageEvent | undefined;
+        let messageId: string | undefined;
+        let requestStarted = false;
+        let admitted = false;
+        const buffered: (SessionEvent | Error)[] = [];
+
+        // Register event handler BEFORE calling send to avoid race condition
+        // where completion fires before the send response supplies its request ID.
+        const observe = (event: SessionEvent) => {
+            if (event.agentId) return;
+            if (event.type === "user.message" && event.data.messageId === messageId) {
+                requestStarted = true;
+            } else if (
+                event.type === "session.warning" &&
+                event.data.warningType === "policy_blocked" &&
+                event.data.originatingMessageId === messageId
+            ) {
+                requestStarted = true;
+            } else if (
+                event.type === "assistant.message" &&
+                (event.data.originatingMessageId === messageId ||
+                    (!event.data.originatingMessageId && requestStarted))
+            ) {
+                lastAssistantMessage = event;
+                if (event.data.originatingMessageId === messageId) requestStarted = true;
+            } else if (
+                event.type === "session.idle" &&
+                requestStarted &&
+                event.data.mode !== "autopilot"
+            ) {
+                resolveOutcome(
+                    event.data.aborted
+                        ? {
+                              kind: "error",
+                              error: new Error("The requested run was aborted before completion."),
+                          }
+                        : { kind: "idle", message: lastAssistantMessage }
+                );
+            } else if (
+                event.type === "session.autopilot_stopped" &&
+                messageId &&
+                event.data.requestId === messageId
+            ) {
+                if (event.data.reason === "error") {
+                    resolveOutcome({
+                        kind: "error",
+                        error: new Error("Autopilot request failed"),
+                    });
+                } else if (event.data.reason === "aborted") {
+                    resolveOutcome({
+                        kind: "error",
+                        error: new Error("The requested run was aborted before completion."),
+                    });
+                } else {
+                    resolveOutcome({ kind: "idle", message: lastAssistantMessage });
+                }
+            } else if (
+                event.type === "session.error" &&
+                (!event.data.originatingMessageId || event.data.originatingMessageId === messageId)
+            ) {
+                const error = Object.assign(new Error(event.data.message), {
+                    data: {
+                        ...event.data,
+                        stack: event.data.stack ?? null,
+                        completionEventId: event.id,
+                    },
+                });
+                error.stack = event.data.stack;
+                resolveOutcome({ kind: "error", error });
+            }
+        };
+        const unsubscribe = this.on((event) => {
+            if (
+                event.agentId ||
+                (event.type !== "assistant.message" &&
+                    event.type !== "user.message" &&
+                    event.type !== "session.warning" &&
+                    event.type !== "session.idle" &&
+                    event.type !== "session.autopilot_stopped" &&
+                    event.type !== "session.error")
+            ) {
+                return;
+            }
+            if (!admitted) buffered.push(event);
+            else observe(event);
+        });
+        const fail = (error: Error) => {
+            if (!admitted) buffered.push(error);
+            else resolveOutcome({ kind: "error", error });
+        };
+        this.pendingResponseWaits.add(fail);
+
+        let cancelTimeout: (() => void) | undefined;
+        let waiting = true;
+        try {
+            const timeoutPromise = new Promise<never>((_, reject) => {
+                cancelTimeout = setLongTimeout(
+                    () =>
+                        reject(
+                            new Error(
+                                `Timeout after ${effectiveTimeout}ms waiting for response completion`
+                            )
+                        ),
+                    remainingTimeout
+                );
+            });
+            const outcome = await Promise.race([
+                this.sendMessage(options, () => !waiting).then((id) => {
+                    messageId = id;
+                    admitted = true;
+                    for (const event of buffered) {
+                        if (event instanceof Error) fail(event);
+                        else observe(event);
+                    }
+                    buffered.length = 0;
+                    return outcomePromise;
+                }),
+                timeoutPromise,
+            ]);
+            if (outcome.kind === "error") {
+                throw outcome.error;
+            }
+
+            return outcome.message;
+        } finally {
+            waiting = false;
+            cancelTimeout?.();
+            unsubscribe();
+            buffered.length = 0;
+            this.pendingResponseWaits.delete(fail);
+        }
+    }
+
+    private async sendWithCompletion(
+        options: MessageOptions,
+        timeout: number
+    ): Promise<SendAndWaitResult | undefined> {
+        if (this.completionRpcUnsupported) return undefined;
+        if (this.disconnected) throw new Error("Session is disconnected");
+
+        const cancellation = new CancellationTokenSource();
+        const dispatched = new Set<string>();
+        let completionEventId: string | undefined;
+        let resolveDispatched!: () => void;
+        const dispatchCompleted = new Promise<void>((resolve) => {
+            resolveDispatched = resolve;
+        });
+        const unsubscribe = this.on((event) => {
+            if (
+                event.agentId ||
+                (event.type !== "session.idle" &&
+                    event.type !== "session.autopilot_stopped" &&
+                    event.type !== "session.error")
+            ) {
+                return;
+            }
+            dispatched.add(event.id);
+            if (event.id === completionEventId) resolveDispatched();
+        });
+        const drain = async (id: string | undefined) => {
+            if (id && !dispatched.has(id)) {
+                completionEventId = id;
+                await dispatchCompleted;
+            }
+        };
+        let fail!: (error: Error) => void;
+        const stopped = new Promise<never>((_, reject) => {
+            fail = reject;
+        });
+        this.pendingResponseWaits.add(fail);
+        const cancelTimeout = setLongTimeout(
+            () => fail(new Error(`Timeout after ${timeout}ms waiting for session.idle`)),
+            timeout
+        );
+        const operation = async () => {
+            try {
+                const message = await this.createSendParams(options);
+                if (cancellation.token.isCancellationRequested) {
+                    throw new Error("Completion wait cancelled");
+                }
+                const result = await this.connection.sendRequest<SendAndWaitResult>(
+                    "session.sendAndWait",
+                    {
+                        sessionId: this.sessionId,
+                        ...message,
+                    },
+                    cancellation.token
+                );
+                await drain(result.completionEventId);
+                return result;
+            } catch (error) {
+                if (error instanceof ResponseError && error.code === ErrorCodes.MethodNotFound) {
+                    this.completionRpcUnsupported = true;
+                    return undefined;
+                }
+                if (
+                    error instanceof ResponseError &&
+                    typeof error.data === "object" &&
+                    error.data !== null
+                ) {
+                    if ("stack" in error.data && typeof error.data.stack === "string") {
+                        error.stack = error.data.stack;
+                    }
+                    if (
+                        "completionEventId" in error.data &&
+                        typeof error.data.completionEventId === "string"
+                    ) {
+                        await drain(error.data.completionEventId);
+                    }
+                }
+                throw error;
+            }
+        };
+        try {
+            return await Promise.race([operation(), stopped]);
+        } finally {
+            cancelTimeout();
+            unsubscribe();
+            this.pendingResponseWaits.delete(fail);
+            resolveDispatched();
+            cancellation.cancel();
+            cancellation.dispose();
+        }
+    }
+
+    private async sendAndWaitForStructuredMessage(
+        options: MessageOptions,
+        timeout: number
+    ): Promise<AssistantMessageEvent | undefined> {
+        if (this.disconnected) {
+            throw new Error("Session is disconnected");
+        }
+        type Outcome =
+            | { kind: "idle"; message: AssistantMessageEvent | undefined }
+            | { kind: "error"; error: Error };
+        let resolveOutcome!: (outcome: Outcome) => void;
+        const outcomePromise = new Promise<Outcome>((resolve) => {
+            resolveOutcome = resolve;
+        });
+        const fail = (error: Error) => resolveOutcome({ kind: "error", error });
+        let messageId: string | undefined;
+        let consumed = false;
+        let lastMessage: AssistantMessageEvent | undefined;
+        const buffered: SessionEvent[] = [];
+        const observe = (event: SessionEvent) => {
+            if (event.agentId) return;
+            if (event.type === "user.message" && event.data.messageId === messageId) {
+                consumed = true;
+            } else if (
+                event.type === "assistant.message" &&
+                event.data.originatingMessageId === messageId
+            ) {
+                consumed = true;
+                lastMessage = event.data.toolRequests?.length ? undefined : event;
+            } else if (
+                (consumed && event.type === "session.idle" && event.data.mode !== "autopilot") ||
+                (event.type === "session.autopilot_stopped" && event.data.requestId === messageId)
+            ) {
+                if (event.type === "session.autopilot_stopped" && event.data.reason === "error") {
+                    fail(new Error("Autopilot request failed"));
+                } else if (
+                    (event.type === "session.idle" && event.data.aborted) ||
+                    (event.type === "session.autopilot_stopped" && event.data.reason === "aborted")
+                ) {
+                    fail(
+                        new Error(
+                            "The requested run was aborted before a structured result was completed."
+                        )
+                    );
+                } else {
+                    resolveOutcome({ kind: "idle", message: lastMessage });
+                }
+            } else if (
+                event.type === "session.error" &&
+                (event.data.originatingMessageId
+                    ? event.data.originatingMessageId === messageId
+                    : consumed)
+            ) {
+                const error = Object.assign(new Error(event.data.message), {
+                    data: {
+                        ...event.data,
+                        stack: event.data.stack ?? null,
+                        completionEventId: event.id,
+                    },
+                });
+                error.stack = event.data.stack;
+                fail(error);
+            }
+        };
+        const unsubscribe = this.on((event) => {
+            if (
+                event.type !== "user.message" &&
+                event.type !== "assistant.message" &&
+                event.type !== "session.idle" &&
+                event.type !== "session.autopilot_stopped" &&
+                event.type !== "session.error"
+            ) {
+                return;
+            }
+            if (messageId === undefined) {
+                buffered.push(event);
+            } else {
+                observe(event);
+            }
+        });
+        this.pendingStructuredWaits.add(fail);
+        let waiting = true;
+        const cancelTimeout = setLongTimeout(
+            () => fail(new Error(`Timeout after ${timeout}ms waiting for the structured response`)),
+            timeout
+        );
+        try {
+            const sendOutcome = this.sendMessage(options, () => !waiting).then(
+                (id) => {
+                    if (!id) {
+                        throw new Error(
+                            "The runtime did not return a message ID for the structured send."
+                        );
+                    }
+                    messageId = id;
+                    for (const event of buffered) observe(event);
+                    buffered.length = 0;
+                    return outcomePromise;
+                },
+                (error: unknown): Outcome => ({
+                    kind: "error",
+                    error: error instanceof Error ? error : new Error(String(error)),
+                })
+            );
+            const outcome = await Promise.race([sendOutcome, outcomePromise]);
+            if (outcome.kind === "error") throw outcome.error;
+            return outcome.message;
+        } finally {
+            waiting = false;
+            cancelTimeout();
+            buffered.length = 0;
+            unsubscribe();
+            this.pendingStructuredWaits.delete(fail);
+        }
+    }
+
+    private assertConnected(): void {
+        if (this.disconnected) {
+            throw new Error("Session is disconnected");
+        }
+    }
+
+    /** @internal */
+    _markDisconnected(): void {
+        if (this.disconnected) {
+            return;
+        }
+        this.disconnected = true;
+        this.releaseFromClient = undefined;
+        for (const fail of this.pendingResponseWaits) {
+            fail(new Error("Session disconnected while waiting for a response"));
+        }
+        this.pendingResponseWaits.clear();
+        for (const fail of this.pendingStructuredWaits) {
+            fail(new Error("Session disconnected while waiting for a structured response"));
+        }
+        this.pendingStructuredWaits.clear();
+        for (const controller of this.pendingExternalTools.values()) {
+            controller.abort();
+        }
+        this.pendingExternalTools.clear();
+        for (const controller of this.pendingSessionCreations) {
+            controller.abort();
+        }
+        this.pendingSessionCreations.clear();
+        this._clearMemoryStore();
+        this.eventHandlers.clear();
+        this.typedEventHandlers.clear();
+        this.toolHandlers.clear();
+        this.permissionHandler = undefined;
+        this.mcpAuthHandler = undefined;
+        this.userInputHandler = undefined;
+        this.shellAuthenticationHandler = undefined;
+        for (const controller of this.pendingShellAuthenticationRequests.values()) {
+            controller.abort();
+        }
+        this.pendingShellAuthenticationRequests.clear();
+        this.elicitationHandler = undefined;
+        this.exitPlanModeHandler = undefined;
+        this.autoModeSwitchHandler = undefined;
+        this.skillProvider = undefined;
+        this.sessionCreationHandler = undefined;
+        this.memoryStoreHandler = undefined;
+        this.hooks = undefined;
+        this.traceContextProvider = undefined;
+        this.bearerTokenProviders.clear();
+        this.commandHandlers.clear();
+        this.canvases.clear();
+        this.workflows.clear();
+        for (const controllersForRun of this.workflowAbortControllers.values()) {
+            for (const controller of controllersForRun.values()) {
+                controller.abort();
+            }
+        }
+        this.workflowAbortControllers.clear();
+        this.transformCallbacks = undefined;
+        delete this.clientSessionApis.providerToken;
+        delete this.clientSessionApis.canvas;
+        delete this.clientSessionApis.workflow;
+        delete this.clientSessionApis.sessionFs;
+        this._runOnDisconnected();
+    }
+
+    /** @internal */
+    _runOnDisconnected(): void {
+        const callback = this.onDisconnected;
+        this.onDisconnected = undefined;
+        callback?.();
+    }
+
+    /** @internal */
+    _setOnDisconnected(callback: () => void): void {
+        this.assertConnected();
+        this.onDisconnected = callback;
+    }
+
+    /**
+     * @internal Lets the owning client stop tracking this session once `disconnect()`
+     * succeeds. Failed create/resume paths unregister the session themselves.
+     */
+    _setReleaseFromClient(callback: () => void): void {
+        this.releaseFromClient = callback;
+    }
+
+    /** @internal */
+    _isDisconnected(): boolean {
+        return this.disconnected;
+    }
+
+    /**
+     * Subscribes to events from this session.
+     *
+     * Events include assistant messages, tool executions, errors, and session state changes.
+     * Multiple handlers can be registered and will all receive events.
+     *
+     * @param eventType - The specific event type to listen for (e.g., "assistant.message", "session.idle")
+     * @param handler - A callback function that receives events of the specified type
+     * @returns A function that, when called, unsubscribes the handler
+     *
+     * @example
+     * ```typescript
+     * // Listen for a specific event type
+     * const unsubscribe = session.on("assistant.message", (event) => {
+     *   console.log("Assistant:", event.data.content);
+     * });
+     *
+     * // Later, to stop receiving events:
+     * unsubscribe();
+     * ```
+     */
+    on<K extends SessionEventType>(eventType: K, handler: TypedSessionEventHandler<K>): () => void;
+
+    /**
+     * Subscribes to all events from this session.
+     *
+     * @param handler - A callback function that receives all session events
+     * @returns A function that, when called, unsubscribes the handler
+     *
+     * @example
+     * ```typescript
+     * const unsubscribe = session.on((event) => {
+     *   switch (event.type) {
+     *     case "assistant.message":
+     *       console.log("Assistant:", event.data.content);
+     *       break;
+     *     case "session.error":
+     *       console.error("Error:", event.data.message);
+     *       break;
+     *   }
+     * });
+     *
+     * // Later, to stop receiving events:
+     * unsubscribe();
+     * ```
+     */
+    on(handler: SessionEventHandler): () => void;
+
+    on<K extends SessionEventType>(
+        eventTypeOrHandler: K | SessionEventHandler,
+        handler?: TypedSessionEventHandler<K>
+    ): () => void {
+        if (this.disconnected) {
+            throw new Error("Session is disconnected");
+        }
+        // Overload 1: on(eventType, handler) - typed event subscription
+        if (typeof eventTypeOrHandler === "string" && handler) {
+            const eventType = eventTypeOrHandler;
+            if (!this.typedEventHandlers.has(eventType)) {
+                this.typedEventHandlers.set(eventType, new Set());
+            }
+            // Cast is safe: handler receives the correctly typed event at dispatch time
+            const storedHandler = handler as (event: SessionEvent) => void;
+            this.typedEventHandlers.get(eventType)!.add(storedHandler);
+            return () => {
+                const handlers = this.typedEventHandlers.get(eventType);
+                if (handlers) {
+                    handlers.delete(storedHandler);
+                }
+            };
+        }
+
+        // Overload 2: on(handler) - wildcard subscription
+        const wildcardHandler = eventTypeOrHandler as SessionEventHandler;
+        this.eventHandlers.add(wildcardHandler);
+        return () => {
+            this.eventHandlers.delete(wildcardHandler);
+        };
+    }
+
+    /**
+     * Dispatches an event to all registered handlers.
+     * Also handles broadcast request events internally (external tool calls, permissions).
+     *
+     * @param event - The session event to dispatch
+     * @internal This method is for internal use by the SDK.
+     */
+    _dispatchEvent(event: SessionEvent): void {
+        // Handle broadcast request events internally (fire-and-forget)
+        this._handleBroadcastEvent(event);
+
+        // Dispatch to typed handlers for this specific event type
+        const typedHandlers = this.typedEventHandlers.get(event.type);
+        if (typedHandlers) {
+            for (const handler of typedHandlers) {
+                try {
+                    handler(event as SessionEventPayload<typeof event.type>);
+                } catch (_error) {
+                    // Handler error
+                }
+            }
+        }
+
+        // Dispatch to wildcard handlers
+        for (const handler of this.eventHandlers) {
+            try {
+                handler(event);
+            } catch (_error) {
+                // Handler error
+            }
+        }
+    }
+
+    /**
+     * Handles broadcast request events by executing local handlers and responding via RPC.
+     * Handlers are dispatched as fire-and-forget — rejections propagate as unhandled promise
+     * rejections, consistent with standard EventEmitter / event handler semantics.
+     * @internal
+     */
+    private _handleBroadcastEvent(event: SessionEvent): void {
+        if (this.disconnected) {
+            return;
+        }
+        if (event.type === "external_tool.requested") {
+            if (event.data.hasHandler === false) {
+                return;
+            }
+            const { requestId, toolName } = event.data as {
+                requestId: string;
+                toolName: string;
+                arguments: unknown;
+                toolCallId: string;
+                sessionId: string;
+            };
+            const args = (event.data as { arguments: unknown }).arguments;
+            const toolCallId = (event.data as { toolCallId: string }).toolCallId;
+            const traceparent = (event.data as { traceparent?: string }).traceparent;
+            const tracestate = (event.data as { tracestate?: string }).tracestate;
+            const handler = this.toolHandlers.get(toolName);
+            if (handler) {
+                void this._executeToolAndRespond(
+                    requestId,
+                    toolName,
+                    toolCallId,
+                    args,
+                    handler,
+                    traceparent,
+                    tracestate,
+                    event.agentId || undefined
+                );
+            }
+        } else if (event.type === "external_tool.completed") {
+            const { requestId } = event.data as { requestId?: string };
+            if (requestId) {
+                const controller = this.pendingExternalTools.get(requestId);
+                if (controller) {
+                    this.pendingExternalTools.delete(requestId);
+                    controller.abort();
+                }
+            }
+        } else if (event.type === "permission.requested") {
+            const {
+                requestId,
+                permissionRequest,
+                promptRequest,
+                assistedApprovalAssessment,
+                resolvedByHook,
+                programToolCallId,
+            } = event.data as PermissionRequestedData;
+            if (resolvedByHook) {
+                return; // Already resolved by a permissionRequest hook; no client action needed.
+            }
+            if (this.permissionHandler) {
+                void this._executePermissionAndRespond(
+                    requestId,
+                    permissionRequest,
+                    promptRequest,
+                    assistedApprovalAssessment,
+                    programToolCallId
+                );
+            }
+        } else if (event.type === "mcp.oauth_required") {
+            const data = event.data as McpAuthRequest | undefined;
+            if (!data?.requestId) {
+                return;
+            }
+            if (!this.mcpAuthHandler) {
+                console.warn(
+                    "Received MCP OAuth request without a registered MCP auth handler. " +
+                        `SessionId=${this.sessionId}, RequestId=${data.requestId}`
+                );
+                return;
+            }
+            void this._executeMcpAuthAndRespond(data);
+        } else if (event.type === "command.execute") {
+            const { requestId, commandName, command, args } = event.data as {
+                requestId: string;
+                command: string;
+                commandName: string;
+                args: string;
+            };
+            void this._executeCommandAndRespond(requestId, commandName, command, args);
+        } else if (event.type === "elicitation.requested") {
+            if (this.elicitationHandler) {
+                const { message, requestedSchema, mode, elicitationSource, url, requestId } =
+                    event.data;
+                void this._handleElicitationRequest(
+                    {
+                        sessionId: this.sessionId,
+                        message,
+                        requestedSchema: requestedSchema as ElicitationContext["requestedSchema"],
+                        mode,
+                        elicitationSource,
+                        url,
+                    },
+                    requestId
+                );
+            }
+        } else if (event.type === "capabilities.changed") {
+            // The event names only the capabilities that changed, so merge `ui` key by key.
+            const { ui, ...changed } = event.data;
+            this._capabilities = { ...this._capabilities, ...changed };
+            if (ui) {
+                this._capabilities.ui = { ...this._capabilities.ui, ...ui };
+            }
+        } else if (event.type === "session.canvas.opened") {
+            this.upsertOpenCanvasFromEvent(event.data);
+        } else if (event.type === "session.canvas.closed") {
+            this.removeOpenCanvasFromEvent(event.data);
+        }
+    }
+
+    private upsertOpenCanvasFromEvent(data: unknown): void {
+        if (!isOpenCanvasInstance(data)) {
+            console.warn("failed to deserialize session.canvas.opened payload");
+            return;
+        }
+        this.upsertOpenCanvas(data);
+    }
+
+    private removeOpenCanvasFromEvent(data: unknown): void {
+        if (
+            !data ||
+            typeof data !== "object" ||
+            typeof (data as { instanceId?: unknown }).instanceId !== "string" ||
+            (data as { instanceId: string }).instanceId.length === 0
+        ) {
+            console.warn("failed to deserialize session.canvas.closed payload");
+            return;
+        }
+        this.removeOpenCanvas((data as { instanceId: string }).instanceId);
+    }
+
+    private removeOpenCanvas(instanceId: string): void {
+        this.openCanvasInstances = this.openCanvasInstances.filter(
+            (open) => open.instanceId !== instanceId
+        );
+    }
+
+    private upsertOpenCanvas(instance: OpenCanvasInstance): void {
+        const index = this.openCanvasInstances.findIndex(
+            (open) => open.instanceId === instance.instanceId
+        );
+        if (index >= 0) {
+            this.openCanvasInstances[index] = instance;
+        } else {
+            this.openCanvasInstances.push(instance);
+        }
+    }
+
+    /**
+     * Executes a tool handler and sends the result back via RPC.
+     * @internal
+     */
+    private async _executeToolAndRespond(
+        requestId: string,
+        toolName: string,
+        toolCallId: string,
+        args: unknown,
+        handler: ToolHandler,
+        traceparent?: string,
+        tracestate?: string,
+        agentId?: string
+    ): Promise<void> {
+        const controller = new AbortController();
+        if (this.disconnected || this.pendingExternalTools.has(requestId)) {
+            return;
+        }
+        this.pendingExternalTools.set(requestId, controller);
+
+        let claimed = false;
+        try {
+            // The built-in tool-search tool receives a snapshot of the session's
+            // currently initialized tools so an override can filter the live
+            // catalog without issuing its own RPC. Fetch it only for that tool
+            // to avoid a round-trip on every tool call; a failed fetch simply
+            // leaves the snapshot undefined rather than failing the tool.
+            let availableTools: CurrentToolMetadata[] | undefined;
+            if (toolName === TOOL_SEARCH_TOOL_NAME) {
+                if (controller.signal.aborted) {
+                    return;
+                }
+                const aborted = new Promise<undefined>((resolve) => {
+                    controller.signal.addEventListener("abort", () => resolve(undefined), {
+                        once: true,
+                    });
+                });
+                try {
+                    const metadata = await Promise.race([
+                        this.rpc.tools.getCurrentMetadata(),
+                        aborted,
+                    ]);
+                    availableTools = metadata?.tools ?? undefined;
+                } catch {
+                    availableTools = undefined;
+                }
+            }
+            if (controller.signal.aborted) {
+                return;
+            }
+            const rawResult = await handler(args, {
+                sessionId: this.sessionId,
+                toolCallId,
+                toolName,
+                arguments: args,
+                availableTools,
+                traceparent,
+                tracestate,
+                signal: controller.signal,
+                agentId,
+                requestId,
+            });
+            let result: ToolResult;
+            if (rawResult == null) {
+                result = "";
+            } else if (typeof rawResult === "string") {
+                result = rawResult;
+            } else if (isToolResultObject(rawResult)) {
+                // Telemetry that cannot be encoded as JSON would stop the result from
+                // being sent at all, leaving the call unanswered, so answer it with the error.
+                try {
+                    JSON.stringify(rawResult.toolTelemetry);
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    throw new Error(`failed to serialize tool telemetry: ${message}`);
+                }
+                // Handlers can return extra fields that must also be JSON-serializable.
+                JSON.stringify(rawResult);
+                result = rawResult;
+            } else {
+                result = JSON.stringify(rawResult);
+            }
+            if (!this._claimExternalTool(requestId, controller)) {
+                return;
+            }
+            claimed = true;
+            await this.rpc.tools.handlePendingToolCall({ requestId, result });
+        } catch (error) {
+            if (claimed) {
+                // The handler finished but its result never reached the runtime, which
+                // is still waiting on the call. This invocation already owns the
+                // request, so report the failure and answer the call with it.
+                if (this.disconnected) {
+                    return;
+                }
+                console.error("External tool result delivery failed", {
+                    sessionId: this.sessionId,
+                    requestId,
+                    toolName,
+                    error,
+                });
+            } else if (!this._claimExternalTool(requestId, controller)) {
+                return;
+            }
+            let message = error instanceof Error ? error.message : String(error);
+            if (!message) {
+                // An empty error reads as no error, so the call would count as a success.
+                message = (error instanceof Error && error.name) || "Error";
+            }
+            // Handler errors are initial replies too; retry failed delivery once,
+            // but never recursively retry a fallback error response.
+            for (let attempt = 0; attempt < (claimed ? 1 : 2); attempt++) {
+                try {
+                    await this.rpc.tools.handlePendingToolCall({ requestId, error: message });
+                    return;
+                } catch (rpcError) {
+                    const retryable = !claimed && attempt === 0 && !this.disconnected;
+                    if (!retryable) {
+                        if (
+                            !(
+                                rpcError instanceof ConnectionError ||
+                                rpcError instanceof ResponseError
+                            )
+                        ) {
+                            throw rpcError;
+                        }
+                        return;
+                    }
+                    // A transport can also fail with a plain Error (for example a write
+                    // EPIPE), so retry the initial reply once whatever the failure is.
+                    console.error("External tool error delivery failed", {
+                        sessionId: this.sessionId,
+                        requestId,
+                        toolName,
+                        error: rpcError,
+                    });
+                    message =
+                        (rpcError instanceof Error ? rpcError.message || rpcError.name : "") ||
+                        String(rpcError) ||
+                        "Error";
+                }
+            }
+        } finally {
+            if (this.pendingExternalTools.get(requestId) === controller) {
+                this.pendingExternalTools.delete(requestId);
+            }
+            controller.abort();
+        }
+    }
+
+    private _claimExternalTool(requestId: string, controller: AbortController): boolean {
+        if (this.disconnected || this.pendingExternalTools.get(requestId) !== controller) {
+            return false;
+        }
+        this.pendingExternalTools.delete(requestId);
+        return true;
+    }
+
+    /**
+     * Executes a permission handler and sends the result back via RPC.
+     * @internal
+     */
+    private async _executePermissionAndRespond(
+        requestId: string,
+        permissionRequest: PermissionRequest,
+        promptRequest?: PermissionRequestedData["promptRequest"],
+        assistedApprovalAssessment?: PermissionRequestedData["assistedApprovalAssessment"],
+        programToolCallId?: string
+    ): Promise<void> {
+        try {
+            const invocation: PermissionHandlerInvocation = {
+                sessionId: this.sessionId,
+                managedSettingsEnabled: this.managedSettingsEnabled,
+                ...(promptRequest === undefined ? {} : { promptRequest }),
+                ...(assistedApprovalAssessment === undefined ? {} : { assistedApprovalAssessment }),
+                ...(programToolCallId === undefined ? {} : { programToolCallId }),
+            };
+            const handlerResult = await this.permissionHandler!(permissionRequest, invocation);
+            const isAttributed = isAttributedPermissionResult(handlerResult);
+            const result: PermissionRequestResult = isAttributed
+                ? handlerResult.result
+                : handlerResult;
+            const decisionContext = isAttributed ? handlerResult.decisionContext : undefined;
+            if (result.kind === "no-result") {
+                return;
+            }
+            if (this.disconnected) {
+                return;
+            }
+            await this.rpc.permissions.handlePendingPermissionRequest(
+                decisionContext === undefined
+                    ? { requestId, result }
+                    : { requestId, result, decisionContext }
+            );
+        } catch (error) {
+            if (this.disconnected) {
+                return;
+            }
+            console.error("Permission handler or response delivery failed", {
+                sessionId: this.sessionId,
+                requestId,
+                error,
+            });
+            try {
+                await this.rpc.permissions.handlePendingPermissionRequest({
+                    requestId,
+                    result: {
+                        kind: "user-not-available",
+                    },
+                });
+            } catch (rpcError) {
+                if (!(rpcError instanceof ConnectionError || rpcError instanceof ResponseError)) {
+                    throw rpcError;
+                }
+                // Connection lost or RPC error — nothing we can do
+            }
+        }
+    }
+
+    /**
+     * Executes an MCP auth handler and sends the result back via RPC.
+     * @internal
+     */
+    private async _executeMcpAuthAndRespond(request: McpAuthRequest): Promise<void> {
+        try {
+            const result = await this.mcpAuthHandler!(request, { sessionId: this.sessionId });
+            const response: McpOauthPendingRequestResponse =
+                result && "kind" in result && result.kind === "cancelled"
+                    ? { kind: "cancelled" }
+                    : result &&
+                        "accessToken" in result &&
+                        typeof result.accessToken === "string" &&
+                        result.accessToken.length > 0
+                      ? { ...result, kind: "token" }
+                      : result &&
+                          "kind" in result &&
+                          result.kind === "runtimeRefresh" &&
+                          request.runtimeRefreshSupported === true
+                        ? { kind: "runtimeRefresh" }
+                        : { kind: "cancelled" };
+            await this.rpc.mcp.oauth.handlePendingRequest({
+                requestId: request.requestId,
+                result: response,
+            });
+        } catch (_error) {
+            try {
+                await this.rpc.mcp.oauth.handlePendingRequest({
+                    requestId: request.requestId,
+                    result: { kind: "cancelled" },
+                });
+            } catch (rpcError) {
+                if (!(rpcError instanceof ConnectionError || rpcError instanceof ResponseError)) {
+                    throw rpcError;
+                }
+            }
+        }
+    }
+
+    /**
+     * Executes a command handler and sends the result back via RPC.
+     * @internal
+     */
+    private async _executeCommandAndRespond(
+        requestId: string,
+        commandName: string,
+        command: string,
+        args: string
+    ): Promise<void> {
+        const handler = this.commandHandlers.get(commandName);
+        if (!handler) {
+            try {
+                await this.rpc.commands.handlePendingCommand({
+                    requestId,
+                    error: `Unknown command: ${commandName}`,
+                });
+            } catch (rpcError) {
+                if (!(rpcError instanceof ConnectionError || rpcError instanceof ResponseError)) {
+                    throw rpcError;
+                }
+            }
+            return;
+        }
+
+        try {
+            await handler({ sessionId: this.sessionId, command, commandName, args });
+            if (this.disconnected) {
+                return;
+            }
+            await this.rpc.commands.handlePendingCommand({ requestId });
+        } catch (error) {
+            if (this.disconnected) {
+                return;
+            }
+            const message = error instanceof Error ? error.message : String(error);
+            try {
+                await this.rpc.commands.handlePendingCommand({ requestId, error: message });
+            } catch (rpcError) {
+                if (!(rpcError instanceof ConnectionError || rpcError instanceof ResponseError)) {
+                    throw rpcError;
+                }
+            }
+        }
+    }
+
+    /**
+     * Registers custom tool handlers for this session.
+     *
+     * Tools with handlers allow the assistant to execute custom functions automatically.
+     * Declaration-only tools are surfaced as events and left pending for the consumer.
+     *
+     * @param tools - An array of tool definitions with their handlers, or undefined to clear all tools
+     * @internal This method is typically called internally when creating a session with tools.
+     */
+    registerTools(tools?: SessionConfig["tools"]): void {
+        this.assertConnected();
+        this.toolHandlers.clear();
+        if (!tools) {
+            return;
+        }
+
+        for (const tool of tools) {
+            if (tool.handler) {
+                const handler = tool.handler;
+                if (
+                    tool.name === "apply_patch" &&
+                    tool.overridesBuiltInTool &&
+                    toJsonSchema(tool.parameters)?.type === "string"
+                ) {
+                    this.toolHandlers.set(tool.name, (args, invocation) => {
+                        if (typeof args === "string") {
+                            return handler(args, invocation);
+                        }
+                        if (
+                            typeof args === "object" &&
+                            args !== null &&
+                            "input" in args &&
+                            typeof args.input === "string"
+                        ) {
+                            return handler(args.input, invocation);
+                        }
+                        throw new TypeError("apply_patch string override requires a string input");
+                    });
+                } else {
+                    this.toolHandlers.set(tool.name, handler);
+                }
+            }
+        }
+    }
+
+    /**
+     * Retrieves a registered tool handler by name.
+     *
+     * @param name - The name of the tool to retrieve
+     * @returns The tool handler if found, or undefined
+     * @internal This method is for internal use by the SDK.
+     */
+    getToolHandler(name: string): ToolHandler | undefined {
+        return this.toolHandlers.get(name);
+    }
+
+    /**
+     * Registers canvas declarations and handlers for this session.
+     *
+     * @param canvases - Canvases created via `createCanvas`, or undefined to clear all canvases
+     * @internal Called by the SDK when creating/resuming a session with `canvases`.
+     */
+    registerCanvases(canvases?: Canvas[]): void {
+        this.assertConnected();
+        this.canvases.clear();
+        if (!canvases || canvases.length === 0) {
+            delete this.clientSessionApis.canvas;
+            return;
+        }
+        for (const canvas of canvases) {
+            this.canvases.set(canvas.declaration.id, canvas);
+        }
+
+        const self = this;
+        this.clientSessionApis.canvas = {
+            async open(params) {
+                const canvas = self.canvases.get(params.canvasId);
+                if (!canvas) throw new Error(`No canvas registered with id "${params.canvasId}"`);
+                try {
+                    return (await canvas.open(params)) ?? {};
+                } catch (error) {
+                    throw toCanvasRpcError(error);
+                }
+            },
+            async close(params) {
+                const canvas = self.canvases.get(params.canvasId);
+                if (!canvas) throw new Error(`No canvas registered with id "${params.canvasId}"`);
+                try {
+                    if (canvas.onClose) {
+                        await canvas.onClose(params);
+                    }
+                } catch (error) {
+                    throw toCanvasRpcError(error);
+                }
+            },
+            async invoke(params) {
+                const canvas = self.canvases.get(params.canvasId);
+                if (!canvas) throw new Error(`No canvas registered with id "${params.canvasId}"`);
+                const handler = canvas.actionHandlers.get(params.actionName);
+                if (!handler) {
+                    throw new CanvasError(
+                        "canvas_action_no_handler",
+                        "No handler implemented for this canvas action"
+                    );
+                }
+                try {
+                    return (await handler(params)) as CanvasActionInvokeResult;
+                } catch (error) {
+                    throw toCanvasRpcError(error);
+                }
+            },
+        };
+    }
+
+    /**
+     * Registers workflow closures and reverse-RPC handlers for this session.
+     *
+     * @param workflows - Workflow handles declared by the joining extension.
+     * @internal Called by the SDK when an extension joins a session.
+     */
+    registerWorkflows(workflows?: WorkflowHandle[]): void {
+        this.assertConnected();
+        this.workflows.clear();
+        if (!workflows || workflows.length === 0) {
+            delete this.clientSessionApis.workflow;
+            return;
+        }
+
+        for (const handle of workflows) {
+            const definition = getWorkflowDefinition(handle);
+            if (this.workflows.has(definition.meta.name)) {
+                throw new Error(
+                    `Duplicate workflow name "${definition.meta.name}". Workflow names must be unique within a joinSession call.`
+                );
+            }
+            this.workflows.set(definition.meta.name, definition);
+        }
+
+        const self = this;
+        this.clientSessionApis.workflow = {
+            async execute(params) {
+                const definition = self.workflows.get(params.name);
+                if (!definition) {
+                    const message = `No workflow registered with name "${params.name}"`;
+                    throw new ResponseError(ErrorCodes.InvalidParams, message, {
+                        code: "workflow_not_found",
+                        name: params.name,
+                    });
+                }
+
+                const controller = new AbortController();
+                // Keyed by execution token as well as run ID so overlapping
+                // attempts for one run stay individually addressable.
+                let controllersForRun = self.workflowAbortControllers.get(params.runId);
+                if (controllersForRun === undefined) {
+                    controllersForRun = new Map();
+                    self.workflowAbortControllers.set(params.runId, controllersForRun);
+                }
+                controllersForRun.set(params.executionToken, controller);
+                const progress = new WorkflowProgressBuffer(async (lines) => {
+                    await self.rpc.workflow.log({
+                        runId: params.runId,
+                        executionToken: params.executionToken,
+                        lines,
+                    });
+                });
+                try {
+                    const context: WorkflowContext = {
+                        runId: params.runId,
+                        agents: definition.agents,
+                        args: params.args,
+                        session: self,
+                        signal: controller.signal,
+                        phase: (title: string) => {
+                            throwIfWorkflowAborted(controller.signal);
+                            progress.enqueue("phase", title);
+                        },
+                        log: (message: string) => {
+                            throwIfWorkflowAborted(controller.signal);
+                            progress.enqueue("log", message);
+                        },
+                        agent: async (prompt, options = {}) => {
+                            await progress.flush();
+                            const opts: PrivateWorkflowAgentTransportOptions = {};
+                            for (const key of WORKFLOW_AGENT_OPTION_KEYS) {
+                                if (key === "agent") {
+                                    if (typeof options.agent === "string") {
+                                        opts.agent = options.agent;
+                                    } else if (options.agent !== undefined) {
+                                        opts.role = getWorkflowAgentReference(
+                                            definition,
+                                            options.agent
+                                        );
+                                    }
+                                } else {
+                                    copyDefinedWorkflowAgentOption(options, opts, key);
+                                }
+                            }
+                            const response = await awaitWorkflowOperation(
+                                () =>
+                                    self.rpc.workflow.agent({
+                                        workflowRunId: params.runId,
+                                        executionToken: params.executionToken,
+                                        prompt,
+                                        opts,
+                                    }),
+                                controller.signal
+                            );
+                            return response.result ?? null;
+                        },
+                        step: async (
+                            key: string,
+                            producer: () => Promise<JsonValue> | JsonValue,
+                            options: WorkflowStepOptions = {}
+                        ): Promise<JsonValue> => {
+                            await progress.flush();
+                            if (options.volatile) {
+                                // The flush above is an await point, so an abort can land
+                                // between entering step() and running the producer. The
+                                // journaled branch is covered by awaitWorkflowOperation;
+                                // this one has to check for itself, or a cancelled run
+                                // would still start new extension work.
+                                throwIfWorkflowAborted(controller.signal);
+                                return producer();
+                            }
+                            const cached = await awaitWorkflowOperation(
+                                () =>
+                                    self.rpc.workflow.journal.get({
+                                        runId: params.runId,
+                                        executionToken: params.executionToken,
+                                        key,
+                                    }),
+                                controller.signal
+                            );
+                            if (cached.hit) {
+                                if (cached.resultJson === undefined) {
+                                    throw new Error(
+                                        `step("${key}") journal returned a hit without a result`
+                                    );
+                                }
+                                assertWorkflowStepResult(cached.resultJson, key);
+                                return cached.resultJson;
+                            }
+
+                            // Producers are best-effort at-least-once across crashes or
+                            // concurrent callers, so authors must make side effects idempotent.
+                            const result = await producer();
+                            assertWorkflowStepResult(result, key);
+                            await awaitWorkflowOperation(
+                                () =>
+                                    self.rpc.workflow.journal.put({
+                                        runId: params.runId,
+                                        executionToken: params.executionToken,
+                                        key,
+                                        resultJson: result,
+                                    }),
+                                controller.signal
+                            );
+                            return result;
+                        },
+                        pause: async (key: string): Promise<void> => {
+                            if (typeof key !== "string" || key.length === 0) {
+                                throw new Error("Workflow pause checkpoint key must not be empty");
+                            }
+                            const helperScope = workflowExecutionStore.getStore()?.helperScope;
+                            if (helperScope !== undefined) {
+                                throw new Error(
+                                    `Workflow pause checkpoints are not allowed inside ${helperScope}() branches`
+                                );
+                            }
+                            await progress.flush();
+                            const response = await awaitWorkflowOperation(
+                                () =>
+                                    self.internalRpc.workflow.pauseAtCheckpoint({
+                                        runId: params.runId,
+                                        executionToken: params.executionToken,
+                                        key,
+                                    }),
+                                controller.signal
+                            );
+                            switch (response.action) {
+                                case "continue":
+                                    return;
+                                case "pause":
+                                    await awaitWorkflowOperation(
+                                        () => new Promise<never>(() => {}),
+                                        controller.signal
+                                    );
+                            }
+                        },
+                        parallel: runWorkflowParallel,
+                        pipeline: runWorkflowPipeline,
+                        workflow: async () => {
+                            throw new Error("nested workflows are not supported");
+                        },
+                    };
+                    const execution = { active: true };
+                    const result = await workflowExecutionStore.run(execution, async () => {
+                        try {
+                            return await definition.run(context);
+                        } finally {
+                            execution.active = false;
+                        }
+                    });
+                    if (result === undefined) {
+                        return {};
+                    }
+                    assertWorkflowResult(result);
+                    return { result };
+                } finally {
+                    // The attempt is over once its body settles, and the runtime sends
+                    // workflow.abort only while an attempt is still running. Abort here
+                    // so work that outlived the body, such as a parallel() branch left
+                    // running after a sibling's fatal error, stops instead of continuing
+                    // on a finished run.
+                    controller.abort(new DOMException("Workflow run has settled", "AbortError"));
+                    try {
+                        await progress.close();
+                    } finally {
+                        const controllersForRun = self.workflowAbortControllers.get(params.runId);
+                        if (controllersForRun?.get(params.executionToken) === controller) {
+                            controllersForRun.delete(params.executionToken);
+                            if (controllersForRun.size === 0) {
+                                self.workflowAbortControllers.delete(params.runId);
+                            }
+                        }
+                    }
+                }
+            },
+            async abort(params) {
+                const controllersForRun = self.workflowAbortControllers.get(params.runId);
+                const controller = controllersForRun?.get(params.executionToken);
+                if (controller !== undefined) {
+                    controller.abort(new DOMException("Workflow run was aborted", "AbortError"));
+                }
+                return {};
+            },
+        };
+    }
+
+    /**
+     * Registers per-provider {@link BearerTokenProvider} callbacks for BYOK providers
+     * configured with managed-identity / on-demand bearer-token auth.
+     *
+     * The runtime never receives the callback itself; the SDK strips it from the
+     * provider config and instead sends `hasBearerTokenProvider: true`. When the
+     * runtime needs a token it issues a session-scoped `providerToken.getToken`
+     * request, which this handler routes to the matching per-provider callback.
+     *
+     * @param providers - Map of provider name → callback, or undefined/empty to clear.
+     * @internal This method is called internally when creating/resuming a session.
+     */
+    registerBearerTokenProviders(providers?: Map<string, BearerTokenProvider>): void {
+        this.assertConnected();
+        this.bearerTokenProviders.clear();
+        if (!providers || providers.size === 0) {
+            delete this.clientSessionApis.providerToken;
+            return;
+        }
+        for (const [name, callback] of providers) {
+            this.bearerTokenProviders.set(name, callback);
+        }
+
+        const self = this;
+        this.clientSessionApis.providerToken = {
+            async getToken(params) {
+                self.assertConnected();
+                const callback = self.bearerTokenProviders.get(params.providerName);
+                if (!callback) {
+                    throw new Error(
+                        `No bearer-token provider registered for provider "${params.providerName}"`
+                    );
+                }
+                const token = await callback({
+                    providerName: params.providerName,
+                    sessionId: params.sessionId,
+                });
+                return { token };
+            },
+        };
+    }
+
+    /**
+     * Registers command handlers for this session.
+     *
+     * @param commands - An array of command definitions with handlers, or undefined to clear
+     * @internal This method is typically called internally when creating/resuming a session.
+     */
+    registerCommands(commands?: { name: string; handler: CommandHandler }[]): void {
+        this.assertConnected();
+        this.commandHandlers.clear();
+        if (!commands) {
+            return;
+        }
+        for (const cmd of commands) {
+            this.commandHandlers.set(cmd.name, cmd.handler);
+        }
+    }
+
+    /**
+     * Registers the elicitation handler for this session.
+     *
+     * @param handler - The handler to invoke when the server dispatches an elicitation request
+     * @internal This method is typically called internally when creating/resuming a session.
+     */
+    registerElicitationHandler(handler?: ElicitationHandler): void {
+        this.assertConnected();
+        this.elicitationHandler = handler;
+    }
+
+    /**
+     * Registers the exit-plan-mode handler for this session.
+     *
+     * @param handler - The handler to invoke when the server dispatches an exit-plan-mode request
+     * @internal This method is typically called internally when creating/resuming a session.
+     */
+    registerExitPlanModeHandler(handler?: ExitPlanModeHandler): void {
+        this.assertConnected();
+        this.exitPlanModeHandler = handler;
+    }
+
+    /**
+     * Registers the auto-mode-switch handler for this session.
+     *
+     * @param handler - The handler to invoke when the server dispatches an auto-mode-switch request
+     * @internal This method is typically called internally when creating/resuming a session.
+     */
+    registerAutoModeSwitchHandler(handler?: AutoModeSwitchHandler): void {
+        this.assertConnected();
+        this.autoModeSwitchHandler = handler;
+    }
+
+    /**
+     * Handles an elicitation.requested broadcast event.
+     * Invokes the registered handler and responds via handlePendingElicitation RPC.
+     * @internal
+     */
+    async _handleElicitationRequest(context: ElicitationContext, requestId: string): Promise<void> {
+        if (!this.elicitationHandler) {
+            return;
+        }
+        try {
+            const result = await this.elicitationHandler(context);
+            await this.rpc.ui.handlePendingElicitation({
+                requestId,
+                result: {
+                    action: result.action,
+                    ...(result.content ? { content: result.content } : {}),
+                },
+                ...(result.decisionContext !== undefined
+                    ? { decisionContext: result.decisionContext }
+                    : {}),
+            });
+        } catch {
+            // Handler failed — attempt to cancel so the request doesn't hang
+            try {
+                await this.rpc.ui.handlePendingElicitation({
+                    requestId,
+                    result: { action: "cancel" },
+                });
+            } catch (rpcError) {
+                if (!(rpcError instanceof ConnectionError || rpcError instanceof ResponseError)) {
+                    throw rpcError;
+                }
+                // Connection lost or RPC error — nothing we can do
+            }
+        }
+    }
+
+    /**
+     * Handles an exitPlanMode.request callback from the runtime.
+     * @internal
+     */
+    async _handleExitPlanModeRequest(request: ExitPlanModeRequest): Promise<ExitPlanModeResult> {
+        this.assertConnected();
+        if (!this.exitPlanModeHandler) {
+            return { approved: true };
+        }
+
+        return await this.exitPlanModeHandler(request, { sessionId: this.sessionId });
+    }
+
+    /**
+     * Handles an autoModeSwitch.request callback from the runtime.
+     * @internal
+     */
+    async _handleAutoModeSwitchRequest(
+        request: AutoModeSwitchRequest
+    ): Promise<AutoModeSwitchResponse> {
+        this.assertConnected();
+        if (!this.autoModeSwitchHandler) {
+            return "no";
+        }
+
+        return await this.autoModeSwitchHandler(request, { sessionId: this.sessionId });
+    }
+
+    /**
+     * Sets the host capabilities for this session.
+     *
+     * @param capabilities - The capabilities object from the create/resume response
+     * @internal This method is typically called internally when creating/resuming a session.
+     */
+    setCapabilities(capabilities?: SessionCapabilities): void {
+        this._capabilities = capabilities ?? {};
+    }
+
+    /**
+     * Snapshot of canvas instances currently known to be open for this session.
+     * Populated from the `session.resume` response and live `session.canvas.opened`
+     * and `session.canvas.closed` events. Returns a defensive copy — mutating the
+     * returned array has no effect on the session.
+     */
+    get openCanvases(): OpenCanvasInstance[] {
+        return [...this.openCanvasInstances];
+    }
+
+    /**
+     * Sets the open-canvas snapshot for this session.
+     *
+     * @param instances - The `openCanvases` array from the `session.resume` response.
+     * @internal This method is typically called internally when resuming a session.
+     */
+    setOpenCanvases(instances: OpenCanvasInstance[]): void {
+        this.openCanvasInstances = [...instances];
+    }
+
+    private assertElicitation(): void {
+        if (!this._capabilities.ui?.elicitation) {
+            throw new Error(
+                "Elicitation is not supported by the host. " +
+                    "Check session.capabilities.ui?.elicitation before calling UI methods."
+            );
+        }
+    }
+
+    private async _elicitation(params: ElicitationParams): Promise<ElicitationResult> {
+        this.assertElicitation();
+        return this.rpc.ui.elicitation({
+            message: params.message,
+            requestedSchema: params.requestedSchema,
+        });
+    }
+
+    private async _confirm(message: string): Promise<boolean> {
+        this.assertElicitation();
+        const result = await this.rpc.ui.elicitation({
+            message,
+            requestedSchema: {
+                type: "object",
+                properties: {
+                    confirmed: { type: "boolean", default: true },
+                },
+                required: ["confirmed"],
+            },
+        });
+        return result.action === "accept" && (result.content?.confirmed as boolean) === true;
+    }
+
+    private async _select(message: string, options: string[]): Promise<string | null> {
+        this.assertElicitation();
+        const result = await this.rpc.ui.elicitation({
+            message,
+            requestedSchema: {
+                type: "object",
+                properties: {
+                    selection: { type: "string", enum: options },
+                },
+                required: ["selection"],
+            },
+        });
+        if (result.action === "accept" && result.content?.selection != null) {
+            return result.content.selection as string;
+        }
+        return null;
+    }
+
+    private async _input(message: string, options?: UiInputOptions): Promise<string | null> {
+        this.assertElicitation();
+        const field: Record<string, unknown> = { type: "string" as const };
+        if (options?.title) field.title = options.title;
+        if (options?.description) field.description = options.description;
+        if (options?.minLength != null) field.minLength = options.minLength;
+        if (options?.maxLength != null) field.maxLength = options.maxLength;
+        if (options?.format) field.format = options.format;
+        if (options?.default != null) field.default = options.default;
+
+        const result = await this.rpc.ui.elicitation({
+            message,
+            requestedSchema: {
+                type: "object",
+                properties: {
+                    value: field as ElicitationParams["requestedSchema"]["properties"][string],
+                },
+                required: ["value"],
+            },
+        });
+        if (result.action === "accept" && result.content?.value != null) {
+            return result.content.value as string;
+        }
+        return null;
+    }
+
+    /**
+     * Registers a handler for permission requests.
+     *
+     * When the assistant needs permission to perform certain actions (e.g., file operations),
+     * this handler is called to approve or deny the request.
+     *
+     * @param handler - The permission handler function, or undefined to remove the handler
+     * @internal This method is typically called internally when creating a session.
+     */
+    registerPermissionHandler(handler?: PermissionHandler): void {
+        this.assertConnected();
+        this.permissionHandler = handler;
+    }
+
+    /**
+     * Registers a user input handler for ask_user requests.
+     *
+     * When the agent needs input from the user (via ask_user tool),
+     * this handler is called to provide the response.
+     *
+     * @param handler - The user input handler function, or undefined to remove the handler
+     * @internal This method is typically called internally when creating a session.
+     */
+    registerUserInputHandler(handler?: UserInputHandler): void {
+        this.assertConnected();
+        this.userInputHandler = handler;
+    }
+
+    /**
+     * Registers the handler for passwords and other answers that shell
+     * commands run by the agent ask for.
+     *
+     * @param handler - The shell authentication handler, or undefined to remove it
+     * @internal This method is typically called internally when creating a session.
+     */
+    registerShellAuthenticationHandler(handler?: ShellAuthenticationHandler): void {
+        this.assertConnected();
+        this.shellAuthenticationHandler = handler;
+    }
+
+    /**
+     * Registers the session's skill provider.
+     *
+     * @param provider - The skill provider, or undefined to remove it
+     * @internal This method is typically called internally when creating a session.
+     */
+    registerSkillProvider(provider?: SkillProvider): void {
+        this.assertConnected();
+        this.skillProvider = provider;
+    }
+
+    /**
+     * Registers the host's creation callback without enabling the tool group.
+     * Enable it separately with `session.rpc.management.configure({ enabled: true })`.
+     */
+    async setSessionCreationHandler(
+        handler?: SessionCreationHandler
+    ): Promise<SessionManagementPolicy> {
+        this.assertConnected();
+        const previous = this.sessionCreationHandler;
+        this.sessionCreationHandler = handler;
+        try {
+            return await this.rpc.management.configure({ hasCreateHandler: handler !== undefined });
+        } catch (error) {
+            if (this.sessionCreationHandler === handler) this.sessionCreationHandler = previous;
+            throw error;
+        }
+    }
+
+    /**
+     * Registers the callback the runtime calls through `memoryStore.store`.
+     * Registered before create or resume declares `hasMemoryStore`.
+     * @internal
+     */
+    _registerMemoryStore(handler: MemoryConfiguration["storeMemory"]): void {
+        this.assertConnected();
+        this.memoryStoreHandler = handler;
+    }
+
+    /** @internal */
+    _clearMemoryStore(): void {
+        this.memoryStoreHandler = undefined;
+    }
+
+    /** @internal */
+    async _handleMemoryStore(memory: StoredMemory, signal: AbortSignal): Promise<void> {
+        this.assertConnected();
+        const handler = this.memoryStoreHandler;
+        if (!handler) throw new Error("No memory store is registered");
+        try {
+            await handler(
+                {
+                    sessionId: memory.sessionId,
+                    subject: memory.subject,
+                    fact: memory.fact,
+                    citations: memory.citations,
+                    reason: memory.reason,
+                },
+                { signal }
+            );
+        } catch (error) {
+            if (signal.aborted) {
+                throw new ResponseError(-32800, "Memory store call cancelled");
+            }
+            // The runtime reports a generic failure to the model; keep the cause visible to the app.
+            console.warn("Memory store callback failed", error);
+            throw new Error("Memory store callback failed");
+        }
+    }
+
+    /** @internal */
+    async _handleSessionManagementCreate(
+        request: SessionManagementCreateHostRequest,
+        token: CancellationToken
+    ): Promise<SessionManagementCreateResult> {
+        this.assertConnected();
+        const handler = this.sessionCreationHandler;
+        if (
+            !handler ||
+            request.parentSessionId !== this.sessionId ||
+            request.sessionId !== this.sessionId
+        ) {
+            throw new Error("Session creation handler is unavailable");
+        }
+        const controller = new AbortController();
+        this.pendingSessionCreations.add(controller);
+        const subscription = token.onCancellationRequested(() => controller.abort());
+        if (token.isCancellationRequested) controller.abort();
+        try {
+            return await handler(request, { signal: controller.signal });
+        } catch {
+            throw new Error("Session creation callback failed");
+        } finally {
+            subscription.dispose();
+            this.pendingSessionCreations.delete(controller);
+        }
+    }
+
+    /**
+     * Handles a `skillProvider.list` request from the runtime.
+     *
+     * @internal This method is for internal use by the SDK.
+     */
+    async _handleSkillProviderList(
+        token?: CancellationToken
+    ): Promise<{ skills: SkillProviderDescriptor[] }> {
+        const provider = this.requireSkillProvider();
+        return await this.callSkillProvider("listSkills", token, async (options) => ({
+            skills: (await provider.listSkills(options)) ?? [],
+        }));
+    }
+
+    /**
+     * Handles a `skillProvider.read` request from the runtime.
+     *
+     * @internal This method is for internal use by the SDK.
+     */
+    async _handleSkillProviderRead(
+        name: string,
+        token?: CancellationToken
+    ): Promise<{ markdown: string | null }> {
+        const provider = this.requireSkillProvider();
+        return await this.callSkillProvider("readSkill", token, async (options) => ({
+            markdown: (await provider.readSkill(name, options)) ?? null,
+        }));
+    }
+
+    private requireSkillProvider(): SkillProvider {
+        this.assertConnected();
+        if (!this.skillProvider) {
+            throw new Error(`No skill provider for session: ${this.sessionId}`);
+        }
+        return this.skillProvider;
+    }
+
+    /**
+     * Runs a provider call with an abort signal tied to the runtime's request
+     * cancellation. Failures are logged locally and reported generically.
+     */
+    private async callSkillProvider<T>(
+        operation: string,
+        token: CancellationToken | undefined,
+        call: (options: SkillProviderCallOptions) => Promise<T>
+    ): Promise<T> {
+        const controller = new AbortController();
+        const subscription = token?.onCancellationRequested(() => controller.abort());
+        if (token?.isCancellationRequested) {
+            controller.abort();
+        }
+        try {
+            return await call({ signal: controller.signal });
+        } catch (error) {
+            if (controller.signal.aborted) {
+                throw new ResponseError(-32800, `Skill provider ${operation} cancelled`);
+            }
+            console.error(`Skill provider ${operation} failed`, {
+                sessionId: this.sessionId,
+                error,
+            });
+            throw skillProviderFailure(operation);
+        } finally {
+            subscription?.dispose();
+        }
+    }
+
+    /**
+     * Registers hook handlers for session lifecycle events.
+     *
+     * Hooks allow custom logic to be executed at various points during
+     * the session lifecycle (before/after tool use, session start/end, etc.).
+     *
+     * @param hooks - The hook handlers object, or undefined to remove all hooks
+     * @internal This method is typically called internally when creating a session.
+     */
+    registerHooks(hooks?: SessionHooks): void {
+        this.assertConnected();
+        this.hooks = hooks;
+    }
+
+    /**
+     * Registers transform callbacks for system message sections.
+     *
+     * @param callbacks - Map of section ID to transform callback, or undefined to clear
+     * @internal This method is typically called internally when creating a session.
+     */
+    registerTransformCallbacks(callbacks?: Map<string, SectionTransformFn>): void {
+        this.assertConnected();
+        this.transformCallbacks = callbacks;
+    }
+
+    /**
+     * Handles a systemMessage.transform request from the runtime.
+     * Dispatches each section to its registered transform callback.
+     *
+     * @param sections - Map of section IDs to their current rendered content
+     * @returns A promise that resolves with the transformed sections
+     * @internal This method is for internal use by the SDK.
+     */
+    async _handleSystemMessageTransform(
+        sections: Record<string, { content: string }>
+    ): Promise<{ sections: Record<string, { content: string }> }> {
+        this.assertConnected();
+        const result: Record<string, { content: string }> = {};
+
+        for (const [sectionId, { content }] of Object.entries(sections)) {
+            const callback = this.transformCallbacks?.get(sectionId);
+            if (callback) {
+                try {
+                    const transformed = await callback(content);
+                    result[sectionId] = { content: transformed };
+                } catch (_error) {
+                    // Callback failed — return original content
+                    result[sectionId] = { content };
+                }
+            } else {
+                // No callback for this section — pass through unchanged
+                result[sectionId] = { content };
+            }
+        }
+
+        return { sections: result };
+    }
+
+    /**
+     * Handles a user input request from the Copilot CLI.
+     *
+     * @param request - The user input request data from the CLI
+     * @returns A promise that resolves with the user's response
+     * @internal This method is for internal use by the SDK.
+     */
+    async _handleUserInputRequest(request: unknown): Promise<UserInputResponse> {
+        this.assertConnected();
+        if (!this.userInputHandler) {
+            // No handler registered, throw error
+            throw new Error("User input requested but no handler registered");
+        }
+
+        try {
+            const result = await this.userInputHandler(request as UserInputRequest, {
+                sessionId: this.sessionId,
+            });
+            return result;
+        } catch (error) {
+            // Handler failed, rethrow
+            throw error;
+        }
+    }
+
+    /**
+     * Asks the registered handler for a secret. Any failure, a malformed answer,
+     * or an abort cancels the prompt, so the program that asked fails instead
+     * of receiving a wrong value. Never logs the answer.
+     *
+     * @param cancelled - Aborted when the runtime no longer needs the answer.
+     * @internal This method is for internal use by the SDK.
+     */
+    async _handleShellAuthenticationRequest(
+        request: ShellAuthenticationRequest,
+        cancelled: AbortSignal
+    ): Promise<ShellAuthenticationResponse> {
+        const handler = this.shellAuthenticationHandler;
+        if (
+            !handler ||
+            cancelled.aborted ||
+            this.pendingShellAuthenticationRequests.has(request.requestId)
+        ) {
+            return { action: "cancel" };
+        }
+        const controller = new AbortController();
+        const abort = () => controller.abort();
+        cancelled.addEventListener("abort", abort, { once: true });
+        this.pendingShellAuthenticationRequests.set(request.requestId, controller);
+        try {
+            // A handler that never settles after its prompt is cancelled must not
+            // keep the request open.
+            const cancellation = new Promise<undefined>((resolve) => {
+                controller.signal.addEventListener("abort", () => resolve(undefined), {
+                    once: true,
+                });
+            });
+            const result = await Promise.race([
+                Promise.resolve(
+                    handler(request, {
+                        sessionId: this.sessionId,
+                        signal: controller.signal,
+                    })
+                ),
+                cancellation,
+            ]);
+            if (
+                controller.signal.aborted ||
+                result?.action !== "accept" ||
+                typeof result.value !== "string"
+            ) {
+                return { action: "cancel" };
+            }
+            return { action: "accept", value: result.value };
+        } catch (error) {
+            // Cancelling the prompt settles the race above, so only handler failures land here.
+            // The error's message or name could contain the answer, so only its type is logged.
+            console.error("Shell authentication handler failed", {
+                sessionId: this.sessionId,
+                requestId: request.requestId,
+                errorType: errorTypeName(error),
+            });
+            return { action: "cancel" };
+        } finally {
+            cancelled.removeEventListener("abort", abort);
+            this.pendingShellAuthenticationRequests.delete(request.requestId);
+        }
+    }
+
+    /**
+     * Handles a hooks invocation from the Copilot CLI.
+     *
+     * @param hookType - The type of hook being invoked
+     * @param input - The input data for the hook
+     * @returns A promise that resolves with the hook output, or undefined
+     * @internal This method is for internal use by the SDK.
+     */
+    async _handleHooksInvoke(hookType: string, input: unknown): Promise<unknown> {
+        this.assertConnected();
+        if (!this.hooks) {
+            return undefined;
+        }
+
+        // All hook inputs share BaseHookInput, which exposes `timestamp` as a Date.
+        // The wire format sends it as Unix epoch ms (number), so we deserialize
+        // here, at the one place that knows the input is a hook payload. Bad data
+        // is left alone — the user-facing handler types still cast unknown to the
+        // specific HookInput, so a runtime type mismatch surfaces as a normal
+        // TypeError in user code rather than being silently masked.
+        const normalized = normalizeHookError(hookType, deserializeHookInput(input));
+
+        type GenericHandler = (
+            input: unknown,
+            invocation: { sessionId: string }
+        ) => Promise<unknown> | unknown;
+
+        const handlerMap: Record<string, GenericHandler | undefined> = {
+            preToolUse: this.hooks.onPreToolUse as GenericHandler | undefined,
+            preMcpToolCall: this.hooks.onPreMcpToolCall as GenericHandler | undefined,
+            postToolUse: this.hooks.onPostToolUse as GenericHandler | undefined,
+            postToolUseFailure: this.hooks.onPostToolUseFailure as GenericHandler | undefined,
+            userPromptSubmitted: this.hooks.onUserPromptSubmitted as GenericHandler | undefined,
+            userPromptTransformed: this.hooks.onUserPromptTransformed as GenericHandler | undefined,
+            sessionStart: this.hooks.onSessionStart as GenericHandler | undefined,
+            sessionEnd: this.hooks.onSessionEnd as GenericHandler | undefined,
+            errorOccurred: this.hooks.onErrorOccurred as GenericHandler | undefined,
+            agentStop: this.hooks.onAgentStop as GenericHandler | undefined,
+            subagentStart: this.hooks.onSubagentStart as GenericHandler | undefined,
+            subagentStop: this.hooks.onSubagentStop as GenericHandler | undefined,
+        };
+
+        const handler = handlerMap[hookType];
+        if (!handler) {
+            return undefined;
+        }
+
+        try {
+            const result = await handler(normalized, { sessionId: this.sessionId });
+            return result;
+        } catch (_error) {
+            // Hook failed, return undefined
+            return undefined;
+        }
+    }
+
+    /**
+     * Retrieves all events and messages from this session's history.
+     *
+     * This returns the complete conversation history including user messages,
+     * assistant responses, tool executions, and other session events.
+     * Use getRawEvents for archives containing integers outside JavaScript's safe range.
+     *
+     * @returns A promise that resolves with an array of all session events
+     * @throws Error if the session has been disconnected or the connection fails
+     *
+     * @example
+     * ```typescript
+     * const events = await session.getEvents();
+     * for (const event of events) {
+     *   if (event.type === "assistant.message") {
+     *     console.log("Assistant:", event.data.content);
+     *   }
+     * }
+     * ```
+     */
+    async getEvents(): Promise<SessionEvent[]> {
+        const response = await this.connection.sendRequest("session.getMessages", {
+            sessionId: this.sessionId,
+        });
+
+        return (response as { events: SessionEvent[] }).events;
+    }
+
+    /**
+     * Retrieves history with unsafe integers preserved as bigint values.
+     * Timestamp strings, explicit nulls, and unknown fields are retained.
+     * Pass the result directly to taskAnalytics.classifyTrajectory; JSON.stringify
+     * does not support bigint, but that RPC's encoder does.
+     */
+    async getRawEvents(): Promise<TrajectoryJsonValue[]> {
+        const response = await this.connection.sendRequest<{ events: TrajectoryJsonValue[] }>(
+            "session.getMessages",
+            { sessionId: this.sessionId, [rawHistoryResponse]: true }
+        );
+        return response.events;
+    }
+
+    /**
+     * Disconnects this session and releases all in-memory resources (event handlers,
+     * tool handlers, permission handlers).
+     *
+     * Session state on disk (conversation history, planning state, artifacts) is
+     * preserved, so the conversation can be resumed later by calling
+     * {@link CopilotClient.resumeSession} with the session ID. To permanently
+     * remove all session data including files on disk, use
+     * {@link CopilotClient.deleteSession} instead.
+     *
+     * After calling this method, the session object can no longer be used.
+     *
+     * @returns A promise that resolves when the session is disconnected
+     * @throws Error if the connection fails
+     *
+     * @example
+     * ```typescript
+     * // Clean up when done — session can still be resumed later
+     * await session.disconnect();
+     * ```
+     */
+    async disconnect(): Promise<void> {
+        if (this.disconnected || this.disconnecting) {
+            return;
+        }
+        this.disconnecting = true;
+        try {
+            let response: { success: boolean; error?: string } = { success: false };
+            for (let attempt = 0; attempt < 2 && !response.success; attempt++) {
+                response = (await this.connection.sendRequest("session.detach", {
+                    sessionId: this.sessionId,
+                })) as { success: boolean; error?: string };
+            }
+            if (!response.success) {
+                throw new Error(
+                    `Failed to disconnect session ${this.sessionId}: ${response.error || "Unknown error"}`
+                );
+            }
+            const release = this.releaseFromClient;
+            this._markDisconnected();
+            release?.();
+        } catch (error) {
+            this.disconnecting = false;
+            throw error;
+        }
+    }
+
+    /** Enables `await using session = ...` syntax for automatic cleanup. */
+    async [Symbol.asyncDispose](): Promise<void> {
+        return this.disconnect();
+    }
+
+    /**
+     * Aborts the currently processing message in this session.
+     *
+     * Use this to cancel a long-running request. The session remains valid
+     * and can continue to be used for new messages.
+     *
+     * @returns A promise that resolves when the abort request is acknowledged
+     * @throws Error if the session has been disconnected or the connection fails
+     *
+     * @example
+     * ```typescript
+     * // Start a long-running request
+     * const messagePromise = session.send({ prompt: "Write a very long story..." });
+     *
+     * // Abort after 5 seconds
+     * setTimeout(async () => {
+     *   await session.abort();
+     * }, 5000);
+     * ```
+     */
+    async abort(): Promise<void> {
+        await this.connection.sendRequest("session.abort", {
+            sessionId: this.sessionId,
+        });
+    }
+
+    /**
+     * Change the model for this session.
+     * The new model takes effect for the next message. Conversation history is preserved.
+     *
+     * @param model - Model ID to switch to
+     * @param options - Optional settings for the new model
+     *
+     * @example
+     * ```typescript
+     * await session.setModel("gpt-5.4");
+     * await session.setModel("claude-sonnet-4.6", { reasoningEffort: "high" });
+     *
+     * // Select Copilot Fusion and its tier in one call, like
+     * // `copilot --model fusion --fusion-tier high`.
+     * await session.setModel("fusion", { fusionTier: "high" });
+     * ```
+     */
+    async setModel(
+        model: string,
+        options?: {
+            reasoningEffort?: ReasoningEffort;
+            reasoningSummary?: ReasoningSummary;
+            contextTier?: ContextTier;
+            modelCapabilities?: ModelCapabilitiesOverride;
+            /**
+             * Routing preference to apply when `model` is `auto`.
+             *
+             * Pass `null` to return to the provider's default Auto routing. The
+             * runtime rejects this option when `model` is anything other than
+             * `auto`; use {@link setAutoTier} to change the preference without
+             * changing the selected model.
+             *
+             * For Copilot Fusion, prefer `fusionTier`. The `balance`,
+             * `hydrafusion` and `hydrafusion-max` identifiers it replaces
+             * remain accepted but are deprecated.
+             *
+             * @experimental Part of an experimental Auto routing surface and may
+             * change or be removed in a future release.
+             */
+            autoTier?: AutoTier | null;
+            /**
+             * Copilot Fusion tier to apply when `model` is `fusion` or `auto`,
+             * matching the CLI's `--fusion-tier`.
+             *
+             * The runtime resolves the tier to the Auto routing preference it
+             * stands for and stages it exactly like `autoTier`. Cannot be
+             * combined with `autoTier`; use {@link setFusionTier} to change the
+             * tier without changing the selected model.
+             *
+             * @experimental Part of an experimental Auto routing surface and may
+             * change or be removed in a future release.
+             */
+            fusionTier?: FusionTier;
+        }
+    ): Promise<void> {
+        await this.rpc.model.switchTo({ modelId: model, ...options });
+    }
+
+    /**
+     * Change the Auto routing preference without changing the selected model.
+     *
+     * The runtime does not apply the preference immediately. It records the
+     * request and commits it only when a later user turn using the `auto` model
+     * successfully obtains a usable model from the provider. A `pending` status
+     * therefore confirms that the request was accepted, not that it took effect.
+     *
+     * Watch for the outcome through the `session.model_change` event on success,
+     * or the ephemeral `session.auto_tier_switch_failed` event on failure. You
+     * can also read the current committed and in-flight state at any time with
+     * `session.rpc.model.getCurrent()`.
+     *
+     * Only the most recent request survives: issuing a new request replaces any
+     * earlier one that has not yet been claimed by a turn.
+     *
+     * For Copilot Fusion, prefer {@link setFusionTier}. The `balance`,
+     * `hydrafusion` and `hydrafusion-max` identifiers it replaces remain
+     * accepted but are deprecated.
+     *
+     * @param autoTier - Routing preference to activate, or `null` to return to
+     *   the provider's default Auto routing
+     * @returns The runtime's immediate acknowledgement and Auto preference snapshot
+     *
+     * @experimental Part of an experimental Auto routing surface and may change
+     * or be removed in a future release.
+     *
+     * @example
+     * ```typescript
+     * const result = await session.setAutoTier("intelligence");
+     * if (result.status === "pending") {
+     *     // Takes effect on a later turn that uses the `auto` model.
+     * }
+     * ```
+     */
+    async setAutoTier(autoTier: AutoTier | null): Promise<ModelSwitchAutoTierResult> {
+        return await this.rpc.model.switchAutoTier({ autoTier });
+    }
+
+    /**
+     * Change the Copilot Fusion tier without changing the selected model,
+     * naming the tier as the CLI's `--fusion-tier` does.
+     *
+     * The runtime resolves the tier to the Auto routing preference it stands
+     * for and then handles the request exactly like {@link setAutoTier}: it
+     * takes effect on a later user turn that uses the `fusion` or `auto`
+     * model. To return to the provider's default routing, call
+     * `setAutoTier(null)`.
+     *
+     * @param fusionTier - Copilot Fusion tier to activate
+     * @returns The runtime's immediate acknowledgement and Auto preference snapshot
+     *
+     * @experimental Part of an experimental Auto routing surface and may change
+     * or be removed in a future release.
+     *
+     * @example
+     * ```typescript
+     * const result = await session.setFusionTier("max");
+     * if (result.status === "pending") {
+     *     // Takes effect on a later turn that uses Copilot Fusion.
+     * }
+     * ```
+     */
+    async setFusionTier(fusionTier: FusionTier): Promise<ModelSwitchAutoTierResult> {
+        return await this.rpc.model.switchFusionTier({ fusionTier });
+    }
+
+    /**
+     * Replace the tools this client supplies to the session.
+     *
+     * `tools` becomes the complete set of tools this client implements,
+     * replacing the ones it supplied when the session was created or resumed,
+     * or in an earlier call. Built-in, MCP, and plugin tools, and tools other
+     * connected clients supply, are unaffected. Pass an empty array to remove
+     * all of this client's tools.
+     *
+     * Tools are defined the same way as for `createSession`: calls to tools
+     * with a `handler` are dispatched to it, and tools without one are
+     * declaration-only. Once the runtime accepts the replacement, every tool
+     * call this session dispatches uses the new handlers; calls already
+     * running finish on their original handlers. If the runtime rejects the
+     * replacement, this rejects and the previous tools and handlers stay in
+     * place. Concurrent calls on the same session are applied one at a time,
+     * in the order they are made.
+     *
+     * The agent sees the new tools from its next model request, which can fall
+     * within a turn in progress. A model request already in flight was made
+     * with the previous tools, so the agent can still call a tool you removed.
+     * If no connected client supplies a tool with that name any more, the call
+     * fails with an error that tells the agent the tool is no longer available,
+     * and the turn continues. If you don't want the agent to see that failure,
+     * replace tools while the session is idle.
+     *
+     * @param tools - The complete set of tools this client supplies
+     * @throws Error if the session disconnects before the replacement is applied
+     *
+     * @experimental Wraps the experimental `session.tools.set` RPC and may change
+     * or be removed in a future release.
+     *
+     * @example
+     * ```typescript
+     * await session.setTools([
+     *     defineTool("search_issues", {
+     *         description: "Search the issues shown on the current page",
+     *         parameters: z.object({ query: z.string() }),
+     *         handler: async ({ query }) => searchIssues(query),
+     *     }),
+     * ]);
+     * ```
+     */
+    async setTools(tools: NonNullable<SessionConfig["tools"]>): Promise<void> {
+        this.assertConnected();
+        const definitions = tools.map(toToolDefinition);
+        const replacement = this.setToolsQueue.then(async () => {
+            this.assertConnected();
+            await this.rpc.tools.set({ tools: definitions });
+            this.registerTools(tools);
+        });
+        this.setToolsQueue = replacement.then(
+            () => undefined,
+            () => undefined
+        );
+        await replacement;
+    }
+
+    /**
+     * Log a message to the session timeline.
+     * The message appears in the session event stream and is visible to SDK consumers
+     * and (for non-ephemeral messages) persisted to the session event log on disk.
+     *
+     * @param message - Human-readable message text
+     * @param options - Optional log level and ephemeral flag
+     *
+     * @example
+     * ```typescript
+     * await session.log("Processing started");
+     * await session.log("Disk usage high", { level: "warning" });
+     * await session.log("Connection failed", { level: "error" });
+     * await session.log("Debug info", { ephemeral: true });
+     * ```
+     */
+    async log(
+        message: string,
+        options?: { level?: "info" | "warning" | "error"; ephemeral?: boolean }
+    ): Promise<void> {
+        await this.rpc.log({ message, ...options });
+    }
+}
+
+/**
+ * Type guard that checks whether a value is a {@link ToolResultObject}.
+ * A valid object must have a string `textResultForLlm` and a recognized `resultType`.
+ */
+function isToolResultObject(value: unknown): value is ToolResultObject {
+    if (typeof value !== "object" || value === null) {
+        return false;
+    }
+
+    if (
+        !("textResultForLlm" in value) ||
+        typeof (value as ToolResultObject).textResultForLlm !== "string"
+    ) {
+        return false;
+    }
+
+    if (!("resultType" in value) || typeof (value as ToolResultObject).resultType !== "string") {
+        return false;
+    }
+
+    const allowedResultTypes: Array<ToolResultObject["resultType"]> = [
+        "success",
+        "failure",
+        "rejected",
+        "denied",
+        "timeout",
+    ];
+
+    return allowedResultTypes.includes((value as ToolResultObject).resultType);
+}
+
+/** Convert a canvas handler error into a ResponseError with a structured data envelope. */
+function toCanvasRpcError(error: unknown): ResponseError<unknown> {
+    if (error instanceof ResponseError) return error;
+    const code = error instanceof CanvasError ? error.code : "canvas_handler_error";
+    const message = error instanceof Error ? error.message : String(error);
+    return new ResponseError(ErrorCodes.InternalError, message, { code, message });
+}
+
+// The provider's own error text is deliberately not forwarded to the runtime.
+function skillProviderFailure(operation: string): ResponseError<undefined> {
+    return new ResponseError(ErrorCodes.InternalError, `Skill provider ${operation} failed`);
+}
+
+/**
+ * Names a thrown value's class, as the other SDKs log an exception's type. Reads the class from
+ * the prototype, never the error's own `name` or `message`, which the thrower can set to anything.
+ */
+function errorTypeName(error: unknown): string {
+    if ((typeof error !== "object" && typeof error !== "function") || error === null) {
+        return typeof error;
+    }
+    try {
+        const name: unknown = Object.getPrototypeOf(error)?.constructor?.name;
+        return typeof name === "string" && name !== "" ? name : typeof error;
+    } catch {
+        // A getter or proxy trap can throw, and logging must not.
+        return typeof error;
+    }
+}
+
+type WorkflowResultValidationCategory =
+    | "unsupported_type"
+    | "non_finite_number"
+    | "negative_zero"
+    | "cyclic_value"
+    | "nested_undefined"
+    | "unsupported_object";
+
+interface StrictJsonValidationContext {
+    code: "workflow_result_not_json" | "workflow_step_not_json";
+    label: string;
+    allowTopLevelUndefined: boolean;
+}
+
+function strictJsonValidationError(
+    context: StrictJsonValidationContext,
+    category: WorkflowResultValidationCategory,
+    message: string,
+    path: string
+): ResponseError<{ code: string; category: WorkflowResultValidationCategory; path: string }> {
+    return new ResponseError(ErrorCodes.InternalError, message, {
+        code: context.code,
+        category,
+        path,
+    });
+}
+
+function assertStrictJson(
+    value: unknown,
+    context: StrictJsonValidationContext
+): asserts value is JsonValue | undefined {
+    const ancestors = new Set<object>();
+
+    const visit = (current: unknown, path: string, allowUndefined: boolean): void => {
+        if (current === undefined) {
+            if (allowUndefined) {
+                return;
+            }
+            throw strictJsonValidationError(
+                context,
+                "nested_undefined",
+                `${context.label} contains nested undefined at ${path}`,
+                path
+            );
+        }
+        if (current === null || typeof current === "boolean" || typeof current === "string") {
+            return;
+        }
+        if (typeof current === "number") {
+            if (!Number.isFinite(current)) {
+                throw strictJsonValidationError(
+                    context,
+                    "non_finite_number",
+                    `${context.label} contains a non-finite number at ${path}`,
+                    path
+                );
+            }
+            // JSON serializes -0 as "0", so a journaled -0 would come back as 0
+            // after a resume and break the lossless replay guarantee.
+            if (Object.is(current, -0)) {
+                throw strictJsonValidationError(
+                    context,
+                    "negative_zero",
+                    `${context.label} contains negative zero at ${path}; normalize it to 0`,
+                    path
+                );
+            }
+            return;
+        }
+        if (
+            typeof current === "function" ||
+            typeof current === "symbol" ||
+            typeof current === "bigint"
+        ) {
+            throw strictJsonValidationError(
+                context,
+                "unsupported_type",
+                `${context.label} contains a function, symbol, or BigInt at ${path}`,
+                path
+            );
+        }
+        if (typeof current !== "object") {
+            throw strictJsonValidationError(
+                context,
+                "unsupported_type",
+                `${context.label} contains a function, symbol, or BigInt at ${path}`,
+                path
+            );
+        }
+        if (ancestors.has(current)) {
+            throw strictJsonValidationError(
+                context,
+                "cyclic_value",
+                `${context.label} contains a cyclic reference at ${path}`,
+                path
+            );
+        }
+
+        ancestors.add(current);
+        try {
+            if (Array.isArray(current)) {
+                const keys = Reflect.ownKeys(current);
+                if (
+                    keys.length !== current.length + 1 ||
+                    keys.some(
+                        (key) =>
+                            key !== "length" &&
+                            (typeof key !== "string" ||
+                                !/^(0|[1-9]\d*)$/.test(key) ||
+                                Number(key) >= current.length)
+                    )
+                ) {
+                    throw strictJsonValidationError(
+                        context,
+                        "unsupported_object",
+                        `${context.label} contains a non-JSON array property at ${path}`,
+                        path
+                    );
+                }
+                for (let index = 0; index < current.length; index++) {
+                    const descriptor = Object.getOwnPropertyDescriptor(current, String(index));
+                    if (
+                        descriptor === undefined ||
+                        !descriptor.enumerable ||
+                        !("value" in descriptor)
+                    ) {
+                        throw strictJsonValidationError(
+                            context,
+                            "unsupported_object",
+                            `${context.label} contains a non-JSON array property at ${path}[${index}]`,
+                            `${path}[${index}]`
+                        );
+                    }
+                    visit(descriptor.value, `${path}[${index}]`, false);
+                }
+                return;
+            }
+
+            const prototype = Object.getPrototypeOf(current);
+            if (prototype !== Object.prototype && prototype !== null) {
+                throw strictJsonValidationError(
+                    context,
+                    "unsupported_object",
+                    `${context.label} contains a non-JSON object at ${path}`,
+                    path
+                );
+            }
+            for (const key of Reflect.ownKeys(current)) {
+                if (typeof key === "symbol") {
+                    throw strictJsonValidationError(
+                        context,
+                        "unsupported_type",
+                        `${context.label} contains a function, symbol, or BigInt at ${path}`,
+                        path
+                    );
+                }
+                const propertyPath = /^[A-Za-z_$][\w$]*$/.test(key)
+                    ? `${path}.${key}`
+                    : `${path}[${JSON.stringify(key)}]`;
+                const descriptor = Object.getOwnPropertyDescriptor(current, key);
+                if (
+                    descriptor === undefined ||
+                    !descriptor.enumerable ||
+                    !("value" in descriptor)
+                ) {
+                    throw strictJsonValidationError(
+                        context,
+                        "unsupported_object",
+                        `${context.label} contains a non-JSON property at ${propertyPath}`,
+                        propertyPath
+                    );
+                }
+                visit(descriptor.value, propertyPath, false);
+            }
+        } finally {
+            ancestors.delete(current);
+        }
+    };
+
+    visit(value, "$", context.allowTopLevelUndefined);
+}
+
+function assertWorkflowResult(value: unknown): asserts value is JsonValue | undefined {
+    assertStrictJson(value, {
+        code: "workflow_result_not_json",
+        label: "Workflow result",
+        allowTopLevelUndefined: true,
+    });
+}
+
+function assertWorkflowStepResult(value: unknown, key: string): asserts value is JsonValue {
+    assertStrictJson(value, {
+        code: "workflow_step_not_json",
+        label: `Workflow step "${key}" result`,
+        allowTopLevelUndefined: false,
+    });
+}

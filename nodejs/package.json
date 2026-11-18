@@ -1,0 +1,59 @@
+{
+    "name": "@github/copilot-sdk",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/microsoft/copilot-sdk.git"
+    },
+    "version": "0.0.0-dev",
+    "copilotCliVersion": "1.0.112",
+    "description": "TypeScript SDK for programmatic control of GitHub Copilot CLI via JSON-RPC",
+    "main": "./dist/cjs/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "import": {
+                "types": "./dist/index.d.ts",
+                "default": "./dist/index.js"
+            },
+            "require": {
+                "types": "./dist/index.d.ts",
+                "default": "./dist/cjs/index.js"
+            }
+        },
+        "./extension": {
+            "import": {
+                "types": "./dist/extension.d.ts",
+                "default": "./dist/extension.js"
+            },
+            "require": {
+                "types": "./dist/extension.d.ts",
+                "default": "./dist/cjs/extension.js"
+            }
+        }
+    },
+    "type": "module",
+    "keywords": [
+        "github",
+        "copilot",
+        "sdk",
+        "jsonrpc",
+        "agent"
+    ],
+    "author": "GitHub",
+    "license": "MIT",
+    "dependencies": {
+        "koffi": "3.3.6",
+        "lossless-json": "4.3.3",
+        "vscode-jsonrpc": "10.0.0",
+        "zod": "4.6.7"
+    },
+    "engines": {
+        "node": "^20.19.0 || >=22.12.0"
+    },
+    "files": [
+        "dist/**/*",
+        "!dist/tsconfig.tsbuildinfo",
+        "docs/**/*",
+        "README.md"
+    ]
+}

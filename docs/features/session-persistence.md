@@ -1,0 +1,920 @@
+# Session resume and persistence
+
+This guide walks you through the SDK's session persistence capabilities—how to pause work, resume it later, and manage sessions in production environments.
+
+## How sessions work
+
+When you create a session, the Copilot CLI maintains conversation history, tool state, and planning context. The runtime saves this state to disk once the session handles its first message, so you can resume sessions across restarts, container migrations, or even different client instances.
+
+```mermaid
+flowchart LR
+    A[🆕 Create] --> B[⚡ Active] --> C[💾 Paused] --> D[🔄 Resume]
+    D --> B
+```
+
+| State | What happens |
+|-------|--------------|
+| **Create** | `session_id` assigned |
+| **Active** | Send prompts, tool calls, responses |
+| **Paused** | State saved to disk |
+| **Resume** | State loaded from disk |
+
+## Quick start: creating a resumable session
+
+Every session that has handled a message is resumable by its ID. Without your own `session_id`, one is generated for you (read it from `session.sessionId` in TypeScript), so you must store it yourself. Providing your own ID lets you derive it from your application's data instead.
+
+### TypeScript
+
+```typescript
+import { CopilotClient } from "@github/copilot-sdk";
+
+const client = new CopilotClient();
+
+// Create a session with a meaningful ID
+const session = await client.createSession({
+  sessionId: "user-123-task-456",
+  model: "gpt-5.2-codex",
+});
+
+// Do some work...
+await session.sendAndWait({ prompt: "Analyze my codebase" });
+
+// Session state is automatically persisted
+// You can safely close the client
+```
+
+### Python
+
+```python
+from copilot import CopilotClient
+from copilot.session import PermissionHandler
+
+client = CopilotClient()
+await client.start()
+
+# Create a session with a meaningful ID
+session = await client.create_session(on_permission_request=PermissionHandler.approve_all, model="gpt-5.2-codex", session_id="user-123-task-456")
+
+# Do some work...
+await session.send_and_wait("Analyze my codebase")
+
+# Session state is automatically persisted
+```
+
+### Go
+
+<!-- docs-validate: hidden -->
+```go
+package main
+
+import (
+	"context"
+	copilot "github.com/github/copilot-sdk/go"
+)
+
+func main() {
+	ctx := context.Background()
+	client := copilot.NewClient(nil)
+
+	// Create a session with a meaningful ID
+	session, _ := client.CreateSession(ctx, &copilot.SessionConfig{
+		SessionID: "user-123-task-456",
+		Model:     "gpt-5.2-codex",
+	})
+
+	// Do some work...
+	session.SendAndWait(ctx, copilot.MessageOptions{Prompt: "Analyze my codebase"})
+
+	// Session state is automatically persisted
+	_ = session
+}
+```
+<!-- /docs-validate: hidden -->
+
+```go
+ctx := context.Background()
+client := copilot.NewClient(nil)
+
+// Create a session with a meaningful ID
+session, _ := client.CreateSession(ctx, &copilot.SessionConfig{
+    SessionID: "user-123-task-456",
+    Model:     "gpt-5.2-codex",
+})
+
+// Do some work...
+session.SendAndWait(ctx, copilot.MessageOptions{Prompt: "Analyze my codebase"})
+
+// Session state is automatically persisted
+```
+
+### C# (.NET)
+
+```csharp
+using GitHub.Copilot;
+
+var client = new CopilotClient();
+
+// Create a session with a meaningful ID
+var session = await client.CreateSessionAsync(new SessionConfig
+{
+    SessionId = "user-123-task-456",
+    Model = "gpt-5.2-codex",
+});
+
+// Do some work...
+await session.SendAndWaitAsync(new MessageOptions { Prompt = "Analyze my codebase" });
+
+// Session state is automatically persisted
+```
+
+## Resuming a session
+
+Later—minutes, hours, or even days—you can resume the session from where you left off.
+
+### Remembered permissions with a session filesystem
+
+When you configure a custom `sessionFs` provider, runtime-owned durable permission choices use provider storage rather than the runtime host's configuration. The files live under the provider's `sessionStatePath` and retain their existing formats:
+
+* `permissions.json`: A top-level `locations` map retaining the existing `tool_approvals` and `allowed_directories` fields
+* `settings.json`: Top-level `allowedUrls` for `approve-permanently` URL approvals and `sandbox` for saved sandbox preferences
+* `config.json`: Top-level `trustedFolders` for remembered folder trust and `sandboxOnboardingShown` for the first-enable sandbox message
+
+Location keys are normalized provider directory paths, such as `/workspace`, without an added prefix. The runtime resolves them lexically using provider path conventions, without inspecting the host filesystem or discovering host Git repositories. An approval saved for `/workspace` is not automatically selected when the working directory is `/workspace/sub`.
+
+Provider-backed folder trust also uses lexical paths: a trusted folder covers itself and its descendants, not linked Git worktrees at other paths. Trust those worktree paths explicitly.
+
+There is no additional session-ID partition inside these files. Sessions that access the same backing files share remembered choices. Use separate provider namespaces when sessions or tenants must not share grants. With a namespace per session, permanent choices survive that session's resumes but do not automatically carry over to new sessions. To restore a session's persisted choices on resume, reconnect it to the same namespace.
+
+Consent updates are serialized per provider endpoint and file within one runtime process. Separate endpoints do not block each other. If different provider endpoints or runtime processes share backing files, the application must coordinate concurrent updates; the runtime cannot infer that those files are shared.
+
+These operations never import, update, or fall back to the host's `permissions-config.json`, `settings.json`, or `config.json`, including when provider reads or writes fail. Existing-format files supplied through the provider are read directly.
+
+As with host configuration, URL approvals are read only from `settings.json`. A legacy `allowedUrls` field in `config.json` is ignored; `config.json` remains the global-state file for remembered folder trust and the sandbox onboarding marker.
+
+Storage routing does not change permission lifetimes, URL denial precedence, or session policy behavior. Approve-once and approve-for-session do not become permanent grants.
+
+Saved sandbox preferences are restored on create and resume. Later explicit SDK `options.update` calls can change the live sandbox configuration without rewriting the saved preference.
+
+Without `sessionFs`, SDK applications in both `empty` and `copilot-cli` modes retain existing host-backed persistence. This includes the existing behavior where permanent URL consent saves host settings and grants access in the live session, but a fresh SDK session does not automatically load the host URL allowlist.
+
+See [Multi-tenancy and server deployments](../setup/multi-tenancy.md#sessionfs) for provider isolation responsibilities.
+
+### Transcript recovery
+
+The resume option `allowTranscriptRecovery` controls recovery when the runtime loads a
+transcript from storage. It defaults to `true` in all modes. With `false`, a load that
+would discard damaged records or move `session.start` fails with JSON-RPC error `-32075`
+without rewriting the transcript. An intact final record without a newline is accepted.
+
+Records skipped for forward compatibility still count when checking persisted order.
+If such records precede `session.start`, recovery must move the start record ahead of
+them. A transcript containing only skipped records is not empty and cannot be recovered
+without a valid `session.start`.
+
+When recovery is allowed, the returned session exposes `transcriptRecovery`, including
+the invalid line numbers, whether `session.start` moved, and a planned byte-exact backup
+path. Loading alone does not write that backup; the next durable append performs the
+repair and backup.
+
+> [!NOTE]
+> This option applies to a new transcript load, not to the lifetime of a session.
+> Reconnecting to a session already resident in the runtime reuses its live history
+> without revalidating storage or rejecting recovery authorized by an earlier resume.
+> The recovery report describes the load that performed recovery, not every subsequent
+> reconnect.
+
+### Linked event journals
+
+Set `COPILOT_SESSION_EVENT_LOG_ROTATION_BYTES` in the runtime process environment
+to opt into size-based journal rotation. The value is a positive decimal byte
+count, read once per process. Leaving it unset disables rotation; an invalid
+value logs one warning and disables rotation.
+
+After a committed write reaches the threshold, the runtime can archive the
+current journal as an unused `events.N.jsonl` and atomically replace
+`events.jsonl`. The replacement starts with a predecessor link and checkpoint
+events that reconstruct the session using existing event types. There is no
+separate checkpoint file. Resume reads only this standalone head; it does not
+need the archives or the environment setting.
+
+The threshold counts bytes appended after the checkpoint prefix, not the
+complete head size. Rotation is deferred when state cannot be reconstructed
+losslessly, or when the replacement cannot pay for its copied prefix from the
+preceding append interval. Deferred attempts wait for further journal growth
+rather than rebuilding on every write. Necessary replay state may grow, so
+this is not a constant-size file or disk-usage limit.
+
+History reads traverse complete predecessor archives, excluding contiguous
+`checkpoint: true` prefixes. Removing archive lines preserves surviving history
+without changing the head's checkpoint. Missing or malformed required data fails
+history reads, not head-only resume. Forks and archived rewinds materialize
+standalone transcripts that cannot reconnect discarded suffixes. Pagination
+locates event identities or expires shifted cursors. Copy linked archives when
+historical access is required.
+
+Custom session filesystem providers must implement atomic replacement through
+their existing `rename` operation and coordinate writers that share storage.
+Optional byte-range reads reduce historical I/O; providers without them read
+the needed complete segment. An unresolved publication stops further writes
+rather than guessing whether an asynchronous replacement committed.
+
+Older runtimes can replay the known checkpoint events while ignoring the link.
+If an older runtime rewrites the head and drops that link, newer runtimes do
+not reconnect orphan archives automatically. Current model, permissions and
+other reconstructed state remain readable, but older history is detached.
+
+```mermaid
+flowchart LR
+    subgraph Day1["Day 1"]
+        A1[Client A:<br/>createSession] --> A2[Work...]
+    end
+    
+    A2 --> S[(💾 Storage:<br/>~/.copilot/session-state/)]
+    S --> B1
+    
+    subgraph Day2["Day 2"]
+        B1[Client B:<br/>resumeSession] --> B2[Continue]
+    end
+```
+
+### TypeScript
+
+```typescript
+// Resume from a different client instance (or after restart)
+const session = await client.resumeSession("user-123-task-456", {});
+
+// Continue where you left off
+await session.sendAndWait({ prompt: "What did we discuss earlier?" });
+```
+
+### Python
+
+```python
+from copilot import CopilotClient
+from copilot.session import PermissionHandler
+
+client = CopilotClient()
+
+# Resume from a different client instance (or after restart)
+session = await client.resume_session("user-123-task-456", on_permission_request=PermissionHandler.approve_all)
+
+# Continue where you left off
+await session.send_and_wait("What did we discuss earlier?")
+```
+
+### Go
+
+<!-- docs-validate: hidden -->
+```go
+package main
+
+import (
+	"context"
+	copilot "github.com/github/copilot-sdk/go"
+)
+
+func main() {
+	ctx := context.Background()
+	client := copilot.NewClient(nil)
+
+	session, _ := client.ResumeSession(ctx, "user-123-task-456", nil)
+
+	session.SendAndWait(ctx, copilot.MessageOptions{Prompt: "What did we discuss earlier?"})
+	_ = session
+}
+```
+<!-- /docs-validate: hidden -->
+
+```go
+ctx := context.Background()
+
+// Resume from a different client instance (or after restart)
+session, _ := client.ResumeSession(ctx, "user-123-task-456", nil)
+
+// Continue where you left off
+session.SendAndWait(ctx, copilot.MessageOptions{Prompt: "What did we discuss earlier?"})
+```
+
+### C# (.NET)
+
+```csharp
+using GitHub.Copilot;
+
+var client = new CopilotClient();
+
+// Resume from a different client instance (or after restart)
+var session = await client.ResumeSessionAsync("user-123-task-456", new ResumeSessionConfig());
+
+// Continue where you left off
+await session.SendAndWaitAsync(new MessageOptions { Prompt = "What did we discuss earlier?" });
+```
+
+## Resume options
+
+When resuming a session, you can optionally reconfigure many settings. This is useful when you need to change the model, update tool configurations, or modify behavior.
+
+| Option | Description |
+|--------|-------------|
+| `model` | Change the model for the resumed session |
+| `systemMessage` | Override or extend the system prompt |
+| `availableTools` | Restrict which tools are available |
+| `excludedTools` | Disable specific tools |
+| `provider` | Re-provide BYOK credentials (required for BYOK sessions) |
+| `capi.autoTier` | Override the persisted Auto routing preference |
+| `capi.fusionTier` | Override the persisted Auto routing preference with a Copilot Fusion tier |
+| `capi.enableWebSocketResponses` | Choose the Responses API transport for the resumed session |
+| `reasoningEffort` | Adjust reasoning effort level |
+| `streaming` | Enable/disable streaming responses |
+| `workingDirectory` | Change the working directory |
+| `configDirectory` | Override configuration directory |
+| `mcpServers` | Configure MCP servers |
+| `customAgents` | Configure custom agents |
+| `agent` | Pre-select a custom agent by name |
+| `skillDirectories` | Directories to load skills from |
+| `disabledSkills` | Skills to disable |
+| `infiniteSessions` | Configure infinite session behavior |
+
+### Auto tier persistence
+
+With `model: "auto"`, the optional `capi.autoTier` setting selects an Auto routing preference: `efficiency`, `balance`, `intelligence`, or `fast`. In Python, use `capi={"auto_tier": "balance"}`. This setting applies to V2 Auto routing; V1 Auto requests are unchanged.
+
+The session's `model.list` RPC also returns optional `auto` metadata from the provider's `/meta` endpoint. Use the enabled descriptors with `type: "auto"` to discover additional supported tier identifiers, their display names, descriptions, and ordering. The existing selection methods and JSON fields accept these identifiers. A discovery failure does not fall back to `/models`, and a successful response without `auto` metadata provides no selectable Auto tiers.
+
+To populate a model picker before any session exists, use the server-level `models.list` RPC (`client.rpc.models.list()` in Node.js). It returns the same `auto` metadata from the same `/meta` response, with the same no-fallback behavior.
+
+Treat tier identifiers as extensible values, not a closed enumeration. Existing named values remain available; for additional identifiers, use strings in Node.js and Python, `AutoTier("premium-v2")` in Go, `new AutoTier("premium-v2")` in .NET, `AutoTier::Custom` in Rust, or `AutoTier.fromValue` in Java. The provider's `defaultTier` describes its default routing without creating a committed SDK preference.
+
+If a persisted tier is removed or disabled, resume preserves the explicit preference rather than replacing it with the provider's default. Select an available replacement before activating Auto routing.
+
+The CLI also preserves settings-derived preferences during startup, even when a tier is unavailable or dynamic discovery is disabled. You can then select a replacement in the model picker. Explicit SDK create and resume preferences are still validated before the operation succeeds, and Auto activation always validates availability against the resolved discovery mode.
+
+When a create or resume request includes `expAssignments`, the runtime installs those assignments before validating an explicit Auto preference. Validation, discovery, and activation use the same resolved feature decision.
+
+`fast` is an integrator-only latency preset, not a first-party GitHub Copilot product preference. Fast is not validated against the `/meta` tier catalog when configuring a session. The SDK does not decide Fast eligibility, inspect client identity, choose it as a default, or fall back to another tier when a runtime does not support it—an older runtime returns its native error unchanged.
+
+The runtime persists the selected tier, so applications do not need to resend it on every resume:
+
+* Omitting the tier when creating a session uses the runtime's default routing behavior.
+* A cold resume restores the persisted tier. Supplying an explicit tier overrides the restored value for the new activation.
+* When resuming a session already resident in the runtime, omitting the tier preserves the current selection and supplying the same tier is a no-op. Supplying a different tier requests a safe switch that the runtime applies after the resume succeeds; it cannot change a turn that is already in flight.
+* Older sessions without a persisted tier retain default routing behavior.
+
+Tier selection is not a live model-switch operation. The SDK forwards the preference; the runtime owns persistence and validation.
+
+The `session.start` and `session.resume` events expose the selected tier in their optional `data.autoTier` field (`data.auto_tier` in Python). When no tier is selected, the field is omitted.
+
+### Changing the Auto tier during a session
+
+Call `setAutoTier` to change the routing preference on a live session without changing the selected model. Pass `null` (Python `None`, Go `nil`) to return to the provider's default Auto routing.
+
+```typescript
+const result = await session.setAutoTier("intelligence");
+if (result.status === "pending") {
+  // Accepted, but not yet in effect.
+}
+```
+
+The runtime does not apply the preference immediately. It records the request and commits it only when a later user turn using the `auto` model successfully obtains a usable model from the provider. A `pending` status therefore confirms that the request was accepted, not that it took effect. Only the most recent request survives: a new request replaces any earlier one that no turn has claimed yet.
+
+If an older request is still validating when a newer preference request or reset arrives, the older call fails with a superseded-request error instead of replacing the newer intent.
+
+Watch for the outcome through these events:
+
+* `session.model_change` when the preference commits.
+* `session.auto_tier_switch_failed` when it does not. This event is ephemeral, so the runtime never persists or replays it on resume. Its `reason` field is one of `policy_rejected`, `request_failed`, `setup_failed`, or `unsupported`, and the previously effective preference stays active.
+
+You can also read the authoritative state at any time through the session's `model.getCurrent` RPC method, which reports the committed `autoTier`, any unclaimed `pendingAutoTier`, and the `activatingAutoTier` currently claimed by an in-progress activation.
+
+| SDK | Change the tier | Return to provider-default routing |
+|-----|-----------------|------------------------------------|
+| Node.js | `session.setAutoTier("balance")` | `session.setAutoTier(null)` |
+| Python | `session.set_auto_tier("balance")` | `session.set_auto_tier(None)` |
+| Go | `session.SetAutoTier(ctx, &tier)` | `session.SetAutoTier(ctx, nil)` |
+| .NET | `session.SetAutoTierAsync(AutoTier.Balance)` | `session.SetAutoTierAsync(null)` |
+| Rust | `session.set_auto_tier(Some(AutoTier::Balance))` | `session.set_auto_tier(None)` |
+| Java | `session.setAutoTier(AutoTier.BALANCE)` | `session.setAutoTier(null)` |
+
+To select the `auto` model and its routing preference in a single call, stage the tier on the model switch instead. The runtime rejects this option when the model is anything other than `auto`.
+
+| SDK | Stage a tier with the switch | Reset to provider-default routing |
+|-----|------------------------------|-----------------------------------|
+| Node.js | `setModel("auto", { autoTier: "balance" })` | `setModel("auto", { autoTier: null })` |
+| Python | `set_model("auto", auto_tier="balance")` | `set_model("auto", auto_tier=None)` |
+| Go | `SetModelOptions{AutoTier: &tier}` | `SetModelOptions{ResetAutoTier: true}` |
+| .NET | `new SetModelOptions { AutoTier = AutoTier.Balance }` | `new SetModelOptions { ResetAutoTier = true }` |
+| Rust | `SetModelOptions::default().with_auto_tier(AutoTier::Balance)` | `SetModelOptions::default().with_reset_auto_tier()` |
+| Java | `new SetModelOptions().setModel("auto").setAutoTier(AutoTier.BALANCE)` | `new SetModelOptions().setModel("auto").setResetAutoTier(true)` |
+
+Node.js, Python, and Rust express all three states in a single value: Node.js and Python because `null`/`None` is distinguishable from an omitted argument, and Rust because `AutoTierPreference::Reset` is a distinct variant of the same option. Go, .NET, and Java have no way to distinguish "reset" from "unset" in one value, so they carry a separate reset flag. Omitting both always means "leave the current preference alone."
+
+### Copilot Fusion names
+
+The SDK accepts the same Copilot Fusion names as the CLI. `model: "fusion"` (case-insensitive) selects Copilot Fusion, and `fusionTier` selects its tier: `standard`, `high`, or `max`. Together they behave like `copilot --model fusion --fusion-tier <tier>`.
+
+<!-- docs-validate: strict -->
+```typescript
+import { approveAll } from "@github/copilot-sdk";
+
+const session = await client.createSession({
+  model: "fusion",
+  capi: { fusionTier: "high" },
+  onPermissionRequest: approveAll,
+});
+```
+
+The runtime resolves each tier to the Auto routing preference it stands for, using the same runtime-owned bindings as the CLI's `--fusion-tier`, and then handles it exactly like `autoTier`. The runtime owns these bindings and can change them. Currently they are:
+
+| Fusion tier | Auto routing preference |
+|-------------|-------------------------|
+| `standard` | `balance` |
+| `high` | `hydrafusion` |
+| `max` | `hydrafusion-max` |
+
+The selected model is reported as `auto`, and `model.getCurrent`, `session.model_change`, `session.start`, and `session.resume` report the resolved preference as `autoTier`. The runtime rejects `fusionTier` when it is combined with `autoTier` (including `autoTier: null`), when it is not one of the three tier names, or, on a model switch, when the model is not `fusion` or `auto`. Remote sessions reject `model: "fusion"`.
+
+| SDK | Create or resume | Stage a tier with the switch | Change the tier |
+|-----|------------------|------------------------------|-----------------|
+| Node.js | `capi: { fusionTier: "high" }` | `setModel("fusion", { fusionTier: "high" })` | `session.setFusionTier("high")` |
+| Python | `capi={"fusion_tier": "high"}` | `set_model("fusion", fusion_tier="high")` | `session.set_fusion_tier("high")` |
+| Go | `&CapiSessionOptions{FusionTier: copilot.FusionTierHigh}` | `SetModelOptions{FusionTier: &tier}` | `session.SetFusionTier(ctx, copilot.FusionTierHigh)` |
+| .NET | `new CapiSessionOptions { FusionTier = FusionTier.High }` | `new SetModelOptions { FusionTier = FusionTier.High }` | `session.SetFusionTierAsync(FusionTier.High)` |
+| Rust | `CapiSessionOptions::new().with_fusion_tier(FusionTier::High)` | `SetModelOptions::default().with_fusion_tier(FusionTier::High)` | `session.set_fusion_tier(FusionTier::High)` |
+| Java | `new CapiSessionOptions().setFusionTier(FusionTier.HIGH)` | `new SetModelOptions().setModel("fusion").setFusionTier(FusionTier.HIGH)` | `session.setFusionTier(FusionTier.HIGH)` |
+
+To return to the provider's default routing, use `setAutoTier` with `null`, as described in the previous section.
+
+> [!NOTE]
+> The routing identifiers that the Fusion tiers replace are deprecated: `autoTier` values `balance`, `hydrafusion`, and `hydrafusion-max`, and `model: "hydrafusion"` or `model: "hydrafusion-max"`. They remain accepted and behave as before. Use `model: "fusion"` with `fusionTier` instead.
+
+### Responses transport on resume
+
+The optional `capi.enableWebSocketResponses` setting chooses the transport for the CAPI Responses API. It defaults to `true`, so the WebSocket transport is used whenever the selected model advertises the `ws:/responses` endpoint. Setting it to `false` falls back to the HTTP transport. In Python, use `capi={"enable_web_socket_responses": False}`.
+
+Supply it on the resume call when you need it. It is worth setting when WebSocket connections fail behind a proxy, and when a resumed session reports `400 input item ID does not belong to this connection`, which is specific to the WebSocket transport.
+
+```typescript
+const session = await client.resumeSession("user-123-task-456", {
+  capi: { enableWebSocketResponses: false },
+});
+```
+
+Setting this to `false` is equivalent to the `COPILOT_CLI_DISABLE_WEBSOCKET_RESPONSES` environment variable, which has the opposite polarity.
+
+### Example: changing model on resume
+
+```typescript
+// Resume with a different model
+const session = await client.resumeSession("user-123-task-456", {
+  model: "claude-sonnet-4",  // Switch to a different model
+  reasoningEffort: "high",   // Increase reasoning effort
+});
+```
+
+## Using BYOK (bring your own key) with resumed sessions
+
+When using your own API keys, you must re-provide the provider configuration when resuming. API keys are never persisted to disk for security reasons.
+
+```typescript
+// Original session with BYOK
+const session = await client.createSession({
+  sessionId: "user-123-task-456",
+  model: "gpt-5.2-codex",
+  provider: {
+    type: "azure",
+    baseUrl: "https://my-resource.openai.azure.com",
+    apiKey: process.env.AZURE_OPENAI_KEY,
+    azure: { apiVersion: "2024-10-21" },
+  },
+});
+
+// When resuming, you MUST re-provide the provider config
+const resumed = await client.resumeSession("user-123-task-456", {
+  provider: {
+    type: "azure",
+    baseUrl: "https://my-resource.openai.azure.com",
+    apiKey: process.env.AZURE_OPENAI_KEY,  // Required again
+    azure: { apiVersion: "2024-10-21" },
+  },
+});
+```
+
+## What gets persisted?
+
+Session state is saved to `~/.copilot/session-state/{sessionId}/`:
+
+```
+~/.copilot/session-state/
+└── user-123-task-456/
+    ├── events.jsonl          # Conversation history (session event log)
+    ├── workspace.yaml        # Session metadata
+    ├── checkpoints/          # Compaction summaries
+    │   ├── index.md          # Checkpoint index
+    │   ├── 001-<title>.md    # Written when the conversation is compacted
+    │   └── ...
+    ├── plan.md               # Agent's planning state (if any)
+    └── files/                # Session artifacts
+        ├── analysis.md       # Files the agent created
+        └── notes.txt         # Working documents
+```
+
+| Data | Persisted? | Notes |
+|------|------------|-------|
+| Conversation history | ✅ Yes | Full message thread |
+| Tool call results | ✅ Yes | Cached for context |
+| Agent planning state | ✅ Yes | `plan.md` file |
+| Session artifacts | ✅ Yes | In `files/` directory |
+| Provider/API keys | ❌ No | Security: must re-provide |
+| In-memory tool state | ❌ No | Tools should be stateless |
+
+## Session ID best practices
+
+Choose session IDs that encode ownership and purpose. This makes auditing and cleanup much easier.
+
+| Pattern | Example | Use Case |
+|---------|---------|----------|
+| ❌ `abc123` | Random IDs | Hard to audit, no ownership info |
+| ✅ `user-{userId}-{taskId}` | `user-alice-pr-review-42` | Multi-user apps |
+| ✅ `tenant-{tenantId}-{workflow}` | `tenant-acme-onboarding` | Multi-tenant SaaS |
+| ✅ `{userId}-{taskId}-{timestamp}` | `alice-deploy-1706932800` | Time-based cleanup |
+
+**Benefits of structured IDs:**
+* Easy to audit: "Show all sessions for user alice"
+* Easy to clean up: "Delete all sessions older than X"
+* Natural access control: Parse user ID from session ID
+
+### Example: generating session IDs
+
+```typescript
+function createSessionId(userId: string, taskType: string): string {
+  const timestamp = Date.now();
+  return `${userId}-${taskType}-${timestamp}`;
+}
+
+const sessionId = createSessionId("alice", "code-review");
+// → "alice-code-review-1706932800000"
+```
+
+```python
+import time
+
+def create_session_id(user_id: str, task_type: str) -> str:
+    timestamp = int(time.time())
+    return f"{user_id}-{task_type}-{timestamp}"
+
+session_id = create_session_id("alice", "code-review")
+# → "alice-code-review-1706932800"
+```
+
+## Managing session lifecycle
+
+### Listing active sessions
+
+<!-- docs-validate: strict -->
+```typescript
+// List all sessions
+const sessions = await client.listSessions();
+console.log(`Found ${sessions.length} sessions`);
+
+for (const session of sessions) {
+  console.log(`- ${session.sessionId} (started: ${session.startTime.toISOString()})`);
+}
+
+// Filter sessions by repository
+const repoSessions = await client.listSessions({ repository: "owner/repo" });
+```
+
+### Cleaning up old sessions
+
+Lock cleanup, creation, resume, and sends until all work, including background work, finishes and the owner disconnects. Share locks across processes or clients sharing storage. Failed cancellation blocks reuse, not unrelated cleanup. After correcting the cause, call `recoverSession` with the original resume configuration to reconnect, reacquire ownership, and drain.
+
+<!-- docs-validate: strict -->
+```typescript
+const sessionLocks = new Map<string, Promise<void>>();
+const sessionRecoveries = new Map<string, Awaited<ReturnType<typeof client.resumeSession>>>();
+
+async function withSessionLock<T>(sessionId: string, operation: () => Promise<T>, allowRecovery = false): Promise<T> {
+  const previous = sessionLocks.get(sessionId) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => { release = resolve; });
+  const tail = previous.then(() => current);
+  sessionLocks.set(sessionId, tail);
+  await previous;
+  try {
+    if (!allowRecovery && sessionRecoveries.has(sessionId)) {
+      throw new Error(`Session ${sessionId} requires recovery; call recoverSession before reuse`);
+    }
+    return await operation();
+  } finally {
+    release();
+    if (sessionLocks.get(sessionId) === tail) sessionLocks.delete(sessionId);
+  }
+}
+
+async function cancelAndDisconnect(sessionId: string, session: Awaited<ReturnType<typeof client.resumeSession>>) {
+  sessionRecoveries.set(sessionId, session);
+  const aborted = await session.rpc.abort({});
+  if (!aborted.success) throw new Error(aborted.error);
+  await session.disconnect();
+  sessionRecoveries.delete(sessionId);
+}
+
+async function recoverSession(sessionId: string, config: Parameters<typeof client.resumeSession>[1]) {
+  await withSessionLock(sessionId, async () => {
+    if (!sessionRecoveries.has(sessionId)) throw new Error(`No recovery pending for session ${sessionId}`);
+    await client.start();
+    const session = await client.resumeSession(sessionId, config);
+    await cancelAndDisconnect(sessionId, session);
+  }, true);
+}
+
+async function sendPrompt(sessionId: string, prompt: string) {
+  return withSessionLock(sessionId, async () => {
+    const session = await client.resumeSession(sessionId, {});
+    let response;
+    try {
+      response = await session.sendAndWait({ prompt });
+    } catch (error) {
+      try {
+        await cancelAndDisconnect(sessionId, session);
+      } catch (recoveryError) {
+        throw new AggregateError([error, recoveryError], "Session requires recovery");
+      }
+      throw error;
+    }
+    await session.disconnect();
+    return response;
+  });
+}
+
+async function cleanupExpiredSessions(maxIdleMs: number) {
+  const sessions = await client.listSessions();
+  
+  for (const session of sessions) {
+    if (Date.now() - session.modifiedTime.getTime() <= maxIdleMs) continue;
+    await withSessionLock(session.sessionId, async () => {
+      if (sessionRecoveries.has(session.sessionId)) return;
+      // The listing can become stale while another session is being deleted.
+      const latest = (await client.listSessions()).find((s) => s.sessionId === session.sessionId);
+      if (latest && Date.now() - latest.modifiedTime.getTime() > maxIdleMs) {
+        await client.deleteSession(session.sessionId);
+        console.log(`Deleted expired session: ${session.sessionId}`);
+      }
+    }, true);
+  }
+}
+
+// Clean up sessions that have been idle for more than 24 hours
+await cleanupExpiredSessions(24 * 60 * 60 * 1000);
+```
+
+### Disconnecting from a session (`disconnect`)
+
+When a task completes, disconnect from the session explicitly rather than waiting for timeouts. This releases in-memory resources but **preserves session data on disk**, so the session can still be resumed later:
+
+```typescript
+try {
+  // Do work...
+  await session.sendAndWait({ prompt: "Complete the task" });
+  
+  // Task complete — release in-memory resources (session can be resumed later)
+  await session.disconnect();
+} catch (error) {
+  // Clean up even on error
+  await session.disconnect();
+  throw error;
+}
+```
+
+Each SDK also provides idiomatic automatic cleanup patterns:
+
+| Language | Pattern | Example |
+|----------|---------|---------|
+| **TypeScript** | `Symbol.asyncDispose` | `await using session = await client.createSession(config);` |
+| **Python** | `async with` context manager | `async with await client.create_session(on_permission_request=handler) as session:` |
+| **C#** | `IAsyncDisposable` | `await using var session = await client.CreateSessionAsync(config);` |
+| **Go** | `defer` | `defer session.Disconnect()` |
+
+> [!NOTE]
+> The Rust SDK's `destroy()` is a deprecated alias for `disconnect()`; use `disconnect()` there. The other SDKs only provide `disconnect()`.
+
+### Permanently deleting a session (`deleteSession`)
+
+To permanently remove a session and all its data from disk (conversation history, planning state, artifacts), use `deleteSession`. This is irreversible—the session **cannot** be resumed after deletion:
+
+```typescript
+// Permanently remove session data
+await client.deleteSession("user-123-task-456");
+```
+
+> **`disconnect()` vs `deleteSession()`:** `disconnect()` releases in-memory resources but keeps session data on disk for later resumption. `deleteSession()` permanently removes everything, including files on disk.
+
+## Automatic cleanup: idle timeout
+
+By default, sessions have **no idle timeout** and live indefinitely until explicitly disconnected or deleted. You can optionally configure a server-wide idle timeout via `CopilotClientOptions.sessionIdleTimeoutSeconds`:
+
+```typescript
+import { CopilotClient } from "@github/copilot-sdk";
+
+const client = new CopilotClient({
+  sessionIdleTimeoutSeconds: 30 * 60, // 30 minutes
+});
+```
+
+When a timeout is configured, sessions without activity for that duration are automatically cleaned up. Set to `0` or omit to disable.
+
+> [!NOTE]
+> This option only applies when the SDK spawns the runtime process. When connecting to an existing server via a URI connection (`RuntimeConnection.forUri`), the server's own timeout configuration applies.
+
+```mermaid
+flowchart LR
+    A["⚡ Last Activity"] --> B["🧹 Timeout<br/>destroyed"]
+```
+
+Sessions with active work (running commands, background agents) are always protected from idle cleanup, regardless of the timeout setting.
+
+Listen for `session.idle` to know when a session has finished processing and gone idle:
+
+```typescript
+session.on("session.idle", () => {
+  console.log("Session is idle");
+});
+```
+
+## Deployment patterns
+
+### Pattern 1: one CLI server per user (recommended)
+
+Best for: Strong isolation, multi-tenant environments, Azure Dynamic Sessions.
+
+```mermaid
+flowchart LR
+    subgraph Users[" "]
+        UA[User A] --> CA[CLI A]
+        UB[User B] --> CB[CLI B]
+        UC[User C] --> CC[CLI C]
+    end
+    CA --> SA[(Storage A)]
+    CB --> SB[(Storage B)]
+    CC --> SC[(Storage C)]
+```
+
+**Benefits:** ✅ Complete isolation | ✅ Simple security | ✅ Easy scaling
+
+### Pattern 2: shared CLI server (resource efficient)
+
+Best for: Internal tools, trusted environments, resource-constrained setups.
+
+```mermaid
+flowchart LR
+    UA[User A] --> CLI
+    UB[User B] --> CLI
+    UC[User C] --> CLI
+    CLI[🖥️ Shared CLI] --> SA[Session A]
+    CLI --> SB[Session B]
+    CLI --> SC[Session C]
+```
+
+**Requirements:**
+* ⚠️ Unique session IDs per user
+* ⚠️ Application-level access control
+* ⚠️ Session ID validation before operations
+
+```typescript
+import { CopilotClient, CopilotSession } from "@github/copilot-sdk";
+
+// Application-level access control for shared CLI
+async function resumeSessionWithAuth(
+  client: CopilotClient,
+  sessionId: string,
+  currentUserId: string
+): Promise<CopilotSession> {
+  // Parse user from session ID
+  const [sessionUserId] = sessionId.split("-");
+  
+  if (sessionUserId !== currentUserId) {
+    throw new Error("Access denied: session belongs to another user");
+  }
+  
+  return client.resumeSession(sessionId, {});
+}
+```
+
+## Azure dynamic sessions
+
+For serverless/container deployments where containers can restart or migrate:
+
+### Mount persistent storage
+
+The session state directory must be mounted to persistent storage:
+
+```yaml
+# Azure Container Instance example
+containers:
+  - name: copilot-agent
+    image: my-agent:latest
+    volumeMounts:
+      - name: session-storage
+        mountPath: /home/app/.copilot/session-state
+
+volumes:
+  - name: session-storage
+    azureFile:
+      shareName: copilot-sessions
+      storageAccountName: myaccount
+```
+
+```mermaid
+flowchart LR
+    subgraph Before["Container A"]
+        CLI1[CLI + Session X]
+    end
+    
+    CLI1 --> |persist| Azure[(☁️ Azure File Share)]
+    Azure --> |restore| CLI2
+    
+    subgraph After["Container B (restart)"]
+        CLI2[CLI + Session X]
+    end
+```
+
+**Session survives container restarts!**
+
+## Infinite sessions for long-running workflows
+
+For workflows that might exceed context limits, enable infinite sessions with automatic compaction:
+
+```typescript
+const session = await client.createSession({
+  sessionId: "long-workflow-123",
+  infiniteSessions: {
+    enabled: true,
+    backgroundCompactionThreshold: 0.80,  // Start compaction at 80% context
+    bufferExhaustionThreshold: 0.95,      // Block at 95% if needed
+  },
+});
+```
+
+> [!NOTE]
+> Thresholds are context utilization ratios (0.0-1.0), not absolute token counts. See the [Compatibility Guide](../troubleshooting/compatibility.md) for details.
+
+## Limitations and considerations
+
+| Limitation | Description | Mitigation |
+|------------|-------------|------------|
+| **BYOK re-authentication** | API keys aren't persisted | Store keys in your secret manager; provide on resume |
+| **Writable storage** | `~/.copilot/session-state/` must be writable | Mount persistent volume in containers |
+| **No session locking** | Concurrent access to same session is undefined | Implement application-level locking or queue |
+| **Tool state not persisted** | In-memory tool state is lost | Design tools to be stateless or persist their own state |
+
+### Handling concurrent access
+
+The SDK doesn't provide built-in session locking. If multiple clients might access the same session:
+
+```typescript
+// Option 1: Application-level locking with Redis
+import { Redis } from "ioredis";
+
+const redis = new Redis();
+
+async function withSessionLock<T>(
+  sessionId: string,
+  fn: () => Promise<T>
+): Promise<T> {
+  const lockKey = `session-lock:${sessionId}`;
+  const acquired = await redis.set(lockKey, "locked", "EX", 300, "NX");
+  
+  if (!acquired) {
+    throw new Error("Session is in use by another client");
+  }
+  
+  try {
+    return await fn();
+  } finally {
+    await redis.del(lockKey);
+  }
+}
+
+// Usage
+await withSessionLock("user-123-task-456", async () => {
+  const session = await client.resumeSession("user-123-task-456", {});
+  await session.sendAndWait({ prompt: "Continue the task" });
+});
+```
+
+## Summary
+
+| Feature | How to Use |
+|---------|------------|
+| **Create resumable session** | Create a session and send a message; provide your own `sessionId` to choose the ID |
+| **Resume session** | `client.resumeSession(sessionId, config)` |
+| **BYOK resume** | Re-provide `provider` config |
+| **List sessions** | `client.listSessions(filter?)` |
+| **Disconnect from active session** | `session.disconnect()`—releases in-memory resources; session data on disk is preserved for resumption |
+| **Delete session permanently** | `client.deleteSession(sessionId)`—permanently removes all session data from disk; cannot be resumed |
+| **Containerized deployment** | Mount `~/.copilot/session-state/` to persistent storage |
+
+## Next steps
+
+* [Hooks Overview](../hooks/hooks-overview.md) - Customize session behavior with hooks
+* [Compatibility Guide](../troubleshooting/compatibility.md) - SDK vs CLI feature comparison
+* [Debugging Guide](../troubleshooting/debugging.md) - Troubleshoot session issues
