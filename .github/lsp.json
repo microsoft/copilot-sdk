@@ -1,0 +1,26 @@
+{
+  "lspServers": {
+    "csharp": {
+      "command": "dotnet",
+      "args": [
+        "tool",
+        "run",
+        "roslyn-language-server",
+        "--stdio",
+        "--autoLoadProjects"
+      ],
+      "fileExtensions": {
+        ".cs": "csharp"
+      },
+      "rootUri": "${configDir}/../dotnet"
+    },
+    "go": {
+      "command": "gopls",
+      "args": ["serve"],
+      "fileExtensions": {
+        ".go": "go"
+      },
+      "rootUri": "${configDir}/../go"
+    }
+  }
+}

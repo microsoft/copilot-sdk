@@ -1,0 +1,457 @@
+package testharness
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"runtime"
+	"slices"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	copilot "github.com/github/copilot-sdk/go"
+)
+
+const defaultGitHubToken = "fake-token-for-e2e-tests"
+
+var (
+	cliPath     string
+	cliPathOnce sync.Once
+)
+
+// CLIPath returns the path to the Copilot CLI, discovering it once and caching.
+func CLIPath() string {
+	cliPathOnce.Do(func() {
+		// Check environment variable first
+		if path := os.Getenv("COPILOT_CLI_PATH"); path != "" {
+			cliPath = path
+			return
+		}
+
+		npm := "npm"
+		if runtime.GOOS == "windows" {
+			npm = "npm.cmd"
+		}
+		command := exec.Command(npm, "run", "--silent", "prepare:runtime", "--", "--print-path")
+		command.Dir = RepoPath("nodejs")
+		output, err := command.Output()
+		if err == nil {
+			candidate := strings.TrimSpace(string(output))
+			if info, statErr := os.Stat(candidate); statErr == nil && !info.IsDir() {
+				cliPath = candidate
+			}
+		}
+	})
+	return cliPath
+}
+
+// TestContext holds shared resources for E2E tests.
+type TestContext struct {
+	CLIPath  string
+	HomeDir  string
+	WorkDir  string
+	ProxyURL string
+
+	proxy *CapiProxy
+
+	inProcess        bool
+	readOnlySnapshot bool
+}
+
+// isInProcessTransport reports whether the in-process (FFI) transport is selected
+// for E2E tests via COPILOT_SDK_DEFAULT_CONNECTION=inprocess. Mirrors the
+// Node/Python/.NET harnesses.
+func isInProcessTransport() bool {
+	return strings.EqualFold(os.Getenv("COPILOT_SDK_DEFAULT_CONNECTION"), "inprocess")
+}
+
+// IsInProcessTransport reports whether E2E tests run under the in-process (FFI)
+// transport. Tests that configure options unsupported in-process should skip
+// when this returns true.
+func IsInProcessTransport() bool {
+	return isInProcessTransport()
+}
+
+// SkipIfInProcess skips the test when E2E tests run under the in-process (FFI)
+// transport, for behavior the shared in-process runtime cannot support (e.g. a
+// process-global LLM inference provider). The reason is
+// surfaced in the test log so the skip is explicit rather than a silent transport
+// downgrade. Such tests still run over stdio in the default matrix cell.
+func SkipIfInProcess(t *testing.T, reason string) {
+	t.Helper()
+	if isInProcessTransport() {
+		t.Skipf("unsupported over the in-process (FFI) transport: %s", reason)
+	}
+}
+
+// SkipIfInProcessOnMacOS skips the test when E2E tests run under the in-process
+// (FFI) transport on macOS. Coverage is retained over stdio on every OS and
+// in-process on Linux and Windows.
+func SkipIfInProcessOnMacOS(t *testing.T, reason string) {
+	t.Helper()
+	if isInProcessTransport() && runtime.GOOS == "darwin" {
+		t.Skipf("unsupported over the in-process (FFI) transport on macOS: %s", reason)
+	}
+}
+
+// NewTestContext creates a new test context with isolated directories and a replaying proxy.
+func NewTestContext(t *testing.T) *TestContext {
+	t.Helper()
+
+	cliPath := CLIPath()
+	if cliPath == "" || !fileExists(cliPath) {
+		t.Fatalf("CLI not found at %s. Run 'npm install' in the nodejs directory first.", cliPath)
+	}
+
+	homeDir, err := os.MkdirTemp("", "copilot-test-config-")
+	if err != nil {
+		t.Fatalf("Failed to create temp home dir: %v", err)
+	}
+	if resolved, err := filepath.EvalSymlinks(homeDir); err == nil {
+		homeDir = resolved
+	}
+
+	workDir, err := os.MkdirTemp("", "copilot-test-work-")
+	if err != nil {
+		os.RemoveAll(homeDir)
+		t.Fatalf("Failed to create temp work dir: %v", err)
+	}
+	// Resolve symlinks (e.g., macOS /var -> /private/var) so paths
+	// match what spawned subprocesses see when they resolve their cwd.
+	if resolved, err := filepath.EvalSymlinks(workDir); err == nil {
+		workDir = resolved
+	}
+
+	proxy := NewCapiProxy()
+	proxyURL, err := proxy.Start()
+	if err != nil {
+		os.RemoveAll(homeDir)
+		os.RemoveAll(workDir)
+		t.Fatalf("Failed to start proxy: %v", err)
+	}
+	// Initialize the proxy before any client can start runtime requests. Tests that
+	// use a snapshot replace this empty configuration before model traffic begins.
+	dummySnapshotPath := filepath.Join(workDir, "__no_snapshot__.yaml")
+	if err := proxy.Configure(dummySnapshotPath, workDir); err != nil {
+		if stopErr := proxy.StopWithOptions(true); stopErr != nil {
+			t.Logf("Failed to stop proxy after initialization error: %v", stopErr)
+		}
+		os.RemoveAll(homeDir)
+		os.RemoveAll(workDir)
+		t.Fatalf("Failed to initialize proxy: %v", err)
+	}
+	if err := proxy.SetCopilotUserByToken(defaultGitHubToken, defaultCopilotUser(proxyURL)); err != nil {
+		if stopErr := proxy.StopWithOptions(true); stopErr != nil {
+			t.Logf("Failed to stop proxy after configuration error: %v", stopErr)
+		}
+		os.RemoveAll(homeDir)
+		os.RemoveAll(workDir)
+		t.Fatalf("Failed to configure default Copilot user: %v", err)
+	}
+
+	ctx := &TestContext{
+		CLIPath:   cliPath,
+		HomeDir:   homeDir,
+		WorkDir:   workDir,
+		ProxyURL:  proxyURL,
+		proxy:     proxy,
+		inProcess: isInProcessTransport(),
+	}
+
+	t.Cleanup(func() {
+		if err := ctx.Close(t.Failed()); err != nil {
+			t.Errorf("Failed to close E2E test context: %v", err)
+		}
+	})
+
+	return ctx
+}
+
+func defaultCopilotUser(proxyURL string) map[string]interface{} {
+	return map[string]interface{}{
+		"login":        "e2e-test-user",
+		"id":           12345,
+		"copilot_plan": "individual_pro",
+		"endpoints": map[string]interface{}{
+			"api":       proxyURL,
+			"telemetry": "https://sdk-hydro-collector.example.com",
+		},
+		"analytics_tracking_id": "e2e-test-tracking-id",
+	}
+}
+
+// ConfigureForTest configures the proxy for a specific subtest.
+// Call this at the start of each t.Run subtest.
+func (c *TestContext) ConfigureForTest(t *testing.T) {
+	t.Helper()
+
+	// Format: test/snapshots/<testFile>/<testName>.yaml
+	// e.g., test/snapshots/session/should_have_stateful_conversation.yaml
+
+	// Get the test file name from the caller's file path
+	_, callerFile, _, ok := runtime.Caller(1)
+	if !ok {
+		t.Fatal("Failed to get caller information")
+	}
+
+	// Extract test file name: ask_user_test.go -> ask_user, ask_user_e2e_test.go -> ask_user
+	testFile := strings.TrimSuffix(filepath.Base(callerFile), "_test.go")
+	testFile = strings.TrimSuffix(testFile, "_e2e")
+
+	// Extract and sanitize the subtest name from t.Name()
+	// t.Name() returns "TestAskUser/should_handle_freeform_user_input_response"
+	testName := t.Name()
+	parts := strings.SplitN(testName, "/", 2)
+	if len(parts) < 2 {
+		t.Fatalf("Expected test name with subtest, got: %s", testName)
+	}
+	sanitizedName := strings.ToLower(regexp.MustCompile(`[^a-zA-Z0-9]`).ReplaceAllString(parts[1], "_"))
+	// Anchor snapshots to the source tree, independently of the runner's cwd.
+	// All e2e test files live three levels below the SDK root.
+	repoRoot := filepath.Join(filepath.Dir(callerFile), "..", "..", "..")
+	snapshotPath := filepath.Join(repoRoot, "test", "snapshots", testFile, sanitizedName+".yaml")
+
+	absSnapshotPath, err := filepath.Abs(snapshotPath)
+	if err != nil {
+		t.Fatalf("Failed to get absolute path: %v", err)
+	}
+
+	if err := c.proxy.Configure(absSnapshotPath, c.WorkDir); err != nil {
+		t.Fatalf("Failed to configure proxy: %v", err)
+	}
+}
+
+// ConfigureWithoutSnapshot initializes the replay proxy without loading a recorded CAPI
+// exchange file. Use this for tests that serve all model-layer behavior locally but
+// still need proxy-backed auth and GitHub API endpoints.
+func (c *TestContext) ConfigureWithoutSnapshot(t *testing.T) {
+	t.Helper()
+
+	dummySnapshotPath := filepath.Join(c.WorkDir, "__no_snapshot__.yaml")
+	if err := c.proxy.Configure(dummySnapshotPath, c.WorkDir); err != nil {
+		t.Fatalf("Failed to configure proxy without snapshot: %v", err)
+	}
+}
+
+// ConfigureSnapshot selects an existing cross-language replay fixture without
+// rewriting it when a test exercises only part of the recorded conversation.
+func (c *TestContext) ConfigureSnapshot(t *testing.T, name string) {
+	t.Helper()
+	c.readOnlySnapshot = true
+	if err := c.proxy.Configure(RepoPath("test", "snapshots", name+".yaml"), c.WorkDir); err != nil {
+		t.Fatalf("Failed to configure shared snapshot: %v", err)
+	}
+}
+
+// Close cleans up the test context resources.
+func (c *TestContext) Close(testFailed bool) error {
+	if c.inProcess {
+		if err := waitForInProcessCleanup(); err != nil {
+			return err
+		}
+	}
+	var proxyErr error
+	if c.proxy != nil {
+		if err := c.proxy.StopWithOptions(testFailed || c.readOnlySnapshot); err != nil {
+			proxyErr = fmt.Errorf("failed to stop E2E proxy: %w", err)
+		}
+	}
+	if c.HomeDir != "" {
+		os.RemoveAll(c.HomeDir)
+	}
+	if c.WorkDir != "" {
+		os.RemoveAll(c.WorkDir)
+	}
+	return proxyErr
+}
+
+func normalizedEnvironmentKey(key string) string {
+	if runtime.GOOS == "windows" {
+		return strings.ToUpper(key)
+	}
+	return key
+}
+
+// GetExchanges retrieves the captured HTTP exchanges from the proxy.
+func (c *TestContext) GetExchanges() ([]ParsedHttpExchange, error) {
+	return c.proxy.GetExchanges()
+}
+
+// GetRequests retrieves all captured outbound HTTP requests from the proxy.
+func (c *TestContext) GetRequests() ([]CapturedRequest, error) {
+	return c.proxy.GetRequests()
+}
+
+// WaitForExchanges waits until the proxy has captured at least the requested exchanges.
+func (c *TestContext) WaitForExchanges(t *testing.T, minimumCount int) []ParsedHttpExchange {
+	t.Helper()
+
+	deadline := time.Now().Add(120 * time.Second)
+	var lastErr error
+	var exchanges []ParsedHttpExchange
+	for {
+		var err error
+		exchanges, err = c.GetExchanges()
+		if err == nil && len(exchanges) >= minimumCount {
+			return exchanges
+		}
+		lastErr = err
+		if !time.Now().Before(deadline) {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	if lastErr != nil {
+		t.Fatalf("Timed out waiting for %d chat completion request(s): %v", minimumCount, lastErr)
+	}
+	t.Fatalf("Timed out waiting for %d chat completion request(s); captured %d", minimumCount, len(exchanges))
+	return nil
+}
+
+// SetCopilotUserByToken registers a per-token user configuration on the proxy.
+func (c *TestContext) SetCopilotUserByToken(token string, response map[string]interface{}) error {
+	return c.proxy.SetCopilotUserByToken(token, response)
+}
+
+// SetDefaultCopilotUserByToken registers the standard replay user for token.
+func (c *TestContext) SetDefaultCopilotUserByToken(token string) error {
+	return c.proxy.SetCopilotUserByToken(token, defaultCopilotUser(c.ProxyURL))
+}
+
+// Env returns environment variables configured for isolated testing.
+func (c *TestContext) Env() []string {
+	env := withoutSigningKeys(os.Environ())
+
+	// Add overrides (later values take precedence in most systems)
+	env = append(env, c.proxy.ProxyEnv()...)
+	env = append(env,
+		"COPILOT_CLI_PATH="+c.CLIPath,
+		"COPILOT_API_URL="+c.ProxyURL,
+		// Route GitHub API calls (e.g. the MCP registry policy check) to the
+		// replay proxy so MCP enablement stays hermetic. Without this the CLI
+		// reaches the real api.github.com, which is slow/unreachable on macOS
+		// CI runners and makes MCP servers time out before reaching connected.
+		"COPILOT_DEBUG_GITHUB_API_URL="+c.ProxyURL,
+		"COPILOT_HOME="+c.HomeDir,
+		"COPILOT_SDK_AUTH_TOKEN="+defaultGitHubToken,
+		"GH_CONFIG_DIR="+c.HomeDir,
+		"GH_TOKEN="+defaultGitHubToken,
+		"GITHUB_TOKEN="+defaultGitHubToken,
+		"COPILOT_MCP_APPS=true",
+		"MCP_APPS=true",
+		"XDG_CONFIG_HOME="+c.HomeDir,
+		"XDG_STATE_HOME="+c.HomeDir,
+	)
+	return env
+}
+
+// NewClient creates a CopilotClient configured for this test context.
+// Optional overrides can be applied to the default ClientOptions via the opts function.
+func (c *TestContext) NewClient(opts ...func(*copilot.ClientOptions)) *Client {
+	defaultEnv := c.Env()
+	options := &copilot.ClientOptions{
+		Connection:       copilot.StdioConnection{Path: c.CLIPath},
+		BaseDirectory:    c.HomeDir,
+		WorkingDirectory: c.WorkDir,
+		Env:              slices.Clone(defaultEnv),
+	}
+
+	for _, opt := range opts {
+		opt(options)
+	}
+	if c.inProcess && c.shouldUseInProcess(options) && !slices.Equal(options.Env, defaultEnv) {
+		panic("per-client environment overrides require a child-process transport; use typed options in-process")
+	}
+
+	_, externalRuntime := options.Connection.(copilot.URIConnection)
+	if !externalRuntime && options.InternalTestOptions == nil && options.Env != nil {
+		values := make(map[string]string)
+		for _, entry := range options.Env {
+			key, value, _ := strings.Cut(entry, "=")
+			values[normalizedEnvironmentKey(key)] = value
+		}
+		valueFor := func(key string) *string {
+			if value, ok := values[key]; ok {
+				return &value
+			}
+			return nil
+		}
+		options.InternalTestOptions = &copilot.InternalTestOptions{
+			CopilotAPIURL:     valueFor("COPILOT_API_URL"),
+			GitHubAPIURL:      valueFor("COPILOT_DEBUG_GITHUB_API_URL"),
+			ProxyURL:          valueFor("HTTPS_PROXY"),
+			NoProxy:           valueFor("NO_PROXY"),
+			CACertificatePath: valueFor("NODE_EXTRA_CA_CERTS"),
+		}
+		networkKeys := map[string]bool{
+			"COPILOT_API_URL": true, "COPILOT_DEBUG_GITHUB_API_URL": true,
+			"HTTP_PROXY": true, "HTTPS_PROXY": true, "http_proxy": true, "https_proxy": true,
+			"NO_PROXY": true, "no_proxy": true, "NODE_EXTRA_CA_CERTS": true, "SSL_CERT_FILE": true,
+			"REQUESTS_CA_BUNDLE": true, "CURL_CA_BUNDLE": true, "GIT_SSL_CAINFO": true,
+		}
+		env := make([]string, 0, len(options.Env))
+		for _, entry := range options.Env {
+			key, _, _ := strings.Cut(entry, "=")
+			if !networkKeys[normalizedEnvironmentKey(key)] {
+				env = append(env, entry)
+			}
+		}
+		options.Env = env
+	}
+	if options.GitHubToken == "" && !externalRuntime {
+		options.GitHubToken = defaultGitHubToken
+	}
+
+	workDir := options.WorkingDirectory
+	if options.SessionFS != nil || externalRuntime {
+		workDir = ""
+	}
+	// Embedded hosts use typed startup options and session-level cwd.
+	if c.inProcess && c.shouldUseInProcess(options) {
+		options.Connection = copilot.InProcessConnection{}
+		options.WorkingDirectory = ""
+		options.Env = nil
+	}
+
+	return &Client{Client: copilot.NewClient(options), workDir: workDir}
+}
+
+func withoutSigningKeys(env []string) []string {
+	result := make([]string, 0, len(env))
+	for _, entry := range env {
+		key, _, _ := strings.Cut(entry, "=")
+		switch normalizedEnvironmentKey(key) {
+		case "COPILOT_HMAC_KEY", "CAPI_HMAC_KEY":
+			continue
+		}
+		result = append(result, entry)
+	}
+	return result
+}
+
+// shouldUseInProcess reports whether a client built from options should be hosted
+// in-process for the inprocess matrix cell. Only the harness default stdio
+// connection is swapped; a test that pins a custom stdio path/args/env or a
+// TCP/URI connection is exercising behavior that must stay on its own transport.
+//
+// Options the in-process runtime cannot support (an LLM
+// inference provider) are NOT silently downgraded here — the affected tests skip
+// explicitly via testharness.SkipIfInProcess so the limitation is visible rather
+// than masked by a quiet transport swap.
+func (c *TestContext) shouldUseInProcess(options *copilot.ClientOptions) bool {
+	s, ok := options.Connection.(copilot.StdioConnection)
+	if !ok {
+		return false
+	}
+	return s.Path == c.CLIPath && len(s.Args) == 0 && s.Env == nil
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}

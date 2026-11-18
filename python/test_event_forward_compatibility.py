@@ -1,0 +1,777 @@
+"""
+Test that unknown event types are handled gracefully for forward compatibility.
+
+This test verifies that:
+1. The session.usage_info event type is recognized
+2. Unknown future event types map to UNKNOWN enum value
+3. Real parsing errors (malformed data) are NOT suppressed and surface for visibility
+"""
+
+from datetime import datetime
+from uuid import uuid4
+
+import pytest
+
+from copilot.session_events import (
+    AttachmentGitHubReferenceType,
+    AutoTier,
+    AutoTierSwitchFailureReason,
+    Data,
+    ElicitationCompletedAction,
+    ElicitationRequestedMode,
+    ElicitationRequestedSchema,
+    ExternalToolRequestedData,
+    HumanResponseAskUserAction,
+    HumanResponseRecordedResponse,
+    HumanResponseRecordedResponseResponseKind,
+    IdeConnectionChangedData,
+    IdeSelection,
+    IdeSelectionChangedData,
+    ManagedSettingsResolvedSource,
+    PermissionApprovalEvaluationReasonCode,
+    PermissionPromptRequestMemory,
+    PermissionRecoveryAttempt,
+    PermissionRecoveryAttemptDisposition,
+    PermissionRecoveryAttemptReason,
+    PermissionRecoveryAttemptRelation,
+    PermissionRequestedData,
+    PermissionRequestMemory,
+    PermissionRequestMemoryAction,
+    SessionAutoTierSwitchFailedData,
+    SessionErrorData,
+    SessionEvent,
+    SessionEventType,
+    SessionManagedSettingsResolvedData,
+    SessionResumeData,
+    SessionStartData,
+    SessionTaskCompleteData,
+    ToolExecutionCompleteData,
+    UserMessageAgentMode,
+    session_event_from_dict,
+    session_event_to_dict,
+)
+
+
+class TestEventForwardCompatibility:
+    """Test forward compatibility for unknown event types."""
+
+    def test_human_response_preserves_positional_constructor(self):
+        # Refusal fields were added after this merged dataclass was published.
+        answer = HumanResponseRecordedResponse(
+            HumanResponseRecordedResponseResponseKind.USER_INPUT, None, None, "answer"
+        )
+        assert answer.allow_freeform is None
+        assert answer.to_dict()["answer"] == "answer"
+
+        refusal = HumanResponseRecordedResponse(
+            HumanResponseRecordedResponseResponseKind.ASK_USER,
+            content={},
+            action=HumanResponseAskUserAction.DECLINE,
+        )
+        assert refusal.to_dict()["action"] == "decline"
+
+    @pytest.mark.parametrize(
+        "selection",
+        [
+            {
+                "text": "selected",
+                "filePath": "/workspace/file.rs",
+                "fileUrl": "file:///workspace/file.rs",
+                "selection": {
+                    "start": {"line": 0, "character": 0},
+                    "end": {"line": 0, "character": 8},
+                    "isEmpty": False,
+                },
+            },
+            None,
+        ],
+        ids=["selected", "cleared"],
+    )
+    def test_ide_selection_changed_decodes_selected_and_cleared_state(self, selection):
+        wire = {
+            "id": "11111111-1111-1111-1111-111111111111",
+            "timestamp": "2026-09-18T22:00:00+00:00",
+            "parentId": None,
+            "type": "ide.selection_changed",
+            "data": {"selection": selection},
+        }
+
+        event = session_event_from_dict(wire)
+
+        assert event.type is SessionEventType.IDE_SELECTION_CHANGED
+        assert isinstance(event.data, IdeSelectionChangedData)
+        if selection is None:
+            assert event.data.selection is None
+        else:
+            assert event.data.selection is not None
+            assert event.data.selection.text == selection["text"]
+            state = IdeConnectionChangedData.from_dict({"selection": selection})
+            assert event.data.selection == state.selection
+            assert isinstance(event.data.selection, IdeSelection)
+            state.selection = event.data.selection
+            assert state.to_dict() == {"selection": selection}
+        assert session_event_to_dict(event) == wire
+
+    def test_external_tool_request_preserves_positional_provider(self):
+        data = ExternalToolRequestedData("request", "session", "call", "tool", {}, "provider")
+        assert data.provider_id == "provider"
+        assert data.to_dict()["providerId"] == "provider"
+        owned = ExternalToolRequestedData.from_dict({**data.to_dict(), "hasHandler": True})
+        assert owned.provider_id == "provider"
+        assert owned.to_dict()["hasHandler"] is True
+
+    def test_permission_recovery_attempt_preserves_positional_tool_call_id(self):
+        # reviewIncomplete was added after this dataclass was published.
+        attempt = PermissionRecoveryAttempt(
+            "attempt-1",
+            PermissionRecoveryAttemptDisposition.DEFERRED,
+            1,
+            "shell",
+            PermissionRecoveryAttemptReason.PERMISSION_REQUIRED,
+            PermissionRecoveryAttemptRelation.INITIAL,
+            "fingerprint",
+            "call-1",
+        )
+        assert attempt.tool_call_id == "call-1"
+        assert attempt.review_incomplete is None
+        wire = {**attempt.to_dict(), "reviewIncomplete": True}
+        assert PermissionRecoveryAttempt.from_dict(wire).to_dict() == wire
+
+    def test_error_data_preserves_legacy_positional_constructor(self):
+        data = SessionErrorData(
+            "query",
+            "provider failed",
+            None,
+            None,
+            "message-1",
+            "provider-call-1",
+            "max_tokens",
+            "invalid_request_error",
+            None,
+            "service-request-1",
+            "provider stack",
+            400,
+            "https://provider.example/error",
+        )
+
+        assert data.provider_error_param == "max_tokens"
+        assert data.provider_error_code is None
+        data.provider_error_code = "unsupported_parameter"
+        wire = data.to_dict()
+        assert wire == {
+            "errorType": "query",
+            "message": "provider failed",
+            "originatingMessageId": "message-1",
+            "providerCallId": "provider-call-1",
+            "providerErrorCode": "unsupported_parameter",
+            "providerErrorParam": "max_tokens",
+            "providerErrorType": "invalid_request_error",
+            "serviceRequestId": "service-request-1",
+            "stack": "provider stack",
+            "statusCode": 400,
+            "url": "https://provider.example/error",
+        }
+        assert SessionErrorData.from_dict(wire) == data
+
+    @pytest.mark.parametrize("ephemeral", [False, True])
+    def test_event_preserves_legacy_positional_constructor(self, ephemeral):
+        original = session_event_from_dict(
+            {
+                "id": "11111111-1111-1111-1111-111111111111",
+                "timestamp": "2026-09-18T22:00:00+00:00",
+                "parentId": "22222222-2222-2222-2222-222222222222",
+                "type": "future.event",
+                "data": {"future": "payload"},
+            }
+        )
+        event = SessionEvent(
+            original.data,
+            original.id,
+            original.timestamp,
+            original.type,
+            "worker",
+            ephemeral,
+            original.parent_id,
+            original.raw_type,
+        )
+        assert event.ephemeral is ephemeral
+        assert event.parent_id == original.parent_id
+        assert event.raw_type == "future.event"
+        assert event.checkpoint is None
+        wire = session_event_to_dict(event)
+        assert wire["ephemeral"] is ephemeral
+        assert wire["parentId"] == str(original.parent_id)
+        assert wire["type"] == "future.event"
+        assert "checkpoint" not in wire
+
+    @pytest.mark.parametrize("checkpoint", [None, False, True])
+    def test_checkpoint_metadata_round_trips_as_a_keyword(self, checkpoint):
+        event = session_event_from_dict(
+            {
+                "id": "11111111-1111-1111-1111-111111111111",
+                "timestamp": "2026-09-18T22:00:00+00:00",
+                "type": "session.idle",
+                "data": {},
+            }
+        )
+        event = SessionEvent(
+            event.data, event.id, event.timestamp, event.type, checkpoint=checkpoint
+        )
+        wire = session_event_to_dict(event)
+        assert session_event_from_dict(wire).checkpoint is checkpoint
+        if checkpoint is None:
+            assert "checkpoint" not in wire
+        else:
+            assert wire["checkpoint"] is checkpoint
+
+    def test_future_file_edit_kind_preserves_tool_completion(self):
+        wire = {
+            "id": str(uuid4()),
+            "timestamp": datetime.now().isoformat(),
+            "parentId": None,
+            "type": "tool.execution_complete",
+            "data": {
+                "toolCallId": "call-1",
+                "success": True,
+                "fileEdits": [{"path": "/future.txt", "kind": "append"}],
+            },
+        }
+
+        event = session_event_from_dict(wire)
+        assert isinstance(event.data, ToolExecutionCompleteData)
+        assert event.data.file_edits is not None
+        assert event.data.file_edits[0].kind.name == "UNKNOWN"
+        assert event.data.file_edits[0].kind.value == "append"
+        assert session_event_to_dict(event)["data"]["fileEdits"] == wire["data"]["fileEdits"]
+        other = session_event_from_dict(wire)
+        assert event.data.file_edits[0].kind is other.data.file_edits[0].kind
+        assert event.data.file_edits[0] == other.data.file_edits[0]
+        assert len({event.data.file_edits[0].kind, other.data.file_edits[0].kind}) == 1
+
+    @staticmethod
+    def _permission_requested_with_reason(reason_code):
+        return {
+            "id": "11111111-1111-1111-1111-111111111111",
+            "timestamp": "2026-09-18T22:00:00+00:00",
+            "parentId": None,
+            "type": "permission.requested",
+            "data": {
+                "requestId": "request-1",
+                "permissionRequest": {
+                    "kind": "memory",
+                    "fact": "fact",
+                    "assistedApproval": {
+                        "recommendation": "requireApproval",
+                        "evaluation": {
+                            "reasonCode": reason_code,
+                            "judgeStatus": "not_called",
+                            "evaluationStage": "pre_judge",
+                            "judgeAttempted": False,
+                        },
+                    },
+                },
+            },
+        }
+
+    @pytest.mark.parametrize("reason", list(PermissionApprovalEvaluationReasonCode))
+    def test_permission_event_decodes_every_published_reason_code(self, reason):
+        wire = self._permission_requested_with_reason(reason.value)
+
+        event = session_event_from_dict(wire)
+        assert isinstance(event.data, PermissionRequestedData)
+        evaluation = event.data.permission_request.assisted_approval.evaluation
+        assert evaluation.reason_code is reason
+        assert session_event_to_dict(event) == wire
+
+    def test_shell_evidence_reason_codes_are_published(self):
+        assert {
+            "content-excluded",
+            "unsupported-command-shape",
+            "unsupported-source",
+            "dynamic-source",
+            "too-many-sources",
+            "executable-unavailable",
+            "executable-too-large",
+        } <= {reason.value for reason in PermissionApprovalEvaluationReasonCode}
+
+    def test_future_reason_code_decodes_as_unknown(self):
+        event = session_event_from_dict(
+            self._permission_requested_with_reason("future-runtime-reason")
+        )
+
+        assert isinstance(event.data, PermissionRequestedData)
+        evaluation = event.data.permission_request.assisted_approval.evaluation
+        assert evaluation.reason_code is PermissionApprovalEvaluationReasonCode.UNKNOWN
+        assert evaluation.judge_status.value == "not_called"
+        assert evaluation.evaluation_stage.value == "pre_judge"
+
+    def test_non_string_reason_code_still_raises(self):
+        with pytest.raises(ValueError):
+            PermissionApprovalEvaluationReasonCode(7)
+
+    @pytest.mark.parametrize(
+        ("event_type", "data"), [("session.idle", {}), ("user.message", {"content": "hello"})]
+    )
+    def test_object_event_preserves_complete_envelope(self, event_type, data):
+        wire = {
+            "id": "11111111-1111-1111-1111-111111111111",
+            "timestamp": "2026-09-18T22:00:00+00:00",
+            "parentId": "22222222-2222-2222-2222-222222222222",
+            "type": event_type,
+            "data": data,
+        }
+        assert session_event_to_dict(session_event_from_dict(wire)) == wire
+
+    @pytest.mark.parametrize(
+        ("event_type", "kind", "fields"),
+        [
+            ("session.indexed_search", "status", {"state": "ready"}),
+            (
+                "session.indexed_search",
+                "startup",
+                {
+                    "outcome": "started",
+                    "startupDurationMs": 1.5,
+                    "forcedByEnv": False,
+                    "warmStart": False,
+                    "fileCount": 0,
+                    "eligible": False,
+                    "errorMessage": "diagnostic",
+                },
+            ),
+            (
+                "session.indexed_search",
+                "server_error",
+                {"errorType": "unexpected_exit", "exitCode": 0, "errorMessage": "diagnostic"},
+            ),
+            (
+                "session.indexed_search",
+                "incremental",
+                {
+                    "phase": "updated",
+                    "changedFileCount": 0,
+                    "addedFileCount": 1,
+                    "deletedFileCount": 0,
+                    "totalChangeCount": 1,
+                    "walkDurationMs": 0.5,
+                    "updateDurationMs": 1.25,
+                    "totalDurationMs": 1.75,
+                },
+            ),
+            (
+                "sandbox.decision",
+                "policy_resolved",
+                {
+                    "backend": "seatbelt",
+                    "policySource": "default_policy",
+                    "readwritePathsCount": 0,
+                    "readonlyPathsCount": 1,
+                    "deniedPathsCount": 0,
+                    "addCurrentWorkingDirectory": False,
+                    "allowOutbound": False,
+                    "allowLocalNetwork": False,
+                    "proxyMode": "none",
+                    "allowBypass": False,
+                    "gitAuth": False,
+                    "ghAuth": False,
+                    "keychainAccess": False,
+                },
+            ),
+            ("sandbox.decision", "spawn_completed", {"backend": "seatbelt", "durationMs": 1.5}),
+            (
+                "sandbox.decision",
+                "enforcement_state",
+                {"backend": "seatbelt", "command": "echo test", "attestation": "spawn_succeeded"},
+            ),
+            (
+                "sandbox.decision",
+                "access_denied",
+                {
+                    "denialClass": "filesystem_read",
+                    "attestation": "builtin_policy_checked",
+                    "deniedResource": "/example",
+                    "command": "cat example",
+                },
+            ),
+            (
+                "sandbox.decision",
+                "access_recorded",
+                {
+                    "denialClass": "filesystem_write",
+                    "permissiveSource": "policy",
+                    "deniedResource": "/example",
+                },
+            ),
+            (
+                "sandbox.decision",
+                "bypass_decided",
+                {"source": "user_prompted", "deniedResource": "/example"},
+            ),
+            (
+                "sandbox.decision",
+                "permissive_retry_decided",
+                {"source": "model_requested", "command": "echo test"},
+            ),
+            (
+                "sandbox.decision",
+                "permissive_retry_completed",
+                {"processName": "example", "command": "echo test"},
+            ),
+        ],
+    )
+    def test_union_event_preserves_complete_envelope(self, event_type, kind, fields):
+        data = {"kind": kind, **fields}
+        if event_type == "sandbox.decision":
+            data.update(
+                control="process",
+                outcome="resolved",
+                platform="macos",
+                enforcementPoint="shell",
+                toolCallId="tool-1",
+            )
+        wire = {
+            "id": "11111111-1111-1111-1111-111111111111",
+            "timestamp": "2026-09-18T22:00:00+00:00",
+            "parentId": "22222222-2222-2222-2222-222222222222",
+            "ephemeral": True,
+            "agentId": "agent-1",
+            "type": event_type,
+            "data": data,
+        }
+        event = session_event_from_dict(wire)
+        assert event.type.value == event_type
+        assert session_event_to_dict(event) == wire
+
+    @pytest.mark.parametrize("event_type", ["session.start", "session.resume"])
+    @pytest.mark.parametrize(
+        "tier", ["efficiency", "balance", "intelligence", "fast", "premium-v2", None]
+    )
+    def test_auto_tier_lifecycle_events_round_trip(self, event_type, tier):
+        timestamp = "2026-08-28T00:00:00Z"
+        data = (
+            {
+                "copilotVersion": "1.0.82-1",
+                "producer": "copilot-agent",
+                "sessionId": str(uuid4()),
+                "startTime": timestamp,
+                "version": 1,
+            }
+            if event_type == "session.start"
+            else {"eventCount": 1, "resumeTime": timestamp}
+        )
+        if tier is not None:
+            data["autoTier"] = tier
+        event = session_event_from_dict(
+            {
+                "id": str(uuid4()),
+                "timestamp": timestamp,
+                "parentId": None,
+                "type": event_type,
+                "data": data,
+            }
+        )
+        assert isinstance(event.data, (SessionStartData, SessionResumeData))
+        assert event.data.auto_tier == (AutoTier(tier) if tier is not None else None)
+        serialized = session_event_to_dict(event)["data"]
+        if tier is None:
+            assert "autoTier" not in serialized
+        else:
+            assert serialized["autoTier"] == tier
+
+    @pytest.mark.parametrize(
+        "reason",
+        ["policy_rejected", "request_failed", "setup_failed", "unsupported"],
+    )
+    def test_auto_tier_switch_failed_event_decodes_every_reason(self, reason):
+        timestamp = "2026-08-28T00:00:00Z"
+        event = session_event_from_dict(
+            {
+                "id": str(uuid4()),
+                "timestamp": timestamp,
+                "parentId": None,
+                "type": "session.auto_tier_switch_failed",
+                "data": {
+                    "effectiveAutoTier": "balance",
+                    "requestedAutoTier": "fast",
+                    "reason": reason,
+                },
+            }
+        )
+        assert isinstance(event.data, SessionAutoTierSwitchFailedData)
+        assert event.data.reason == AutoTierSwitchFailureReason(reason)
+        assert event.data.effective_auto_tier == AutoTier.BALANCE
+        assert event.data.requested_auto_tier == AutoTier.FAST
+
+    def test_auto_tier_switch_failed_event_allows_null_requested_tier(self):
+        # A null requested tier means the attempt to return to provider-default
+        # Auto routing is what failed.
+        timestamp = "2026-08-28T00:00:00Z"
+        event = session_event_from_dict(
+            {
+                "id": str(uuid4()),
+                "timestamp": timestamp,
+                "parentId": None,
+                "type": "session.auto_tier_switch_failed",
+                "data": {
+                    "effectiveAutoTier": "efficiency",
+                    "requestedAutoTier": None,
+                    "reason": "unsupported",
+                },
+            }
+        )
+        assert isinstance(event.data, SessionAutoTierSwitchFailedData)
+        assert event.data.requested_auto_tier is None
+        assert event.data.effective_auto_tier == AutoTier.EFFICIENCY
+        serialized = session_event_to_dict(event)["data"]
+        assert serialized["requestedAutoTier"] is None
+
+    def test_session_usage_info_is_recognized(self):
+        """The session.usage_info event type should be in the enum."""
+        assert SessionEventType.SESSION_USAGE_INFO.value == "session.usage_info"
+
+    def test_unknown_event_type_maps_to_unknown(self):
+        """Unknown event types should map to UNKNOWN enum value for forward compatibility."""
+        unknown_event = {
+            "id": str(uuid4()),
+            "timestamp": datetime.now().isoformat(),
+            "parentId": None,
+            "type": "session.future_feature_from_server",
+            "data": {},
+        }
+
+        event = session_event_from_dict(unknown_event)
+        assert event.type == SessionEventType.UNKNOWN, f"Expected UNKNOWN, got {event.type}"
+
+    @pytest.mark.parametrize(
+        "event_type",
+        [
+            "session.memory_changed",
+            "program.execution",
+            "program.tool_execution_start",
+            "program.tool_execution_complete",
+            "program.permission_requested",
+        ],
+    )
+    def test_internal_event_type_maps_to_unknown(self, event_type):
+        """Internal events should use the forward-compatible raw event path."""
+        internal_event = {
+            "id": str(uuid4()),
+            "timestamp": datetime.now().isoformat(),
+            "parentId": None,
+            "type": event_type,
+            "data": {},
+        }
+
+        event = session_event_from_dict(internal_event)
+        assert event.type == SessionEventType.UNKNOWN
+        assert session_event_to_dict(event)["type"] == event_type
+
+    def test_known_event_preserves_top_level_agent_id(self):
+        """Known events should preserve the top-level sub-agent envelope ID."""
+        known_event = {
+            "id": str(uuid4()),
+            "timestamp": datetime.now().isoformat(),
+            "parentId": None,
+            "agentId": "agent-1",
+            "type": "user.message",
+            "data": {"content": "Hello"},
+        }
+
+        event = session_event_from_dict(known_event)
+        assert event.agent_id == "agent-1"
+        assert session_event_to_dict(event)["agentId"] == "agent-1"
+
+    def test_unknown_event_preserves_top_level_agent_id(self):
+        """Unknown events should preserve the top-level sub-agent envelope ID."""
+        unknown_event = {
+            "id": str(uuid4()),
+            "timestamp": datetime.now().isoformat(),
+            "parentId": None,
+            "agentId": "future-agent",
+            "type": "session.future_feature_from_server",
+            "data": {"key": "value"},
+        }
+
+        event = session_event_from_dict(unknown_event)
+        assert event.type == SessionEventType.UNKNOWN
+        assert event.agent_id == "future-agent"
+        serialized = session_event_to_dict(event)
+        assert serialized["agentId"] == "future-agent"
+        assert serialized["type"] == "session.future_feature_from_server"
+
+    def test_malformed_uuid_raises_error(self):
+        """Malformed UUIDs should raise ValueError for visibility, not be suppressed."""
+        malformed_event = {
+            "id": "not-a-valid-uuid",
+            "timestamp": datetime.now().isoformat(),
+            "parentId": None,
+            "type": "session.start",
+            "data": {},
+        }
+
+        # This should raise an error and NOT be silently suppressed
+        with pytest.raises(ValueError):
+            session_event_from_dict(malformed_event)
+
+    def test_malformed_timestamp_raises_error(self):
+        """Malformed timestamps should raise an error for visibility."""
+        malformed_event = {
+            "id": str(uuid4()),
+            "timestamp": "not-a-valid-timestamp",
+            "parentId": None,
+            "type": "session.start",
+            "data": {},
+        }
+
+        # This should raise an error and NOT be silently suppressed
+        with pytest.raises((ValueError, TypeError)):
+            session_event_from_dict(malformed_event)
+
+    def test_explicit_generated_symbols_remain_available(self):
+        """Explicit generated helper symbols should remain importable."""
+        assert ElicitationCompletedAction.ACCEPT.value == "accept"
+        assert UserMessageAgentMode.INTERACTIVE.value == "interactive"
+        assert ElicitationRequestedMode.FORM.value == "form"
+        assert AttachmentGitHubReferenceType.PR.value == "pr"
+
+        schema = ElicitationRequestedSchema(
+            properties={"answer": {"type": "string"}}, type="object"
+        )
+        assert schema.to_dict()["type"] == "object"
+
+    def test_managed_settings_client_provenance_round_trips(self):
+        """Managed settings events should preserve truthful client provenance."""
+        assert [source.value for source in ManagedSettingsResolvedSource] == [
+            "server",
+            "device",
+            "client",
+            "policyHelper",
+            "mixed",
+            "none",
+        ]
+
+        client = SessionManagedSettingsResolvedData(
+            bypass_permissions_disabled=True,
+            client_managed=True,
+            device_managed=False,
+            fail_closed=False,
+            managed_keys=["permissions"],
+            server_managed=False,
+            source=ManagedSettingsResolvedSource.CLIENT,
+        )
+        serialized = client.to_dict()
+        assert serialized["source"] == "client"
+        assert serialized["clientManaged"] is True
+        assert SessionManagedSettingsResolvedData.from_dict(serialized) == client
+
+        mixed = SessionManagedSettingsResolvedData(
+            bypass_permissions_disabled=True,
+            device_managed=True,
+            fail_closed=False,
+            managed_keys=["permissions"],
+            server_managed=True,
+            source=ManagedSettingsResolvedSource.MIXED,
+        )
+        serialized = mixed.to_dict()
+        assert serialized["source"] == "mixed"
+        assert "clientManaged" not in serialized
+
+    def test_data_shim_preserves_raw_mapping_values(self):
+        """Compatibility Data should keep arbitrary nested mappings as plain dicts."""
+        parsed = Data.from_dict(
+            {
+                "arguments": {"toolCallId": "call-1"},
+                "input": {"step_name": "build"},
+            }
+        )
+        assert parsed.arguments == {"toolCallId": "call-1"}
+        assert isinstance(parsed.arguments, dict)
+        assert parsed.input == {"step_name": "build"}
+        assert isinstance(parsed.input, dict)
+
+        constructed = Data(arguments={"tool_call_id": "call-1"})
+        assert constructed.to_dict() == {"arguments": {"tool_call_id": "call-1"}}
+
+    def test_data_shim_preserves_abbreviation_json_keys_on_round_trip(self):
+        """Data.from_dict(x).to_dict() should preserve JSON keys with abbreviations.
+
+        Regression test for github/copilot-sdk#1138: keys like userURL, sessionID,
+        and OAuthToken were rewritten on round-trip because _compat_to_json_key could
+        not reconstruct the original camelCase abbreviation casing.
+        """
+        for key in ["userURL", "sessionID", "XMLPayload", "serverIP", "OAuthToken"]:
+            incoming = {key: 42}
+            assert Data.from_dict(incoming).to_dict() == incoming
+
+    def test_data_shim_preserves_colliding_json_keys_on_round_trip(self):
+        """Data.from_dict(x).to_dict() should preserve keys with the same Python name."""
+        colliding_keys = {"userURL": 42, "userUrl": 43}
+        assert Data.from_dict(colliding_keys).to_dict() == colliding_keys
+
+    def test_missing_optional_fields_remain_none_after_parsing(self):
+        """Generated event models should leave missing optional fields as None.
+
+        Regression test for github/copilot-sdk issues #1139, #1140, and #1141:
+        the Python codegen previously baked JSON Schema `default` values into
+        ``obj.get(key, default)`` for optional fields, so ``from_dict()`` returned
+        the schema default instead of ``None`` and broke ``from_dict(to_dict(x))``
+        round-trips for instances where the field was ``None``.
+        """
+        from copilot.generated.session_events import (
+            _load_PermissionPromptRequest,
+            _load_PermissionRequest,
+        )
+
+        # #1141: PermissionRequest.action defaults to None when missing.
+        request = _load_PermissionRequest({"kind": "memory", "fact": "remember this"})
+        assert isinstance(request, PermissionRequestMemory)
+        assert request.action is None
+        assert PermissionRequestMemoryAction.STORE.value == "store"  # sanity
+
+        # #1140: PermissionPromptRequest.action defaults to None when missing.
+        prompt_request = _load_PermissionPromptRequest({"kind": "memory", "fact": "remember this"})
+        assert isinstance(prompt_request, PermissionPromptRequestMemory)
+        assert prompt_request.action is None
+
+        # #1139: SessionTaskCompleteData.summary defaults to None when missing.
+        task_complete = SessionTaskCompleteData.from_dict({"success": True})
+        assert task_complete.summary is None
+
+        # Explicit JSON null should also map to None.
+        task_complete_null = SessionTaskCompleteData.from_dict({"success": True, "summary": None})
+        assert task_complete_null.summary is None
+
+    def test_optional_fields_round_trip_none(self):
+        """``from_dict(to_dict(x))`` should equal ``x`` when optional fields are None.
+
+        Regression test for github/copilot-sdk issues #1139, #1140, and #1141.
+        """
+        # #1139: SessionTaskCompleteData round-trip with summary=None.
+        task = SessionTaskCompleteData(success=None, summary=None)
+        assert SessionTaskCompleteData.from_dict(task.to_dict()) == task
+
+        # #1140: PermissionPromptRequestMemory round-trip with action=None.
+        prompt = PermissionPromptRequestMemory(fact="test-fact")
+        assert prompt.action is None
+        assert "action" not in prompt.to_dict()
+        assert PermissionPromptRequestMemory.from_dict(prompt.to_dict()) == prompt
+
+        # #1141: PermissionRequestMemory round-trip with action=None.
+        permission = PermissionRequestMemory(fact="test-fact")
+        assert permission.action is None
+        assert "action" not in permission.to_dict()
+        assert PermissionRequestMemory.from_dict(permission.to_dict()) == permission
+
+        # PermissionRequest is now a discriminated union; the dispatch loader
+        # should round-trip via the correct variant class.
+        from copilot.generated.session_events import _load_PermissionRequest
+
+        round_tripped = _load_PermissionRequest(permission.to_dict())
+        assert isinstance(round_tripped, PermissionRequestMemory)
+        assert round_tripped == permission
+        # PermissionPromptRequest likewise.
+        from copilot.generated.session_events import _load_PermissionPromptRequest
+
+        round_tripped_prompt = _load_PermissionPromptRequest(prompt.to_dict())
+        assert isinstance(round_tripped_prompt, PermissionPromptRequestMemory)
+        assert round_tripped_prompt == prompt

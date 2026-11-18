@@ -1,0 +1,686 @@
+package copilot
+
+import (
+	"bytes"
+	"encoding/json"
+	"reflect"
+	"testing"
+
+	"github.com/github/copilot-sdk/go/rpc"
+)
+
+func TestPersistedLocalModelOptionsPreserveOpaqueNumbers(t *testing.T) {
+	provider := `{"name":"local","type":"winml","baseUrl":"model.gguf","localModel":{"device":"gpu","seed":9007199254740993,"future":[null,true,-9007199254740995,1.234567890123456789]}}`
+	model := `{"id":"model","provider":"local","autoLocal":{"source":"azureml","revision":9007199254740993,"future":[null,true,-9007199254740995,1.234567890123456789]},"metadata":{"autoLocal":{"source":"azureml","revision":9007199254740993},"future":[null,true,-9007199254740995,1.234567890123456789]}}`
+	decode := func(data []byte) map[string]any {
+		t.Helper()
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.UseNumber()
+		var value map[string]any
+		if err := decoder.Decode(&value); err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	for _, test := range []struct {
+		name  string
+		input string
+		value any
+		field string
+	}{
+		{"session provider", provider, &NamedProviderConfig{}, "localModel"},
+		{"session model", model, &ProviderModelConfig{}, "autoLocal"},
+		{"session model metadata", model, &ProviderModelConfig{}, "metadata"},
+		{"RPC provider", provider, &rpc.NamedProviderConfig{}, "localModel"},
+		{"RPC model", model, &rpc.ProviderModelConfig{}, "autoLocal"},
+		{"RPC model metadata", model, &rpc.ProviderModelConfig{}, "metadata"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := json.Unmarshal([]byte(test.input), test.value); err != nil {
+				t.Fatal(err)
+			}
+			data, err := json.Marshal(test.value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want, got := decode([]byte(test.input))[test.field], decode(data)[test.field]
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("%s changed:\ngot: %#v\nwant: %#v\nwire: %s", test.field, got, want, data)
+			}
+		})
+	}
+}
+
+func TestLocalModelProviderConfigurationRoundTrip(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		input string
+		value any
+		field string
+	}{
+		{"provider", `{"name":"local","type":"winml","baseUrl":"model.gguf","localModel":{"device":"gpu","future":[1,true]}}`, &NamedProviderConfig{}, "localModel"},
+		{"model", `{"id":"model","provider":"local","autoLocal":{"source":"azureml","future":[1,true]}}`, &ProviderModelConfig{}, "autoLocal"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := json.Unmarshal([]byte(test.input), test.value); err != nil {
+				t.Fatal(err)
+			}
+			data, err := json.Marshal(test.value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var expected, actual map[string]any
+			if err := json.Unmarshal([]byte(test.input), &expected); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(data, &actual); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(actual[test.field], expected[test.field]) {
+				t.Fatalf("%s changed: expected %#v, got %#v", test.field, expected[test.field], actual[test.field])
+			}
+		})
+	}
+}
+
+func TestMemoryConfiguration_Mode(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		mode MemoryMode
+		json string
+	}{
+		{"omitted", "", `{"enabled":true}`},
+		{"system prompt", MemoryModeSystemPrompt, `{"enabled":true,"mode":"system-prompt"}`},
+		{"user prompt", MemoryModeUserPrompt, `{"enabled":true,"mode":"user-prompt"}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			original := MemoryConfiguration{Enabled: true, Mode: test.mode}
+			data, err := json.Marshal(original)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(data) != test.json {
+				t.Fatalf("expected %s, got %s", test.json, data)
+			}
+			var decoded MemoryConfiguration
+			if err := json.Unmarshal(data, &decoded); err != nil {
+				t.Fatal(err)
+			}
+			if decoded != original {
+				t.Fatalf("expected %#v after round-trip, got %#v", original, decoded)
+			}
+		})
+	}
+}
+
+func TestUserPromptTransformedHookOutput_PreservesEmptyReplacement(t *testing.T) {
+	data, err := json.Marshal(UserPromptTransformedHookOutput{
+		ModifiedTransformedPrompt: String(""),
+	})
+	if err != nil {
+		t.Fatalf("failed to marshal hook output: %v", err)
+	}
+	if string(data) != `{"modifiedTransformedPrompt":""}` {
+		t.Fatalf("expected empty replacement to be preserved, got %s", data)
+	}
+}
+
+func TestProviderConfig_JSONIncludesHeaders(t *testing.T) {
+	config := ProviderConfig{
+		BaseURL: "https://example.com/provider",
+		Headers: map[string]string{"Authorization": "Bearer provider-token"},
+	}
+
+	data, err := json.Marshal(config)
+	if err != nil {
+		t.Fatalf("failed to marshal provider config: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal provider config: %v", err)
+	}
+
+	if decoded["baseUrl"] != "https://example.com/provider" {
+		t.Fatalf("expected baseUrl to round-trip, got %v", decoded["baseUrl"])
+	}
+	headers, ok := decoded["headers"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected headers object, got %T", decoded["headers"])
+	}
+	if headers["Authorization"] != "Bearer provider-token" {
+		t.Fatalf("expected Authorization header, got %v", headers["Authorization"])
+	}
+}
+
+func TestMCPHTTPServerConfig_JSONIncludesOAuthConfiguration(t *testing.T) {
+	grantType := rpc.MCPServerConfigHTTPOauthGrantTypeClientCredentials
+	config := MCPHTTPServerConfig{
+		URL:               "https://example.com/mcp",
+		OAuthClientID:     String("client-id"),
+		OAuthScopes:       []string{"mcp:read", "mcp:write"},
+		OAuthPublicClient: Bool(false),
+		OAuthGrantType:    &grantType,
+	}
+
+	data, err := json.Marshal(config)
+	if err != nil {
+		t.Fatalf("failed to marshal MCP HTTP server config: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal MCP HTTP server config: %v", err)
+	}
+
+	if decoded["type"] != "http" {
+		t.Errorf("expected type 'http', got %v", decoded["type"])
+	}
+	if decoded["oauthClientId"] != "client-id" {
+		t.Errorf("expected oauthClientId 'client-id', got %v", decoded["oauthClientId"])
+	}
+	if decoded["oauthPublicClient"] != false {
+		t.Errorf("expected oauthPublicClient false, got %v", decoded["oauthPublicClient"])
+	}
+	if decoded["oauthGrantType"] != "client_credentials" {
+		t.Errorf("expected oauthGrantType 'client_credentials', got %v", decoded["oauthGrantType"])
+	}
+	scopes, ok := decoded["oauthScopes"].([]any)
+	if !ok {
+		t.Fatalf("expected oauthScopes array, got %T", decoded["oauthScopes"])
+	}
+	if len(scopes) != 2 || scopes[0] != "mcp:read" || scopes[1] != "mcp:write" {
+		t.Errorf("expected OAuth scopes to round-trip, got %v", scopes)
+	}
+}
+
+func TestSessionSendRequest_JSONIncludesRequestHeaders(t *testing.T) {
+	req := sessionSendRequest{
+		SessionID:      "session-1",
+		Prompt:         "hello",
+		RequestHeaders: map[string]string{"Authorization": "Bearer turn-token"},
+	}
+
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("failed to marshal session send request: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal session send request: %v", err)
+	}
+
+	if decoded["prompt"] != "hello" {
+		t.Fatalf("expected prompt to round-trip, got %v", decoded["prompt"])
+	}
+	headers, ok := decoded["requestHeaders"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected requestHeaders object, got %T", decoded["requestHeaders"])
+	}
+	if headers["Authorization"] != "Bearer turn-token" {
+		t.Fatalf("expected Authorization header, got %v", headers["Authorization"])
+	}
+}
+
+func TestProviderConfig_JSONIncludesAllFields(t *testing.T) {
+	cfg := ProviderConfig{
+		BaseURL:         "https://example.com/provider",
+		APIKey:          "test-key",
+		Headers:         map[string]string{"Authorization": "Bearer provider-token"},
+		ModelID:         "gpt-4o",
+		WireModel:       "my-finetune-v3",
+		ModelProvider:   "lm_studio",
+		MaxPromptTokens: 100000,
+		MaxOutputTokens: 4096,
+	}
+
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("failed to marshal ProviderConfig: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal ProviderConfig: %v", err)
+	}
+
+	if decoded["baseUrl"] != "https://example.com/provider" {
+		t.Errorf("expected baseUrl to round-trip, got %v", decoded["baseUrl"])
+	}
+	if decoded["modelId"] != "gpt-4o" {
+		t.Errorf("expected modelId 'gpt-4o', got %v", decoded["modelId"])
+	}
+	if decoded["wireModel"] != "my-finetune-v3" {
+		t.Errorf("expected wireModel 'my-finetune-v3', got %v", decoded["wireModel"])
+	}
+	if decoded["modelProvider"] != "lm_studio" {
+		t.Errorf("expected modelProvider 'lm_studio', got %v", decoded["modelProvider"])
+	}
+	if decoded["maxPromptTokens"] != float64(100000) {
+		t.Errorf("expected maxPromptTokens 100000, got %v", decoded["maxPromptTokens"])
+	}
+	if decoded["maxOutputTokens"] != float64(4096) {
+		t.Errorf("expected maxOutputTokens 4096, got %v", decoded["maxOutputTokens"])
+	}
+	headers, ok := decoded["headers"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected headers object, got %T", decoded["headers"])
+	}
+	if headers["Authorization"] != "Bearer provider-token" {
+		t.Errorf("expected Authorization header, got %v", headers["Authorization"])
+	}
+}
+
+func TestProviderConfig_JSONOmitsUnsetTokenFields(t *testing.T) {
+	cfg := ProviderConfig{BaseURL: "https://example.com/provider"}
+
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("failed to marshal ProviderConfig: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal ProviderConfig: %v", err)
+	}
+
+	for _, field := range []string{"modelId", "wireModel", "modelProvider", "maxPromptTokens", "maxOutputTokens", "headers"} {
+		if _, present := decoded[field]; present {
+			t.Errorf("expected %q to be omitted when unset, got %v", field, decoded[field])
+		}
+	}
+}
+
+func TestProviderConfig_APIKeyCommandRoundTrips(t *testing.T) {
+	cfg := ProviderConfig{
+		BaseURL:       "https://models.example.test",
+		APIKeyCommand: "credential-helper --profile sdk",
+	}
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("failed to marshal provider config: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to decode provider config: %v", err)
+	}
+	if decoded["apiKeyCommand"] != cfg.APIKeyCommand {
+		t.Errorf("expected command wire value %q, got %v", cfg.APIKeyCommand, decoded["apiKeyCommand"])
+	}
+	var roundTripped ProviderConfig
+	if err := json.Unmarshal(data, &roundTripped); err != nil {
+		t.Fatalf("failed to round-trip provider config: %v", err)
+	}
+	if roundTripped.APIKeyCommand != cfg.APIKeyCommand {
+		t.Errorf("expected command %q, got %q", cfg.APIKeyCommand, roundTripped.APIKeyCommand)
+	}
+	data, err = json.Marshal(ProviderConfig{BaseURL: cfg.BaseURL})
+	if err != nil {
+		t.Fatalf("failed to marshal default provider config: %v", err)
+	}
+	var omitted map[string]any
+	if err := json.Unmarshal(data, &omitted); err != nil {
+		t.Fatalf("failed to decode default provider config: %v", err)
+	}
+	if _, present := omitted["apiKeyCommand"]; present {
+		t.Errorf("expected unset apiKeyCommand to be omitted, got %s", data)
+	}
+}
+
+func TestNamedProviderConfig_JSONIncludesModelProvider(t *testing.T) {
+	cfg := NamedProviderConfig{
+		Name:          "local",
+		Type:          "openai",
+		BaseURL:       "http://localhost:11434/v1",
+		ModelProvider: "ollama",
+	}
+
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("failed to marshal NamedProviderConfig: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal NamedProviderConfig: %v", err)
+	}
+
+	if decoded["modelProvider"] != "ollama" {
+		t.Errorf("expected modelProvider 'ollama', got %v", decoded["modelProvider"])
+	}
+}
+
+func TestCustomAgentConfig_JSONIncludesModel(t *testing.T) {
+	cfg := CustomAgentConfig{
+		Name:   "model-agent",
+		Prompt: "You are a model agent.",
+		Model:  "claude-haiku-4.5",
+	}
+
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("failed to marshal CustomAgentConfig: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal CustomAgentConfig: %v", err)
+	}
+
+	if decoded["model"] != "claude-haiku-4.5" {
+		t.Errorf("expected model 'claude-haiku-4.5', got %v", decoded["model"])
+	}
+	if decoded["name"] != "model-agent" {
+		t.Errorf("expected name 'model-agent', got %v", decoded["name"])
+	}
+}
+
+func TestCustomAgentConfig_JSONIncludesReasoningEffort(t *testing.T) {
+	cfg := CustomAgentConfig{
+		Name:            "reasoning-agent",
+		Prompt:          "Think carefully.",
+		ReasoningEffort: "high",
+	}
+
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("failed to marshal CustomAgentConfig: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal CustomAgentConfig: %v", err)
+	}
+
+	if decoded["reasoningEffort"] != "high" {
+		t.Errorf("expected reasoningEffort 'high', got %v", decoded["reasoningEffort"])
+	}
+}
+
+func TestCustomAgentConfig_JSONIncludesEmptyTools(t *testing.T) {
+	cfg := CustomAgentConfig{
+		Name:   "no-tools-agent",
+		Prompt: "You are an agent without tools.",
+		Tools:  []string{},
+	}
+
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("failed to marshal CustomAgentConfig: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal CustomAgentConfig: %v", err)
+	}
+
+	rawTools, present := decoded["tools"]
+	if !present {
+		t.Fatal("expected tools to be present for an empty non-nil slice")
+	}
+	tools, ok := rawTools.([]any)
+	if !ok {
+		t.Fatalf("expected tools array, got %T", rawTools)
+	}
+	if len(tools) != 0 {
+		t.Fatalf("expected empty tools array, got %v", tools)
+	}
+}
+
+func TestCustomAgentConfig_JSONOmitsNilTools(t *testing.T) {
+	cfg := CustomAgentConfig{
+		Name:   "all-tools-agent",
+		Prompt: "You are an agent with default tools.",
+	}
+
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("failed to marshal CustomAgentConfig: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal CustomAgentConfig: %v", err)
+	}
+
+	if _, present := decoded["tools"]; present {
+		t.Errorf("expected tools to be omitted for nil slice, got %v", decoded["tools"])
+	}
+}
+
+func TestToolResult_JSONIncludesToolReferences(t *testing.T) {
+	result := ToolResult{
+		TextResultForLLM: "found 2 tools",
+		ResultType:       "success",
+		ToolReferences:   []string{"get_weather", "check_status"},
+	}
+
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("failed to marshal ToolResult: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal ToolResult: %v", err)
+	}
+
+	rawRefs, present := decoded["toolReferences"]
+	if !present {
+		t.Fatal("expected toolReferences to be present")
+	}
+	refs, ok := rawRefs.([]any)
+	if !ok {
+		t.Fatalf("expected toolReferences array, got %T", rawRefs)
+	}
+	if len(refs) != 2 || refs[0] != "get_weather" || refs[1] != "check_status" {
+		t.Errorf("unexpected toolReferences: %v", refs)
+	}
+}
+
+func TestToolResult_JSONOmitsNilToolReferences(t *testing.T) {
+	result := ToolResult{
+		TextResultForLLM: "ok",
+		ResultType:       "success",
+	}
+
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("failed to marshal ToolResult: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal ToolResult: %v", err)
+	}
+
+	if _, present := decoded["toolReferences"]; present {
+		t.Errorf("expected toolReferences to be omitted for nil slice, got %v", decoded["toolReferences"])
+	}
+}
+
+func TestCustomAgentConfig_JSONOmitsModelWhenEmpty(t *testing.T) {
+	cfg := CustomAgentConfig{
+		Name:   "no-model-agent",
+		Prompt: "You are an agent without a model.",
+	}
+
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("failed to marshal CustomAgentConfig: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal CustomAgentConfig: %v", err)
+	}
+
+	if _, present := decoded["model"]; present {
+		t.Errorf("expected model to be omitted when empty, got %v", decoded["model"])
+	}
+	if _, present := decoded["reasoningEffort"]; present {
+		t.Errorf("expected reasoningEffort to be omitted when empty, got %v", decoded["reasoningEffort"])
+	}
+}
+
+func TestTool_JSONIncludesEmptyParameters(t *testing.T) {
+	tool := Tool{
+		Name:       "accept_anything",
+		Parameters: map[string]any{},
+	}
+
+	data, err := json.Marshal(tool)
+	if err != nil {
+		t.Fatalf("failed to marshal Tool: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal Tool: %v", err)
+	}
+
+	rawParameters, present := decoded["parameters"]
+	if !present {
+		t.Fatal("expected parameters to be present for an empty non-nil map")
+	}
+	parameters, ok := rawParameters.(map[string]any)
+	if !ok {
+		t.Fatalf("expected parameters object, got %T", rawParameters)
+	}
+	if len(parameters) != 0 {
+		t.Fatalf("expected empty parameters object, got %v", parameters)
+	}
+}
+
+func TestTool_JSONOmitsNilParameters(t *testing.T) {
+	tool := Tool{Name: "no_parameters"}
+
+	data, err := json.Marshal(tool)
+	if err != nil {
+		t.Fatalf("failed to marshal Tool: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal Tool: %v", err)
+	}
+
+	if _, present := decoded["parameters"]; present {
+		t.Errorf("expected parameters to be omitted for nil map, got %v", decoded["parameters"])
+	}
+}
+
+func TestCanvasDeclaration_JSONIncludesEmptyInputSchema(t *testing.T) {
+	canvas := CanvasDeclaration{
+		ID:          "empty-input",
+		DisplayName: "Empty input",
+		Description: "Accepts any input.",
+		InputSchema: map[string]any{},
+	}
+
+	data, err := json.Marshal(canvas)
+	if err != nil {
+		t.Fatalf("failed to marshal CanvasDeclaration: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal CanvasDeclaration: %v", err)
+	}
+
+	rawInputSchema, present := decoded["inputSchema"]
+	if !present {
+		t.Fatal("expected inputSchema to be present for an empty non-nil map")
+	}
+	inputSchema, ok := rawInputSchema.(map[string]any)
+	if !ok {
+		t.Fatalf("expected inputSchema object, got %T", rawInputSchema)
+	}
+	if len(inputSchema) != 0 {
+		t.Fatalf("expected empty inputSchema object, got %v", inputSchema)
+	}
+}
+
+func TestCanvasDeclaration_JSONOmitsNilInputSchema(t *testing.T) {
+	canvas := CanvasDeclaration{
+		ID:          "no-input-schema",
+		DisplayName: "No input schema",
+		Description: "Does not declare input.",
+	}
+
+	data, err := json.Marshal(canvas)
+	if err != nil {
+		t.Fatalf("failed to marshal CanvasDeclaration: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal CanvasDeclaration: %v", err)
+	}
+
+	if _, present := decoded["inputSchema"]; present {
+		t.Errorf("expected inputSchema to be omitted for nil map, got %v", decoded["inputSchema"])
+	}
+}
+
+func TestElicitationResult_JSONIncludesEmptyContent(t *testing.T) {
+	result := ElicitationResult{
+		Action:  ElicitationActionAccept,
+		Content: map[string]any{},
+	}
+
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("failed to marshal ElicitationResult: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal ElicitationResult: %v", err)
+	}
+
+	rawContent, present := decoded["content"]
+	if !present {
+		t.Fatal("expected content to be present for an empty non-nil map")
+	}
+	content, ok := rawContent.(map[string]any)
+	if !ok {
+		t.Fatalf("expected content object, got %T", rawContent)
+	}
+	if len(content) != 0 {
+		t.Fatalf("expected empty content object, got %v", content)
+	}
+}
+
+func TestElicitationResult_JSONOmitsNilContent(t *testing.T) {
+	result := ElicitationResult{Action: ElicitationActionCancel}
+
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("failed to marshal ElicitationResult: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal ElicitationResult: %v", err)
+	}
+
+	if _, present := decoded["content"]; present {
+		t.Errorf("expected content to be omitted for nil map, got %v", decoded["content"])
+	}
+}
+
+func TestSessionMetadata_JSONReadsClientNames(t *testing.T) {
+	var metadata SessionMetadata
+	data := `{"sessionId":"session-1","startTime":"2026-01-01T00:00:00Z","modifiedTime":"2026-01-02T00:00:00Z","isRemote":false,"clientName":"github/cli","lastClientName":"vscode"}`
+	if err := json.Unmarshal([]byte(data), &metadata); err != nil {
+		t.Fatalf("failed to unmarshal SessionMetadata: %v", err)
+	}
+	if metadata.ClientName == nil || *metadata.ClientName != "github/cli" {
+		t.Errorf("expected client name github/cli, got %v", metadata.ClientName)
+	}
+	if metadata.LastClientName == nil || *metadata.LastClientName != "vscode" {
+		t.Errorf("expected last client name vscode, got %v", metadata.LastClientName)
+	}
+}

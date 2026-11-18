@@ -1,0 +1,504 @@
+# Pre-tool use hook
+
+The `onPreToolUse` hook is called **before** a tool executes. Use it to:
+
+* Approve or deny tool execution
+* Modify tool arguments
+* Add context for the tool
+* Suppress tool output from the conversation
+
+## Hook signature
+
+<details open>
+<summary><strong>Node.js / TypeScript</strong></summary>
+
+<!-- docs-validate: hidden -->
+```ts
+import type { PreToolUseHookInput, HookInvocation, PreToolUseHookOutput } from "@github/copilot-sdk";
+type PreToolUseHandler = (
+  input: PreToolUseHookInput,
+  invocation: HookInvocation
+) => Promise<PreToolUseHookOutput | null | undefined>;
+```
+<!-- /docs-validate: hidden -->
+```typescript
+type PreToolUseHandler = (
+  input: PreToolUseHookInput,
+  invocation: HookInvocation
+) => Promise<PreToolUseHookOutput | null | undefined>;
+```
+
+</details>
+
+<details>
+<summary><strong>Python</strong></summary>
+
+<!-- docs-validate: hidden -->
+```python
+from copilot.session import PreToolUseHookInput, PreToolUseHookOutput
+from copilot.session import PreToolUseHandler as SdkPreToolUseHandler
+from typing import Callable, Awaitable
+
+PreToolUseHandler = Callable[
+    [PreToolUseHookInput, dict[str, str]],
+    Awaitable[PreToolUseHookOutput | None]
+]
+
+def check(handler: PreToolUseHandler) -> SdkPreToolUseHandler:
+    return handler
+```
+<!-- /docs-validate: hidden -->
+```python
+PreToolUseHandler = Callable[
+    [PreToolUseHookInput, dict[str, str]],
+    Awaitable[PreToolUseHookOutput | None]
+]
+```
+
+</details>
+
+<details>
+<summary><strong>Go</strong></summary>
+
+<!-- docs-validate: hidden -->
+```go
+package main
+
+import copilot "github.com/github/copilot-sdk/go"
+
+// Aliases let the signature below use the package's own type names.
+type (
+    PreToolUseHookInput  = copilot.PreToolUseHookInput
+    HookInvocation       = copilot.HookInvocation
+    PreToolUseHookOutput = copilot.PreToolUseHookOutput
+)
+
+type PreToolUseHandler func(
+    input PreToolUseHookInput,
+    invocation HookInvocation,
+) (*PreToolUseHookOutput, error)
+
+var _ = copilot.PreToolUseHandler(PreToolUseHandler(nil))
+
+func main() {}
+```
+<!-- /docs-validate: hidden -->
+```go
+type PreToolUseHandler func(
+    input PreToolUseHookInput,
+    invocation HookInvocation,
+) (*PreToolUseHookOutput, error)
+```
+
+</details>
+
+<details>
+<summary><strong>.NET</strong></summary>
+
+<!-- docs-validate: hidden -->
+```csharp
+using GitHub.Copilot;
+
+public delegate Task<PreToolUseHookOutput?> PreToolUseHandler(
+    PreToolUseHookInput input,
+    HookInvocation invocation);
+
+static class PreToolUseHandlerCheck
+{
+    static SessionHooks Check(PreToolUseHandler handler) =>
+        new() { OnPreToolUse = handler.Invoke };
+}
+```
+<!-- /docs-validate: hidden -->
+```csharp
+public delegate Task<PreToolUseHookOutput?> PreToolUseHandler(
+    PreToolUseHookInput input,
+    HookInvocation invocation);
+```
+
+</details>
+
+<details>
+<summary><strong>Java</strong></summary>
+
+<!-- docs-validate: hidden -->
+```java
+import com.github.copilot.rpc.*;
+import java.util.concurrent.CompletableFuture;
+
+public class PreToolUseSignature {
+    static class Documented {
+        @FunctionalInterface
+        public interface PreToolUseHandler {
+            CompletableFuture<PreToolUseHookOutput> handle(
+                PreToolUseHookInput input,
+                HookInvocation invocation);
+        }
+    }
+
+    // The documented interface and the SDK's accept each other's implementations.
+    static PreToolUseHandler toSdk(Documented.PreToolUseHandler documented) {
+        return documented::handle;
+    }
+
+    static Documented.PreToolUseHandler fromSdk(PreToolUseHandler sdk) {
+        return sdk::handle;
+    }
+
+    public static void main(String[] args) {}
+}
+```
+<!-- /docs-validate: hidden -->
+```java
+@FunctionalInterface
+public interface PreToolUseHandler {
+    CompletableFuture<PreToolUseHookOutput> handle(
+        PreToolUseHookInput input,
+        HookInvocation invocation);
+}
+```
+
+</details>
+
+## Input
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `timestamp` | SDK timestamp type | When the hook was triggered |
+| `workingDirectory` | string | Current working directory |
+| `sessionId` | string | Session reported by the hook input, not necessarily the callback owner's session |
+| `toolCallId` | string (optional) | Original tool-call ID, unchanged by argument modifications |
+| `traceparent` | string (optional) | Existing W3C trace context |
+| `tracestate` | string (optional) | Existing W3C vendor trace state |
+| `toolName` | string | Name of the tool being called |
+| `toolArgs` | object | Arguments passed to the tool |
+
+Tracing fields are exposed in TypeScript, Python, Go, Rust, and Java, not .NET.
+See [Hook metadata](./hooks-overview.md#hook-metadata) for language-specific
+accessors and compatibility with older runtimes. Correlate with success or
+failure hooks and tool-execution events using `(input.sessionId, input.toolCallId)`.
+A pre-hook does not guarantee a matching post-hook.
+
+## Output
+
+Return `null` or `undefined` to allow the tool to execute with no changes. Otherwise, return an object with any of these fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `permissionDecision` | `"allow"` \| `"deny"` \| `"ask"` | Whether to allow the tool call |
+| `permissionDecisionReason` | string | Explanation shown to user (for deny/ask) |
+| `modifiedArgs` | object | Modified arguments to pass to the tool |
+| `additionalContext` | string | Extra context injected into the conversation |
+| `suppressOutput` | boolean | If true, tool output won't appear in conversation |
+
+### Permission decisions
+
+| Decision | Behavior |
+|----------|----------|
+| `"allow"` | Tool executes normally |
+| `"deny"` | Tool is blocked, reason shown to user |
+| `"ask"` | User is prompted to approve (interactive mode) |
+
+### Skipping permission prompts for trusted custom tools
+
+If you define a custom tool that is safe to run without prompting, set `skipPermission: true` on the tool definition. Use this for trusted, app-owned tools whose inputs are already constrained by your application; use `onPreToolUse` when you need per-call policy checks or argument validation.
+
+```typescript
+const getWeather = defineTool("get_weather", {
+  description: "Get weather for a location.",
+  parameters: {
+    type: "object",
+    properties: { location: { type: "string" } },
+    required: ["location"],
+  },
+  skipPermission: true,
+  handler: async ({ location }) => ({ forecast: `Sunny in ${location}` }),
+});
+```
+
+## Examples
+
+### Allow all tools (logging only)
+
+<details open>
+<summary><strong>Node.js / TypeScript</strong></summary>
+
+```typescript
+const session = await client.createSession({
+  hooks: {
+    onPreToolUse: async (input, invocation) => {
+      console.log(`[${invocation.sessionId}] Calling ${input.toolName}`);
+      console.log(`  Args: ${JSON.stringify(input.toolArgs)}`);
+      return { permissionDecision: "allow" };
+    },
+  },
+});
+```
+
+</details>
+
+<details>
+<summary><strong>Python</strong></summary>
+
+```python
+from copilot import CopilotClient
+from copilot.session import PermissionHandler
+
+client = CopilotClient()
+
+async def on_pre_tool_use(input_data, invocation):
+    print(f"[{invocation['session_id']}] Calling {input_data['toolName']}")
+    print(f"  Args: {input_data['toolArgs']}")
+    return {"permissionDecision": "allow"}
+
+session = await client.create_session(on_permission_request=PermissionHandler.approve_all, hooks={"on_pre_tool_use": on_pre_tool_use})
+```
+
+</details>
+
+<details>
+<summary><strong>Go</strong></summary>
+
+<!-- docs-validate: hidden -->
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	copilot "github.com/github/copilot-sdk/go"
+)
+
+func main() {
+	client := copilot.NewClient(nil)
+	session, _ := client.CreateSession(context.Background(), &copilot.SessionConfig{
+		Hooks: &copilot.SessionHooks{
+			OnPreToolUse: func(input copilot.PreToolUseHookInput, inv copilot.HookInvocation) (*copilot.PreToolUseHookOutput, error) {
+				fmt.Printf("[%s] Calling %s\n", inv.SessionID, input.ToolName)
+				fmt.Printf("  Args: %v\n", input.ToolArgs)
+				return &copilot.PreToolUseHookOutput{
+					PermissionDecision: "allow",
+				}, nil
+			},
+		},
+	})
+	_ = session
+}
+```
+<!-- /docs-validate: hidden -->
+```go
+session, _ := client.CreateSession(context.Background(), &copilot.SessionConfig{
+    Hooks: &copilot.SessionHooks{
+        OnPreToolUse: func(input copilot.PreToolUseHookInput, inv copilot.HookInvocation) (*copilot.PreToolUseHookOutput, error) {
+            fmt.Printf("[%s] Calling %s\n", inv.SessionID, input.ToolName)
+            fmt.Printf("  Args: %v\n", input.ToolArgs)
+            return &copilot.PreToolUseHookOutput{
+                PermissionDecision: "allow",
+            }, nil
+        },
+    },
+})
+```
+
+</details>
+
+<details>
+<summary><strong>.NET</strong></summary>
+
+```csharp
+var session = await client.CreateSessionAsync(new SessionConfig
+{
+    Hooks = new SessionHooks
+    {
+        OnPreToolUse = (input, invocation) =>
+        {
+            Console.WriteLine($"[{invocation.SessionId}] Calling {input.ToolName}");
+            Console.WriteLine($"  Args: {input.ToolArgs}");
+            return Task.FromResult<PreToolUseHookOutput?>(
+                new PreToolUseHookOutput { PermissionDecision = "allow" }
+            );
+        },
+    },
+});
+```
+
+</details>
+
+<details>
+<summary><strong>Java</strong></summary>
+
+<!-- docs-validate: hidden -->
+```java
+import com.github.copilot.*;
+import com.github.copilot.rpc.*;
+import java.util.concurrent.CompletableFuture;
+
+public class LogAllToolCallsExample {
+    public static void main(String[] args) throws Exception {
+        try (var client = new CopilotClient()) {
+            var hooks = new SessionHooks()
+                .setOnPreToolUse((input, invocation) -> {
+                    System.out.println("[" + invocation.getSessionId() + "] Calling " + input.getToolName());
+                    System.out.println("  Args: " + input.getToolArgs());
+                    return CompletableFuture.completedFuture(PreToolUseHookOutput.allow());
+                });
+
+            var session = client.createSession(
+                new SessionConfig()
+                    .setOnPermissionRequest(PermissionHandler.APPROVE_ALL)
+                    .setHooks(hooks)
+            ).get();
+        }
+    }
+}
+```
+<!-- /docs-validate: hidden -->
+```java
+import com.github.copilot.*;
+import com.github.copilot.rpc.*;
+import java.util.concurrent.CompletableFuture;
+
+var hooks = new SessionHooks()
+    .setOnPreToolUse((input, invocation) -> {
+        System.out.println("[" + invocation.getSessionId() + "] Calling " + input.getToolName());
+        System.out.println("  Args: " + input.getToolArgs());
+        return CompletableFuture.completedFuture(PreToolUseHookOutput.allow());
+    });
+
+var session = client.createSession(
+    new SessionConfig()
+        .setOnPermissionRequest(PermissionHandler.APPROVE_ALL)
+        .setHooks(hooks)
+).get();
+```
+
+</details>
+
+### Block specific tools
+
+```typescript
+const BLOCKED_TOOLS = ["shell", "bash", "write_file", "delete_file"];
+
+const session = await client.createSession({
+  hooks: {
+    onPreToolUse: async (input) => {
+      if (BLOCKED_TOOLS.includes(input.toolName)) {
+        return {
+          permissionDecision: "deny",
+          permissionDecisionReason: `Tool '${input.toolName}' is not permitted in this environment`,
+        };
+      }
+      return { permissionDecision: "allow" };
+    },
+  },
+});
+```
+
+### Modify tool arguments
+
+```typescript
+const session = await client.createSession({
+  hooks: {
+    onPreToolUse: async (input) => {
+      // Add a default timeout to all shell commands
+      if (input.toolName === "shell" && input.toolArgs) {
+        const args = input.toolArgs as { command: string; timeout?: number };
+        return {
+          permissionDecision: "allow",
+          modifiedArgs: {
+            ...args,
+            timeout: args.timeout ?? 30000, // Default 30s timeout
+          },
+        };
+      }
+      return { permissionDecision: "allow" };
+    },
+  },
+});
+```
+
+### Restrict file access to specific directories
+
+```typescript
+const ALLOWED_DIRECTORIES = ["/home/user/projects", "/tmp"];
+
+const session = await client.createSession({
+  hooks: {
+    onPreToolUse: async (input) => {
+      if (input.toolName === "read_file" || input.toolName === "write_file") {
+        const args = input.toolArgs as { path: string };
+        const isAllowed = ALLOWED_DIRECTORIES.some(dir => 
+          args.path.startsWith(dir)
+        );
+        
+        if (!isAllowed) {
+          return {
+            permissionDecision: "deny",
+            permissionDecisionReason: `Access to '${args.path}' is not permitted. Allowed directories: ${ALLOWED_DIRECTORIES.join(", ")}`,
+          };
+        }
+      }
+      return { permissionDecision: "allow" };
+    },
+  },
+});
+```
+
+### Suppress verbose tool output
+
+```typescript
+const VERBOSE_TOOLS = ["list_directory", "search_files"];
+
+const session = await client.createSession({
+  hooks: {
+    onPreToolUse: async (input) => {
+      return {
+        permissionDecision: "allow",
+        suppressOutput: VERBOSE_TOOLS.includes(input.toolName),
+      };
+    },
+  },
+});
+```
+
+### Add context based on tool
+
+```typescript
+const session = await client.createSession({
+  hooks: {
+    onPreToolUse: async (input) => {
+      if (input.toolName === "query_database") {
+        return {
+          permissionDecision: "allow",
+          additionalContext: "Remember: This database uses PostgreSQL syntax. Always use parameterized queries.",
+        };
+      }
+      return { permissionDecision: "allow" };
+    },
+  },
+});
+```
+
+## Best practices
+
+1. **Always return a decision** - Returning `null` allows the tool, but being explicit with `{ permissionDecision: "allow" }` is clearer.
+
+1. **Provide helpful denial reasons** - When denying, explain why so users understand:
+   ```typescript
+   return {
+     permissionDecision: "deny",
+     permissionDecisionReason: "Shell commands require approval. Please describe what you want to accomplish.",
+   };
+   ```
+
+1. **Be careful with argument modification** - Ensure modified args maintain the expected schema for the tool.
+
+1. **Consider performance** - Pre-tool hooks run synchronously before each tool call. Keep them fast.
+
+1. **Use `suppressOutput` judiciously** - Suppressing output means the model won't see the result, which may affect conversation quality.
+
+## See also
+
+* [Hooks Overview](./README.md)
+* [Post-Tool Use Hook](./post-tool-use.md)
+* [Debugging Guide](../troubleshooting/debugging.md)

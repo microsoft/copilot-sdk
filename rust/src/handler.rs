@@ -1,0 +1,620 @@
+//! Optional session-callback traits.
+//!
+//! Each callback the CLI may dispatch (permission requests, elicitation
+//! prompts, user-input questions, exit-plan-mode prompts,
+//! auto-mode-switch prompts, shell password prompts) has its own focused
+//! trait. Recovery-aware Auto handlers also implement
+//! `handle_auto_mode_recovery`, leaving legacy `handle` unchanged.
+//!
+//! Handlers are **optional**: install only the ones the application cares
+//! about. The SDK derives the corresponding wire flag on
+//! `session.create` / `session.resume` from the presence of each handler,
+//! so the runtime does not emit broadcasts this client would never
+//! respond to.
+//!
+//! Tool dispatch uses its own per-tool registry built from
+//! [`Tool::with_handler`](crate::types::Tool::with_handler) on entries passed to
+//! [`SessionConfig::with_tools`](crate::types::SessionConfig::with_tools).
+
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use tokio_util::sync::CancellationToken;
+
+use crate::generated::api_types::{
+    McpOauthPendingRequestResponse, McpOauthPendingRequestResponseCancelled,
+    McpOauthPendingRequestResponseCancelledKind, McpOauthPendingRequestResponseRuntimeRefresh,
+    McpOauthPendingRequestResponseRuntimeRefreshKind, McpOauthPendingRequestResponseToken,
+    McpOauthPendingRequestResponseTokenKind, PermissionDecision, PermissionDecisionApproveOnce,
+    PermissionDecisionContext, PermissionDecisionReject, PermissionDecisionUserNotAvailable,
+};
+use crate::session_events::{
+    McpOauthRequestReason, McpOauthRequiredStaticClientConfig, McpOauthWWWAuthenticateParams,
+};
+use crate::types::{
+    AutoModeRecoveryContext, ElicitationRequest, ElicitationResult, ExitPlanModeData,
+    PermissionRequestData, RequestId, SessionId,
+};
+
+/// Decision returned by a [`PermissionHandler`].
+///
+/// Either a concrete wire-level [`PermissionDecision`] (approve, reject,
+/// approve-for-session, approve-permanently, user-not-available, …) with
+/// optional telemetry context, or [`PermissionResult::NoResult`], which tells
+/// the SDK to suppress its response so another connected client can answer
+/// instead.
+///
+/// ```
+/// use github_copilot_sdk::handler::PermissionResult;
+///
+/// fn is_decision(result: PermissionResult) -> bool {
+///     match result {
+///         PermissionResult::Decision { .. } => true,
+///         PermissionResult::NoResult => false,
+///     }
+/// }
+/// ```
+#[derive(Debug, Clone)]
+pub enum PermissionResult {
+    /// Send a permission decision on the wire.
+    Decision {
+        /// The decision to send.
+        decision: PermissionDecision,
+        /// Optional context describing how and where the decision was reached.
+        context: Option<PermissionDecisionContext>,
+    },
+    /// Decline to respond to this request, allowing another connected
+    /// client to answer instead. The SDK suppresses the response.
+    NoResult,
+}
+
+impl PermissionResult {
+    /// Approve this single request.
+    pub fn approve_once() -> Self {
+        Self::Decision {
+            decision: PermissionDecision::ApproveOnce(PermissionDecisionApproveOnce::default()),
+            context: None,
+        }
+    }
+
+    /// Reject the request, optionally forwarding feedback to the LLM.
+    pub fn reject(feedback: impl Into<Option<String>>) -> Self {
+        Self::Decision {
+            decision: PermissionDecision::Reject(PermissionDecisionReject {
+                feedback: feedback.into(),
+                ..Default::default()
+            }),
+            context: None,
+        }
+    }
+
+    /// Deny because no user is available to confirm.
+    pub fn user_not_available() -> Self {
+        Self::Decision {
+            decision: PermissionDecision::UserNotAvailable(
+                PermissionDecisionUserNotAvailable::default(),
+            ),
+            context: None,
+        }
+    }
+
+    /// Decline to respond, allowing another connected client to answer
+    /// instead.
+    pub fn no_result() -> Self {
+        Self::NoResult
+    }
+
+    /// Attach provenance describing how and where this decision was made,
+    /// so the runtime can attribute auto-approval telemetry.
+    ///
+    /// It is a no-op on [`PermissionResult::NoResult`].
+    ///
+    /// ```rust,no_run
+    /// # use github_copilot_sdk::handler::PermissionResult;
+    /// # use github_copilot_sdk::{
+    /// #     PermissionDecisionContext, PermissionDecisionOutcome, PermissionDecisionSource,
+    /// #     PermissionDecisionSurface,
+    /// # };
+    ///
+    /// let result = PermissionResult::approve_once().with_context(PermissionDecisionContext {
+    ///     outcome: PermissionDecisionOutcome::AutoApproved,
+    ///     response_capability: None,
+    ///     source: PermissionDecisionSource::HostPolicy,
+    ///     surface: PermissionDecisionSurface::Sdk,
+    ///     user_feedback: None,
+    /// });
+    /// ```
+    pub fn with_context(self, context: PermissionDecisionContext) -> Self {
+        match self {
+            Self::Decision { decision, .. } => Self::Decision {
+                decision,
+                context: Some(context),
+            },
+            Self::NoResult => Self::NoResult,
+        }
+    }
+}
+
+impl From<PermissionDecision> for PermissionResult {
+    fn from(value: PermissionDecision) -> Self {
+        Self::Decision {
+            decision: value,
+            context: None,
+        }
+    }
+}
+
+pub(crate) fn permission_handler_failure(message: &str) -> PermissionResult {
+    tracing::error!(error = message, "permission handler failed");
+    PermissionResult::user_not_available()
+}
+
+/// Response to a user input request.
+#[derive(Debug, Clone)]
+pub struct UserInputResponse {
+    /// The user's answer text.
+    pub answer: String,
+    /// Whether the answer was free-form (not a preset choice).
+    pub was_freeform: bool,
+}
+
+/// Result of an exit-plan-mode request.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExitPlanModeResult {
+    /// Whether the user approved exiting plan mode.
+    pub approved: bool,
+    /// The action the user selected (if any).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selected_action: Option<String>,
+    /// Optional feedback text from the user.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub feedback: Option<String>,
+}
+
+impl Default for ExitPlanModeResult {
+    fn default() -> Self {
+        Self {
+            approved: true,
+            selected_action: None,
+            feedback: None,
+        }
+    }
+}
+
+/// A prompt answer paired with who answered and how.
+///
+/// When `decision_context` says a person answered interactively
+/// (`source: HumanResponse`, `response_capability: Some(Interactive)`), the
+/// runtime counts the answer as the person's own authority for Assisted
+/// Permissions, but only from the session's owning connection; an answer from
+/// any other connection still settles, without that authority. The runtime
+/// decides which answers carry authority, so label a person's refusals too.
+/// Leave automated answers unlabeled.
+///
+/// Return one from a handler's `handle_attributed` method, such as
+/// [`UserInputHandler::handle_attributed`].
+#[derive(Debug, Clone)]
+pub struct AttributedResult<T> {
+    /// The answer.
+    pub result: T,
+    /// Who answered and how, if known.
+    pub decision_context: Option<PermissionDecisionContext>,
+}
+
+impl<T> AttributedResult<T> {
+    /// Label `result` with who answered and how.
+    pub fn new(result: T, decision_context: PermissionDecisionContext) -> Self {
+        Self {
+            result,
+            decision_context: Some(decision_context),
+        }
+    }
+
+    /// An answer without a label.
+    pub fn unattributed(result: T) -> Self {
+        Self {
+            result,
+            decision_context: None,
+        }
+    }
+}
+
+/// Response to an auto-mode-switch request.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoModeSwitchResponse {
+    /// Approve this one Auto-switch or recovery offer.
+    Yes,
+    /// Approve and remember consent. Currently saves the session-local rate-limit
+    /// preference; recovery requires `allow_always` to be true.
+    YesAlways,
+    /// Decline the auto-mode switch. The session stays on the current
+    /// model and surfaces the original failure.
+    No,
+}
+
+/// Handler for `permission.requested` broadcasts.
+///
+/// Install via
+/// [`SessionConfig::with_permission_handler`](crate::types::SessionConfig::with_permission_handler)
+/// (or the matching method on [`ResumeSessionConfig`](crate::types::ResumeSessionConfig)).
+/// When no permission handler is supplied, the SDK sends
+/// `requestPermission: false` on the wire and the runtime short-circuits
+/// permission prompts for this client.
+#[async_trait]
+pub trait PermissionHandler: Send + Sync + 'static {
+    /// Resolve a permission request.
+    async fn handle(
+        &self,
+        session_id: SessionId,
+        request_id: RequestId,
+        data: PermissionRequestData,
+    ) -> PermissionResult;
+}
+
+/// Handler for `elicitation.requested` broadcasts.
+///
+/// When unset, `requestElicitation: false` goes on the wire.
+#[async_trait]
+pub trait ElicitationHandler: Send + Sync + 'static {
+    /// Respond to an elicitation prompt (form, URL confirm, etc.).
+    async fn handle(
+        &self,
+        session_id: SessionId,
+        request_id: RequestId,
+        request: ElicitationRequest,
+    ) -> ElicitationResult;
+
+    /// Respond and say who answered. Override it to label a person's answer
+    /// (see [`AttributedResult`]); the SDK calls this method, and the default
+    /// returns [`handle`](Self::handle)'s answer without a label.
+    async fn handle_attributed(
+        &self,
+        session_id: SessionId,
+        request_id: RequestId,
+        request: ElicitationRequest,
+    ) -> AttributedResult<ElicitationResult> {
+        AttributedResult::unattributed(self.handle(session_id, request_id, request).await)
+    }
+}
+
+/// MCP OAuth request that the SDK host can satisfy with a host-acquired token.
+#[derive(Debug, Clone)]
+pub struct McpAuthRequest {
+    /// Identifier for the pending MCP OAuth request.
+    pub request_id: RequestId,
+    /// Display name of the MCP server that requires OAuth.
+    pub server_name: String,
+    /// URL of the MCP server that requires OAuth.
+    pub server_url: String,
+    /// Why the runtime is requesting host-provided OAuth credentials.
+    pub reason: McpOauthRequestReason,
+    /// Parsed WWW-Authenticate parameters from the MCP server, if available.
+    pub www_authenticate_params: Option<McpOauthWWWAuthenticateParams>,
+    /// Raw RFC 9728 protected-resource metadata JSON fetched by the runtime, if available.
+    pub resource_metadata: Option<String>,
+    /// Static OAuth client configuration, if the server specifies one.
+    pub static_client_config: Option<McpOauthRequiredStaticClientConfig>,
+}
+
+/// Result returned by an MCP auth request handler.
+#[derive(Debug, Clone)]
+pub enum McpAuthResult {
+    /// Supplies host-acquired OAuth token data.
+    Token {
+        /// Access token acquired by the SDK host.
+        access_token: String,
+        /// OAuth token type. Defaults to Bearer when omitted.
+        token_type: Option<String>,
+        /// Token lifetime in seconds, if known.
+        expires_in: Option<i64>,
+    },
+    /// Declines or cancels the pending OAuth request.
+    Cancelled,
+}
+
+impl McpAuthResult {
+    pub(crate) fn into_wire(self) -> McpOauthPendingRequestResponse {
+        match self {
+            Self::Token {
+                access_token,
+                token_type,
+                expires_in,
+            } => McpOauthPendingRequestResponse::Token(McpOauthPendingRequestResponseToken {
+                access_token,
+                token_type,
+                expires_in,
+                kind: McpOauthPendingRequestResponseTokenKind::Token,
+            }),
+            Self::Cancelled => {
+                McpOauthPendingRequestResponse::Cancelled(McpOauthPendingRequestResponseCancelled {
+                    kind: McpOauthPendingRequestResponseCancelledKind::Cancelled,
+                })
+            }
+        }
+    }
+}
+
+/// Opt-in response from [`McpAuthHandler::handle_with_runtime_refresh`].
+/// The existing [`McpAuthResult`] remains exhaustive for legacy handlers.
+#[non_exhaustive]
+pub enum McpAuthResponse {
+    /// Return the existing host token or cancellation response.
+    Legacy(McpAuthResult),
+    /// Hand an advertised Refresh request back to its original runtime operation.
+    /// Acceptance is not credential installation or reconnect completion.
+    RuntimeRefresh,
+}
+
+impl McpAuthResponse {
+    pub(crate) fn into_wire_for_request(
+        self,
+        runtime_refresh_supported: bool,
+    ) -> McpOauthPendingRequestResponse {
+        match self {
+            Self::Legacy(result) => result.into_wire(),
+            Self::RuntimeRefresh if !runtime_refresh_supported => {
+                McpAuthResult::Cancelled.into_wire()
+            }
+            Self::RuntimeRefresh => McpOauthPendingRequestResponse::RuntimeRefresh(
+                McpOauthPendingRequestResponseRuntimeRefresh {
+                    kind: McpOauthPendingRequestResponseRuntimeRefreshKind::RuntimeRefresh,
+                },
+            ),
+        }
+    }
+}
+
+/// Handler for MCP server OAuth requests.
+#[async_trait]
+pub trait McpAuthHandler: Send + Sync + 'static {
+    /// Resolve an MCP OAuth request with host token data or cancellation.
+    async fn handle(
+        &self,
+        session_id: SessionId,
+        request_id: RequestId,
+        request: McpAuthRequest,
+    ) -> McpAuthResult;
+
+    /// Opt in to noninteractive refresh handoff without changing legacy request
+    /// construction or result matching. The default delegates to [`Self::handle`].
+    /// `runtime_refresh_supported` defaults to false when omitted by the runtime.
+    /// Return [`McpAuthResponse::RuntimeRefresh`] only for an advertised Refresh;
+    /// otherwise return [`McpAuthResponse::Legacy`].
+    async fn handle_with_runtime_refresh(
+        &self,
+        session_id: SessionId,
+        request_id: RequestId,
+        request: McpAuthRequest,
+        runtime_refresh_supported: bool,
+    ) -> McpAuthResponse {
+        let _ = runtime_refresh_supported;
+        McpAuthResponse::Legacy(self.handle(session_id, request_id, request).await)
+    }
+}
+
+/// Handler for `user_input.requested` events from the legacy question-and-answer
+/// `ask_user` variant.
+///
+/// When unset, `requestUserInput: false` goes on the wire, so this client
+/// cannot handle legacy user-input requests.
+#[async_trait]
+pub trait UserInputHandler: Send + Sync + 'static {
+    /// Answer a question on behalf of the user. Return `None` to signal
+    /// "no answer available".
+    ///
+    /// `request_id` is the runtime ID of the pending `user_input.requested`
+    /// request; pass it as `requestId` to the session's UI RPCs to answer
+    /// that exact request. It is `None` when the runtime predates it.
+    async fn handle(
+        &self,
+        session_id: SessionId,
+        request_id: Option<RequestId>,
+        question: String,
+        choices: Option<Vec<String>>,
+        allow_freeform: Option<bool>,
+    ) -> Option<UserInputResponse>;
+
+    /// Answer and say who answered. Override it to label a person's answer
+    /// (see [`AttributedResult`]); the SDK calls this method, and the default
+    /// returns [`handle`](Self::handle)'s answer without a label.
+    async fn handle_attributed(
+        &self,
+        session_id: SessionId,
+        request_id: Option<RequestId>,
+        question: String,
+        choices: Option<Vec<String>>,
+        allow_freeform: Option<bool>,
+    ) -> Option<AttributedResult<UserInputResponse>> {
+        self.handle(session_id, request_id, question, choices, allow_freeform)
+            .await
+            .map(AttributedResult::unattributed)
+    }
+}
+
+/// Handler for `exit_plan_mode.requested` events. When unset,
+/// `requestExitPlanMode: false` goes on the wire.
+#[async_trait]
+pub trait ExitPlanModeHandler: Send + Sync + 'static {
+    /// Decide whether to leave plan mode.
+    ///
+    /// `request_id` is the runtime ID of the pending `exit_plan_mode.requested`
+    /// request; pass it as `requestId` to the session's UI RPCs to answer that
+    /// exact request. It is `None` when the runtime predates it.
+    async fn handle(
+        &self,
+        session_id: SessionId,
+        request_id: Option<RequestId>,
+        data: ExitPlanModeData,
+    ) -> ExitPlanModeResult;
+
+    /// Decide and say who decided. Override it to label a person's review
+    /// (see [`AttributedResult`]); the SDK calls this method, and the default
+    /// returns [`handle`](Self::handle)'s result without a label.
+    async fn handle_attributed(
+        &self,
+        session_id: SessionId,
+        request_id: Option<RequestId>,
+        data: ExitPlanModeData,
+    ) -> AttributedResult<ExitPlanModeResult> {
+        AttributedResult::unattributed(self.handle(session_id, request_id, data).await)
+    }
+}
+
+/// Handler for `autoModeSwitch.request` callbacks. When unset,
+/// `requestAutoModeSwitch: false` goes on the wire.
+#[async_trait]
+pub trait AutoModeSwitchHandler: Send + Sync + 'static {
+    /// Decide whether to fall back to the auto model after an eligible
+    /// rate-limit error. `retry_after_seconds`, when present, is the
+    /// number of seconds until the rate limit resets.
+    async fn handle(
+        &self,
+        session_id: SessionId,
+        error_code: Option<String>,
+        retry_after_seconds: Option<f64>,
+    ) -> AutoModeSwitchResponse;
+
+    /// Decide whether to recover the retained active request using Auto.
+    /// Only called after explicit `auto_mode_recovery` enrollment. The default
+    /// declines; existing legacy handlers never silently consent to recovery.
+    /// Return `YesAlways` only when `auto_mode_recovery.allow_always` is true.
+    async fn handle_auto_mode_recovery(
+        &self,
+        _session_id: SessionId,
+        _error_code: Option<String>,
+        _retry_after_seconds: Option<f64>,
+        _auto_mode_recovery: AutoModeRecoveryContext,
+    ) -> AutoModeSwitchResponse {
+        AutoModeSwitchResponse::No
+    }
+}
+
+/// What a [`ShellAuthenticationRequest`] asks for.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ShellAuthenticationInputKind {
+    /// A password or passphrase. Mask the input.
+    Secret,
+    /// A visible answer, such as a user name.
+    Text,
+    /// A yes/no question, such as an ssh host-key check. Accept with `"yes"`,
+    /// or cancel to decline.
+    Confirm,
+}
+
+/// A password or other answer that a shell command run by the agent asks
+/// for, for example `sudo -A`, `ssh`, or `git` over HTTPS. The answer goes
+/// only to the program that asked: it is not shown to the model and is not
+/// recorded in session events.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShellAuthenticationRequest {
+    /// Identifies the request. A cancellation for it carries the same ID.
+    pub request_id: RequestId,
+    /// The program that asked: `sudo`, `ssh`, or `git`.
+    pub program: String,
+    /// The prompt text the program supplied.
+    pub prompt: String,
+    /// Whether to mask the input, show it, or ask yes/no.
+    pub input_kind: ShellAuthenticationInputKind,
+    /// The shell command that triggered the prompt.
+    pub command: String,
+    /// The command's working directory.
+    pub cwd: String,
+}
+
+/// Answer to a [`ShellAuthenticationRequest`].
+///
+/// `Debug` output never includes an accepted answer.
+#[derive(Clone, PartialEq, Eq)]
+pub enum ShellAuthenticationResponse {
+    /// Give this answer to the program that asked. Answer a
+    /// [`ShellAuthenticationInputKind::Confirm`] request with `"yes"`.
+    Accept(String),
+    /// Decline. The program fails as if its prompt were dismissed.
+    Cancel,
+}
+
+impl std::fmt::Debug for ShellAuthenticationResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Accept(_) => f.write_str("Accept(<redacted>)"),
+            Self::Cancel => f.write_str("Cancel"),
+        }
+    }
+}
+
+/// Handler for passwords and other answers that shell commands run by the
+/// agent ask for.
+///
+/// When unset, the SDK doesn't send `requestShellAuthentication` on the wire, the
+/// runtime never asks this client, and such commands fail as they would
+/// without a terminal.
+///
+/// `cancellation` is cancelled when the answer is no longer needed, for
+/// example because the command ended, the prompt timed out, or the session or
+/// connection closed. The SDK then drops the handler future and answers
+/// [`ShellAuthenticationResponse::Cancel`], so any separately spawned UI must observe
+/// the token and close its prompt. A panic in the handler also cancels, but the
+/// process's panic hook still reports it, by default by printing its message to
+/// stderr, so never put the answer in a panic message.
+#[async_trait]
+pub trait ShellAuthenticationHandler: Send + Sync + 'static {
+    /// Ask the user for the answer.
+    async fn handle(
+        &self,
+        session_id: SessionId,
+        request: ShellAuthenticationRequest,
+        cancellation: CancellationToken,
+    ) -> ShellAuthenticationResponse;
+}
+
+/// A [`PermissionHandler`] that approves ordinary requests when managed settings are disabled.
+///
+/// When managed settings are enabled, the handler logs an error and returns a
+/// user-not-available decision. As a defense-in-depth fallback, a request marked
+/// as requiring managed approval is left unanswered even if the session flag is
+/// absent.
+#[derive(Debug, Clone)]
+pub struct ApproveAllHandler;
+
+#[async_trait]
+impl PermissionHandler for ApproveAllHandler {
+    async fn handle(
+        &self,
+        _session_id: SessionId,
+        _request_id: RequestId,
+        data: PermissionRequestData,
+    ) -> PermissionResult {
+        if data.managed_settings_enabled {
+            permission_handler_failure(
+                "ApproveAllHandler cannot be used when managed settings are enabled",
+            )
+        } else if data.managed_approval_required == Some(true) {
+            PermissionResult::no_result()
+        } else {
+            PermissionResult::approve_once()
+        }
+    }
+}
+
+/// A [`PermissionHandler`] that denies every request.
+#[derive(Debug, Clone)]
+pub struct DenyAllHandler;
+
+#[async_trait]
+impl PermissionHandler for DenyAllHandler {
+    async fn handle(
+        &self,
+        _session_id: SessionId,
+        _request_id: RequestId,
+        _data: PermissionRequestData,
+    ) -> PermissionResult {
+        PermissionResult::reject(None)
+    }
+}
+
+#[cfg(test)]
+mod tests;

@@ -1,0 +1,4493 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *--------------------------------------------------------------------------------------------*/
+
+using GitHub.Copilot.Rpc;
+using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
+using System.Net.Sockets;
+using System.Runtime.ExceptionServices;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
+
+namespace GitHub.Copilot;
+
+/// <summary>
+/// Provides a client for interacting with the Copilot CLI server.
+/// </summary>
+/// <remarks>
+/// <para>
+/// The <see cref="CopilotClient"/> manages the connection to the Copilot CLI server and provides
+/// methods to create and manage conversation sessions. It can either spawn a CLI server process
+/// or connect to an existing server.
+/// </para>
+/// <para>
+/// The client supports both stdio (default) and TCP transport modes for communication with the CLI server.
+/// </para>
+/// </remarks>
+/// <example>
+/// <code>
+/// // Create a client with default options (spawns CLI server)
+/// await using var client = new CopilotClient();
+///
+/// // Create a session
+/// await using var session = await client.CreateSessionAsync(new() { OnPermissionRequest = PermissionHandler.ApproveAll, Model = "gpt-5.4" });
+///
+/// // Handle events
+/// using var subscription = session.On&lt;SessionEvent&gt;(evt =>
+/// {
+///     if (evt is AssistantMessageEvent assistantMessage)
+///         Console.WriteLine(assistantMessage.Data?.Content);
+/// });
+///
+/// // Send a message
+/// await session.SendAsync(new MessageOptions { Prompt = "Hello!" });
+/// </code>
+/// </example>
+public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
+{
+    private const string ExplicitBundledCliMarker = ".copilot-explicit-cli";
+    /// <summary>
+    /// Minimum protocol version this SDK can communicate with.
+    /// </summary>
+    private const int MinProtocolVersion = 3;
+    private static readonly TimeSpan s_stderrPumpShutdownTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan s_runtimeShutdownTimeout = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// Provides a thread-safe collection of active Copilot sessions, indexed by session identifier.
+    /// </summary>
+    /// <remarks>
+    /// This maintains a strong reference to every <see cref="CopilotSession"/> created on this
+    /// <see cref="CopilotClient"/> that has not been explicitly disposed or removed.
+    /// </remarks>
+    internal readonly ConcurrentDictionary<string, CopilotSession> _sessions = new();
+    // Open secret prompts by session and request ID. Tracked here rather than on a session,
+    // which a resume can replace while a prompt is open. Guarded by itself.
+    private readonly Dictionary<(string SessionId, string RequestId), ShellAuthenticationCancellation> _pendingShellAuthenticationRequests = [];
+    private readonly object _sessionAdmissionLock = new();
+    private readonly HashSet<SessionOperation> _sessionOperations = [];
+    private bool _sessionAdmissionClosed;
+    private readonly ConcurrentDictionary<string, Func<GitHubTokenProviderArgs, Task<GitHubTokenProviderResult>>> _gitHubTokenProviders = new();
+
+    private readonly CopilotClientOptions _options;
+    private readonly RuntimeConnection _connection;
+    private readonly ILogger _logger;
+    private readonly int? _optionsPort;
+    private readonly string? _optionsHost;
+    private readonly string[] _builtinPluginDirectories;
+    private readonly Func<CancellationToken, Task<IList<ModelInfo>>>? _onListModels;
+    private readonly List<LifecycleSubscription> _lifecycleHandlers = [];
+
+    private Task<Connection>? _connectionTask;
+    private CancellationTokenSource? _startupCancellation;
+    private FfiRuntimeHost? _ffiHost;
+    private bool _disposed;
+    // Each startup publishes a distinct registration, even when it reuses a fixed TCP port.
+    private sealed class RuntimePortRegistration(int port)
+    {
+        public int Port { get; } = port;
+    }
+
+    private RuntimePortRegistration? _actualPort;
+    private int? _negotiatedProtocolVersion;
+    private volatile ModelsCache _modelsCache = new();
+    private ServerRpc? _serverRpc;
+
+    private sealed class ModelsCache
+    {
+        public SemaphoreSlim Lock { get; } = new(1, 1);
+        public List<ModelInfo>? Models { get; set; }
+    }
+    /// <summary>
+    /// Client-global RPC handlers (e.g. the LLM inference provider adapter),
+    /// built once at construction and registered on every connection.
+    /// </summary>
+    private ClientGlobalApiHandlers? _clientGlobalApis;
+
+    private sealed record LifecycleSubscription(Type EventType, Action<SessionLifecycleEvent> Handler);
+
+    private sealed class SessionOperation(CopilotClient client, string sessionId, JsonRpc rpc, bool recoveryInitialization) : IDisposable
+    {
+        public string SessionId { get; } = sessionId;
+        public JsonRpc Rpc { get; } = rpc;
+        public bool RecoveryInitialization { get; } = recoveryInitialization;
+        public CopilotSession? Session { get; set; }
+
+        public void Dispose()
+        {
+            lock (client._sessionAdmissionLock)
+            {
+                client._sessionOperations.Remove(this);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Gets the typed RPC client for server-scoped methods (no session required).
+    /// </summary>
+    /// <remarks>
+    /// The client must be started before accessing this property. Call <see cref="StartAsync"/> before use.
+    /// </remarks>
+    /// <exception cref="ObjectDisposedException">Thrown if the client has been disposed.</exception>
+    /// <exception cref="InvalidOperationException">Thrown if the client is not started.</exception>
+    public ServerRpc Rpc => _disposed
+        ? throw new ObjectDisposedException(nameof(CopilotClient))
+        : _serverRpc ?? throw new InvalidOperationException("Client is not started. Call StartAsync first.");
+
+    /// <summary>
+    /// Gets the actual TCP port the runtime is listening on, if using TCP transport.
+    /// </summary>
+    /// <remarks>
+    /// Returns <see langword="null"/> before <see cref="StartAsync"/> sets it, with stdio or in-process
+    /// transport, and once a runtime this client started has been stopped or has failed to start.
+    /// </remarks>
+    public int? RuntimePort => Volatile.Read(ref _actualPort)?.Port;
+
+    /// <summary>
+    /// Creates a new instance of <see cref="CopilotClient"/>.
+    /// </summary>
+    /// <param name="options">Options for creating the client. If null, default options are used.</param>
+    /// <example>
+    /// <code>
+    /// // Default options - spawns the bundled runtime using stdio
+    /// var client = new CopilotClient();
+    ///
+    /// // Connect to an existing runtime
+    /// var client = new CopilotClient(new CopilotClientOptions { Connection = RuntimeConnection.ForUri("localhost:3000") });
+    ///
+    /// // Custom runtime path with specific log level
+    /// var client = new CopilotClient(new CopilotClientOptions
+    /// {
+    ///     Connection = RuntimeConnection.ForStdio(path: "/usr/local/bin/copilot"),
+    ///     LogLevel = CopilotLogLevel.Debug
+    /// });
+    /// </code>
+    /// </example>
+    public CopilotClient(CopilotClientOptions? options = null)
+    {
+        _options = options ?? new();
+        _connection = _options.Connection ?? ResolveDefaultConnection(_options);
+        _builtinPluginDirectories = _options.BuiltinPluginDirectories?.ToArray() ?? [];
+        foreach (var path in _builtinPluginDirectories.Where(path => !IsFullyQualifiedPath(path)))
+        {
+            throw new ArgumentException(
+                $"{nameof(CopilotClientOptions)}.{nameof(CopilotClientOptions.BuiltinPluginDirectories)} " +
+                $"must contain only absolute paths: {path}",
+                nameof(options));
+        }
+
+        switch (_connection)
+        {
+            case StdioRuntimeConnection:
+                break;
+
+            case InProcessRuntimeConnection:
+                break;
+
+            case TcpRuntimeConnection tcp:
+                if (tcp.ConnectionToken is { Length: 0 })
+                {
+                    throw new ArgumentException("ConnectionToken must be a non-empty string or null.", nameof(options));
+                }
+                // Auto-generate a connection token when the SDK spawns the runtime over TCP
+                // so the loopback listener is safe by default.
+                tcp.ConnectionToken ??= Guid.NewGuid().ToString();
+                break;
+
+            case UriRuntimeConnection uri:
+                if (string.IsNullOrEmpty(uri.Url))
+                {
+                    throw new ArgumentException("UriRuntimeConnection.Url must be a non-empty string.", nameof(options));
+                }
+                if (!string.IsNullOrEmpty(_options.GitHubToken) || _options.UseLoggedInUser != null)
+                {
+                    throw new ArgumentException("GitHubToken and UseLoggedInUser cannot be combined with RuntimeConnection.ForUri (the existing runtime manages its own auth).", nameof(options));
+                }
+                var parsed = ParseRuntimeUrl(uri.Url);
+                _optionsHost = parsed.Host.Trim('[', ']');
+                _optionsPort = parsed.Port;
+                break;
+
+            default:
+                throw new ArgumentException($"Unsupported RuntimeConnection type: {_connection.GetType().Name}", nameof(options));
+        }
+
+        ValidateEnvironmentOptions(_options, _connection);
+
+        _logger = _options.Logger ?? NullLogger.Instance;
+        _onListModels = _options.OnListModels;
+
+        _clientGlobalApis = BuildClientGlobalApis();
+
+        // Empty mode: validate at construction time that the app supplied a
+        // per-session persistence location. The runtime is mode-agnostic, so
+        // without this check it would silently fall back to ~/.copilot, which
+        // defeats the point of empty mode for multi-tenant scenarios.
+        if (_options.Mode == CopilotClientMode.Empty)
+        {
+            var hasPersistence =
+                !string.IsNullOrEmpty(_options.BaseDirectory) ||
+                _options.SessionFs is not null ||
+                // External runtimes manage their own persistence layer; the SDK
+                // can't enforce it from here.
+                _connection is UriRuntimeConnection;
+            if (!hasPersistence)
+            {
+                throw new ArgumentException(
+                    "CopilotClient was created with Mode = CopilotClientMode.Empty but neither " +
+                    "BaseDirectory nor SessionFs was set. Empty mode requires an explicit " +
+                    "per-session persistence location; pick one.",
+                    nameof(options));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Rejects process-wide settings not supported by in-process hosts and
+    /// conflicting environment dictionaries for child-process transports.
+    /// </summary>
+    private static void ValidateEnvironmentOptions(CopilotClientOptions options, RuntimeConnection connection)
+    {
+        if (connection is UriRuntimeConnection && options.InternalTestOptions is not null)
+        {
+            throw new ArgumentException("InternalTestOptions requires a runtime owned by this client", nameof(options));
+        }
+        if (connection is InProcessRuntimeConnection)
+        {
+            if (options.Environment is not null)
+            {
+                throw new ArgumentException(
+                    "CopilotClientOptions.Environment is not supported with RuntimeConnection.ForInProcess(): " +
+                    "environment variables belong to the shared host process. Use typed client/session options " +
+                    "or a child-process transport.", nameof(options));
+            }
+            if (options.WorkingDirectory is not null)
+            {
+                throw new ArgumentException(
+                    $"{nameof(CopilotClientOptions)}.{nameof(CopilotClientOptions.WorkingDirectory)} is not supported with " +
+                    $"{nameof(RuntimeConnection)}.{nameof(RuntimeConnection.ForInProcess)}(): the in-process transport hosts " +
+                    "the native runtime in the shared host process and spawns the worker without a working-directory " +
+                    "parameter, so a per-client working directory cannot be honored in-process. Set " +
+                    "SessionConfig.WorkingDirectory instead, or use a child-process transport.",
+                    nameof(options));
+            }
+
+            return;
+        }
+
+        if (connection is ChildProcessRuntimeConnection { Environment: not null } && options.Environment is not null)
+        {
+            throw new ArgumentException(
+                $"Set environment variables via either {nameof(CopilotClientOptions)}.{nameof(CopilotClientOptions.Environment)} " +
+                $"or {nameof(ChildProcessRuntimeConnection)}.{nameof(ChildProcessRuntimeConnection.Environment)}, not both. " +
+                $"Prefer {nameof(ChildProcessRuntimeConnection)}.{nameof(ChildProcessRuntimeConnection.Environment)} for " +
+                "child-process transports.",
+                nameof(options));
+        }
+    }
+
+    /// <summary>
+    /// Environment variable that overrides the transport used when the caller does not
+    /// specify <see cref="CopilotClientOptions.Connection"/>. Accepts <c>"inprocess"</c>
+    /// or <c>"stdio"</c> (case-insensitive); unset preserves the default stdio transport.
+    /// Any other value is an error. Ignored when a <see cref="RuntimeConnection"/> is set
+    /// explicitly.
+    /// </summary>
+    internal const string DefaultConnectionEnvVar = "COPILOT_SDK_DEFAULT_CONNECTION";
+
+    /// <summary>
+    /// Resolves the default <see cref="RuntimeConnection"/> for the no-Connection case,
+    /// honoring <see cref="DefaultConnectionEnvVar"/>.
+    /// </summary>
+    private static RuntimeConnection ResolveDefaultConnection(CopilotClientOptions options)
+    {
+        var value = options.Environment is not null
+            && options.Environment.TryGetValue(DefaultConnectionEnvVar, out var fromOptions)
+                ? fromOptions
+                : System.Environment.GetEnvironmentVariable(DefaultConnectionEnvVar);
+
+        if (string.IsNullOrEmpty(value) || string.Equals(value, "stdio", StringComparison.OrdinalIgnoreCase))
+        {
+            return RuntimeConnection.ForStdio();
+        }
+        if (string.Equals(value, "inprocess", StringComparison.OrdinalIgnoreCase))
+        {
+            return RuntimeConnection.ForInProcess();
+        }
+        throw new ArgumentException(
+            $"Invalid {DefaultConnectionEnvVar} value '{value}'. Expected 'inprocess', 'stdio', or unset.");
+    }
+
+    /// <summary>
+    /// Parses a runtime URL into a URI with host and port.
+    /// </summary>
+    /// <param name="url">The URL to parse. Supports formats: "port", "host:port", "[ipv6]:port", "http://host:port".</param>
+    private static Uri ParseRuntimeUrl(string url)
+    {
+        if (url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException(
+                "HTTPS runtime connections are not supported: this transport uses plaintext TCP, not TLS");
+        }
+
+        // If it's just a port number, treat as localhost
+        if (int.TryParse(url, out var port))
+        {
+            return new Uri($"http://localhost:{port}");
+        }
+
+        // Preserve legacy port defaults when normalizing scheme-less TCP addresses.
+        if (!url.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+        {
+            url = "https://" + url;
+        }
+
+        return new Uri(url);
+    }
+
+    private static bool IsFullyQualifiedPath(string path)
+    {
+        if (string.IsNullOrEmpty(path) || !Path.IsPathRooted(path))
+        {
+            return false;
+        }
+#if NETSTANDARD2_0
+        if (Path.DirectorySeparatorChar != '\\')
+        {
+            return true;
+        }
+
+        bool IsSeparator(char value) => value == '\\' || value == '/';
+        return (path.Length >= 3 && path[1] == ':' && IsSeparator(path[2]))
+            || (path.Length >= 2 && IsSeparator(path[0]) && IsSeparator(path[1]));
+#else
+        return Path.IsPathFullyQualified(path);
+#endif
+    }
+
+    /// <summary>
+    /// Starts the Copilot client and connects to the server.
+    /// </summary>
+    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel the operation.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
+    /// <remarks>
+    /// If the server is not already running and the client is configured to spawn one (default), it will be started.
+    /// If connecting to an external runtime (via RuntimeConnection.ForUri), only establishes the connection.
+    /// If a previous start failed or was canceled, calling this method again starts the client anew.
+    /// If the connection closed after a successful start, for example because the runtime process exited,
+    /// calling this method again retires that connection and its sessions, then starts the client anew.
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// var client = new CopilotClient();
+    /// await client.StartAsync();
+    /// // Now ready to create sessions
+    /// </code>
+    /// </example>
+    public Task StartAsync(CancellationToken cancellationToken = default)
+        => StartConnectionAsync(replaceLostConnection: true, cancellationToken);
+
+    private Task<Connection> StartConnectionAsync(bool replaceLostConnection, CancellationToken cancellationToken)
+    {
+        lock (_sessionAdmissionLock)
+        {
+            // A failed or canceled startup leaves the client disconnected, so start again instead of replaying it.
+            // An explicit start does the same for a connection that closed after startup, once it is retired.
+            var lostConnection = replaceLostConnection
+                && _connectionTask is { Status: System.Threading.Tasks.TaskStatus.RanToCompletion } started
+                && (started.Result.Rpc.IsClosed || started.Result.CliProcess is { HasExited: true })
+                    ? started.Result
+                    : null;
+            if (_connectionTask is null || _connectionTask.IsFaulted || _connectionTask.IsCanceled || lostConnection is not null)
+            {
+                _sessionAdmissionClosed = false;
+                _startupCancellation?.Dispose();
+                _startupCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                var startupToken = _startupCancellation.Token;
+                if (lostConnection is { } lost)
+                {
+                    var lostSessions = _sessions.Values.ToArray();
+                    _sessions.Clear();
+                    _modelsCache = new();
+                    // Retirement takes session locks, so it runs outside the admission lock.
+                    _connectionTask = Task.Run(() => RestartCoreAsync(lost, lostSessions, startupToken));
+                }
+                else
+                {
+                    _connectionTask = StartCoreAsync(startupToken);
+                }
+            }
+            else if (cancellationToken.CanBeCanceled && !_connectionTask.IsCompleted)
+            {
+                // A caller that joins a startup already in progress stops waiting when its own token is canceled.
+                // The shared startup keeps running for the caller that began it.
+                return _connectionTask.WaitAsync(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+            return _connectionTask;
+        }
+
+        async Task<Connection> RestartCoreAsync(Connection lostConnection, CopilotSession[] lostSessions, CancellationToken ct)
+        {
+            // Process-exit callbacks can lag behind HasExited while inherited stdio stays open.
+            if (!lostConnection.Rpc.IsClosed)
+            {
+                DisposeRpcAfterProcessExit(lostConnection.Rpc);
+            }
+            // Fence connection-owned bookkeeping, not consumer cancellation callbacks, before replacement.
+            await lostConnection.CloseCleanup.ConfigureAwait(false);
+            RetireSessionsAndCallbacks(lostSessions);
+            await CleanupConnectionAsync(lostConnection, errors: null, gracefulRuntimeShutdown: false).ConfigureAwait(false);
+            return await StartCoreAsync(ct).ConfigureAwait(false);
+        }
+
+        async Task<Connection> StartCoreAsync(CancellationToken ct)
+        {
+            _logger.LogDebug("Starting Copilot client");
+
+            var startTimestamp = Stopwatch.GetTimestamp();
+            Connection? connection = null;
+            FfiRuntimeHost? ffiHost = null;
+            Process? cliProcess = null;
+            ProcessStderrPump? stderrPump = null;
+            RuntimePortRegistration? ownedRuntimePort = null;
+
+            try
+            {
+                if (_connection is InProcessRuntimeConnection)
+                {
+                    var ffiEnvironment = BuildInProcessRuntimeEnvironment(_options);
+                    var ffiArgs = BuildInProcessRuntimeArguments(_options);
+                    ffiEnvironment.TryGetValue("COPILOT_CLI_PATH", out var explicitCliPath);
+                    if (string.IsNullOrEmpty(explicitCliPath))
+                    {
+                        explicitCliPath = null;
+                    }
+                    var ffiRuntimePath = explicitCliPath is null
+                        ? GetBundledNativePath(FfiRuntimeHost.GetRuntimeLibraryFileName(), out var searchedRuntime)
+                            ?? throw new InvalidOperationException(
+                                $"In-process FFI runtime library not found at '{searchedRuntime}'.")
+                        : ResolveRuntimePathForExplicitCli(explicitCliPath);
+                    ffiHost = FfiRuntimeHost.Create(
+                        ffiRuntimePath,
+                        explicitCliPath,
+                        ffiEnvironment,
+                        ffiArgs,
+                        _logger);
+                    _ffiHost = ffiHost;
+                    await ffiHost.StartAsync(ct);
+                    connection = await ConnectToServerAsync(null, null, null, null, ct, ffiHost);
+                }
+                else if (_connection is UriRuntimeConnection)
+                {
+                    // External runtime
+                    Volatile.Write(ref _actualPort, _optionsPort is int port ? new RuntimePortRegistration(port) : null);
+                    connection = await ConnectToServerAsync(null, _optionsHost, _optionsPort, null, ct);
+                }
+                else
+                {
+                    // Child process (stdio or TCP)
+                    var (startedProcess, portOrNull, startedStderrPump) = await StartCliServerAsync(ct);
+                    cliProcess = startedProcess;
+                    stderrPump = startedStderrPump;
+                    ownedRuntimePort = portOrNull is int port ? new RuntimePortRegistration(port) : null;
+                    Volatile.Write(ref _actualPort, ownedRuntimePort);
+                    connection = await ConnectToServerAsync(cliProcess, portOrNull is null ? null : "localhost", portOrNull, stderrPump, ct);
+                    connection.OwnedRuntimePort = ownedRuntimePort;
+                }
+
+                LoggingHelpers.LogTiming(_logger, LogLevel.Debug, null,
+                    "CopilotClient.StartAsync transport setup complete. Elapsed={Elapsed}",
+                    startTimestamp);
+
+                // Verify protocol version compatibility
+                await VerifyProtocolVersionAsync(connection, ct);
+                LoggingHelpers.LogTiming(_logger, LogLevel.Debug, null,
+                    "CopilotClient.StartAsync protocol verification complete. Elapsed={Elapsed}",
+                    startTimestamp);
+
+                if (_clientGlobalApis?.Network is NetworkAdapter network)
+                {
+                    await network.RegisterAsync(connection.Server.Network, ct);
+                }
+
+                if (_options.ExtensionLaunchProvider is not null)
+                {
+                    await connection.Server.RegisterExtensionLaunchProviderAsync(ct);
+                }
+
+                if (_builtinPluginDirectories.Length > 0)
+                {
+                    var request = new BuiltinPluginDirectoriesRequest(_builtinPluginDirectories);
+                    await InvokeRpcAsync<JsonElement>(
+                        connection.Rpc, "plugins.builtin.set", [request], null, ct);
+                }
+
+                var sessionFsTimestamp = Stopwatch.GetTimestamp();
+                await ConfigureSessionFsAsync(ct);
+                if (_options.SessionFs is not null)
+                {
+                    LoggingHelpers.LogTiming(_logger, LogLevel.Debug, null,
+                        "CopilotClient.StartAsync session filesystem setup complete. Elapsed={Elapsed}",
+                        sessionFsTimestamp);
+                }
+
+                await ConfigureLlmInferenceAsync(ct);
+
+                LoggingHelpers.LogTiming(_logger, LogLevel.Debug, null,
+                    "CopilotClient.StartAsync complete. Elapsed={Elapsed}",
+                    startTimestamp);
+                return connection;
+            }
+            catch (Exception ex)
+            {
+                if (ex is not OperationCanceledException)
+                {
+                    LoggingHelpers.LogTiming(_logger, LogLevel.Warning, ex,
+                        "CopilotClient.StartAsync failed. Elapsed={Elapsed}",
+                        startTimestamp);
+                }
+
+                ClearRuntimePort(ownedRuntimePort);
+                if (connection is not null)
+                {
+                    await CleanupConnectionAsync(connection, errors: null, gracefulRuntimeShutdown: false);
+                }
+                else if (ffiHost is not null)
+                {
+                    try { await Task.Run(ffiHost.Dispose, CancellationToken.None).ConfigureAwait(false); }
+                    catch (Exception cleanupError) { AddCleanupError(null, cleanupError, _logger); }
+                    Interlocked.CompareExchange(ref _ffiHost, null, ffiHost);
+                }
+                else if (cliProcess is not null)
+                {
+                    await CleanupCliProcessAsync(cliProcess, stderrPump, errors: null, _logger);
+                }
+
+                if (ex is IOException
+                    && cliProcess is not null
+                    && stderrPump is not null
+                    && !ex.Message.Contains("stderr:", StringComparison.OrdinalIgnoreCase))
+                {
+                    var stderrOutput = GetStderrOutput(stderrPump.Buffer);
+                    if (!string.IsNullOrEmpty(stderrOutput))
+                    {
+                        throw new IOException(
+                            FormatCliExitedMessage("CLI process exited unexpectedly.", stderrOutput),
+                            ex);
+                    }
+                }
+
+                throw;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Disconnects from the Copilot server and closes all active sessions.
+    /// </summary>
+    /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
+    /// <remarks>
+    /// <para>
+    /// This method performs graceful cleanup:
+    /// <list type="number">
+    ///     <item>Closes all active sessions (releases in-memory resources); detach requests share one
+    ///     shutdown timeout, so an unresponsive runtime cannot hold the remaining steps back</item>
+    ///     <item>Requests runtime shutdown for SDK-owned CLI processes</item>
+    ///     <item>Closes the JSON-RPC connection</item>
+    ///     <item>Terminates the CLI server process (if spawned by this client)</item>
+    /// </list>
+    /// </para>
+    /// <para>
+    /// Note: session data on disk is preserved, so sessions can be resumed later.
+    /// To permanently remove session data before stopping, call
+    /// <see cref="DeleteSessionAsync"/> for each session first.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="AggregateException">Thrown when multiple errors occur during cleanup.</exception>
+    /// <example>
+    /// <code>
+    /// await client.StopAsync();
+    /// </code>
+    /// </example>
+    public async Task StopAsync()
+    {
+        var sessions = CloseSessionAdmission(clearSessions: false);
+        DisconnectAhpHosts();
+        List<Exception> errors = [];
+        CancelPendingExternalTools(sessions);
+        CancelPendingShellAuthenticationRequests();
+
+        // A hung runtime never answers session.detach, so every detach shares one
+        // deadline; past it, StopAsync moves on to runtime shutdown and termination.
+        using var detachTimeout = new CancellationTokenSource(s_runtimeShutdownTimeout);
+        foreach (var session in sessions)
+        {
+            try
+            {
+                await session.DisposeAsync().AsTask().WaitAsync(Timeout.InfiniteTimeSpan, detachTimeout.Token);
+            }
+            catch (OperationCanceledException) when (detachTimeout.IsCancellationRequested)
+            {
+                errors.Add(new IOException(
+                    $"Failed to dispose session {session.SessionId}: session.detach did not complete within the {s_runtimeShutdownTimeout.TotalSeconds}s shutdown timeout"));
+            }
+            catch (Exception ex)
+            {
+                errors.Add(new IOException($"Failed to dispose session {session.SessionId}: {ex.Message}", ex));
+            }
+            finally
+            {
+                // A timed-out disposal may still be waiting for the transport write lock.
+                session.Retire();
+                session.RemoveFromClient();
+            }
+        }
+
+        ClearGitHubTokenProviders();
+
+        await CleanupConnectionAsync(errors, gracefulRuntimeShutdown: true);
+
+        ThrowErrors(errors);
+    }
+
+    /// <summary>
+    /// Forces an immediate stop of the client without graceful cleanup.
+    /// </summary>
+    /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
+    /// <remarks>
+    /// Use this when <see cref="StopAsync"/> fails or takes too long. This method:
+    /// <list type="bullet">
+    ///     <item>Clears all sessions immediately without destroying them</item>
+    ///     <item>Stops session event delivery without waiting for running handlers</item>
+    ///     <item>Force closes the connection</item>
+    ///     <item>Kills the CLI process (if spawned by this client)</item>
+    /// </list>
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// // If normal stop hangs, force stop
+    /// var stopTask = client.StopAsync();
+    /// if (!stopTask.Wait(TimeSpan.FromSeconds(5)))
+    /// {
+    ///     await client.ForceStopAsync();
+    /// }
+    /// </code>
+    /// </example>
+    public async Task ForceStopAsync()
+    {
+        var sessions = CloseSessionAdmission(clearSessions: true);
+        RetireSessionsAndCallbacks(sessions);
+
+        var errors = new List<Exception>();
+        await CleanupConnectionAsync(errors, gracefulRuntimeShutdown: false);
+        ThrowErrors(errors);
+    }
+
+    /// <summary>Retires sessions and pending client callbacks without contacting the runtime.</summary>
+    private void RetireSessionsAndCallbacks(CopilotSession[] sessions)
+    {
+        DisconnectAhpHosts();
+        CancelPendingExternalTools(sessions);
+        CancelPendingShellAuthenticationRequests();
+        foreach (var session in sessions)
+        {
+            session.Retire();
+        }
+        ClearGitHubTokenProviders();
+    }
+
+    private CopilotSession[] CloseSessionAdmission(bool clearSessions)
+    {
+        lock (_sessionAdmissionLock)
+        {
+            _sessionAdmissionClosed = true;
+            var sessions = _sessions.Values.ToArray();
+            if (clearSessions)
+            {
+                _sessions.Clear();
+            }
+            return sessions;
+        }
+    }
+
+    private static void ThrowErrors(List<Exception>? errors)
+    {
+        if (errors is not null)
+        {
+            if (errors.Count == 1)
+            {
+                ExceptionDispatchInfo.Throw(errors[0]);
+            }
+
+            if (errors.Count > 0)
+            {
+                throw new AggregateException(errors);
+            }
+        }
+    }
+
+    private async Task CleanupConnectionAsync(List<Exception>? errors, bool gracefulRuntimeShutdown)
+    {
+        Task<Connection>? connectionTask;
+        CancellationTokenSource? startupCancellation;
+        lock (_sessionAdmissionLock)
+        {
+            connectionTask = _connectionTask;
+            _connectionTask = null;
+            startupCancellation = _startupCancellation;
+            _startupCancellation = null;
+            _modelsCache = new();
+        }
+        using var startupLifetime = startupCancellation;
+        if (connectionTask is null)
+        {
+            return;
+        }
+
+        if (!connectionTask.IsCompleted && startupLifetime is not null)
+        {
+            try
+            {
+#if NET8_0_OR_GREATER
+                await startupLifetime.CancelAsync().ConfigureAwait(false);
+#else
+                await Task.Run(() => startupLifetime.Cancel()).ConfigureAwait(false);
+#endif
+            }
+            catch (Exception ex) { AddCleanupError(errors, ex, _logger); }
+        }
+
+        Connection ctx;
+        try
+        {
+            ctx = await connectionTask;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Ignoring failed Copilot client startup during cleanup");
+            return;
+        }
+
+        await CleanupConnectionAsync(ctx, errors, gracefulRuntimeShutdown);
+    }
+
+    private async Task CleanupConnectionAsync(Connection ctx, List<Exception>? errors, bool gracefulRuntimeShutdown)
+    {
+        ClearRuntimePort(ctx.OwnedRuntimePort);
+
+        if (gracefulRuntimeShutdown && (ctx.CliProcess is not null || ctx.FfiHost is not null))
+        {
+            var runtimeShutdownTimestamp = Stopwatch.GetTimestamp();
+            try
+            {
+                using var cancellation = new CancellationTokenSource(s_runtimeShutdownTimeout);
+                await ctx.Server.Runtime.ShutdownAsync(cancellation.Token);
+                LoggingHelpers.LogTiming(_logger, LogLevel.Debug, null,
+                    "CopilotClient.StopAsync runtime shutdown complete. Elapsed={Elapsed}",
+                    runtimeShutdownTimestamp);
+            }
+            catch (Exception ex) when (ex is OperationCanceledException
+                or InvalidOperationException
+                or ObjectDisposedException
+                or IOException
+                or SocketException)
+            {
+                LoggingHelpers.LogTiming(_logger, LogLevel.Debug, ex,
+                    "CopilotClient.StopAsync runtime shutdown failed. Elapsed={Elapsed}",
+                    runtimeShutdownTimestamp);
+            }
+        }
+
+        try { ctx.Rpc.Dispose(); }
+        catch (Exception ex) { AddCleanupError(errors, ex, _logger); }
+
+        // Clear RPC
+        _serverRpc = null;
+
+        if (ctx.NetworkStream is not null)
+        {
+            try { await ctx.NetworkStream.DisposeAsync(); }
+            catch (Exception ex) { AddCleanupError(errors, ex, _logger); }
+        }
+
+        if (ctx.CliProcess is { } childProcess)
+        {
+            await CleanupCliProcessAsync(childProcess, ctx.StderrPump, errors, _logger, gracefulRuntimeShutdown);
+        }
+
+        if (ctx.FfiHost is { } ffiHost)
+        {
+            try { await Task.Run(ffiHost.Dispose).ConfigureAwait(false); }
+            catch (Exception ex) { AddCleanupError(errors, ex, _logger); }
+            _ffiHost = null;
+        }
+    }
+
+    // Only the port of the runtime being torn down is cleared, so a newer StartAsync keeps its own.
+    // An external runtime keeps its port: stopping this client does not stop that runtime.
+    private void ClearRuntimePort(RuntimePortRegistration? ownedRuntimePort)
+    {
+        if (ownedRuntimePort is not null)
+        {
+            Interlocked.CompareExchange(ref _actualPort, null, ownedRuntimePort);
+        }
+    }
+
+    private static async Task CleanupCliProcessAsync(Process childProcess, ProcessStderrPump? stderrPump, List<Exception>? errors, ILogger? logger, bool gracefulRuntimeShutdown = false)
+    {
+        var processExited = false;
+
+        try
+        {
+            if (gracefulRuntimeShutdown && childProcess.StartInfo.RedirectStandardInput && !childProcess.HasExited)
+            {
+                try
+                {
+                    // The native wrapper finalizes host telemetry after stdin EOF,
+                    // not when it acknowledges runtime.shutdown.
+                    childProcess.StandardInput.Close();
+                    await childProcess.WaitForExitAsync().WaitAsync(s_runtimeShutdownTimeout);
+                }
+                catch (Exception ex) when (ex is TimeoutException or IOException or ObjectDisposedException)
+                {
+                    logger?.LogDebug(ex, "Graceful stdio runtime exit did not complete; terminating the process");
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
+                {
+                    AddCleanupError(errors, ex, logger);
+                }
+            }
+
+            if (!childProcess.HasExited)
+            {
+                // Force-stop, failed startup, and runtimes that ignore EOF still
+                // require explicit termination.
+                childProcess.Kill(entireProcessTree: true);
+                // Kill is asynchronous; wait for the root CLI process to exit so cleanup callers
+                // do not observe StopAsync/DisposeAsync completion while it is still tearing down.
+                var killWaitTimestamp = Stopwatch.GetTimestamp();
+                try
+                {
+                    await childProcess.WaitForExitAsync().WaitAsync(s_runtimeShutdownTimeout);
+                }
+                catch (TimeoutException ex)
+                {
+                    if (logger is not null)
+                    {
+                        LoggingHelpers.LogTiming(logger, LogLevel.Debug, ex,
+                            "Timed out waiting for runtime process to exit after kill. Elapsed={Elapsed}, Timeout={Timeout}",
+                            killWaitTimestamp,
+                            s_runtimeShutdownTimeout);
+                    }
+
+                    AddCleanupError(errors, ex, logger);
+                }
+            }
+
+            processExited = childProcess.HasExited;
+        }
+        catch (Exception ex)
+        {
+            AddCleanupError(errors, ex, logger);
+        }
+
+        if (!processExited)
+        {
+            stderrPump?.Cancel();
+        }
+
+        if (stderrPump is not null)
+        {
+            var stderrPumpWaitTimestamp = Stopwatch.GetTimestamp();
+            try
+            {
+                await stderrPump.Completion.WaitAsync(s_stderrPumpShutdownTimeout);
+            }
+            catch (TimeoutException ex)
+            {
+                stderrPump.Cancel();
+                if (logger is not null)
+                {
+                    LoggingHelpers.LogTiming(logger, LogLevel.Debug, ex,
+                        "Timed out waiting for runtime stderr pump to stop. Elapsed={Elapsed}, Timeout={Timeout}",
+                        stderrPumpWaitTimestamp,
+                        s_stderrPumpShutdownTimeout);
+                }
+
+                // Once the owned process has exited, stderr is diagnostic-only. A descendant
+                // can briefly retain the inherited pipe on Windows, but that must not turn a
+                // successful process shutdown into a client cleanup failure.
+                if (!processExited)
+                {
+                    AddCleanupError(errors, ex, logger);
+                }
+            }
+            catch (Exception ex)
+            {
+                AddCleanupError(errors, ex, logger);
+            }
+        }
+
+        try { childProcess.Dispose(); }
+        catch (Exception ex) { AddCleanupError(errors, ex, logger); }
+    }
+
+    private static void AddCleanupError(List<Exception>? errors, Exception ex, ILogger? logger)
+    {
+        if (errors is not null)
+        {
+            errors.Add(ex);
+        }
+        else
+        {
+            logger?.LogDebug(ex, "Error while cleaning up Copilot CLI connection");
+        }
+    }
+
+    private static (SystemMessageConfig? wireConfig, Dictionary<string, Func<string, Task<string>>>? callbacks) ExtractTransformCallbacks(SystemMessageConfig? systemMessage)
+    {
+        if (systemMessage?.Mode != SystemMessageMode.Customize || systemMessage.Sections == null)
+        {
+            return (systemMessage, null);
+        }
+
+        Dictionary<string, Func<string, Task<string>>>? callbacks = null;
+        Dictionary<SystemMessageSection, SectionOverride>? wireSections = null;
+
+        if (systemMessage.Sections is { Count: > 0 })
+        {
+            wireSections ??= [];
+
+            foreach (var (sectionId, sectionOverride) in systemMessage.Sections)
+            {
+                if (sectionOverride.Transform != null)
+                {
+                    (callbacks ??= [])[sectionId.Value] = sectionOverride.Transform;
+                    wireSections[sectionId] = new SectionOverride { Action = SectionOverrideAction.Transform };
+                }
+                else
+                {
+                    wireSections[sectionId] = sectionOverride;
+                }
+            }
+        }
+
+        if (callbacks is null)
+        {
+            return (systemMessage, null);
+        }
+
+        var wireConfig = new SystemMessageConfig
+        {
+            Mode = systemMessage.Mode,
+            Content = systemMessage.Content,
+            Sections = wireSections
+        };
+
+        return (wireConfig, callbacks);
+    }
+
+    /// <summary>
+    /// Creates a <see cref="CopilotSession"/>, wires up handlers from the
+    /// session config, registers it with the client, and starts its event
+    /// processing loop. Used by both <see cref="CreateSessionAsync"/> (invoked
+    /// from the JSON-RPC read loop the instant the response arrives, so that
+    /// session events delivered between the response and the awaiter
+    /// resuming are not dropped) and <see cref="ResumeSessionAsync"/>
+    /// (invoked before the RPC is issued, since the session id is known up
+    /// front).
+    /// </summary>
+    private CopilotSession InitializeSession(
+        string sessionId,
+        JsonRpc rpc,
+        SessionConfigBase config,
+        Dictionary<string, Func<string, Task<string>>>? transformCallbacks,
+        bool hasHooks,
+        string callerName,
+        CopilotSession? replacedSession = null)
+    {
+        var setupTimestamp = Stopwatch.GetTimestamp();
+        var session = new CopilotSession(
+            sessionId,
+            rpc,
+            _logger,
+            this);
+        session.RegisterTools(config.Tools ?? []);
+        session.RegisterPermissionHandler(
+            config.OnPermissionRequest,
+            config.EnableManagedSettings is true || config.ManagedSettings is not null);
+        session.RegisterMcpAuthHandler(config.OnMcpAuthRequest);
+        session.RegisterCommands(config.Commands);
+        session.RegisterElicitationHandler(config.OnElicitationRequest);
+        session.RegisterExitPlanModeHandler(config.OnExitPlanModeRequest);
+        session.RegisterAutoModeSwitchHandler(config.OnAutoModeSwitchRequest);
+        session.RegisterSkillProvider(config.SkillProvider);
+        session.RegisterMemoryStore(config.Memory?.StoreMemory);
+        if (config.OnUserInputRequest != null)
+        {
+            session.RegisterUserInputHandler(config.OnUserInputRequest);
+        }
+        if (config.OnShellAuthenticationRequest != null)
+        {
+            session.RegisterShellAuthenticationHandler(config.OnShellAuthenticationRequest);
+        }
+        if (config.Hooks != null)
+        {
+            session.RegisterHooks(config.Hooks);
+        }
+        if (transformCallbacks != null)
+        {
+            session.RegisterTransformCallbacks(transformCallbacks);
+        }
+        if (config.OnEvent != null)
+        {
+            session.On<SessionEvent>(config.OnEvent);
+        }
+        ConfigureSessionFsHandlers(session, config.CreateSessionFsProvider);
+        session.SetCanvasHandler(config.CanvasHandler);
+        session.RegisterBearerTokenProviders(BuildBearerTokenCallbacks(config));
+        RegisterSession(session, rpc, replacedSession);
+        session.StartProcessingEvents();
+        LoggingHelpers.LogTiming(_logger, LogLevel.Debug, null,
+            callerName + " local setup complete. Elapsed={Elapsed}, SessionId={SessionId}, Tools={ToolsCount}, Commands={CommandsCount}, Hooks={HasHooks}",
+            setupTimestamp,
+            sessionId,
+            config.Tools?.Count ?? 0,
+            config.Commands?.Count ?? 0,
+            hasHooks);
+        return session;
+    }
+
+    /// <summary>
+    /// Implicit provider name for the singular, whole-session <see cref="ProviderConfig"/>.
+    /// </summary>
+    private const string DefaultBearerTokenProviderName = "default";
+
+    /// <summary>
+    /// Collects the per-provider <c>BearerTokenProvider</c> callbacks keyed by
+    /// provider name for session-side registration. The singular, whole-session
+    /// <see cref="ProviderConfig"/> uses the implicit
+    /// <see cref="DefaultBearerTokenProviderName"/>.
+    /// </summary>
+    private static Dictionary<string, Func<ProviderTokenArgs, Task<string>>> BuildBearerTokenCallbacks(SessionConfigBase config)
+    {
+        var callbacks = new Dictionary<string, Func<ProviderTokenArgs, Task<string>>>(StringComparer.Ordinal);
+        if (config.Provider?.BearerTokenProvider is { } singular)
+        {
+            callbacks[DefaultBearerTokenProviderName] = singular;
+        }
+        if (config.Providers != null)
+        {
+            foreach (var provider in config.Providers.Where(provider => provider.BearerTokenProvider is not null))
+            {
+                callbacks[provider.Name] = provider.BearerTokenProvider!;
+            }
+        }
+        return callbacks;
+    }
+
+    /// <summary>
+    /// Catches misuse of <see cref="SessionConfigBase.AvailableTools"/> /
+    /// <see cref="SessionConfigBase.ExcludedTools"/> at the SDK boundary so
+    /// callers get an actionable error rather than a silently-empty filter.
+    /// The runtime treats a bare <c>"*"</c> as a literal name match for a tool
+    /// whose name is the single character <c>*</c>, which the runtime's
+    /// charset guard would reject at registration — so the filter effectively
+    /// matches nothing.
+    /// </summary>
+    private static void ValidateToolFilterList(string field, IList<string>? list)
+    {
+        if (list is null) return;
+        foreach (var entry in list)
+        {
+            if (entry == "*")
+            {
+                throw new ArgumentException(
+                    $"Invalid {field} entry '*': there is no bare wildcard. " +
+                    "Use `new ToolSet().AddBuiltIn(\"*\")`, `.AddMcp(\"*\")`, or " +
+                    "`.AddCustom(\"*\")` to target a specific source.",
+                    nameof(list));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Resolves <see cref="SessionConfigBase.AvailableTools"/> /
+    /// <see cref="SessionConfigBase.ExcludedTools"/> for the wire payload,
+    /// validating empty-mode requirements.
+    /// </summary>
+    private (IList<string>? AvailableTools, IList<string>? ExcludedTools) ResolveToolFilterOptions(SessionConfigBase config)
+    {
+        ValidateToolFilterList(nameof(SessionConfigBase.AvailableTools), config.AvailableTools);
+        ValidateToolFilterList(nameof(SessionConfigBase.ExcludedTools), config.ExcludedTools);
+
+        if (_options.Mode == CopilotClientMode.Empty && config.AvailableTools is null)
+        {
+            throw new ArgumentException(
+                "CopilotClient is in Mode = CopilotClientMode.Empty but the session config did " +
+                "not specify AvailableTools. Empty mode requires every session to explicitly " +
+                "opt into the tools it wants — e.g. " +
+                "`AvailableTools = new ToolSet().AddBuiltIn(BuiltInTools.Isolated)`.",
+                nameof(config));
+        }
+
+        return (config.AvailableTools, config.ExcludedTools);
+    }
+
+    /// <summary>
+    /// Applies mode-specific defaults to a session config in place. Caller
+    /// values win — only fields left unset by the caller are filled in.
+    /// </summary>
+    private void ApplyConfigDefaultsForMode(SessionConfigBase config)
+    {
+        if (_options.Mode == CopilotClientMode.Empty)
+        {
+            config.EnableExperimentalMode ??= false;
+            config.EnableSessionTelemetry ??= false;
+            config.SkipEmbeddingRetrieval ??= true;
+            config.EmbeddingCacheStorage ??= EmbeddingCacheStorageMode.InMemory;
+            config.EnableOnDemandInstructionDiscovery ??= false;
+            config.EnableFileHooks ??= false;
+            config.EnableHostGitOperations ??= false;
+            config.EnableSessionStore ??= false;
+            config.EnableSkills ??= false;
+            config.Memory ??= new MemoryConfiguration { Enabled = false };
+            config.McpOAuthTokenStorage ??= McpOAuthTokenStorageMode.InMemory;
+            config.CustomAgentsLocalOnly ??= true;
+        }
+    }
+
+    /// <summary>
+    /// Returns the <see cref="SystemMessageConfig"/> to send to the runtime,
+    /// adjusted for the current mode. In empty mode the
+    /// <c>environment_context</c> section is stripped unless the caller has
+    /// already taken control of it; append-mode messages are promoted to
+    /// customize so the env-context strip can apply alongside the caller's
+    /// content (the runtime appends <see cref="SystemMessageConfig.Content"/>
+    /// in both modes).
+    /// </summary>
+    private SystemMessageConfig? GetSystemMessageConfigForMode(SystemMessageConfig? supplied)
+    {
+        if (_options.Mode != CopilotClientMode.Empty)
+        {
+            return supplied;
+        }
+
+        if (supplied is null)
+        {
+            return new SystemMessageConfig
+            {
+                Mode = SystemMessageMode.Customize,
+                Sections = new Dictionary<SystemMessageSection, SectionOverride>
+                {
+                    [SystemMessageSection.EnvironmentContext] = new() { Action = SectionOverrideAction.Remove },
+                },
+            };
+        }
+
+        switch (supplied.Mode)
+        {
+            case SystemMessageMode.Replace:
+                return supplied;
+            case SystemMessageMode.Customize:
+                if (supplied.Sections is not null && supplied.Sections.ContainsKey(SystemMessageSection.EnvironmentContext))
+                {
+                    return supplied;
+                }
+                var mergedSections = supplied.Sections is null
+                    ? []
+                    : new Dictionary<SystemMessageSection, SectionOverride>(supplied.Sections);
+                mergedSections[SystemMessageSection.EnvironmentContext] = new() { Action = SectionOverrideAction.Remove };
+                return new SystemMessageConfig
+                {
+                    Mode = SystemMessageMode.Customize,
+                    Content = supplied.Content,
+                    Sections = mergedSections,
+                };
+            case SystemMessageMode.Append:
+            case null:
+                // Promote to customize so we can also strip environment_context.
+                // The runtime appends Content to additional instructions in both
+                // customize and append modes, so the caller's text is preserved.
+                return new SystemMessageConfig
+                {
+                    Mode = SystemMessageMode.Customize,
+                    Content = supplied.Content,
+                    Sections = new Dictionary<SystemMessageSection, SectionOverride>
+                    {
+                        [SystemMessageSection.EnvironmentContext] = new() { Action = SectionOverrideAction.Remove },
+                    },
+                };
+            default:
+                return supplied;
+        }
+    }
+
+    /// <summary>
+    /// Applies the post-create / post-resume <c>session.options.update</c>
+    /// patch for the current mode. In empty mode this defaults the four
+    /// overridable feature flags to safe values (caller values from
+    /// <paramref name="config"/> win); <c>installedPlugins=[]</c> is
+    /// unconditional under empty mode. <c>includedBuiltinSkills</c> defaults to
+    /// an empty list, but callers can explicitly allow selected runtime-bundled
+    /// skills. In copilot-cli mode only explicitly-set fields are forwarded.
+    /// </summary>
+    /// <returns>
+    /// The settings that only this patch carries, or <see langword="null"/> when no patch was sent.
+    /// </returns>
+    private async Task<AppliedSessionOptions?> UpdateSessionOptionsForModeAsync(CopilotSession session, SessionConfigBase config, CancellationToken cancellationToken)
+    {
+        var hasAnyPatch = false;
+        bool? skipCustomInstructions = null;
+        bool? customAgentsLocalOnly = null;
+        bool? coauthorEnabled = null;
+        bool? manageScheduleEnabled = null;
+        IList<SessionInstalledPlugin>? installedPlugins = null;
+        IList<string>? includedBuiltinSkills = null;
+
+        if (_options.Mode == CopilotClientMode.Empty)
+        {
+            skipCustomInstructions = config.SkipCustomInstructions ?? true;
+            customAgentsLocalOnly = config.CustomAgentsLocalOnly ?? true;
+            coauthorEnabled = config.CoauthorEnabled ?? false;
+            manageScheduleEnabled = config.ManageScheduleEnabled ?? false;
+            installedPlugins = [];
+            includedBuiltinSkills = config.IncludedBuiltinSkills ?? [];
+            hasAnyPatch = true;
+        }
+        else
+        {
+            if (config.SkipCustomInstructions is not null) { skipCustomInstructions = config.SkipCustomInstructions; hasAnyPatch = true; }
+            if (config.CustomAgentsLocalOnly is not null) { customAgentsLocalOnly = config.CustomAgentsLocalOnly; hasAnyPatch = true; }
+            if (config.CoauthorEnabled is not null) { coauthorEnabled = config.CoauthorEnabled; hasAnyPatch = true; }
+            if (config.ManageScheduleEnabled is not null) { manageScheduleEnabled = config.ManageScheduleEnabled; hasAnyPatch = true; }
+            if (config.IncludedBuiltinSkills is not null) { includedBuiltinSkills = config.IncludedBuiltinSkills; hasAnyPatch = true; }
+        }
+
+        if (!hasAnyPatch) return null;
+
+        try
+        {
+#pragma warning disable GHCP001
+            await session.Rpc.Options.UpdateAsync(
+                skipCustomInstructions: skipCustomInstructions,
+                customAgentsLocalOnly: customAgentsLocalOnly,
+                coauthorEnabled: coauthorEnabled,
+                manageScheduleEnabled: manageScheduleEnabled,
+                installedPlugins: installedPlugins,
+                includedBuiltinSkills: includedBuiltinSkills,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+#pragma warning restore GHCP001
+        }
+        catch
+        {
+            // The runtime session exists but the post-create options
+            // patch failed — best-effort destroy so we don't leak it
+            // (in empty mode it would otherwise stay alive with
+            // permissive defaults).
+            try
+            {
+                await session.DisposeAsync().ConfigureAwait(false);
+            }
+            catch
+            {
+                // Swallow: original error is what the caller needs.
+            }
+            throw;
+        }
+        return new AppliedSessionOptions(skipCustomInstructions, coauthorEnabled, manageScheduleEnabled);
+    }
+
+    private sealed record AppliedSessionOptions(bool? SkipCustomInstructions, bool? CoauthorEnabled, bool? ManageScheduleEnabled);
+
+    /// <summary>
+    /// Creates a new Copilot session with the specified configuration.
+    /// </summary>
+    /// <param name="config">Configuration for the session.</param>
+    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel the operation.</param>
+    /// <returns>A task that resolves to provide the <see cref="CopilotSession"/>.</returns>
+    /// <remarks>
+    /// Sessions maintain conversation state, handle events, and manage tool execution.
+    /// If the client is not connected,
+    /// this will automatically start the connection.
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// // Basic session
+    /// var session = await client.CreateSessionAsync(new() { OnPermissionRequest = PermissionHandler.ApproveAll });
+    ///
+    /// // Session with model and tools
+    /// var session = await client.CreateSessionAsync(new()
+    /// {
+    ///     OnPermissionRequest = PermissionHandler.ApproveAll,
+    ///     Model = "gpt-5.4",
+    ///     Tools = [AIFunctionFactory.Create(MyToolMethod)]
+    /// });
+    /// </code>
+    /// </example>
+    public async Task<CopilotSession> CreateSessionAsync(SessionConfig config, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        if (config.AutoModeRecovery && config.OnAutoModeSwitchRequest is null)
+        {
+            throw new ArgumentException("AutoModeRecovery requires OnAutoModeSwitchRequest", nameof(config));
+        }
+        ValidateGitHubTokenConfig(config);
+        ValidateMemoryConfig(config);
+        if (config.Cloud is not null && config.SkillProvider is not null)
+        {
+            throw new ArgumentException("Skill providers are not supported for cloud sessions.");
+        }
+        if (config.Cloud is not null && config.Memory?.StoreMemory is not null)
+        {
+            throw new ArgumentException("Memory stores are not supported for cloud sessions.");
+        }
+
+        var connection = await EnsureConnectedAsync(cancellationToken);
+        var totalTimestamp = Stopwatch.GetTimestamp();
+
+        ApplyConfigDefaultsForMode(config);
+        config.SystemMessage = GetSystemMessageConfigForMode(config.SystemMessage);
+        var toolFilter = ResolveToolFilterOptions(config);
+
+        var hasHooks = config.Hooks != null && (
+            config.Hooks.OnPreToolUse != null ||
+            config.Hooks.OnPreMcpToolCall != null ||
+            config.Hooks.OnPostToolUse != null ||
+            config.Hooks.OnPostToolUseFailure != null ||
+            config.Hooks.OnUserPromptSubmitted != null ||
+            config.Hooks.OnUserPromptTransformed != null ||
+            config.Hooks.OnSessionStart != null ||
+            config.Hooks.OnSessionEnd != null ||
+            config.Hooks.OnErrorOccurred != null ||
+            config.Hooks.OnAgentStop != null ||
+            config.Hooks.OnSubagentStart != null ||
+            config.Hooks.OnSubagentStop != null);
+
+        var (wireSystemMessage, transformCallbacks) = ExtractTransformCallbacks(config.SystemMessage);
+
+        // For cloud sessions, let the CLI/server assign the session id and
+        // register the session lazily once the response arrives. For non-cloud
+        // sessions we generate the id client-side (when the caller didn't
+        // supply one) so the session can be registered BEFORE the RPC — the
+        // CLI may issue session-scoped requests (e.g. sessionFs.WriteFile
+        // for workspace metadata) during session.create processing, before
+        // it has sent the response.
+        var useServerGeneratedId = config.Cloud != null && string.IsNullOrEmpty(config.SessionId);
+        var localSessionId = useServerGeneratedId
+            ? null
+            : (string.IsNullOrEmpty(config.SessionId) ? Guid.NewGuid().ToString() : config.SessionId);
+
+        var registrationId = RegisterGitHubTokenProvider(config.GitHubTokenProvider);
+        var registrationTransferred = false;
+        CopilotSession? session = null;
+        SessionOperation? operation = null;
+        string? serverAssignedSessionId = null;
+        try
+        {
+            if (localSessionId != null)
+            {
+                operation = BeginSessionOperation(localSessionId, connection.Rpc, config.AutoModeRecovery, initializeSession: true);
+                session = InitializeSession(
+                    localSessionId,
+                    connection.Rpc,
+                    config,
+                    transformCallbacks,
+                    hasHooks,
+                    "CopilotClient.CreateSessionAsync");
+            }
+
+            var (traceparent, tracestate) = TelemetryHelpers.GetTraceContext();
+
+            var request = new CreateSessionRequest(
+                config.Model,
+                localSessionId,
+                config.Name,
+                config.ClientName,
+                config.ReasoningEffort,
+                config.AllowMultipleToolCalls,
+                config.ReasoningSummary,
+                config.ContextTier,
+                config.Tools?.Select(ToolDefinition.FromAIFunction).ToList(),
+                config.EnableCitations,
+                config.EnableFileChangeTracking,
+                wireSystemMessage,
+                config.AskUserVariant,
+                toolFilter.AvailableTools,
+                toolFilter.ExcludedTools,
+                config.ExcludedBuiltInAgents,
+                config.IncludedBuiltInAgents,
+                config.Provider,
+                config.Capi,
+                config.EnableSessionTelemetry,
+                config.EnableExperimentalMode,
+                config.OnPermissionRequest != null ? true : null,
+                config.OnUserInputRequest != null ? true : null,
+                config.OnExitPlanModeRequest != null ? true : null,
+                config.OnAutoModeSwitchRequest != null ? true : null,
+                hasHooks ? true : null,
+                config.WorkingDirectory,
+                config.Streaming is true ? true : null,
+                config.IncludeSubAgentStreamingEvents,
+                config.McpServers,
+                config.Diagnostics,
+                config.LifecycleDiagnostics,
+                config.McpOAuthTokenStorage,
+                config.AuthClientIdMetadataUrl,
+                "direct",
+                config.CustomAgents,
+                config.DefaultAgent,
+                config.Agent,
+                config.ConfigDirectory,
+                config.EnableConfigDiscovery,
+                config.CustomAgentsLocalOnly,
+                config.SkipEmbeddingRetrieval,
+                config.EmbeddingCacheStorage,
+                config.OrganizationCustomInstructions,
+                config.EnableOnDemandInstructionDiscovery,
+                config.EnableFileHooks,
+                config.EnableHostGitOperations,
+                config.EnableSessionStore,
+                config.EnableSkills,
+                config.SkillDirectories,
+                config.DisabledSkills,
+                config.InfiniteSessions,
+                config.SessionLimits,
+                config.Autopilot,
+                Commands: config.Commands?.Select(c => new CommandWireDefinition(c.Name, c.Description ?? string.Empty)).ToList(),
+                RequestElicitation: config.OnElicitationRequest != null,
+                RequestAutoModeRecovery: config.AutoModeRecovery ? true : null,
+                RequestMcpApps: config.EnableMcpApps ? true : null,
+                RequestShellAuthentication: config.OnShellAuthenticationRequest != null ? true : null,
+                Traceparent: traceparent,
+                Tracestate: tracestate,
+                ModelCapabilities: config.ModelCapabilities,
+                GitHubToken: config.GitHubToken,
+                GitHubTokenProviderRegistrationId: registrationId,
+                Cloud: config.Cloud,
+                TrustWorkingDirectory: config.TrustWorkingDirectory switch
+                {
+                    WorkingDirectoryTrust.Session => "session",
+                    WorkingDirectoryTrust.User => "user",
+                    null => null,
+                    _ => throw new ArgumentOutOfRangeException(nameof(config), config.TrustWorkingDirectory, "Unsupported working-directory trust scope.")
+                },
+                RefreshCustomInstructions: config.RefreshCustomInstructions,
+                InstructionDirectories: config.InstructionDirectories,
+                AgentDirectories: config.AgentDirectories,
+                HookDirectories: config.HookDirectories,
+                PluginDirectories: config.PluginDirectories,
+                DisabledMcpServers: config.DisabledMcpServers,
+                SandboxConfig: config.SandboxConfig,
+                LargeOutput: config.LargeOutput,
+                ToolSearch: config.ToolSearch,
+                ImageGeneration: config.ImageGeneration,
+                Memory: config.Memory,
+                Canvases: config.Canvases,
+                RequestCanvasRenderer: config.RequestCanvasRenderer,
+                RequestExtensions: config.RequestExtensions,
+                ExtensionSdkPath: config.ExtensionSdkPath,
+                ExtensionInfo: config.ExtensionInfo,
+                CanvasProvider: config.CanvasProvider,
+                Providers: config.Providers,
+                Models: config.Models,
+                FeatureFlags: config.FeatureFlags,
+                ExpAssignments: config.ExpAssignments,
+                EnableManagedSettings: config.EnableManagedSettings,
+                ExcludedManagedSettings: config.ExcludedManagedSettings,
+                EnforceManagedModelDefaults: config.EnforceManagedModelDefaults,
+                InteractiveUser: config.InteractiveUser,
+                PermissionMode: config.PermissionMode,
+                GitHubMcpToolConfig: config.GitHubMcpToolConfig,
+                ManagedSettings: config.ManagedSettings,
+                EnableGitHubTelemetryForwarding: _options.OnGitHubTelemetry != null ? true : null,
+                AdditionalDirectories: config.AdditionalDirectories,
+                HasSkillProvider: config.SkillProvider is not null ? true : null,
+                HasMemoryStore: config.Memory?.StoreMemory is not null ? true : null);
+
+            var rpcTimestamp = Stopwatch.GetTimestamp();
+
+            // For the server-assigned (cloud) path, register the session
+            // synchronously from the read loop the instant the response
+            // arrives. This closes the small window where a session.event
+            // notification could arrive after the response but before the
+            // awaiter resumes — without this hook the dispatcher would
+            // silently drop those events. Non-cloud sessions are already
+            // registered above (before the RPC).
+            Action<JsonElement>? onResponseInline = session != null ? null : raw =>
+            {
+                if (raw.ValueKind is JsonValueKind.Object
+                    && raw.TryGetProperty("sessionId", out var sessionIdProp)
+                    && sessionIdProp.ValueKind is JsonValueKind.String
+                    && sessionIdProp.GetString() is string sessionId
+                    && !string.IsNullOrEmpty(sessionId))
+                {
+                    serverAssignedSessionId = sessionId;
+                    operation = BeginSessionOperation(sessionId, connection.Rpc, config.AutoModeRecovery, initializeSession: true);
+                    session = InitializeSession(
+                        sessionId,
+                        connection.Rpc,
+                        config,
+                        transformCallbacks,
+                        hasHooks,
+                        "CopilotClient.CreateSessionAsync");
+                }
+            };
+
+            var response = await InvokeRpcAsync<CreateSessionResponse>(
+                connection.Rpc, "session.create", [request], null, cancellationToken, onResponseInline);
+            LoggingHelpers.LogTiming(_logger, LogLevel.Debug, null,
+                "CopilotClient.CreateSessionAsync session creation request completed successfully. Elapsed={Elapsed}, SessionId={SessionId}",
+                rpcTimestamp,
+                response.SessionId);
+
+            if (session is null)
+            {
+                throw new InvalidOperationException("session.create response did not include a sessionId.");
+            }
+
+            if (localSessionId != null && !string.Equals(localSessionId, response.SessionId, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"session.create returned sessionId {response.SessionId} but the caller requested {localSessionId}.");
+            }
+
+            session.SetCapabilities(response.Capabilities);
+            if (config.AutoModeRecovery)
+            {
+                if (registrationId is not null)
+                {
+                    session.SetGitHubTokenProviderRegistration(registrationId);
+                    registrationTransferred = true;
+                }
+                await RequireAutoModeRecoveryAsync(session, cancellationToken, deleteOnFailure: localSessionId is null).ConfigureAwait(false);
+            }
+            if (config.OnMcpAuthRequest is not null)
+            {
+                await session.Rpc.EventLog.RegisterInterestAsync("mcp.oauth_required", cancellationToken);
+            }
+
+            session.WorkspacePath = response.WorkspacePath;
+            session.PermissionModeResult = response.PermissionModeResult;
+            session.SetOpenCanvases(response.OpenCanvases);
+
+            var appliedOptions = await UpdateSessionOptionsForModeAsync(session, config, cancellationToken).ConfigureAwait(false);
+            CaptureAhpSession(session, request, ClientJsonContext.Default.CreateSessionRequest, appliedOptions);
+            if (registrationId is not null)
+            {
+                session.SetGitHubTokenProviderRegistration(registrationId);
+                registrationTransferred = true;
+            }
+            serverAssignedSessionId = null;
+        }
+        catch (Exception ex)
+        {
+            if (session?.AutoModeRecoveryCleanupTask is null)
+            {
+                session?.Retire();
+            }
+            if (localSessionId is null && serverAssignedSessionId is not null && session?.AutoModeRecoveryCleanupTask is null)
+            {
+                try
+                {
+                    using var cleanupTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                    var deletion = await InvokeRpcAsync<DeleteSessionResponse>(
+                        connection.Rpc, "session.delete", [new DeleteSessionRequest(serverAssignedSessionId)],
+                        cleanupTimeout.Token).ConfigureAwait(false);
+                    if (!deletion.Success)
+                    {
+                        throw new InvalidOperationException($"Failed to delete session {serverAssignedSessionId}: {deletion.Error ?? "unknown error"}");
+                    }
+                }
+                catch (Exception cleanupError) when (IsRecoverableConnectionCleanupFailure(cleanupError))
+                {
+                    session?.Unregister(cleanupFailed: true);
+                    throw new AggregateException(
+                        $"Failed to initialize and delete cloud session {serverAssignedSessionId}", ex, cleanupError);
+                }
+            }
+            session?.Unregister();
+
+            if (ex is not OperationCanceledException)
+            {
+                LoggingHelpers.LogTiming(_logger, LogLevel.Warning, ex,
+                    "CopilotClient.CreateSessionAsync failed. Elapsed={Elapsed}, SessionId={SessionId}",
+                    totalTimestamp,
+                    session?.SessionId);
+            }
+
+            throw;
+        }
+        finally
+        {
+            operation?.Dispose();
+            if (!registrationTransferred && registrationId is not null)
+            {
+                UnregisterGitHubTokenProvider(registrationId);
+            }
+        }
+
+        LoggingHelpers.LogTiming(_logger, LogLevel.Debug, null,
+            "CopilotClient.CreateSessionAsync complete. Elapsed={Elapsed}, SessionId={SessionId}",
+            totalTimestamp,
+            session.SessionId);
+        return session;
+    }
+
+    /// <summary>
+    /// Resumes an existing Copilot session with the specified configuration.
+    /// </summary>
+    /// <param name="sessionId">The ID of the session to resume.</param>
+    /// <param name="config">Configuration for the resumed session.</param>
+    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel the operation.</param>
+    /// <returns>A task that resolves to provide the <see cref="CopilotSession"/>.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the session does not exist or the client is not connected.</exception>
+    /// <remarks>
+    /// This allows you to continue a previous conversation, maintaining all conversation history.
+    /// The session must have been previously created and not deleted.
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// // Resume a previous session
+    /// var session = await client.ResumeSessionAsync("session-123", new() { OnPermissionRequest = PermissionHandler.ApproveAll });
+    ///
+    /// // Resume with new tools
+    /// var session = await client.ResumeSessionAsync("session-123", new()
+    /// {
+    ///     OnPermissionRequest = PermissionHandler.ApproveAll,
+    ///     Tools = [AIFunctionFactory.Create(MyNewToolMethod)]
+    /// });
+    /// </code>
+    /// </example>
+    public async Task<CopilotSession> ResumeSessionAsync(string sessionId, ResumeSessionConfig config, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(sessionId);
+        ArgumentNullException.ThrowIfNull(config);
+        if (config.AutoModeRecovery && config.OnAutoModeSwitchRequest is null)
+        {
+            throw new ArgumentException("AutoModeRecovery requires OnAutoModeSwitchRequest", nameof(config));
+        }
+        ValidateGitHubTokenConfig(config);
+        ValidateMemoryConfig(config);
+
+        var connection = await EnsureConnectedAsync(cancellationToken);
+        var totalTimestamp = Stopwatch.GetTimestamp();
+
+        ApplyConfigDefaultsForMode(config);
+        config.SystemMessage = GetSystemMessageConfigForMode(config.SystemMessage);
+        var toolFilter = ResolveToolFilterOptions(config);
+
+        var hasHooks = config.Hooks != null && (
+            config.Hooks.OnPreToolUse != null ||
+            config.Hooks.OnPreMcpToolCall != null ||
+            config.Hooks.OnPostToolUse != null ||
+            config.Hooks.OnPostToolUseFailure != null ||
+            config.Hooks.OnUserPromptSubmitted != null ||
+            config.Hooks.OnUserPromptTransformed != null ||
+            config.Hooks.OnSessionStart != null ||
+            config.Hooks.OnSessionEnd != null ||
+            config.Hooks.OnErrorOccurred != null ||
+            config.Hooks.OnAgentStop != null ||
+            config.Hooks.OnSubagentStart != null ||
+            config.Hooks.OnSubagentStop != null);
+
+        var (wireSystemMessage, transformCallbacks) = ExtractTransformCallbacks(config.SystemMessage);
+
+        using var operation = BeginSessionOperation(sessionId, connection.Rpc, config.AutoModeRecovery, initializeSession: true);
+        var registrationId = RegisterGitHubTokenProvider(config.GitHubTokenProvider);
+        var registrationTransferred = false;
+        CopilotSession? session = null;
+        CopilotSession? previousSession = null;
+        var keepAcceptedOwner = false;
+        try
+        {
+            lock (_sessionAdmissionLock)
+            {
+                // Preserve the public rejection of an exact already-tracked ID,
+                // even when that ID also looks like an abbreviated UUID.
+                if (_sessions.ContainsKey(sessionId))
+                {
+                    throw new InvalidOperationException($"Session '{sessionId}' is already tracked by this client.");
+                }
+            }
+            var resolvedSessionId = sessionId;
+            var uuidPrefix = config.AutoModeRecovery && _options.SessionFs is null && IsAbbreviatedUuidPrefix(sessionId);
+            if (uuidPrefix)
+            {
+                var match = await connection.Server.Sessions.FindByPrefixWithOptionsAsync(
+                    new SessionsFindByPrefixRequest { Prefix = sessionId, ConfigDir = config.ConfigDirectory },
+                    cancellationToken);
+                var canonicalId = match?.SessionId;
+                if (canonicalId is not { Length: > 0 }
+                    || !canonicalId.StartsWith(sessionId, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException($"Session prefix '{sessionId}' does not match a unique persisted session.");
+                }
+                resolvedSessionId = canonicalId;
+            }
+            var (traceparent, tracestate) = TelemetryHelpers.GetTraceContext();
+
+            var request = new ResumeSessionRequest(
+                resolvedSessionId,
+                config.ClientName,
+                config.Model,
+                config.ReasoningEffort,
+                config.AllowMultipleToolCalls,
+                config.ReasoningSummary,
+                config.ContextTier,
+                config.Tools?.Select(ToolDefinition.FromAIFunction).ToList(),
+                config.EnableCitations,
+                config.EnableFileChangeTracking,
+                wireSystemMessage,
+                config.AskUserVariant,
+                toolFilter.AvailableTools,
+                toolFilter.ExcludedTools,
+                config.ExcludedBuiltInAgents,
+                config.IncludedBuiltInAgents,
+                config.Provider,
+                config.Capi,
+                config.EnableSessionTelemetry,
+                config.EnableExperimentalMode,
+                config.OnPermissionRequest != null ? true : null,
+                config.OnUserInputRequest != null ? true : null,
+                config.OnExitPlanModeRequest != null ? true : null,
+                config.OnAutoModeSwitchRequest != null ? true : null,
+                hasHooks ? true : null,
+                config.WorkingDirectory,
+                config.ConfigDirectory,
+                config.EnableConfigDiscovery,
+                config.CustomAgentsLocalOnly,
+                config.SkipEmbeddingRetrieval,
+                config.EmbeddingCacheStorage,
+                config.OrganizationCustomInstructions,
+                config.EnableOnDemandInstructionDiscovery,
+                config.EnableFileHooks,
+                config.EnableHostGitOperations,
+                config.EnableSessionStore,
+                config.EnableSkills,
+                config.SuppressResumeEvent is true ? true : null,
+                config.Streaming is true ? true : null,
+                config.IncludeSubAgentStreamingEvents,
+                config.McpServers,
+                config.Diagnostics,
+                config.LifecycleDiagnostics,
+                config.McpOAuthTokenStorage,
+                config.AuthClientIdMetadataUrl,
+                "direct",
+                config.CustomAgents,
+                config.DefaultAgent,
+                config.Agent,
+                config.SkillDirectories,
+                config.DisabledSkills,
+                config.InfiniteSessions,
+                config.SessionLimits,
+                config.Autopilot,
+                Commands: config.Commands?.Select(c => new CommandWireDefinition(c.Name, c.Description ?? string.Empty)).ToList(),
+                RequestElicitation: config.OnElicitationRequest != null,
+                RequestAutoModeRecovery: config.AutoModeRecovery ? true : null,
+                RequestMcpApps: config.EnableMcpApps ? true : null,
+                RequestShellAuthentication: config.OnShellAuthenticationRequest != null ? true : null,
+                Traceparent: traceparent,
+                Tracestate: tracestate,
+                ModelCapabilities: config.ModelCapabilities,
+                GitHubToken: config.GitHubToken,
+                GitHubTokenProviderRegistrationId: registrationId,
+                ContinuePendingWork: config.ContinuePendingWork,
+                InstructionDirectories: config.InstructionDirectories,
+                AgentDirectories: config.AgentDirectories,
+                HookDirectories: config.HookDirectories,
+                PluginDirectories: config.PluginDirectories,
+                DisabledMcpServers: config.DisabledMcpServers,
+                SandboxConfig: config.SandboxConfig,
+                LargeOutput: config.LargeOutput,
+                ToolSearch: config.ToolSearch,
+                ImageGeneration: config.ImageGeneration,
+                Memory: config.Memory,
+                Canvases: config.Canvases,
+                RequestCanvasRenderer: config.RequestCanvasRenderer,
+                RequestExtensions: config.RequestExtensions,
+                ExtensionSdkPath: config.ExtensionSdkPath,
+                ExtensionInfo: config.ExtensionInfo,
+                CanvasProvider: config.CanvasProvider,
+                OpenCanvases: config.OpenCanvases,
+                Providers: config.Providers,
+                Models: config.Models,
+                FeatureFlags: config.FeatureFlags,
+                ExpAssignments: config.ExpAssignments,
+                EnableManagedSettings: config.EnableManagedSettings,
+                ExcludedManagedSettings: config.ExcludedManagedSettings,
+                EnforceManagedModelDefaults: config.EnforceManagedModelDefaults,
+                InteractiveUser: config.InteractiveUser,
+                PermissionMode: config.PermissionMode,
+                GitHubMcpToolConfig: config.GitHubMcpToolConfig,
+                ManagedSettings: config.ManagedSettings,
+                EnableGitHubTelemetryForwarding: _options.OnGitHubTelemetry != null ? true : null,
+                AdditionalDirectories: config.AdditionalDirectories,
+                AllowTranscriptRecovery: config.AllowTranscriptRecovery,
+                HasSkillProvider: config.SkillProvider is not null ? true : null,
+                HasMemoryStore: config.Memory?.StoreMemory is not null ? true : null);
+
+            cancellationToken.ThrowIfCancellationRequested();
+            lock (_sessionAdmissionLock)
+            {
+                previousSession = uuidPrefix
+                    ? _sessions.Values.FirstOrDefault(resident => string.Equals(resident.SessionId, resolvedSessionId, StringComparison.OrdinalIgnoreCase))
+                    : FindResidentSession(sessionId);
+            }
+            // Resolve persisted identity and prepare the request before replacing
+            // callbacks, then publish the owner before the RPC can emit events.
+            session = InitializeSession(
+                previousSession?.SessionId ?? resolvedSessionId,
+                connection.Rpc,
+                config,
+                transformCallbacks,
+                hasHooks,
+                "CopilotClient.ResumeSessionAsync",
+                previousSession);
+            lock (_sessionAdmissionLock)
+            {
+                operation.Session = session;
+            }
+            var rpcTimestamp = Stopwatch.GetTimestamp();
+            var response = await InvokeRpcAsync<ResumeSessionResponse>(
+                connection.Rpc, "session.resume", [request], null, cancellationToken, raw =>
+                {
+                    if (raw.TryGetProperty("sessionId", out var id) && id.GetString() is { Length: > 0 } canonicalId)
+                    {
+                        BindResumedSession(operation, session, canonicalId, uuidPrefix, ref previousSession);
+                    }
+                });
+            LoggingHelpers.LogTiming(_logger, LogLevel.Debug, null,
+                "CopilotClient.ResumeSessionAsync session resume request completed successfully. Elapsed={Elapsed}, SessionId={SessionId}",
+                rpcTimestamp,
+                sessionId);
+
+            session.WorkspacePath = response.WorkspacePath;
+            session.TranscriptRecovery = response.TranscriptRecovery;
+            session.PermissionModeResult = response.PermissionModeResult;
+            session.SetCapabilities(response.Capabilities);
+            if (config.AutoModeRecovery)
+            {
+                if (registrationId is not null)
+                {
+                    session.SetGitHubTokenProviderRegistration(registrationId);
+                    registrationTransferred = true;
+                }
+                // A successful resident resume has already installed these callbacks.
+                // Missing recovery support must not detach that accepted attachment.
+                keepAcceptedOwner = previousSession is not null;
+                await RequireAutoModeRecoveryAsync(session, cancellationToken, detachOnFailure: previousSession is null).ConfigureAwait(false);
+                keepAcceptedOwner = false;
+            }
+            session.SetOpenCanvases(response.OpenCanvases);
+
+            if (config.OnMcpAuthRequest is not null)
+            {
+                await session.Rpc.EventLog.RegisterInterestAsync("mcp.oauth_required", cancellationToken);
+            }
+
+            var appliedOptions = await UpdateSessionOptionsForModeAsync(session, config, cancellationToken).ConfigureAwait(false);
+            CaptureAhpSession(session, request, ClientJsonContext.Default.ResumeSessionRequest, appliedOptions);
+            if (registrationId is not null)
+            {
+                session.SetGitHubTokenProviderRegistration(registrationId);
+                registrationTransferred = true;
+            }
+            previousSession?.Retire();
+        }
+        catch (Exception ex)
+        {
+            if (keepAcceptedOwner)
+            {
+                previousSession?.Retire();
+            }
+            else if (session is not null)
+            {
+                if (session.AutoModeRecoveryCleanupTask is null)
+                {
+                    RestoreResumedSession(operation, session, previousSession);
+                }
+                session.Unregister();
+            }
+            if (ex is not OperationCanceledException)
+            {
+                LoggingHelpers.LogTiming(_logger, LogLevel.Warning, ex,
+                    "CopilotClient.ResumeSessionAsync failed. Elapsed={Elapsed}, SessionId={SessionId}",
+                    totalTimestamp,
+                    sessionId);
+            }
+            throw;
+        }
+        finally
+        {
+            if (!registrationTransferred && registrationId is not null)
+            {
+                UnregisterGitHubTokenProvider(registrationId);
+            }
+        }
+
+        LoggingHelpers.LogTiming(_logger, LogLevel.Debug, null,
+            "CopilotClient.ResumeSessionAsync complete. Elapsed={Elapsed}, SessionId={SessionId}",
+            totalTimestamp,
+            sessionId);
+        return session!;
+    }
+
+    private async Task RequireAutoModeRecoveryAsync(CopilotSession session, CancellationToken cancellationToken, bool deleteOnFailure = false, bool detachOnFailure = true)
+    {
+        if (session.Capabilities.Ui?.AutoModeRecovery == true)
+        {
+            return;
+        }
+        var error = new NotSupportedException("The runtime does not support AutoModeRecovery");
+        if (!detachOnFailure)
+        {
+            throw error;
+        }
+        // Caller cancellation stops waiting, but must not prevent detach from being sent.
+        var cleanup = DisconnectUnsupportedSessionAsync(session, deleteOnFailure);
+        session.AutoModeRecoveryCleanupTask = cleanup;
+        try
+        {
+            await cleanup.WaitAsync(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            _ = cleanup.ContinueWith(
+                completed =>
+                {
+                    var cleanupError = completed.Exception;
+                    if (_logger.IsEnabled(LogLevel.Warning))
+                    {
+                        _logger.LogWarning(cleanupError,
+                            "Failed to detach unsupported AutoModeRecovery session {SessionId}. Status={Status}",
+                            session.SessionId, completed.Status);
+                    }
+                },
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously | TaskContinuationOptions.NotOnRanToCompletion,
+                TaskScheduler.Default);
+            throw;
+        }
+        // Fatal runtime errors propagate unwrapped.
+        catch (Exception cleanupError) when (IsRecoverableConnectionCleanupFailure(cleanupError))
+        {
+            throw new AggregateException(error, cleanupError);
+        }
+        throw error;
+    }
+
+    private static async Task DisconnectUnsupportedSessionAsync(CopilotSession session, bool deleteOnFailure)
+    {
+        try
+        {
+            Exception? detachError = null;
+            try
+            {
+                using var cleanupCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                await session.DisconnectAsync(cleanupCancellation.Token, requireAcknowledgement: true, retainCallbacks: true).ConfigureAwait(false);
+            }
+            catch (Exception error) when (IsRecoverableConnectionCleanupFailure(error))
+            {
+                detachError = error;
+            }
+            if (deleteOnFailure)
+            {
+                try
+                {
+                    using var deletionCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                    var deletion = await InvokeRpcAsync<DeleteSessionResponse>(
+                        session.JsonRpc, "session.delete", [new DeleteSessionRequest(session.SessionId)],
+                        deletionCancellation.Token).ConfigureAwait(false);
+                    if (!deletion.Success)
+                    {
+                        throw new InvalidOperationException($"Failed to delete session {session.SessionId}: {deletion.Error ?? "unknown error"}");
+                    }
+                }
+                catch (Exception error) when (detachError is not null && IsRecoverableConnectionCleanupFailure(error))
+                {
+                    throw new AggregateException(detachError, error);
+                }
+            }
+            if (detachError is not null)
+            {
+                ExceptionDispatchInfo.Capture(detachError).Throw();
+            }
+        }
+        finally
+        {
+            session.Retire();
+        }
+    }
+
+    /// <summary>
+    /// Validates the health of the connection by sending a ping request.
+    /// </summary>
+    /// <param name="message">An optional message that will be reflected back in the response.</param>
+    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel the operation.</param>
+    /// <returns>A task that resolves with the <see cref="PingResponse"/> containing the message and server timestamp.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the client is not connected.</exception>
+    /// <example>
+    /// <code>
+    /// var response = await client.PingAsync("health check");
+    /// Console.WriteLine($"Server responded at {response.Timestamp}");
+    /// </code>
+    /// </example>
+    public async Task<PingResponse> PingAsync(string? message = null, CancellationToken cancellationToken = default)
+    {
+        var connection = await EnsureConnectedAsync(cancellationToken);
+
+        return await InvokeRpcAsync<PingResponse>(
+            connection.Rpc, "ping", [new PingRequest { Message = message }], cancellationToken);
+    }
+
+    /// <summary>
+    /// Gets CLI status including version and protocol information.
+    /// </summary>
+    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel the operation.</param>
+    /// <returns>A task that resolves with the status response containing version and protocol version.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the client is not connected.</exception>
+    public async Task<GetStatusResponse> GetStatusAsync(CancellationToken cancellationToken = default)
+    {
+        var connection = await EnsureConnectedAsync(cancellationToken);
+
+        return await InvokeRpcAsync<GetStatusResponse>(
+            connection.Rpc, "status.get", [], cancellationToken);
+    }
+
+    /// <summary>
+    /// Gets current authentication status.
+    /// </summary>
+    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel the operation.</param>
+    /// <returns>A task that resolves with the authentication status.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the client is not connected.</exception>
+    public async Task<GetAuthStatusResponse> GetAuthStatusAsync(CancellationToken cancellationToken = default)
+    {
+        var connection = await EnsureConnectedAsync(cancellationToken);
+
+        return await InvokeRpcAsync<GetAuthStatusResponse>(
+            connection.Rpc, "auth.getStatus", [], cancellationToken);
+    }
+
+    /// <summary>
+    /// Lists available models with their metadata.
+    /// </summary>
+    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel the operation.</param>
+    /// <returns>A task that resolves with a list of available models.</returns>
+    /// <remarks>
+    /// Results are cached after the first successful call to avoid rate limiting.
+    /// The cache is cleared when the client disconnects.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">Thrown when the client is not connected or not authenticated.</exception>
+    public async Task<IList<ModelInfo>> ListModelsAsync(CancellationToken cancellationToken = default)
+    {
+        var cache = _modelsCache;
+        await cache.Lock.WaitAsync(cancellationToken);
+        try
+        {
+            // Check cache (already inside lock)
+            if (cache.Models is null)
+            {
+                IList<ModelInfo> models;
+                if (_onListModels is not null)
+                {
+                    // Use custom handler instead of CLI RPC
+                    models = await _onListModels(cancellationToken);
+                }
+                else
+                {
+                    var connection = await EnsureConnectedAsync(cancellationToken);
+
+                    // Cache miss - fetch from backend while holding lock
+                    var response = await InvokeRpcAsync<GetModelsResponse>(
+                        connection.Rpc, "models.list", [], cancellationToken);
+                    models = response.Models;
+                }
+
+                // Update cache before releasing lock (copy to prevent external mutation)
+                cache.Models = [.. models];
+            }
+
+            return [.. cache.Models]; // Return a copy to prevent cache mutation
+        }
+        finally
+        {
+            cache.Lock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Gets the ID of the most recently used session.
+    /// </summary>
+    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel the operation.</param>
+    /// <returns>A task that resolves with the session ID, or null if no sessions exist.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the client is not connected.</exception>
+    /// <example>
+    /// <code>
+    /// var lastId = await client.GetLastSessionIdAsync();
+    /// if (lastId != null)
+    /// {
+    ///     var session = await client.ResumeSessionAsync(lastId, new() { OnPermissionRequest = PermissionHandler.ApproveAll });
+    /// }
+    /// </code>
+    /// </example>
+    public async Task<string?> GetLastSessionIdAsync(CancellationToken cancellationToken = default)
+    {
+        var connection = await EnsureConnectedAsync(cancellationToken);
+
+        var response = await InvokeRpcAsync<GetLastSessionIdResponse>(
+            connection.Rpc, "session.getLastId", [], cancellationToken);
+
+        return response.SessionId;
+    }
+
+    /// <summary>
+    /// Permanently deletes a session and all its data from disk, including
+    /// conversation history, planning state, and artifacts.
+    /// </summary>
+    /// <param name="sessionId">The ID of the session to delete.</param>
+    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel the operation.</param>
+    /// <returns>A task that represents the asynchronous delete operation.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the session does not exist or deletion fails.</exception>
+    /// <remarks>
+    /// Unlike <see cref="CopilotSession.DisposeAsync"/>, which only releases in-memory
+    /// resources and preserves session data for later resumption, this method is
+    /// irreversible. The session cannot be resumed after deletion.
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// await client.DeleteSessionAsync("session-123");
+    /// </code>
+    /// </example>
+    public async Task DeleteSessionAsync(string sessionId, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(sessionId);
+
+        var connection = await EnsureConnectedAsync(cancellationToken);
+
+        using var operation = BeginSessionOperation(sessionId, connection.Rpc);
+        var response = await InvokeRpcAsync<DeleteSessionResponse>(
+            connection.Rpc, "session.delete", [new DeleteSessionRequest(sessionId)], cancellationToken);
+
+        if (!response.Success)
+        {
+            throw new InvalidOperationException($"Failed to delete session {sessionId}: {response.Error}");
+        }
+
+        if (_sessions.TryRemove(sessionId, out var session))
+        {
+            session.ClearSkillProvider();
+            session.ClearMemoryStore();
+            session.ReleaseGitHubTokenProviderRegistration();
+        }
+    }
+
+    /// <summary>
+    /// Lists all sessions known to the Copilot server.
+    /// </summary>
+    /// <param name="filter">Optional filter to narrow down the session list by cwd, git root, repository, or branch.</param>
+    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel the operation.</param>
+    /// <returns>A task that resolves with a list of <see cref="SessionMetadata"/> for all available sessions.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the client is not connected.</exception>
+    /// <example>
+    /// <code>
+    /// var sessions = await client.ListSessionsAsync();
+    /// foreach (var session in sessions)
+    /// {
+    ///     Console.WriteLine($"{session.SessionId}: {session.Summary}");
+    /// }
+    /// </code>
+    /// </example>
+    public async Task<IList<SessionMetadata>> ListSessionsAsync(SessionListFilter? filter = null, CancellationToken cancellationToken = default)
+    {
+        var connection = await EnsureConnectedAsync(cancellationToken);
+
+        var response = await InvokeRpcAsync<ListSessionsResponse>(
+            connection.Rpc, "session.list", [new ListSessionsRequest(filter)], cancellationToken);
+
+        return response.Sessions;
+    }
+
+    /// <summary>
+    /// Gets metadata for a specific session by ID.
+    /// </summary>
+    /// <remarks>
+    /// This provides an efficient O(1) lookup of a single session's metadata
+    /// instead of listing all sessions.
+    /// </remarks>
+    /// <param name="sessionId">The ID of the session to look up.</param>
+    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel the operation.</param>
+    /// <returns>A task that resolves with the <see cref="SessionMetadata"/>, or null if the session was not found.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the client is not connected.</exception>
+    /// <example>
+    /// <code>
+    /// var metadata = await client.GetSessionMetadataAsync("session-123");
+    /// if (metadata != null)
+    /// {
+    ///     Console.WriteLine($"Session started at: {metadata.StartTime}");
+    /// }
+    /// </code>
+    /// </example>
+    public async Task<SessionMetadata?> GetSessionMetadataAsync(string sessionId, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(sessionId);
+
+        var connection = await EnsureConnectedAsync(cancellationToken);
+
+        var response = await InvokeRpcAsync<GetSessionMetadataResponse>(
+            connection.Rpc, "session.getMetadata", [new GetSessionMetadataRequest(sessionId)], cancellationToken);
+
+        return response.Session;
+    }
+
+    /// <summary>
+    /// Gets the ID of the session currently displayed in the TUI.
+    /// </summary>
+    /// <remarks>
+    /// This is only available when connecting to a server running in TUI+server mode
+    /// (--ui-server).
+    /// </remarks>
+    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <returns>The session ID, or null if no foreground session is set.</returns>
+    /// <example>
+    /// <code>
+    /// var sessionId = await client.GetForegroundSessionIdAsync();
+    /// if (sessionId != null)
+    /// {
+    ///     Console.WriteLine($"TUI is displaying session: {sessionId}");
+    /// }
+    /// </code>
+    /// </example>
+    public async Task<string?> GetForegroundSessionIdAsync(CancellationToken cancellationToken = default)
+    {
+        var connection = await EnsureConnectedAsync(cancellationToken);
+
+        var response = await InvokeRpcAsync<GetForegroundSessionResponse>(
+            connection.Rpc, "session.getForeground", [], cancellationToken);
+
+        return response.SessionId;
+    }
+
+    /// <summary>
+    /// Requests the TUI to switch to displaying the specified session.
+    /// </summary>
+    /// <remarks>
+    /// This is only available when connecting to a server running in TUI+server mode
+    /// (--ui-server).
+    /// </remarks>
+    /// <param name="sessionId">The ID of the session to display in the TUI.</param>
+    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <exception cref="InvalidOperationException">Thrown if the operation fails.</exception>
+    /// <example>
+    /// <code>
+    /// await client.SetForegroundSessionIdAsync("session-123");
+    /// </code>
+    /// </example>
+    public async Task SetForegroundSessionIdAsync(string sessionId, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(sessionId);
+
+        var connection = await EnsureConnectedAsync(cancellationToken);
+
+        var response = await InvokeRpcAsync<SetForegroundSessionResponse>(
+            connection.Rpc, "session.setForeground", [new SetForegroundSessionRequest(sessionId)], cancellationToken);
+
+        if (!response.Success)
+        {
+            throw new InvalidOperationException(response.Error ?? "Failed to set foreground session");
+        }
+    }
+
+    /// <summary>
+    /// Subscribes to session lifecycle events of a specific kind.
+    /// </summary>
+    /// <typeparam name="T">
+    /// The lifecycle event type to listen for. Pass a derived type such as
+    /// <see cref="SessionCreatedEvent"/> to filter by kind, or
+    /// <see cref="SessionLifecycleEvent"/> to receive every lifecycle event.
+    /// </typeparam>
+    /// <param name="handler">A callback invoked when a matching lifecycle event arrives.</param>
+    /// <returns>An <see cref="IDisposable"/> that, when disposed, unsubscribes the handler.</returns>
+    /// <example>
+    /// <code>
+    /// using var sub = client.OnLifecycle&lt;SessionForegroundEvent&gt;(evt =&gt;
+    /// {
+    ///     Console.WriteLine($"Session {evt.SessionId} is now in foreground");
+    /// });
+    /// </code>
+    /// </example>
+    public IDisposable OnLifecycle<T>(Action<T> handler) where T : SessionLifecycleEvent
+    {
+        ArgumentNullException.ThrowIfNull(handler);
+
+        var subscription = new LifecycleSubscription(typeof(T), evt => handler((T)evt));
+
+        lock (_lifecycleHandlers)
+        {
+            _lifecycleHandlers.Add(subscription);
+        }
+
+        return new ActionDisposable(() =>
+        {
+            lock (_lifecycleHandlers)
+            {
+                _lifecycleHandlers.Remove(subscription);
+            }
+        });
+    }
+
+    private void DispatchLifecycleEvent(SessionLifecycleEvent evt)
+    {
+        LifecycleSubscription[] snapshot;
+        lock (_lifecycleHandlers)
+        {
+            snapshot = _lifecycleHandlers.ToArray();
+        }
+
+        var eventType = evt.GetType();
+        foreach (var subscription in snapshot)
+        {
+            if (subscription.EventType.IsAssignableFrom(eventType))
+            {
+                try { subscription.Handler(evt); } catch { /* Ignore handler errors */ }
+            }
+        }
+    }
+
+    internal static Task<T> InvokeRpcAsync<T>(JsonRpc rpc, string method, object?[]? args, CancellationToken cancellationToken)
+    {
+        return InvokeRpcAsync<T>(rpc, method, args, null, cancellationToken);
+    }
+
+    internal static Task InvokeRpcAsync(JsonRpc rpc, string method, object?[]? args, CancellationToken cancellationToken)
+    {
+        return InvokeRpcAsync<object>(rpc, method, args, null, cancellationToken);
+    }
+
+    internal static Task<T> InvokeRpcAsync<T>(SessionRpc rpc, string method, object?[]? args, CancellationToken cancellationToken)
+    {
+        return InvokeRpcAsync<T>(rpc.Session.JsonRpc, method, args, cancellationToken);
+    }
+
+    internal static Task InvokeRpcAsync(SessionRpc rpc, string method, object?[]? args, CancellationToken cancellationToken)
+    {
+        return InvokeRpcAsync<object>(rpc, method, args, cancellationToken);
+    }
+
+    internal static async Task<T> InvokeRpcAsync<T>(JsonRpc rpc, string method, object?[]? args, StringBuilder? stderrBuffer, CancellationToken cancellationToken, Action<JsonElement>? onResponseInline = null)
+    {
+        try
+        {
+            return await rpc.InvokeAsync<T>(method, args, cancellationToken, onResponseInline);
+        }
+        catch (ConnectionLostException ex)
+        {
+            string? stderrOutput = null;
+            if (stderrBuffer is not null)
+            {
+                lock (stderrBuffer)
+                {
+                    stderrOutput = stderrBuffer.ToString().Trim();
+                }
+            }
+
+            if (!string.IsNullOrEmpty(stderrOutput))
+            {
+                throw new IOException(FormatCliExitedMessage("CLI process exited unexpectedly.", stderrOutput!), ex);
+            }
+
+            throw new IOException($"Communication error with Copilot CLI: {ex.Message}", ex);
+        }
+        catch (RemoteRpcException ex)
+        {
+            throw new IOException($"Communication error with Copilot CLI: {ex.Message}", ex);
+        }
+    }
+
+    private static string FormatCliExitedMessage(string message, string stderrOutput)
+    {
+        return string.IsNullOrEmpty(stderrOutput)
+            ? message
+            : $"{message}\nstderr: {stderrOutput}";
+    }
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "CopilotClient.StartCliServerAsync starting Copilot CLI. CliPath={CliPath}, Executable={Executable}, CliPathSource={CliPathSource}, UseStdio={UseStdio}, Port={Port}")]
+    private static partial void LogStartingCopilotCli(ILogger logger, string cliPath, string executable, string cliPathSource, bool useStdio, int? port);
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "CopilotClient.ConnectToServerAsync connecting to CLI server. Host={Host}, Port={Port}")]
+    private static partial void LogConnectingToCliServer(ILogger logger, string host, int port);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "[CLI] {Line}")]
+    private static partial void LogCliStderrLine(ILogger logger, string line);
+
+    private static IOException CreateCliExitedException(string message, StringBuilder stderrBuffer)
+    {
+        return new IOException(FormatCliExitedMessage(message, GetStderrOutput(stderrBuffer)));
+    }
+
+    private static string GetStderrOutput(StringBuilder stderrBuffer)
+    {
+        lock (stderrBuffer)
+        {
+            return stderrBuffer.ToString().Trim();
+        }
+    }
+
+    private Task<Connection> EnsureConnectedAsync(CancellationToken cancellationToken)
+    {
+        // If already started or starting, this will return the existing task.
+        // Only an explicit StartAsync replaces a connection that closed after startup.
+        return StartConnectionAsync(replaceLostConnection: false, cancellationToken);
+    }
+
+    private async Task ConfigureSessionFsAsync(CancellationToken cancellationToken)
+    {
+        if (_options.SessionFs is null)
+        {
+            return;
+        }
+
+        await Rpc.SessionFs.SetProviderAsync(
+            _options.SessionFs.InitialWorkingDirectory,
+            _options.SessionFs.SessionStatePath,
+            _options.SessionFs.Conventions,
+            _options.SessionFs.Capabilities,
+            cancellationToken: cancellationToken);
+    }
+
+    /// <summary>
+    /// Builds the client-global RPC handler bag at construction time. Registers
+    /// the configured connection-level adapters. The GitHub token dispatcher is
+    /// always registered because providers are configured per session.
+    /// </summary>
+    private ClientGlobalApiHandlers? BuildClientGlobalApis()
+    {
+        var onGitHubTelemetry = _options.OnGitHubTelemetry;
+        var installationConfirmationHandler = _options.InstallationConfirmationHandler;
+        var network = _options.Network;
+        return new ClientGlobalApiHandlers
+        {
+            ExtensionLaunchProvider = _options.ExtensionLaunchProvider,
+            Network = network is { ResolveProxy: not null } or { AuthenticateNegotiate: not null } or { AuthenticateBasic: not null }
+                ? new NetworkAdapter(network)
+                : null,
+            GitHubTelemetry = onGitHubTelemetry is null ? null : new GitHubTelemetryAdapter(onGitHubTelemetry, _logger),
+            GitHubToken = new GitHubTokenAdapter(this),
+            EntraToken = _options.Entra?.TokenProvider is { } entraProvider
+                ? new EntraTokenAdapter(entraProvider)
+                : null,
+            UiThread = new UiThreadAdapter(this),
+            Installations = installationConfirmationHandler is null
+                ? null
+                : new InstallationConfirmationAdapter(installationConfirmationHandler),
+        };
+    }
+
+    private static void ValidateGitHubTokenConfig(SessionConfigBase config)
+    {
+        if (config.GitHubToken is not null && config.GitHubTokenProvider is not null)
+        {
+            throw new ArgumentException(
+                $"{nameof(SessionConfigBase.GitHubToken)} and {nameof(SessionConfigBase.GitHubTokenProvider)} cannot be used together.",
+                nameof(config));
+        }
+    }
+
+    private static void ValidateMemoryConfig(SessionConfigBase config)
+    {
+        if (config.Memory is { StoreMemory: not null, Enabled: not true })
+        {
+            throw new ArgumentException(
+                $"{nameof(SessionConfigBase.Memory)}.{nameof(MemoryConfiguration.StoreMemory)} requires {nameof(SessionConfigBase.Memory)}.{nameof(MemoryConfiguration.Enabled)} to be true.",
+                nameof(config));
+        }
+    }
+
+    private string? RegisterGitHubTokenProvider(
+        Func<GitHubTokenProviderArgs, Task<GitHubTokenProviderResult>>? provider)
+    {
+        if (provider is null)
+        {
+            return null;
+        }
+
+        var registrationId = Guid.NewGuid().ToString();
+        if (!_gitHubTokenProviders.TryAdd(registrationId, provider))
+        {
+            throw new InvalidOperationException("Failed to register GitHub token provider.");
+        }
+        return registrationId;
+    }
+
+    internal void UnregisterGitHubTokenProvider(string registrationId)
+        => _gitHubTokenProviders.TryRemove(registrationId, out _);
+
+    private void ClearGitHubTokenProviders() => _gitHubTokenProviders.Clear();
+
+    private sealed class UiThreadAdapter(CopilotClient client) : IUiThreadHandler
+    {
+        public async Task RunAsync(UiThreadRunRequest request, CancellationToken cancellationToken = default)
+        {
+            var host = client._ffiHost;
+            if (client._connection is not InProcessRuntimeConnection { RunOnUiThread: { } handler } || host is null)
+            {
+                throw new InvalidOperationException("No in-process RunOnUiThread handler is configured.");
+            }
+            await handler(() => host.RunUiAction(checked((uint)request.ActionId))).ConfigureAwait(false);
+        }
+    }
+
+    private sealed class GitHubTokenAdapter(CopilotClient client) : IGitHubTokenHandler
+    {
+        public async Task<GitHubTokenAcquireResult> GetTokenAsync(
+            GitHubTokenAcquireRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            if (!client._gitHubTokenProviders.TryGetValue(request.RegistrationId, out var provider))
+            {
+                throw new InvalidOperationException(
+                    $"Unknown GitHub token provider registration ID '{request.RegistrationId}'.");
+            }
+
+            var reason = request.Reason == GitHubTokenAcquireReason.Initial
+                ? GitHubTokenRequestReason.Initial
+                : request.Reason == GitHubTokenAcquireReason.Refresh
+                    ? GitHubTokenRequestReason.Refresh
+                    : throw new InvalidOperationException($"Unknown GitHub token request reason '{request.Reason}'.");
+            var result = await provider(new GitHubTokenProviderArgs
+            {
+                Host = request.Host,
+                SessionId = request.SessionId,
+                Reason = reason,
+            }).ConfigureAwait(false);
+
+            if (result is { Cancelled: true })
+            {
+                return new GitHubTokenAcquireResultCancelled();
+            }
+            if (result?.Token is not { } token)
+            {
+                throw new InvalidOperationException(
+                    "GitHub token provider returned neither a token nor cancellation.");
+            }
+            return new GitHubTokenAcquireResultToken
+            {
+                AccessToken = token.AccessToken,
+                TokenType = token.TokenType,
+                ExpiresIn = token.ExpiresIn,
+            };
+        }
+    }
+
+    /// <summary>
+    /// Tells the runtime to route its outbound model-layer requests through this
+    /// client's LLM inference provider. No-op when interception is not configured.
+    /// </summary>
+    private async Task ConfigureLlmInferenceAsync(CancellationToken cancellationToken)
+    {
+        if (_options.RequestHandler is null)
+        {
+            return;
+        }
+
+        await Rpc.LlmInference.SetProviderAsync(cancellationToken);
+    }
+
+    private void ConfigureSessionFsHandlers(CopilotSession session, Func<CopilotSession, SessionFsProvider>? createSessionFsHandler)
+    {
+        if (_options.SessionFs is null)
+        {
+            return;
+        }
+
+        if (createSessionFsHandler is null)
+        {
+            throw new InvalidOperationException(
+                "CreateSessionFsProvider is required in the session config when CopilotClientOptions.SessionFs is configured.");
+        }
+
+        var provider = createSessionFsHandler(session)
+            ?? throw new InvalidOperationException("CreateSessionFsProvider returned null.");
+
+        if (_options.SessionFs.Capabilities?.Sqlite == true && provider is not ISessionFsSqliteProvider)
+        {
+            throw new InvalidOperationException(
+                "SessionFsConfig declares capabilities.sqlite but the provider does not implement ISessionFsSqliteProvider.");
+        }
+        if (_options.SessionFs.Capabilities?.Binary == true && provider is not ISessionFsBinaryProvider)
+        {
+            throw new InvalidOperationException(
+                "SessionFsConfig declares capabilities.binary but the provider does not implement ISessionFsBinaryProvider.");
+        }
+
+        if (_options.SessionFs.Capabilities?.ReadFileRange == true && provider is not ISessionFsReadFileRangeProvider)
+        {
+            throw new InvalidOperationException(
+                "SessionFsConfig declares capabilities.readFileRange but the provider does not implement ISessionFsReadFileRangeProvider.");
+        }
+        session.SetSessionFsHandler(provider);
+    }
+
+    private async Task VerifyProtocolVersionAsync(Connection connection, CancellationToken cancellationToken)
+    {
+        var handshakeTimestamp = Stopwatch.GetTimestamp();
+        var usedFallbackPing = false;
+        var maxVersion = SdkProtocolVersion.GetVersion();
+        int? serverVersion;
+        try
+        {
+            var token = _ffiHost is not null
+                ? null // FFI hosting is an ungated in-process connection; no token.
+                : _connection switch
+                {
+                    TcpRuntimeConnection tcp => tcp.ConnectionToken,
+                    UriRuntimeConnection uri => uri.ConnectionToken,
+                    _ => null,
+                };
+            var connectResponse = await InvokeRpcAsync<ConnectResult>(
+                connection.Rpc,
+                "connect",
+                [new ConnectHandshakeRequest(
+                    token,
+                    // Opt in to GitHub telemetry forwarding at the connection level when a
+                    // handler is registered (mirrors the runtime, which reads this flag on the
+                    // `connect` handshake so the first session's un-replayable `session.start`
+                    // event is forwarded). Also sent on session.create/resume for older CLIs.
+                    _options.OnGitHubTelemetry != null ? true : null,
+                    // Declare the integrating application's identity so the runtime attributes the
+                    // telemetry it emits on this connection to a consistent surface instead
+                    // of its own build. Null when the app didn't supply it.
+                    ConnectHandshakeClientInfo.From(_options.ClientInfo),
+                    SupportedTaskKinds: [TaskKind.Agent, TaskKind.Client, TaskKind.Shell],
+                    Entra: _options.Entra?.ToWire(),
+                    EntraTokenProvider: _options.Entra?.TokenProvider is null ? null : true)],
+                connection.StderrBuffer,
+                cancellationToken);
+            serverVersion = (int)connectResponse.ProtocolVersion;
+            if (_options.Entra?.TokenProvider is not null && connectResponse.EntraTokenProvider != true)
+            {
+                throw new InvalidOperationException("This runtime does not support host-owned Entra token providers.");
+            }
+        }
+        catch (IOException ex) when (ex.InnerException is RemoteRpcException remoteEx && IsUnsupportedConnectMethod(remoteEx))
+        {
+            if (_options.Entra is not null)
+            {
+                throw new InvalidOperationException("This runtime does not support Entra client configuration.", ex);
+            }
+            // Legacy server without `connect`; fall back to `ping`. A token, if any,
+            // is silently dropped — the legacy server can't enforce one.
+            usedFallbackPing = true;
+            var pingResponse = await InvokeRpcAsync<PingResponse>(
+                connection.Rpc, "ping", [new PingRequest()], connection.StderrBuffer, cancellationToken);
+            serverVersion = pingResponse.ProtocolVersion;
+        }
+
+        if (!serverVersion.HasValue)
+        {
+            throw new InvalidOperationException(
+                $"SDK protocol version mismatch: SDK supports versions {MinProtocolVersion}-{maxVersion}, " +
+                $"but server does not report a protocol version. " +
+                $"Please update your server to ensure compatibility.");
+        }
+
+        if (serverVersion.Value < MinProtocolVersion || serverVersion.Value > maxVersion)
+        {
+            throw new InvalidOperationException(
+                $"SDK protocol version mismatch: SDK supports versions {MinProtocolVersion}-{maxVersion}, " +
+                $"but server reports version {serverVersion.Value}. " +
+                $"Please update your SDK or server to ensure compatibility.");
+        }
+
+        _negotiatedProtocolVersion = serverVersion.Value;
+        LoggingHelpers.LogTiming(_logger, LogLevel.Debug, null,
+            "CopilotClient.VerifyProtocolVersionAsync protocol handshake complete. Elapsed={Elapsed}, ProtocolVersion={ProtocolVersion}, UsedFallbackPing={UsedFallbackPing}",
+            handshakeTimestamp,
+            serverVersion.Value,
+            usedFallbackPing);
+    }
+
+    private static bool IsUnsupportedConnectMethod(RemoteRpcException ex)
+    {
+        return ex.ErrorCode == RemoteRpcException.MethodNotFoundErrorCode
+            || string.Equals(ex.Message, "Unhandled method connect", StringComparison.Ordinal);
+    }
+
+    // Applies the telemetry-derived environment variables the runtime reads to
+    // enable OTLP export. Shared by the stdio/tcp child-process path and the
+    // in-process FFI path so telemetry behaves identically across transports.
+    private static void ApplyTelemetryEnvironment(Action<string, string> setEnvironment, TelemetryConfig? telemetry)
+    {
+        if (telemetry is null)
+        {
+            return;
+        }
+
+        setEnvironment("COPILOT_OTEL_ENABLED", "true");
+        if (telemetry.OtlpEndpoint is not null) setEnvironment("OTEL_EXPORTER_OTLP_ENDPOINT", telemetry.OtlpEndpoint);
+        if (telemetry.OtlpProtocol is not null) setEnvironment("OTEL_EXPORTER_OTLP_PROTOCOL", telemetry.OtlpProtocol);
+        if (telemetry.FilePath is not null) setEnvironment("COPILOT_OTEL_FILE_EXPORTER_PATH", telemetry.FilePath);
+        if (telemetry.ExporterType is not null) setEnvironment("COPILOT_OTEL_EXPORTER_TYPE", telemetry.ExporterType);
+        if (telemetry.SourceName is not null) setEnvironment("COPILOT_OTEL_SOURCE_NAME", telemetry.SourceName);
+        if (telemetry.CaptureContent is { } capture)
+        {
+            setEnvironment("OTEL_INSTRUMENTATION_GENAI_CAPTURE_CONTENT", capture ? "SPAN_ONLY" : "NO_CONTENT");
+            setEnvironment("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", capture ? "true" : "false");
+        }
+    }
+
+    private async Task<(Process Process, int? DetectedLocalhostTcpPort, ProcessStderrPump StderrPump)> StartCliServerAsync(CancellationToken cancellationToken)
+    {
+        var options = _options;
+        var logger = _logger;
+        var childProcessConnection = (ChildProcessRuntimeConnection)_connection;
+        var tcpConnection = _connection as TcpRuntimeConnection;
+        var useStdio = _connection is StdioRuntimeConnection;
+
+        // Explicit CLI paths preserve the legacy launch contract. Otherwise use
+        // the bundled native runtime pair. An empty COPILOT_CLI_PATH counts as unset.
+        var configuredEnvironment = childProcessConnection.Environment ?? options.Environment;
+        var envCliPath = configuredEnvironment is not null
+            ? configuredEnvironment.TryGetValue("COPILOT_CLI_PATH", out var configuredCliPath) ? configuredCliPath : null
+            : System.Environment.GetEnvironmentVariable("COPILOT_CLI_PATH");
+        if (string.IsNullOrEmpty(envCliPath))
+        {
+            envCliPath = null;
+        }
+        var launch = childProcessConnection.Path is not null
+            ? new RuntimeLaunch(childProcessConnection.Path, "Options")
+            : envCliPath is not null
+                ? new RuntimeLaunch(envCliPath, "Environment")
+                : GetBundledRuntimeLaunch();
+        var cliPath = launch.Executable;
+        var cliPathSource = launch.Source;
+        var args = new List<string>();
+
+        if (childProcessConnection.Args != null)
+        {
+            args.AddRange(childProcessConnection.Args);
+        }
+
+        args.AddRange(["--headless", "--no-auto-update"]);
+        if (options.LogLevel is { } logLevel && !string.IsNullOrEmpty(logLevel.Value))
+        {
+            args.AddRange(["--log-level", logLevel.Value]);
+        }
+
+        if (useStdio)
+        {
+            args.Add("--stdio");
+        }
+        else if (tcpConnection is { Port: > 0 } tcp)
+        {
+            args.AddRange(["--port", tcp.Port.ToString(CultureInfo.InvariantCulture)]);
+        }
+
+        // Add auth-related flags
+        if (!string.IsNullOrEmpty(options.GitHubToken))
+        {
+            args.AddRange(["--auth-token-env", "COPILOT_SDK_AUTH_TOKEN"]);
+        }
+
+        // Default UseLoggedInUser to false when GitHubToken is provided
+        var useLoggedInUser = options.UseLoggedInUser ?? string.IsNullOrEmpty(options.GitHubToken);
+        if (!useLoggedInUser)
+        {
+            args.Add("--no-auto-login");
+        }
+
+        if (options.SessionIdleTimeoutSeconds is > 0)
+        {
+            args.AddRange(["--session-idle-timeout", options.SessionIdleTimeoutSeconds.Value.ToString(CultureInfo.InvariantCulture)]);
+        }
+
+        var (fileName, processArgs) = ResolveCliCommand(cliPath, args);
+        var configuredPort = useStdio ? (int?)null : tcpConnection?.Port;
+        LogStartingCopilotCli(logger, cliPath, fileName, cliPathSource, useStdio, configuredPort);
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = fileName,
+            Arguments = string.Join(" ", processArgs.Select(ProcessArgumentEscaper.Escape)),
+            UseShellExecute = false,
+            RedirectStandardInput = useStdio,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            WorkingDirectory = options.WorkingDirectory,
+            CreateNoWindow = true
+        };
+
+        var childEnvironment = options.Environment ?? childProcessConnection.Environment;
+        if (childEnvironment != null)
+        {
+            startInfo.Environment.Clear();
+            foreach (var (key, value) in childEnvironment)
+            {
+                startInfo.Environment[key] = value;
+            }
+        }
+
+        startInfo.Environment.Remove("NODE_DEBUG");
+        if (options.InternalTestOptions is { } testOptions)
+        {
+            foreach (var (key, value) in testOptions.ToEnvironment())
+            {
+                startInfo.Environment[key] = value;
+            }
+        }
+
+        // Set auth token in environment if provided
+        if (!string.IsNullOrEmpty(options.GitHubToken))
+        {
+            startInfo.Environment["COPILOT_SDK_AUTH_TOKEN"] = options.GitHubToken;
+        }
+
+        if (tcpConnection?.ConnectionToken is { Length: > 0 } token)
+        {
+            startInfo.Environment["COPILOT_CONNECTION_TOKEN"] = token;
+        }
+
+        if (!string.IsNullOrEmpty(options.BaseDirectory))
+        {
+            startInfo.Environment["COPILOT_HOME"] = options.BaseDirectory;
+        }
+
+        // In empty mode, disable the system keychain. Keytar reads from a
+        // process-wide store that's shared across sessions, which is unsafe
+        // for multi-tenant hosts. The runtime falls back to file-based
+        // credential storage scoped to COPILOT_HOME.
+        if (options.Mode == CopilotClientMode.Empty)
+        {
+            startInfo.Environment["COPILOT_DISABLE_KEYTAR"] = "1";
+        }
+
+        if (options.Mode != CopilotClientMode.Empty)
+        {
+            startInfo.Environment["COPILOT_RUNTIME_PROCESS_FILE_LOGGING"] = "1";
+        }
+
+        // Set telemetry environment variables if configured
+        ApplyTelemetryEnvironment((key, value) => startInfo.Environment[key] = value, options.Telemetry);
+
+        var cliProcess = new Process { StartInfo = startInfo };
+        try
+        {
+            var spawnTimestamp = Stopwatch.GetTimestamp();
+            cliProcess.Start();
+            LoggingHelpers.LogTiming(logger, LogLevel.Debug, null,
+                "CopilotClient.StartCliServerAsync subprocess spawned. Elapsed={Elapsed}",
+                spawnTimestamp);
+        }
+        catch
+        {
+            cliProcess.Dispose();
+            throw;
+        }
+
+        ProcessStderrPump? stderrPump = null;
+        int? detectedLocalhostTcpPort = null;
+        try
+        {
+            // Capture stderr for error messages and forward to logger.
+            // The pump has its own lifetime token and is later cancelled/observed
+            // by the owning Connection before the process is disposed.
+            stderrPump = ProcessStderrPump.Start(cliProcess, logger);
+
+            if (!useStdio)
+            {
+                // Wait for port announcement
+                var portWaitTimestamp = Stopwatch.GetTimestamp();
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                cts.CancelAfter(TimeSpan.FromSeconds(30));
+
+                try
+                {
+                    while (await cliProcess.StandardOutput.ReadLineAsync(cts.Token) is string line)
+                    {
+                        if (logger.IsEnabled(LogLevel.Debug))
+                        {
+                            logger.LogDebug("[CLI] {Line}", line);
+                        }
+
+                        if (ListeningOnPortRegex().Match(line) is { Success: true } match)
+                        {
+                            detectedLocalhostTcpPort = int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
+                            LoggingHelpers.LogTiming(logger, LogLevel.Debug, null,
+                                "CopilotClient.StartCliServerAsync TCP port wait complete. Elapsed={Elapsed}, Port={Port}",
+                                portWaitTimestamp,
+                                detectedLocalhostTcpPort.Value);
+                            break;
+                        }
+                    }
+
+                    if (detectedLocalhostTcpPort is null)
+                    {
+                        // The CLI's stdout closed (process exited). Drain stderr
+                        // before throwing so the surfaced exception includes the
+                        // final diagnostic lines.
+                        try { await stderrPump.Completion.WaitAsync(s_stderrPumpShutdownTimeout, CancellationToken.None); }
+                        catch (TimeoutException) { /* best-effort: include whatever was captured */ }
+                        catch (Exception ex) { logger.LogDebug(ex, "Runtime stderr pump faulted while draining"); }
+                        throw CreateCliExitedException("Runtime process exited unexpectedly", stderrPump.Buffer);
+                    }
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && cts.IsCancellationRequested)
+                {
+                    throw CreateCliExitedException("Timed out waiting for Copilot CLI to report its TCP listening port.", stderrPump.Buffer);
+                }
+            }
+
+            return (cliProcess, detectedLocalhostTcpPort, stderrPump);
+        }
+        catch
+        {
+            await CleanupCliProcessAsync(cliProcess, stderrPump, errors: null, logger);
+
+            throw;
+        }
+    }
+
+    private static string? GetBundledCliPath(out string searchedPath)
+    {
+        return GetBundledNativePath(OperatingSystem.IsWindows() ? "copilot.exe" : "copilot", out searchedPath);
+    }
+
+    private static Dictionary<string, string> BuildInProcessRuntimeEnvironment(CopilotClientOptions options)
+    {
+        var environment = new Dictionary<string, string>(
+            OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        var source = System.Environment.GetEnvironmentVariables().Cast<System.Collections.DictionaryEntry>()
+            .Select(entry => new KeyValuePair<string, string>((string)entry.Key, (string)entry.Value!));
+        // Assignment collapses Windows aliases before typed options take precedence.
+        foreach (var (name, value) in source)
+        {
+            environment[name] = value;
+        }
+        environment.Remove("NODE_DEBUG");
+        if (options.InternalTestOptions is { } testOptions)
+        {
+            foreach (var (key, value) in testOptions.ToEnvironment())
+            {
+                environment[key] = value;
+            }
+        }
+        if (!string.IsNullOrEmpty(options.GitHubToken))
+        {
+            environment["COPILOT_SDK_AUTH_TOKEN"] = options.GitHubToken!;
+        }
+        if (!string.IsNullOrEmpty(options.BaseDirectory))
+        {
+            environment["COPILOT_HOME"] = options.BaseDirectory!;
+            environment["COPILOT_CACHE_HOME"] = Path.Combine(options.BaseDirectory!, "cache");
+        }
+        if (options.Mode == CopilotClientMode.Empty)
+        {
+            environment["COPILOT_DISABLE_KEYTAR"] = "1";
+        }
+        ApplyTelemetryEnvironment((key, value) => environment[key] = value, options.Telemetry);
+        return environment;
+    }
+
+    private static List<string> BuildInProcessRuntimeArguments(CopilotClientOptions options)
+    {
+        var args = new List<string>();
+        if (options.LogLevel is { } logLevel && !string.IsNullOrEmpty(logLevel.Value))
+        {
+            args.AddRange(["--log-level", logLevel.Value]);
+        }
+        if (!string.IsNullOrEmpty(options.GitHubToken))
+        {
+            args.AddRange(["--auth-token-env", "COPILOT_SDK_AUTH_TOKEN"]);
+        }
+        var useLoggedInUser = options.UseLoggedInUser ?? string.IsNullOrEmpty(options.GitHubToken);
+        if (!useLoggedInUser)
+        {
+            args.Add("--no-auto-login");
+        }
+        if (options.SessionIdleTimeoutSeconds is > 0)
+        {
+            args.AddRange(["--session-idle-timeout", options.SessionIdleTimeoutSeconds.Value.ToString(CultureInfo.InvariantCulture)]);
+        }
+
+        var cliLoginSyncIntegrationId = System.Environment.GetEnvironmentVariable("GITHUB_COPILOT_INTEGRATION_ID")?.Trim();
+        if (!string.IsNullOrEmpty(cliLoginSyncIntegrationId))
+        {
+            args.Add($"--cli-login-sync-integration-id={cliLoginSyncIntegrationId}");
+        }
+        return args;
+    }
+
+    private static string? GetBundledNativePath(string binaryName, out string searchedPath)
+    {
+        // Always use portable RID (e.g., linux-x64) to match the build-time placement,
+        // since distro-specific RIDs (e.g., ubuntu.24.04-x64) are normalized at build time.
+        var rid = GetPortableRid()
+            ?? Path.GetFileName(RuntimeInformation.RuntimeIdentifier);
+        searchedPath = Path.Combine(AppContext.BaseDirectory, "runtimes", rid, "native", binaryName);
+        return File.Exists(searchedPath) ? searchedPath : null;
+    }
+
+    private static RuntimeLaunch GetBundledRuntimeLaunch()
+    {
+        _ = GetBundledNativePath(
+            OperatingSystem.IsWindows() ? "copilot-runtime.exe" : "copilot-runtime",
+            out var searchedWrapper);
+        var directory = Path.GetDirectoryName(searchedWrapper)!;
+        var runtimeNode = Path.Combine(directory, "runtime.node");
+        var explicitCliMarker = Path.Combine(directory, ExplicitBundledCliMarker);
+        if (!File.Exists(searchedWrapper)
+            && !File.Exists(runtimeNode)
+            && File.Exists(explicitCliMarker)
+            && GetBundledCliPath(out _) is { } explicitCli)
+        {
+            return new RuntimeLaunch(explicitCli, "Bundled explicit CLI");
+        }
+        return ValidateRuntimePair(searchedWrapper, "Bundled runtime");
+    }
+
+    private static RuntimeLaunch ValidateRuntimePair(string wrapper, string source)
+    {
+        var runtimeNode = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(wrapper))!, "runtime.node");
+        if (!File.Exists(wrapper))
+        {
+            throw new InvalidOperationException($"Copilot runtime wrapper not found at '{wrapper}'.");
+        }
+        if (!File.Exists(runtimeNode))
+        {
+            throw new InvalidOperationException(
+                $"Copilot runtime wrapper at '{wrapper}' is missing its adjacent runtime.node at '{runtimeNode}'.");
+        }
+        if (new FileInfo(wrapper).Length == 0 || new FileInfo(runtimeNode).Length == 0)
+        {
+            throw new InvalidOperationException("Copilot runtime wrapper and adjacent runtime.node must both be non-empty.");
+        }
+#if NET8_0_OR_GREATER
+        if (!OperatingSystem.IsWindows())
+        {
+            var mode = File.GetUnixFileMode(wrapper);
+            const UnixFileMode executeBits =
+                UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute;
+            if ((mode & executeBits) == 0)
+            {
+                File.SetUnixFileMode(wrapper, mode | executeBits);
+            }
+        }
+#endif
+        return new RuntimeLaunch(wrapper, source);
+    }
+
+    private sealed record RuntimeLaunch(string Executable, string Source);
+
+    private static string? GetPortableRid()
+    {
+        string os;
+        if (OperatingSystem.IsWindows()) os = "win";
+        else if (OperatingSystem.IsLinux())
+        {
+            os = RuntimeInformation.RuntimeIdentifier.StartsWith("linux-musl-", StringComparison.Ordinal)
+                ? "linux-musl"
+                : "linux";
+        }
+        else if (OperatingSystem.IsMacOS()) os = "osx";
+        else return null;
+
+        var arch = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture switch
+        {
+            System.Runtime.InteropServices.Architecture.X64 => "x64",
+            System.Runtime.InteropServices.Architecture.Arm64 => "arm64",
+            _ => null,
+        };
+
+        return arch != null ? $"{os}-{arch}" : null;
+    }
+
+    private static string ResolveRuntimePathForExplicitCli(string cliPath)
+    {
+        var fullEntrypoint = Path.GetFullPath(cliPath);
+        var directory = Path.GetDirectoryName(fullEntrypoint)
+            ?? throw new InvalidOperationException($"Could not determine directory for '{cliPath}'.");
+        var flatLibraryPath = Path.GetFullPath(
+            $"{directory}{Path.DirectorySeparatorChar}{FfiRuntimeHost.GetRuntimeLibraryFileName()}");
+        if (File.Exists(flatLibraryPath))
+        {
+            return flatLibraryPath;
+        }
+        var adjacentPrebuildPath = Path.Combine(directory, "runtime.node");
+        if (File.Exists(adjacentPrebuildPath))
+        {
+            return adjacentPrebuildPath;
+        }
+        var prebuildsLibraryPath = Path.Combine(
+            directory, "prebuilds", GetNapiPrebuildsFolderOrThrow(), "runtime.node");
+        return File.Exists(prebuildsLibraryPath)
+            ? prebuildsLibraryPath
+            : throw new InvalidOperationException(
+                $"FFI runtime library not found. Looked for '{flatLibraryPath}', '{adjacentPrebuildPath}', and '{prebuildsLibraryPath}'.");
+    }
+
+    /// <summary>
+    /// Returns the napi-rs prebuilds folder name for the current host — the
+    /// <c>&lt;node-platform&gt;-&lt;arch&gt;</c> convention (e.g. <c>win32-x64</c>,
+    /// <c>darwin-arm64</c>, <c>linux-x64</c>) under which the runtime ships
+    /// <c>prebuilds/&lt;folder&gt;/runtime.node</c>. This differs from the .NET RID
+    /// (<c>win-x64</c>/<c>osx-x64</c>) for Windows and macOS.
+    /// </summary>
+    private static string? GetNapiPrebuildsFolder()
+    {
+        string platform;
+        if (OperatingSystem.IsWindows()) platform = "win32";
+        else if (OperatingSystem.IsLinux())
+        {
+            platform = RuntimeInformation.RuntimeIdentifier.StartsWith("linux-musl-", StringComparison.Ordinal)
+                ? "linuxmusl"
+                : "linux";
+        }
+        else if (OperatingSystem.IsMacOS()) platform = "darwin";
+        else return null;
+
+        var arch = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture switch
+        {
+            System.Runtime.InteropServices.Architecture.X64 => "x64",
+            System.Runtime.InteropServices.Architecture.Arm64 => "arm64",
+            _ => null,
+        };
+
+        return arch != null ? $"{platform}-{arch}" : null;
+    }
+
+    private static string GetNapiPrebuildsFolderOrThrow() =>
+        GetNapiPrebuildsFolder()
+        ?? throw new InvalidOperationException("Could not determine a napi-rs prebuilds folder for FFI hosting.");
+
+    private static (string FileName, IEnumerable<string> Args) ResolveCliCommand(string cliPath, IEnumerable<string> args)
+    {
+        var isJsFile = cliPath.EndsWith(".js", StringComparison.OrdinalIgnoreCase);
+
+        if (isJsFile)
+        {
+            return ("node", new[] { cliPath }.Concat(args));
+        }
+
+        return (cliPath, args);
+    }
+
+    private async Task<Connection> ConnectToServerAsync(Process? cliProcess, string? tcpHost, int? tcpPort, ProcessStderrPump? stderrPump, CancellationToken cancellationToken, FfiRuntimeHost? ffiHost = null)
+    {
+        var setupTimestamp = Stopwatch.GetTimestamp();
+        NetworkStream? networkStream = null;
+        JsonRpc? rpc = null;
+
+        try
+        {
+            Stream inputStream, outputStream;
+
+            if (ffiHost is not null)
+            {
+                inputStream = ffiHost.ReceiveStream;
+                outputStream = ffiHost.SendStream;
+            }
+            else if (_connection is StdioRuntimeConnection)
+            {
+                if (cliProcess == null)
+                {
+                    throw new InvalidOperationException("Runtime process not started");
+                }
+
+                inputStream = cliProcess.StandardOutput.BaseStream;
+                outputStream = cliProcess.StandardInput.BaseStream;
+            }
+            else
+            {
+                if (tcpHost is null || tcpPort is null)
+                {
+                    throw new InvalidOperationException("Cannot connect because TCP host or port are not available");
+                }
+
+                var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+                try
+                {
+                    var tcpConnectTimestamp = Stopwatch.GetTimestamp();
+                    LogConnectingToCliServer(_logger, tcpHost, tcpPort.Value);
+                    await socket.ConnectAsync(tcpHost, tcpPort.Value, cancellationToken);
+                    LoggingHelpers.LogTiming(_logger, LogLevel.Debug, null,
+                        "CopilotClient.ConnectToServerAsync TCP connect complete. Elapsed={Elapsed}, Host={Host}, Port={Port}",
+                        tcpConnectTimestamp,
+                        tcpHost,
+                        tcpPort.Value);
+                }
+                catch
+                {
+                    socket.Dispose();
+                    throw;
+                }
+
+                inputStream = outputStream = networkStream = new NetworkStream(socket, ownsSocket: true);
+            }
+
+            rpc = new JsonRpc(
+                outputStream,
+                inputStream,
+                SerializerOptionsForMessageFormatter,
+                _logger);
+
+            var connection = new Connection(rpc, cliProcess, networkStream, stderrPump, ffiHost);
+            if (_options.RequestHandler is { } requestHandler)
+            {
+                connection.LlmInference = new LlmInferenceAdapter(requestHandler, () => connection.Server);
+            }
+            var handler = new RpcHandler(this);
+            rpc.SetLocalRpcNotification<string, SessionEvent?>("session.event", handler.OnSessionEvent);
+            rpc.SetLocalRpcMethod("session.lifecycle", handler.OnSessionLifecycle);
+            rpc.SetLocalRpcMethod("userInput.request", handler.OnUserInputRequest);
+            rpc.SetLocalRpcMethod("shellAuthentication.request", handler.OnShellAuthenticationRequest, singleObjectParam: true);
+            rpc.SetLocalRpcMethod("shellAuthentication.cancel", handler.OnShellAuthenticationCancel, singleObjectParam: true);
+            rpc.SetLocalRpcMethod("exitPlanMode.request", handler.OnExitPlanModeRequest);
+            rpc.SetLocalRpcMethod("autoModeSwitch.request", handler.OnAutoModeSwitchRequest);
+            rpc.SetLocalRpcMethod("hooks.invoke", handler.OnHooksInvoke);
+            rpc.SetLocalRpcMethod("systemMessage.transform", handler.OnSystemMessageTransform);
+            rpc.SetLocalRpcMethod("skillProvider.list", handler.OnSkillProviderList, singleObjectParam: true);
+            rpc.SetLocalRpcMethod("skillProvider.read", handler.OnSkillProviderRead, singleObjectParam: true);
+            rpc.SetLocalRpcMethod("memoryStore.store", handler.OnMemoryStore, singleObjectParam: true);
+            ClientSessionApiRegistration.RegisterClientSessionApiHandlers(rpc, sessionId =>
+            {
+                var session = GetSession(sessionId) ?? throw new ArgumentException($"Unknown session {sessionId}");
+                return session.ClientSessionApis;
+            });
+            if (_clientGlobalApis is not null)
+            {
+                if (_clientGlobalApis.EntraToken is EntraTokenAdapter entraTokenAdapter)
+                {
+                    entraTokenAdapter.Attach(rpc);
+                }
+                if (_clientGlobalApis.Installations is InstallationConfirmationAdapter installationConfirmationAdapter)
+                {
+                    installationConfirmationAdapter.Attach(rpc);
+                }
+                var connectionApis = new ClientGlobalApiHandlers
+                {
+                    Host = _clientGlobalApis.Host,
+                    ExtensionLaunchProvider = _clientGlobalApis.ExtensionLaunchProvider,
+                    Network = _clientGlobalApis.Network,
+                    LlmInference = connection.LlmInference,
+                    GitHubTelemetry = _clientGlobalApis.GitHubTelemetry,
+                    GitHubToken = _clientGlobalApis.GitHubToken,
+                    EntraToken = _clientGlobalApis.EntraToken,
+                    UiThread = _clientGlobalApis.UiThread,
+                    Installations = _clientGlobalApis.Installations,
+                };
+                _clientGlobalApis = connectionApis;
+                ClientGlobalApiRegistration.RegisterClientGlobalApiHandlers(rpc, connectionApis);
+            }
+            RegisterAhpHandlers(rpc);
+            if (cliProcess is not null)
+            {
+                RegisterRpcProcessExit(cliProcess, rpc);
+            }
+            rpc.StartListening();
+            ffiHost?.ConfigureUiThread(
+                _connection is InProcessRuntimeConnection { RunOnUiThread: not null });
+            LoggingHelpers.LogTiming(_logger, LogLevel.Debug, null,
+                "CopilotClient.ConnectToServerAsync transport setup complete. Elapsed={Elapsed}",
+                setupTimestamp);
+
+            connection.CloseCleanup = CancelExternalToolsWhenConnectionClosesAsync(connection);
+            _serverRpc = connection.Server;
+
+            return connection;
+        }
+        catch
+        {
+            try { rpc?.Dispose(); }
+            catch (Exception ex) when (IsRecoverableConnectionCleanupFailure(ex))
+            {
+                _logger.LogDebug(ex, "Failed to dispose JSON-RPC connection after startup failure");
+            }
+
+            if (networkStream is not null)
+            {
+                try { await networkStream.DisposeAsync(); }
+                catch (Exception ex) when (IsRecoverableConnectionCleanupFailure(ex))
+                {
+                    _logger.LogDebug(ex, "Failed to dispose TCP stream after startup failure");
+                }
+            }
+            throw;
+        }
+    }
+
+    private void RegisterRpcProcessExit(Process cliProcess, JsonRpc rpc)
+    {
+        try
+        {
+            cliProcess.EnableRaisingEvents = true;
+            cliProcess.Exited += (_, _) => DisposeRpcAfterProcessExit(rpc);
+            if (cliProcess.HasExited)
+            {
+                DisposeRpcAfterProcessExit(rpc);
+            }
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException)
+        {
+            _logger.LogDebug(ex, "Unable to monitor the Copilot CLI process for transport closure");
+        }
+    }
+
+    private void DisposeRpcAfterProcessExit(JsonRpc rpc)
+    {
+        try
+        {
+            rpc.Dispose(new ConnectionLostException());
+        }
+        catch (Exception ex) when (IsRecoverableConnectionCleanupFailure(ex))
+        {
+            _logger.LogDebug(ex, "Failed to dispose JSON-RPC connection after Copilot CLI process exit");
+        }
+    }
+
+    private static bool IsRecoverableConnectionCleanupFailure(Exception exception)
+        => exception is not OutOfMemoryException
+            and not StackOverflowException
+            and not AccessViolationException
+            and not AppDomainUnloadedException;
+
+    private async Task CancelExternalToolsWhenConnectionClosesAsync(Connection connection)
+    {
+        var rpc = connection.Rpc;
+        await Task.WhenAny(rpc.Completion).ConfigureAwait(false);
+        if (rpc.Completion.Exception is { } exception)
+        {
+            _logger.LogDebug(exception, "JSON-RPC connection completed with an error");
+        }
+
+        connection.LlmInference?.CancelPending();
+        var connectionTask = _connectionTask;
+        if (connectionTask is null
+            || connectionTask.Status != System.Threading.Tasks.TaskStatus.RanToCompletion
+            || !ReferenceEquals(connectionTask.Result.Rpc, rpc))
+        {
+            return;
+        }
+        DisconnectAhpHosts();
+        CancelPendingExternalTools();
+        CancelPendingShellAuthenticationRequests();
+    }
+
+    private void CancelPendingExternalTools(IEnumerable<CopilotSession>? sessions = null)
+    {
+        if (_connectionTask is { Status: System.Threading.Tasks.TaskStatus.RanToCompletion } connectionTask)
+        {
+            connectionTask.Result.LlmInference?.CancelPending();
+        }
+        foreach (var session in sessions ?? _sessions.Values)
+        {
+            session.ClearSkillProvider();
+            session.ClearMemoryStore();
+            session.CancelPendingExternalTools();
+        }
+    }
+
+    /// <summary>
+    /// Handles a <c>shellAuthentication.request</c>: a shell command the agent runs asks for a password or
+    /// another answer. Anything that isn't the handler's answer cancels the prompt.
+    /// </summary>
+    internal async Task<ShellAuthenticationResponse> HandleShellAuthenticationRequestAsync(ShellAuthenticationRequestParams request, CancellationToken cancellationToken)
+    {
+        if (request.SessionId is not { Length: > 0 } sessionId
+            || request.RequestId is not { Length: > 0 } requestId
+            || request.Program is not { } program
+            || request.Prompt is not { } prompt
+            || request.InputKind is not { } inputKind
+            || inputKind is not ("secret" or "text" or "confirm")
+            || GetSession(sessionId) is not { } session)
+        {
+            return ShellAuthenticationResponse.Cancel();
+        }
+        var key = (sessionId, requestId);
+        using var pending = new ShellAuthenticationCancellation(cancellationToken);
+        lock (_pendingShellAuthenticationRequests)
+        {
+            if (_pendingShellAuthenticationRequests.ContainsKey(key))
+            {
+                return ShellAuthenticationResponse.Cancel();
+            }
+            _pendingShellAuthenticationRequests[key] = pending;
+        }
+        try
+        {
+            var response = await session.HandleShellAuthenticationRequestAsync(new ShellAuthenticationRequest
+            {
+                SessionId = sessionId,
+                RequestId = requestId,
+                Program = program,
+                Prompt = prompt,
+                InputKind = new ShellAuthenticationInputKind(inputKind),
+                Command = request.Command ?? string.Empty,
+                Cwd = request.Cwd ?? string.Empty,
+            }, pending).ConfigureAwait(false);
+            // Stopping the client removes its open prompts before cancellation callbacks run,
+            // so an answer that arrives in between is refused.
+            lock (_pendingShellAuthenticationRequests)
+            {
+                return _pendingShellAuthenticationRequests.TryGetValue(key, out var current) && ReferenceEquals(current, pending)
+                    ? response
+                    : ShellAuthenticationResponse.Cancel();
+            }
+        }
+        finally
+        {
+            lock (_pendingShellAuthenticationRequests)
+            {
+                if (_pendingShellAuthenticationRequests.TryGetValue(key, out var current) && ReferenceEquals(current, pending))
+                {
+                    _pendingShellAuthenticationRequests.Remove(key);
+                }
+            }
+        }
+    }
+
+    /// <summary>Handles a <c>shellAuthentication.cancel</c>: the answer to an open prompt is no longer needed.</summary>
+    internal void CancelShellAuthenticationRequest(ShellAuthenticationCancelParams request)
+    {
+        if (request.SessionId is null || request.RequestId is null)
+        {
+            return;
+        }
+        ShellAuthenticationCancellation? pending;
+        lock (_pendingShellAuthenticationRequests)
+        {
+            _pendingShellAuthenticationRequests.TryGetValue((request.SessionId, request.RequestId), out pending);
+        }
+        pending?.Cancel();
+    }
+
+    /// <summary>Cancels every open secret prompt once the runtime can no longer use an answer.</summary>
+    private void CancelPendingShellAuthenticationRequests()
+    {
+        ShellAuthenticationCancellation[] pending;
+        lock (_pendingShellAuthenticationRequests)
+        {
+            pending = [.. _pendingShellAuthenticationRequests.Values];
+            _pendingShellAuthenticationRequests.Clear();
+        }
+        foreach (var source in pending)
+        {
+            source.Cancel();
+        }
+    }
+
+    /// <summary>
+    /// Cancels on the thread pool. Cancellation callbacks are consumer code that can block, so they
+    /// must not run on the connection's reader or on the thread that stops the client or disposes the session.
+    /// </summary>
+    internal static async Task CancelCallbacksAsync(CancellationTokenSource pending)
+    {
+        try
+        {
+#if NET8_0_OR_GREATER
+            await pending.CancelAsync().ConfigureAwait(false);
+#else
+            await Task.Run(() => pending.Cancel()).ConfigureAwait(false);
+#endif
+        }
+        catch (AggregateException)
+        {
+            // Cancellation callbacks are consumer code and must not disrupt the cancel or teardown.
+        }
+        catch (ObjectDisposedException)
+        {
+            // The request finished while it was being cancelled.
+        }
+    }
+
+    internal static JsonSerializerOptions SerializerOptionsForMessageFormatter { get; } = CreateSerializerOptions();
+
+    /// <summary>
+    /// Serializer options for caller-supplied <c>object</c> payloads, such as opaque-JSON RPC
+    /// arguments, hook outputs and elicitation answers. These can hold caller-defined types, such as
+    /// anonymous objects, that no source-generated context describes. Source-generated metadata is
+    /// used first; other types are serialized with reflection when the application enables it.
+    /// </summary>
+    internal static JsonSerializerOptions CallerPayloadSerializerOptions { get; } = CreateCallerPayloadSerializerOptions();
+
+    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "The reflection resolver is only added when JsonSerializer.IsReflectionEnabledByDefault is enabled.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "The reflection resolver is only added when JsonSerializer.IsReflectionEnabledByDefault is enabled.")]
+    private static JsonSerializerOptions CreateCallerPayloadSerializerOptions()
+    {
+        var options = new JsonSerializerOptions(SerializerOptionsForMessageFormatter)
+        {
+            // Opaque caller payloads distinguish explicit nulls from omitted protocol fields.
+            DefaultIgnoreCondition = JsonIgnoreCondition.Never
+        };
+        if (JsonSerializer.IsReflectionEnabledByDefault)
+        {
+            options.TypeInfoResolverChain.Add(new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver());
+        }
+        options.MakeReadOnly();
+        return options;
+    }
+
+    /// <summary>
+    /// Reads values taken from incoming messages, such as session history, as deep as the
+    /// JSON-RPC connection reads the messages themselves.
+    /// </summary>
+    internal static JsonSerializerOptions SerializerOptionsForIncomingMessages { get; } =
+        JsonRpc.CreateIncomingSerializerOptions(SerializerOptionsForMessageFormatter);
+
+    /// <summary>
+    /// Converts an arbitrary value into the <see cref="JsonElement"/> representation that wire
+    /// DTOs use for opaque-JSON fields. Pass-through for <see cref="JsonElement"/>, otherwise
+    /// serializes the runtime type using the SDK's source-generated contexts (e.g. primitives,
+    /// <c>Dictionary&lt;string, object&gt;</c>, generated DTOs). Other caller-defined types, such
+    /// as anonymous objects, are serialized with reflection when the application enables it.
+    /// </summary>
+    public static JsonElement? ToJsonElementForWire(object? value) => value switch
+    {
+        null => null,
+        JsonElement je => je,
+        // Concrete event types ignore Type; the base contract writes the discriminator.
+        SessionEvent sessionEvent => JsonSerializer.SerializeToElement(sessionEvent, SessionEventsJsonContext.Default.SessionEvent),
+        _ => JsonSerializer.SerializeToElement(value, CallerPayloadSerializerOptions.GetTypeInfo(value.GetType()))
+    };
+
+    private static JsonSerializerOptions CreateSerializerOptions()
+    {
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+        {
+            AllowOutOfOrderMetadataProperties = true,
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+        };
+
+        options.Converters.Add(SessionEventJsonConverter.Default);
+        options.TypeInfoResolverChain.Add(SessionEventJsonTypeInfoResolver.Default);
+        options.TypeInfoResolverChain.Add(ClientJsonContext.Default);
+        options.TypeInfoResolverChain.Add(TypesJsonContext.Default);
+        options.TypeInfoResolverChain.Add(CopilotSession.SessionJsonContext.Default);
+        options.TypeInfoResolverChain.Add(SessionEventsJsonContext.Default);
+        options.TypeInfoResolverChain.Add(GitHub.Copilot.Rpc.RpcJsonContext.Default);
+
+        options.MakeReadOnly();
+
+        return options;
+    }
+
+    internal CopilotSession? GetSession(string sessionId)
+    {
+        lock (_sessionAdmissionLock)
+        {
+            if (_sessionOperations.Count > 0)
+            {
+                // UUID prefixes are resolved against persisted sessions before publication.
+                foreach (var operation in _sessionOperations.OrderByDescending(operation => operation.SessionId.Length))
+                {
+                    if (operation.Session is { } pending
+                        && _connectionTask?.Status == System.Threading.Tasks.TaskStatus.RanToCompletion
+                        && ReferenceEquals(_connectionTask.Result.Rpc, operation.Rpc)
+                        && (string.Equals(sessionId, pending.SessionId, StringComparison.Ordinal)
+                            || (IsUuidSessionId(sessionId) && IsUuidSessionId(pending.SessionId)
+                                && string.Equals(sessionId, pending.SessionId, StringComparison.OrdinalIgnoreCase))))
+                    {
+                        return pending;
+                    }
+                }
+            }
+
+            _sessions.TryGetValue(sessionId, out var session);
+            return session;
+        }
+    }
+
+    private static bool SessionIdsOverlap(string left, string right) =>
+        string.Equals(left, right, StringComparison.Ordinal)
+        || (IsUuidSessionId(left) && IsUuidSessionId(right)
+            && (left.StartsWith(right, StringComparison.OrdinalIgnoreCase) || right.StartsWith(left, StringComparison.OrdinalIgnoreCase)));
+
+    private static bool IsUuidSessionId(string sessionId) =>
+        IsAbbreviatedUuidPrefix(sessionId) || Guid.TryParseExact(sessionId, "D", out _);
+
+    private static bool IsAbbreviatedUuidPrefix(string sessionId)
+    {
+        if (sessionId.Length is < 7 or >= 36)
+        {
+            return false;
+        }
+        for (var index = 0; index < sessionId.Length; index++)
+        {
+            if (!Uri.IsHexDigit(sessionId[index]) && !(index >= 7 && sessionId[index] == '-'))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private SessionOperation BeginSessionOperation(string sessionId, JsonRpc rpc, bool recoveryInitialization = false, bool initializeSession = false)
+    {
+        lock (_sessionAdmissionLock)
+        {
+            // Session initialization still builds and retires its callbacks through
+            // RegisterSession when shutdown has already closed admission.
+            if (!initializeSession && (_sessionAdmissionClosed
+                || _connectionTask?.Status != System.Threading.Tasks.TaskStatus.RanToCompletion
+                || !ReferenceEquals(_connectionTask.Result.Rpc, rpc)))
+            {
+                throw new IOException("Cannot operate on a session on a stopped connection.");
+            }
+            if (_sessionOperations.Any(operation => (recoveryInitialization || operation.RecoveryInitialization)
+                    && ReferenceEquals(operation.Rpc, rpc) && SessionIdsOverlap(operation.SessionId, sessionId))
+                || _sessions.Values.Any(session => session.AutoModeRecoveryCleanupTask is not null
+                    && ReferenceEquals(session.JsonRpc, rpc) && SessionIdsOverlap(session.SessionId, sessionId)))
+            {
+                // Admission is fail-fast, including callback reentry. Waiting here
+                // could depend on the very callback the runtime is waiting for.
+                throw new InvalidOperationException($"Session '{sessionId}' has a pending operation or rejected AutoModeRecovery cleanup.");
+            }
+            var operation = new SessionOperation(this, sessionId, rpc, recoveryInitialization);
+            _sessionOperations.Add(operation);
+            return operation;
+        }
+    }
+
+    private CopilotSession? FindResidentSession(string sessionId)
+    {
+        var matches = _sessions.Values.Where(session =>
+            string.Equals(session.SessionId, sessionId, StringComparison.Ordinal)
+            || (IsUuidSessionId(sessionId) && IsUuidSessionId(session.SessionId)
+                && string.Equals(session.SessionId, sessionId, StringComparison.OrdinalIgnoreCase))).Take(2).ToArray();
+        return matches.Length == 1 ? matches[0] : null;
+    }
+
+    private void BindResumedSession(SessionOperation operation, CopilotSession session, string canonicalId, bool resolvedPrefix, ref CopilotSession? previousSession)
+    {
+        lock (_sessionAdmissionLock)
+        {
+            if (!SessionIdsOverlap(operation.SessionId, canonicalId)
+                || (resolvedPrefix
+                    && !string.Equals(session.SessionId, canonicalId, StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new InvalidOperationException($"session.resume returned unrelated sessionId {canonicalId} for {operation.SessionId}.");
+            }
+            if (session.SessionId == canonicalId)
+            {
+                return;
+            }
+            if (_sessionAdmissionClosed
+                || _connectionTask?.Status != System.Threading.Tasks.TaskStatus.RanToCompletion
+                || !ReferenceEquals(_connectionTask.Result.Rpc, operation.Rpc))
+            {
+                throw new IOException("Cannot register a session on a stopped connection.");
+            }
+            session.RemoveFromClient();
+            if (previousSession is not null)
+            {
+                _sessions[previousSession.SessionId] = previousSession;
+            }
+            previousSession = _sessions.Values.FirstOrDefault(resident => string.Equals(resident.SessionId, canonicalId, StringComparison.OrdinalIgnoreCase));
+            previousSession?.RemoveFromClient();
+            session.SessionId = canonicalId;
+            _sessions[canonicalId] = session;
+        }
+    }
+
+    private void RestoreResumedSession(SessionOperation operation, CopilotSession session, CopilotSession? previousSession)
+    {
+        var restored = false;
+        lock (_sessionAdmissionLock)
+        {
+            operation.Session = null;
+            var removed = ((ICollection<KeyValuePair<string, CopilotSession>>)_sessions).Remove(new(session.SessionId, session));
+            if (previousSession is not null && removed && !_sessionAdmissionClosed
+                && _connectionTask?.Status == System.Threading.Tasks.TaskStatus.RanToCompletion
+                && ReferenceEquals(_connectionTask.Result.Rpc, session.JsonRpc))
+            {
+                restored = _sessions.TryAdd(previousSession.SessionId, previousSession);
+            }
+        }
+        if (!restored)
+        {
+            previousSession?.Retire();
+        }
+    }
+
+    private void RegisterSession(CopilotSession session, JsonRpc rpc, CopilotSession? replacedSession = null)
+    {
+        Exception error;
+        lock (_sessionAdmissionLock)
+        {
+            // A restarted connection must not admit setup that began on the stopped transport.
+            if (!_sessionAdmissionClosed
+                && _connectionTask?.Status == System.Threading.Tasks.TaskStatus.RanToCompletion
+                && ReferenceEquals(_connectionTask.Result.Rpc, rpc))
+            {
+                if (replacedSession is not null
+                    ? _sessions.TryUpdate(session.SessionId, session, replacedSession)
+                    : _sessions.TryAdd(session.SessionId, session))
+                {
+                    return;
+                }
+                error = new InvalidOperationException($"Session '{session.SessionId}' is already tracked by this client.");
+            }
+            else
+            {
+                error = new IOException("Cannot register a session on a stopped connection.");
+            }
+        }
+        session.Retire();
+        throw error;
+    }
+
+    /// <summary>
+    /// Disposes the <see cref="CopilotClient"/> synchronously.
+    /// </summary>
+    /// <remarks>
+    /// Prefer using <see cref="DisposeAsync"/> for better performance in async contexts.
+    /// </remarks>
+    public void Dispose()
+    {
+        DisposeAsync().AsTask().GetAwaiter().GetResult();
+    }
+
+    /// <summary>
+    /// Disposes the <see cref="CopilotClient"/> asynchronously.
+    /// </summary>
+    /// <returns>A <see cref="ValueTask"/> representing the asynchronous dispose operation.</returns>
+    /// <remarks>
+    /// This method calls <see cref="StopAsync"/> to gracefully shut down the runtime and
+    /// release all resources. Use <see cref="ForceStopAsync"/> for an immediate hard stop
+    /// that skips graceful runtime shutdown.
+    /// </remarks>
+    public async ValueTask DisposeAsync()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        await StopAsync();
+    }
+
+    private class RpcHandler(CopilotClient client)
+    {
+        public void OnSessionEvent(string sessionId, SessionEvent? @event)
+        {
+            var session = client.GetSession(sessionId);
+            if (session != null && @event != null)
+            {
+                session.DispatchEvent(@event);
+            }
+        }
+
+        public void OnSessionLifecycle(string type, string sessionId, JsonElement? metadata)
+        {
+            SessionLifecycleEvent evt = type switch
+            {
+                "session.created" => new SessionCreatedEvent(),
+                "session.deleted" => new SessionDeletedEvent(),
+                "session.updated" => new SessionUpdatedEvent(),
+                "session.foreground" => new SessionForegroundEvent(),
+                "session.background" => new SessionBackgroundEvent(),
+                _ => new SessionLifecycleEvent()
+            };
+
+            evt.Type = type;
+            evt.SessionId = sessionId;
+            if (metadata is not null)
+            {
+                evt.Metadata = metadata.Value.Deserialize(TypesJsonContext.Default.SessionLifecycleEventMetadata);
+            }
+
+            client.DispatchLifecycleEvent(evt);
+        }
+
+        public async ValueTask<UserInputRequestResponse> OnUserInputRequest(string sessionId, string question, IList<string>? choices = null, bool? allowFreeform = null, string? requestId = null)
+        {
+            var session = client.GetSession(sessionId) ?? throw new ArgumentException($"Unknown session {sessionId}");
+            var request = new UserInputRequest
+            {
+                Question = question,
+                Choices = choices,
+                AllowFreeform = allowFreeform,
+                RequestId = requestId
+            };
+
+            var result = await session.HandleUserInputRequestAsync(request);
+            return new UserInputRequestResponse(result.Answer, result.WasFreeform, result.DecisionContext);
+        }
+
+        public async ValueTask<ShellAuthenticationResponse> OnShellAuthenticationRequest(ShellAuthenticationRequestParams request, CancellationToken cancellationToken) =>
+            await client.HandleShellAuthenticationRequestAsync(request, cancellationToken).ConfigureAwait(false);
+
+        public ValueTask OnShellAuthenticationCancel(ShellAuthenticationCancelParams request, CancellationToken cancellationToken)
+        {
+            client.CancelShellAuthenticationRequest(request);
+            return default;
+        }
+
+        public async ValueTask<ExitPlanModeResult> OnExitPlanModeRequest(
+            string sessionId,
+            string summary,
+            string? planContent = null,
+            IList<string>? actions = null,
+            string? recommendedAction = null,
+            string? requestId = null)
+        {
+            var session = client.GetSession(sessionId) ?? throw new ArgumentException($"Unknown session {sessionId}");
+            var request = new ExitPlanModeRequest
+            {
+                Summary = summary,
+                PlanContent = planContent,
+                Actions = actions ?? [],
+                RecommendedAction = recommendedAction ?? "autopilot",
+                RequestId = requestId
+            };
+
+            return await session.HandleExitPlanModeRequestAsync(request);
+        }
+
+        public async ValueTask<AutoModeSwitchRequestResponse> OnAutoModeSwitchRequest(
+            string sessionId,
+            string? errorCode = null,
+            double? retryAfterSeconds = null,
+            AutoModeRecoveryContext? autoModeRecovery = null)
+        {
+            var session = client.GetSession(sessionId) ?? throw new ArgumentException($"Unknown session {sessionId}");
+            var response = await session.HandleAutoModeSwitchRequestAsync(new AutoModeSwitchRequest
+            {
+                ErrorCode = errorCode,
+                RetryAfterSeconds = retryAfterSeconds,
+                AutoModeRecovery = autoModeRecovery
+            });
+            return new AutoModeSwitchRequestResponse(response);
+        }
+
+        public async ValueTask<HooksInvokeResponse> OnHooksInvoke(string sessionId, string hookType, JsonElement input)
+        {
+            var session = client.GetSession(sessionId) ?? throw new ArgumentException($"Unknown session {sessionId}");
+            var output = await session.HandleHooksInvokeAsync(hookType, input);
+            return new HooksInvokeResponse(output);
+        }
+
+        public async ValueTask<SystemMessageTransformRpcResponse> OnSystemMessageTransform(string sessionId, JsonElement sections)
+        {
+            var session = client.GetSession(sessionId) ?? throw new ArgumentException($"Unknown session {sessionId}");
+            return await session.HandleSystemMessageTransformAsync(sections);
+        }
+
+        public async ValueTask<SkillProviderListResult> OnSkillProviderList(SkillProviderListRequest request, CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+            if (string.IsNullOrEmpty(request.SessionId))
+            {
+                throw new ArgumentException("Skill provider list request is missing a session id.");
+            }
+
+            var session = client.GetSession(request.SessionId)
+                ?? throw new InvalidOperationException($"No skill provider for session: {request.SessionId}");
+            return await session.HandleSkillProviderListAsync(cancellationToken);
+        }
+
+        public async ValueTask<SkillProviderReadResult> OnSkillProviderRead(SkillProviderReadRequest request, CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+            if (string.IsNullOrEmpty(request.SessionId) || string.IsNullOrEmpty(request.Name))
+            {
+                throw new ArgumentException("Skill provider read request is missing a session id or skill name.");
+            }
+
+            var session = client.GetSession(request.SessionId)
+                ?? throw new InvalidOperationException($"No skill provider for session: {request.SessionId}");
+            return await session.HandleSkillProviderReadAsync(request.Name, cancellationToken);
+        }
+
+#pragma warning disable GHCP001
+        public async ValueTask OnMemoryStore(StoredMemory request, CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+            var session = (string.IsNullOrEmpty(request.SessionId) ? null : client.GetSession(request.SessionId))
+                ?? throw new InvalidOperationException("Memory store owner is unavailable");
+            await session.HandleMemoryStoreAsync(request, cancellationToken);
+        }
+#pragma warning restore GHCP001
+
+    }
+
+    private class Connection(
+        JsonRpc rpc,
+        Process? cliProcess, // Set if we created the child process
+        NetworkStream? networkStream, // Set if using TCP
+        ProcessStderrPump? stderrPump = null, // Captures stderr for error messages
+        FfiRuntimeHost? ffiHost = null) // Set if using in-process FFI hosting
+    {
+        public Process? CliProcess => cliProcess;
+        public RuntimePortRegistration? OwnedRuntimePort { get; set; } // Set if we created the child process and it listens on TCP
+        public JsonRpc Rpc => rpc;
+        public LlmInferenceAdapter? LlmInference { get; set; }
+        public Task CloseCleanup { get; set; } = Task.CompletedTask;
+        public ServerRpc Server => field ?? Interlocked.CompareExchange(ref field, new(rpc), null) ?? field;
+        public NetworkStream? NetworkStream => networkStream;
+        public ProcessStderrPump? StderrPump => stderrPump;
+        public StringBuilder? StderrBuffer => stderrPump?.Buffer;
+        public FfiRuntimeHost? FfiHost => ffiHost;
+    }
+
+    private sealed class ProcessStderrPump
+    {
+        private readonly CancellationTokenSource _cancellationTokenSource = new();
+        private readonly Task _completion;
+
+        private ProcessStderrPump(Process process, ILogger logger)
+        {
+            _completion = Task.Run(() => PumpAsync(process, logger, _cancellationTokenSource.Token));
+        }
+
+        public StringBuilder Buffer { get; } = new();
+
+        public Task Completion => _completion;
+
+        public static ProcessStderrPump Start(Process process, ILogger logger)
+        {
+            return new ProcessStderrPump(process, logger);
+        }
+
+        public void Cancel() => _cancellationTokenSource.Cancel();
+
+        private async Task PumpAsync(Process process, ILogger logger, CancellationToken cancellationToken)
+        {
+            try
+            {
+                while (await process.StandardError.ReadLineAsync(cancellationToken) is string line)
+                {
+                    lock (Buffer)
+                    {
+                        Buffer.AppendLine(line);
+                    }
+
+                    LogCliStderrLine(logger, line);
+                }
+            }
+            catch (Exception e) when (cancellationToken.IsCancellationRequested
+                && e is OperationCanceledException or InvalidOperationException or ObjectDisposedException or IOException)
+            {
+            }
+            catch (Exception ex)
+            {
+                logger.LogDebug(ex, "Runtime stderr pump stopped unexpectedly");
+            }
+        }
+    }
+
+    private static class ProcessArgumentEscaper
+    {
+        public static string Escape(string arg)
+        {
+            if (string.IsNullOrEmpty(arg)) return "\"\"";
+            if (!arg.Contains(' ') && !arg.Contains('"')) return arg;
+            return "\"" + arg.Replace("\"", "\\\"") + "\"";
+        }
+    }
+
+    // Request/Response types for RPC
+    internal record CreateSessionRequest(
+        string? Model,
+        string? SessionId,
+        string? Name,
+        string? ClientName,
+        string? ReasoningEffort,
+        bool? AllowMultipleToolCalls,
+        ReasoningSummary? ReasoningSummary,
+        ContextTier? ContextTier,
+        IList<ToolDefinition>? Tools,
+        bool? EnableCitations,
+        bool? EnableFileChangeTracking,
+        SystemMessageConfig? SystemMessage,
+        AskUserVariant? AskUserVariant,
+        IList<string>? AvailableTools,
+        IList<string>? ExcludedTools,
+        [property: JsonPropertyName("excludedBuiltinAgents")] IList<string>? ExcludedBuiltInAgents,
+        [property: JsonPropertyName("includedBuiltinAgents")] IList<string>? IncludedBuiltInAgents,
+        ProviderConfig? Provider,
+        CapiSessionOptions? Capi,
+        bool? EnableSessionTelemetry,
+        bool? IsExperimentalMode,
+        bool? RequestPermission,
+        bool? RequestUserInput,
+        bool? RequestExitPlanMode,
+        bool? RequestAutoModeSwitch,
+        bool? Hooks,
+        string? WorkingDirectory,
+        bool? Streaming,
+        bool? IncludeSubAgentStreamingEvents,
+        IDictionary<string, McpServerConfig>? McpServers,
+        DiagnosticsConfiguration? Diagnostics,
+        LifecycleDiagnosticsConfiguration? LifecycleDiagnostics,
+        McpOAuthTokenStorageMode? McpOAuthTokenStorage,
+        string? AuthClientIdMetadataUrl,
+        string? EnvValueMode,
+        IList<CustomAgentConfig>? CustomAgents,
+        DefaultAgentConfig? DefaultAgent,
+        string? Agent,
+        [property: JsonPropertyName("configDir")] string? ConfigDirectory,
+        bool? EnableConfigDiscovery,
+        [property: JsonPropertyName("customAgentsLocalOnly")] bool? CustomAgentsLocalOnly,
+        bool? SkipEmbeddingRetrieval,
+        EmbeddingCacheStorageMode? EmbeddingCacheStorage,
+        string? OrganizationCustomInstructions,
+        bool? EnableOnDemandInstructionDiscovery,
+        bool? EnableFileHooks,
+        bool? EnableHostGitOperations,
+        bool? EnableSessionStore,
+        bool? EnableSkills,
+        IList<string>? SkillDirectories,
+        IList<string>? DisabledSkills,
+        InfiniteSessionConfig? InfiniteSessions,
+        SessionLimitsConfig? SessionLimits,
+        AutopilotOptions? Autopilot,
+        IList<CommandWireDefinition>? Commands = null,
+        bool? RequestElicitation = null,
+        bool? RequestMcpApps = null,
+        bool? RequestShellAuthentication = null,
+        string? Traceparent = null,
+        string? Tracestate = null,
+        ModelCapabilitiesOverride? ModelCapabilities = null,
+        string? GitHubToken = null,
+        [property: JsonPropertyName("gitHubTokenProviderRegistrationId")] string? GitHubTokenProviderRegistrationId = null,
+        RemoteSessionMode? RemoteSession = null,
+        CloudSessionOptions? Cloud = null,
+        string? TrustWorkingDirectory = null,
+        bool? RefreshCustomInstructions = null,
+        IList<string>? InstructionDirectories = null,
+        IList<string>? AgentDirectories = null,
+        IList<string>? HookDirectories = null,
+        IList<string>? PluginDirectories = null,
+        [property: JsonPropertyName("disabledMcpServers")] IList<string>? DisabledMcpServers = null,
+        [property: JsonPropertyName("sandboxConfig")] SandboxConfig? SandboxConfig = null,
+        LargeToolOutputConfig? LargeOutput = null,
+        ToolSearchConfig? ToolSearch = null,
+        ImageGenerationConfig? ImageGeneration = null,
+        MemoryConfiguration? Memory = null,
+#pragma warning disable GHCP001
+        IList<CanvasDeclaration>? Canvases = null,
+        bool? RequestCanvasRenderer = null,
+        bool? RequestExtensions = null,
+        string? ExtensionSdkPath = null,
+        ExtensionInfo? ExtensionInfo = null,
+        CanvasProviderIdentity? CanvasProvider = null,
+        IList<NamedProviderConfig>? Providers = null,
+        IList<ProviderModelConfig>? Models = null,
+        [property: JsonPropertyName("featureFlags")] IDictionary<string, bool>? FeatureFlags = null,
+        [property: JsonPropertyName("expAssignments")] CopilotExpAssignmentResponse? ExpAssignments = null,
+        [property: JsonPropertyName("enableManagedSettings")] bool? EnableManagedSettings = null,
+        [property: JsonPropertyName("excludedManagedSettings")] IList<string>? ExcludedManagedSettings = null,
+        [property: JsonPropertyName("enforceManagedModelDefaults")] bool? EnforceManagedModelDefaults = null,
+        [property: JsonPropertyName("interactiveUser")] bool? InteractiveUser = null,
+        [property: JsonPropertyName("permissionMode")] PermissionMode? PermissionMode = null,
+        [property: JsonPropertyName("managedSettings")] ManagedSettings? ManagedSettings = null,
+        bool? EnableGitHubTelemetryForwarding = null,
+        [property: JsonPropertyName("githubMcpToolConfig")] GitHubMcpToolConfig? GitHubMcpToolConfig = null,
+        IList<string>? AdditionalDirectories = null,
+        bool? HasSkillProvider = null,
+        bool? RequestAutoModeRecovery = null,
+        bool? HasMemoryStore = null);
+#pragma warning restore GHCP001
+
+    internal record ToolDefinition(
+        string Name,
+        string? Description,
+        JsonElement Parameters, /* JSON schema */
+        bool? OverridesBuiltInTool = null,
+        bool? SkipPermission = null,
+        bool? HasHandler = null,
+        CopilotToolDefer? Defer = null,
+        IDictionary<string, JsonNode?>? Metadata = null,
+        bool? IsTerminal = null,
+        ProtocolExternalToolNamespace? Namespace = null,
+        bool? Idempotent = null)
+    {
+        public static ToolDefinition FromAIFunction(AIFunctionDeclaration function)
+        {
+            var overrides = function.AdditionalProperties.TryGetValue(CopilotTool.OverridesBuiltInToolKey, out var val) && val is true;
+            var skipPerm = function.AdditionalProperties.TryGetValue(CopilotTool.SkipPermissionKey, out var skipVal) && skipVal is true;
+            var defer = function.AdditionalProperties.TryGetValue(CopilotTool.DeferKey, out var deferVal) && deferVal is CopilotToolDefer d ? d : (CopilotToolDefer?)null;
+            var metadata = function.AdditionalProperties.TryGetValue(CopilotTool.MetadataKey, out var metaVal) && metaVal is IDictionary<string, JsonNode?> m ? m : null;
+            var isTerminal = function.AdditionalProperties.TryGetValue(CopilotTool.IsTerminalKey, out var terminalVal) && terminalVal is true;
+            var idempotent = function.AdditionalProperties.TryGetValue(CopilotTool.IdempotentKey, out var idempotentVal) && idempotentVal is true;
+            var toolNamespace = function.AdditionalProperties.TryGetValue(CopilotTool.NamespaceKey, out var namespaceVal) && namespaceVal is ToolNamespace ns
+                ? new ProtocolExternalToolNamespace { Name = ns.Name, Description = ns.Description }
+                : null;
+            return new ToolDefinition(function.Name, function.Description, function.JsonSchema,
+                overrides ? true : null,
+                skipPerm ? true : null,
+                function.GetService<AIFunction>() is not null,
+                defer,
+                metadata,
+                isTerminal ? true : null,
+                toolNamespace,
+                idempotent ? true : null);
+        }
+    }
+
+    internal record CreateSessionResponse(
+        string SessionId,
+        string? WorkspacePath,
+        SessionCapabilities? Capabilities = null,
+#pragma warning disable GHCP001
+        IList<OpenCanvasInstance>? OpenCanvases = null,
+        PermissionsSetModeResult? PermissionModeResult = null);
+#pragma warning restore GHCP001
+
+    internal record ResumeSessionRequest(
+        string SessionId,
+        string? ClientName,
+        string? Model,
+        string? ReasoningEffort,
+        bool? AllowMultipleToolCalls,
+        ReasoningSummary? ReasoningSummary,
+        ContextTier? ContextTier,
+        IList<ToolDefinition>? Tools,
+        bool? EnableCitations,
+        bool? EnableFileChangeTracking,
+        SystemMessageConfig? SystemMessage,
+        AskUserVariant? AskUserVariant,
+        IList<string>? AvailableTools,
+        IList<string>? ExcludedTools,
+        [property: JsonPropertyName("excludedBuiltinAgents")] IList<string>? ExcludedBuiltInAgents,
+        [property: JsonPropertyName("includedBuiltinAgents")] IList<string>? IncludedBuiltInAgents,
+        ProviderConfig? Provider,
+        CapiSessionOptions? Capi,
+        bool? EnableSessionTelemetry,
+        bool? IsExperimentalMode,
+        bool? RequestPermission,
+        bool? RequestUserInput,
+        bool? RequestExitPlanMode,
+        bool? RequestAutoModeSwitch,
+        bool? Hooks,
+        string? WorkingDirectory,
+        [property: JsonPropertyName("configDir")] string? ConfigDirectory,
+        bool? EnableConfigDiscovery,
+        [property: JsonPropertyName("customAgentsLocalOnly")] bool? CustomAgentsLocalOnly,
+        bool? SkipEmbeddingRetrieval,
+        EmbeddingCacheStorageMode? EmbeddingCacheStorage,
+        string? OrganizationCustomInstructions,
+        bool? EnableOnDemandInstructionDiscovery,
+        bool? EnableFileHooks,
+        bool? EnableHostGitOperations,
+        bool? EnableSessionStore,
+        bool? EnableSkills,
+        [property: JsonPropertyName("disableResume")] bool? SuppressResumeEvent,
+        bool? Streaming,
+        bool? IncludeSubAgentStreamingEvents,
+        IDictionary<string, McpServerConfig>? McpServers,
+        DiagnosticsConfiguration? Diagnostics,
+        LifecycleDiagnosticsConfiguration? LifecycleDiagnostics,
+        McpOAuthTokenStorageMode? McpOAuthTokenStorage,
+        string? AuthClientIdMetadataUrl,
+        string? EnvValueMode,
+        IList<CustomAgentConfig>? CustomAgents,
+        DefaultAgentConfig? DefaultAgent,
+        string? Agent,
+        IList<string>? SkillDirectories,
+        IList<string>? DisabledSkills,
+        InfiniteSessionConfig? InfiniteSessions,
+        SessionLimitsConfig? SessionLimits,
+        AutopilotOptions? Autopilot,
+        IList<CommandWireDefinition>? Commands = null,
+        bool? RequestElicitation = null,
+        bool? RequestMcpApps = null,
+        bool? RequestShellAuthentication = null,
+        string? Traceparent = null,
+        string? Tracestate = null,
+        ModelCapabilitiesOverride? ModelCapabilities = null,
+        string? GitHubToken = null,
+        [property: JsonPropertyName("gitHubTokenProviderRegistrationId")] string? GitHubTokenProviderRegistrationId = null,
+        RemoteSessionMode? RemoteSession = null,
+        bool? ContinuePendingWork = null,
+        IList<string>? InstructionDirectories = null,
+        IList<string>? AgentDirectories = null,
+        IList<string>? HookDirectories = null,
+        IList<string>? PluginDirectories = null,
+        [property: JsonPropertyName("disabledMcpServers")] IList<string>? DisabledMcpServers = null,
+        [property: JsonPropertyName("sandboxConfig")] SandboxConfig? SandboxConfig = null,
+        LargeToolOutputConfig? LargeOutput = null,
+        ToolSearchConfig? ToolSearch = null,
+        ImageGenerationConfig? ImageGeneration = null,
+        MemoryConfiguration? Memory = null,
+#pragma warning disable GHCP001
+        IList<CanvasDeclaration>? Canvases = null,
+        bool? RequestCanvasRenderer = null,
+        bool? RequestExtensions = null,
+        string? ExtensionSdkPath = null,
+        ExtensionInfo? ExtensionInfo = null,
+        CanvasProviderIdentity? CanvasProvider = null,
+        IList<OpenCanvasInstance>? OpenCanvases = null,
+        IList<NamedProviderConfig>? Providers = null,
+        IList<ProviderModelConfig>? Models = null,
+        [property: JsonPropertyName("featureFlags")] IDictionary<string, bool>? FeatureFlags = null,
+        [property: JsonPropertyName("expAssignments")] CopilotExpAssignmentResponse? ExpAssignments = null,
+        [property: JsonPropertyName("enableManagedSettings")] bool? EnableManagedSettings = null,
+        [property: JsonPropertyName("excludedManagedSettings")] IList<string>? ExcludedManagedSettings = null,
+        [property: JsonPropertyName("enforceManagedModelDefaults")] bool? EnforceManagedModelDefaults = null,
+        [property: JsonPropertyName("interactiveUser")] bool? InteractiveUser = null,
+        [property: JsonPropertyName("permissionMode")] PermissionMode? PermissionMode = null,
+        [property: JsonPropertyName("managedSettings")] ManagedSettings? ManagedSettings = null,
+        bool? EnableGitHubTelemetryForwarding = null,
+        [property: JsonPropertyName("githubMcpToolConfig")] GitHubMcpToolConfig? GitHubMcpToolConfig = null,
+        IList<string>? AdditionalDirectories = null,
+        bool? AllowTranscriptRecovery = null,
+        bool? HasSkillProvider = null,
+        bool? RequestAutoModeRecovery = null,
+        bool? HasMemoryStore = null);
+#pragma warning restore GHCP001
+
+    internal record ResumeSessionResponse(
+        string SessionId,
+        string? WorkspacePath,
+        SessionCapabilities? Capabilities = null,
+#pragma warning disable GHCP001
+        IList<OpenCanvasInstance>? OpenCanvases = null,
+        TranscriptRecoveryReport? TranscriptRecovery = null,
+        PermissionsSetModeResult? PermissionModeResult = null);
+#pragma warning restore GHCP001
+
+    internal record CommandWireDefinition(
+        string Name,
+        string Description);
+
+    internal record GetLastSessionIdResponse(
+        string? SessionId);
+
+    internal record DeleteSessionRequest(
+        string SessionId);
+
+    internal record DeleteSessionResponse(
+        bool Success,
+        string? Error);
+
+    internal record ListSessionsRequest(
+        SessionListFilter? Filter);
+
+    internal record ListSessionsResponse(
+        List<SessionMetadata> Sessions);
+
+    internal record GetSessionMetadataRequest(
+        string SessionId);
+
+    internal record GetSessionMetadataResponse(
+        SessionMetadata? Session);
+
+    internal record ConnectHandshakeRequest(
+        string? Token,
+        [property: JsonPropertyName("enableGitHubTelemetryForwarding")] bool? EnableGitHubTelemetryForwarding = null,
+        [property: JsonPropertyName("clientInfo")] ConnectHandshakeClientInfo? ClientInfo = null,
+        [property: JsonPropertyName("supportedTaskKinds")] IList<TaskKind>? SupportedTaskKinds = null,
+        [property: JsonPropertyName("entra")] EntraAuthConfig? Entra = null,
+        [property: JsonPropertyName("entraTokenProvider")] bool? EntraTokenProvider = null);
+
+    internal record ConnectHandshakeClientInfo(
+        [property: JsonPropertyName("editorName")] string? EditorName = null,
+        [property: JsonPropertyName("editorVersion")] string? EditorVersion = null,
+        [property: JsonPropertyName("extensionName")] string? ExtensionName = null,
+        [property: JsonPropertyName("extensionVersion")] string? ExtensionVersion = null)
+    {
+        /// <summary>
+        /// Maps the public <see cref="CopilotClientInfo"/> onto the connect wire
+        /// shape, dropping empty fields. Returns <see langword="null"/> when no
+        /// identity was supplied so the handshake omits <c>clientInfo</c> and the
+        /// runtime keeps its default attribution.
+        /// </summary>
+        public static ConnectHandshakeClientInfo? From(CopilotClientInfo? info)
+        {
+            if (info is null)
+            {
+                return null;
+            }
+
+            var editorName = NullIfEmpty(info.ApplicationName);
+            var editorVersion = NullIfEmpty(info.ApplicationVersion);
+            var extensionName = NullIfEmpty(info.IntegrationName);
+            var extensionVersion = NullIfEmpty(info.IntegrationVersion);
+            if (editorName is null && editorVersion is null && extensionName is null && extensionVersion is null)
+            {
+                return null;
+            }
+
+            return new ConnectHandshakeClientInfo(editorName, editorVersion, extensionName, extensionVersion);
+        }
+
+        private static string? NullIfEmpty(string? value) => string.IsNullOrEmpty(value) ? null : value;
+    }
+
+    internal record BuiltinPluginDirectoriesRequest(
+        string[] Paths);
+
+    internal record SetForegroundSessionRequest(
+        string SessionId);
+
+    internal record UserInputRequestResponse(
+        string Answer,
+        bool WasFreeform,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] PermissionDecisionContext? DecisionContext = null);
+
+    internal record ShellAuthenticationRequestParams(
+        string? SessionId,
+        string? RequestId,
+        string? Program,
+        string? Prompt,
+        string? InputKind,
+        string? Command = null,
+        string? Cwd = null);
+
+    internal record ShellAuthenticationCancelParams(
+        string? SessionId,
+        string? RequestId);
+
+    internal record SkillProviderListRequest(
+        string SessionId);
+
+#pragma warning disable GHCP001
+    internal record SkillProviderListResult(
+        IReadOnlyList<SkillProviderDescriptor> Skills);
+#pragma warning restore GHCP001
+
+    internal record SkillProviderReadRequest(
+        string SessionId,
+        string Name);
+
+    internal record SkillProviderReadResult(
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Markdown);
+
+    internal record AutoModeSwitchRequestResponse(
+        AutoModeSwitchResponse Response);
+
+    internal record HooksInvokeResponse(
+        object? Output);
+
+    [JsonSourceGenerationOptions(
+        JsonSerializerDefaults.Web,
+        AllowOutOfOrderMetadataProperties = true,
+        NumberHandling = JsonNumberHandling.AllowReadingFromString,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
+    [JsonSerializable(typeof(CreateSessionRequest))]
+    [JsonSerializable(typeof(SessionConfig))]
+    [JsonSerializable(typeof(ResumeSessionConfig))]
+    [JsonSerializable(typeof(AhpMaterializeRequest))]
+    [JsonSerializable(typeof(AhpMaterializeResult))]
+    [JsonSerializable(typeof(AhpReleaseRequest))]
+    [JsonSerializable(typeof(AhpValidateAuthenticationRequest))]
+    [JsonSerializable(typeof(AhpAuthenticationCancelled))]
+    [JsonSerializable(typeof(AhpAuthenticationResult))]
+    [JsonSerializable(typeof(CreateSessionResponse))]
+    [JsonSerializable(typeof(AutoModeSwitchRequest))]
+    [JsonSerializable(typeof(AutoModeRecoveryContext))]
+    [JsonSerializable(typeof(AutoModeSwitchRequestResponse))]
+    [JsonSerializable(typeof(AutoModeSwitchResponse))]
+    [JsonSerializable(typeof(CustomAgentConfig))]
+    [JsonSerializable(typeof(DeleteSessionRequest))]
+    [JsonSerializable(typeof(DeleteSessionResponse))]
+    [JsonSerializable(typeof(ExitPlanModeRequest))]
+    [JsonSerializable(typeof(ExitPlanModeResult))]
+    [JsonSerializable(typeof(GetLastSessionIdResponse))]
+    [JsonSerializable(typeof(HooksInvokeResponse))]
+    [JsonSerializable(typeof(SkillProviderListRequest))]
+#pragma warning disable GHCP001
+    [JsonSerializable(typeof(SkillProviderListResult))]
+#pragma warning restore GHCP001
+    [JsonSerializable(typeof(SkillProviderReadRequest))]
+    [JsonSerializable(typeof(SkillProviderReadResult))]
+#pragma warning disable GHCP001
+    [JsonSerializable(typeof(StoredMemory))]
+#pragma warning restore GHCP001
+    [JsonSerializable(typeof(ListSessionsRequest))]
+    [JsonSerializable(typeof(ListSessionsResponse))]
+    [JsonSerializable(typeof(GetSessionMetadataRequest))]
+    [JsonSerializable(typeof(GetSessionMetadataResponse))]
+    [JsonSerializable(typeof(ConnectHandshakeRequest))]
+    [JsonSerializable(typeof(ConnectHandshakeClientInfo))]
+    [JsonSerializable(typeof(BuiltinPluginDirectoriesRequest))]
+    [JsonSerializable(typeof(McpOAuthTokenStorageMode))]
+    [JsonSerializable(typeof(EmbeddingCacheStorageMode))]
+    [JsonSerializable(typeof(ModelCapabilitiesOverride))]
+    [JsonSerializable(typeof(ProviderConfig))]
+    [JsonSerializable(typeof(CapiSessionOptions))]
+    [JsonSerializable(typeof(NamedProviderConfig))]
+    [JsonSerializable(typeof(ProviderModelConfig))]
+    [JsonSerializable(typeof(SessionLimitsConfig))]
+    [JsonSerializable(typeof(ResumeSessionRequest))]
+    [JsonSerializable(typeof(ResumeSessionResponse))]
+    [JsonSerializable(typeof(SessionCapabilities))]
+    [JsonSerializable(typeof(SessionUiCapabilities))]
+    [JsonSerializable(typeof(SessionMetadata))]
+    [JsonSerializable(typeof(SetForegroundSessionRequest))]
+    [JsonSerializable(typeof(SystemMessageConfig))]
+    [JsonSerializable(typeof(SystemMessageTransformRpcResponse))]
+    [JsonSerializable(typeof(CommandWireDefinition))]
+    [JsonSerializable(typeof(ToolDefinition))]
+    [JsonSerializable(typeof(CopilotToolDefer))]
+    [JsonSerializable(typeof(ToolResultAIContent))]
+    [JsonSerializable(typeof(ToolResultObject))]
+    [JsonSerializable(typeof(ShellAuthenticationCancelParams))]
+    [JsonSerializable(typeof(ShellAuthenticationRequestParams))]
+    [JsonSerializable(typeof(ShellAuthenticationResponse))]
+    [JsonSerializable(typeof(UserInputRequestResponse))]
+    [JsonSerializable(typeof(UserInputRequest))]
+    [JsonSerializable(typeof(UserInputResponse))]
+    internal partial class ClientJsonContext : JsonSerializerContext;
+
+#if NET8_0_OR_GREATER
+    [GeneratedRegex(@"listening on port ([0-9]+)", RegexOptions.IgnoreCase)]
+    private static partial Regex ListeningOnPortRegex();
+#else
+    private static readonly Regex s_listeningOnPortRegex = new(@"listening on port ([0-9]+)", RegexOptions.IgnoreCase);
+
+    private static Regex ListeningOnPortRegex() => s_listeningOnPortRegex;
+#endif
+}
+
+/// <summary>
+/// Wraps a <see cref="ToolResultObject"/> as <see cref="AIContent"/> to pass structured tool results
+/// back through Microsoft.Extensions.AI without JSON serialization.
+/// </summary>
+/// <param name="toolResult">The tool result to wrap.</param>
+public sealed class ToolResultAIContent(ToolResultObject toolResult) : AIContent
+{
+    /// <summary>
+    /// Gets the underlying <see cref="ToolResultObject"/>.
+    /// </summary>
+    public ToolResultObject Result => toolResult;
+}
+
+/// <summary>
+/// Bridges the generated <see cref="Rpc.IGitHubTelemetryHandler"/> client-global handler to
+/// the public <c>OnGitHubTelemetry</c> callback, forwarding the generated
+/// <see cref="Rpc.GitHubTelemetryNotification"/> payload unchanged.
+/// </summary>
+[Experimental(Diagnostics.Experimental)]
+internal sealed class GitHubTelemetryAdapter(Func<Rpc.GitHubTelemetryNotification, Task> callback, ILogger logger) : Rpc.IGitHubTelemetryHandler
+{
+    private readonly Func<Rpc.GitHubTelemetryNotification, Task> _callback = callback ?? throw new ArgumentNullException(nameof(callback));
+    private readonly ILogger _logger = logger ?? NullLogger.Instance;
+
+    public async Task EventAsync(Rpc.GitHubTelemetryNotification request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        try
+        {
+            await _callback(request).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error handling gitHubTelemetry.event notification");
+        }
+    }
+}
