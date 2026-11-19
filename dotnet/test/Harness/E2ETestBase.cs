@@ -2,8 +2,8 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
-using Microsoft.Copilot.Rpc;
-using Microsoft.Copilot.Test.Harness;
+using GitHub.Copilot.Rpc;
+using GitHub.Copilot.Test.Harness;
 using Microsoft.Extensions.Logging;
 using System.Data;
 using System.Diagnostics;
@@ -11,7 +11,7 @@ using System.Reflection;
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Microsoft.Copilot.Test;
+namespace GitHub.Copilot.Test;
 
 public abstract class E2ETestBase : IClassFixture<E2ETestFixture>, IAsyncLifetime
 {
@@ -69,6 +69,7 @@ public abstract class E2ETestBase : IClassFixture<E2ETestFixture>, IAsyncLifetim
 
     public async Task InitializeAsync()
     {
+        Ctx.PrepareForTest();
         await Ctx.CleanupAfterTestAsync();
         await Ctx.ConfigureForTestAsync(_snapshotCategory, _testName, _replayOnly);
     }
@@ -129,10 +130,10 @@ public abstract class E2ETestBase : IClassFixture<E2ETestFixture>, IAsyncLifetim
     /// Creates a session with a default config that approves all permissions.
     /// Convenience wrapper for E2E tests.
     /// </summary>
-    protected Task<CopilotSession> CreateSessionAsync(CreateSessionOptions? config = null)
+    protected Task<CopilotSession> CreateSessionAsync(SessionConfig? config = null)
     {
-        config ??= new CreateSessionOptions();
-        config.Permissions.OnRequest ??= PermissionHandler.ApproveAll;
+        config ??= new SessionConfig();
+        config.OnPermissionRequest ??= PermissionHandler.ApproveAll;
         return Ctx.CreateSessionAsync(Client, config);
     }
 
@@ -140,10 +141,10 @@ public abstract class E2ETestBase : IClassFixture<E2ETestFixture>, IAsyncLifetim
     /// Resumes a session with a default config that approves all permissions.
     /// Convenience wrapper for E2E tests.
     /// </summary>
-    protected async Task<CopilotSession> ResumeSessionAsync(string sessionId, ResumeSessionOptions? config = null)
+    protected async Task<CopilotSession> ResumeSessionAsync(string sessionId, ResumeSessionConfig? config = null)
     {
-        config ??= new ResumeSessionOptions();
-        config.Permissions.OnRequest ??= PermissionHandler.ApproveAll;
+        config ??= new ResumeSessionConfig();
+        config.OnPermissionRequest ??= PermissionHandler.ApproveAll;
 
         CopilotClient client;
         if (E2ETestContext.UsesInProcessTransport)
@@ -158,8 +159,7 @@ public abstract class E2ETestBase : IClassFixture<E2ETestFixture>, IAsyncLifetim
 
             client = Ctx.CreateClient(options: new CopilotClientOptions
             {
-                Mode = CopilotClientMode.CodingAgent,
-                Runtime = RuntimeConnection.ForTcp("localhost", port, connectionToken: E2ETestFixture.SharedTcpConnectionToken)
+                Connection = RuntimeConnection.ForUri($"localhost:{port}", connectionToken: E2ETestFixture.SharedTcpConnectionToken),
             });
         }
 

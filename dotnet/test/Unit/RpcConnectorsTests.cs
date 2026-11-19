@@ -5,10 +5,10 @@
 #if NET8_0_OR_GREATER
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Microsoft.Copilot.Rpc;
+using GitHub.Copilot.Rpc;
 using Xunit;
 
-namespace Microsoft.Copilot.Test.Unit;
+namespace GitHub.Copilot.Test.Unit;
 
 public sealed partial class ClientSessionLifetimeTests
 {
@@ -19,10 +19,9 @@ public sealed partial class ClientSessionLifetimeTests
         server.ResponseFactory = CreateConnectorRpcResponse;
         await using var client = new CopilotClient(new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForTcp(server.Host, server.Port)
+            Connection = RuntimeConnection.ForUri(server.Url)
         });
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions());
+        await using var session = await client.CreateSessionAsync(new SessionConfig());
         server.ClearRequests();
 
         var connectors = session.Rpc.Connectors;
@@ -85,10 +84,9 @@ public sealed partial class ClientSessionLifetimeTests
         server.ResponseFactory = CreateConnectorRpcResponse;
         await using var client = new CopilotClient(new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForTcp(server.Host, server.Port)
+            Connection = RuntimeConnection.ForUri(server.Url)
         });
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions());
+        await using var session = await client.CreateSessionAsync(new SessionConfig());
         server.ClearRequests();
 
         var connected = Assert.IsType<ConnectorConnectResultConnected>(
@@ -142,10 +140,9 @@ public sealed partial class ClientSessionLifetimeTests
         server.ResponseFactory = CreateConnectorRpcResponse;
         await using var client = new CopilotClient(new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForTcp(server.Host, server.Port)
+            Connection = RuntimeConnection.ForUri(server.Url)
         });
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions());
+        await using var session = await client.CreateSessionAsync(new SessionConfig());
         server.ClearRequests();
 
         var disconnected = await session.Rpc.Connectors.DisconnectAsync("account-1", "slack");
@@ -154,8 +151,8 @@ public sealed partial class ClientSessionLifetimeTests
 
         var reconciled = await session.Rpc.Connectors.ReconcileAsync(
             "account-1",
-            refreshCatalog: true,
-            cancellationToken: CancellationToken.None);
+            true,
+            CancellationToken.None);
         Assert.Equal(10, reconciled.Catalog?.Revision);
         Assert.Empty(reconciled.RuntimeServers);
 
@@ -190,10 +187,9 @@ public sealed partial class ClientSessionLifetimeTests
         };
         await using var client = new CopilotClient(new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForTcp(server.Host, server.Port)
+            Connection = RuntimeConnection.ForUri(server.Url)
         });
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions());
+        await using var session = await client.CreateSessionAsync(new SessionConfig());
         server.ClearRequests();
 
         var capabilities = await session.Rpc.Connectors.GetCapabilitiesAsync();
@@ -263,10 +259,9 @@ public sealed partial class ClientSessionLifetimeTests
         };
         await using var client = new CopilotClient(new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForTcp(server.Host, server.Port)
+            Connection = RuntimeConnection.ForUri(server.Url)
         });
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions());
+        await using var session = await client.CreateSessionAsync(new SessionConfig());
         server.ClearRequests();
 
         var capabilities = await session.Rpc.Connectors.GetCapabilitiesAsync();
@@ -282,8 +277,12 @@ public sealed partial class ClientSessionLifetimeTests
         {
             if (capabilities.TargetedReconcile == true)
             {
-                await session.Rpc.Connectors.ReconcileAsync(
-                    accountId: "account-1", refreshCatalog: false, forceConnectorName: "slack");
+                await session.Rpc.Connectors.ReconcileAsync(new ConnectorReconcileRequest
+                {
+                    AccountId = "account-1",
+                    RefreshCatalog = false,
+                    ForceConnectorName = "slack",
+                });
             }
             else
             {
@@ -335,10 +334,9 @@ public sealed partial class ClientSessionLifetimeTests
             : CreateConnectorRpcResponse(request);
         await using var client = new CopilotClient(new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForTcp(server.Host, server.Port)
+            Connection = RuntimeConnection.ForUri(server.Url)
         });
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions());
+        await using var session = await client.CreateSessionAsync(new SessionConfig());
         server.ClearRequests();
 
         var catalog = await session.Rpc.Connectors.ListAsync("account-1");
@@ -382,10 +380,9 @@ public sealed partial class ClientSessionLifetimeTests
             : CreateConnectorRpcResponse(request);
         await using var client = new CopilotClient(new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForTcp(server.Host, server.Port)
+            Connection = RuntimeConnection.ForUri(server.Url)
         });
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions());
+        await using var session = await client.CreateSessionAsync(new SessionConfig());
         server.ClearRequests();
 
         var failure = await Assert.ThrowsAsync<JsonException>(() => session.Rpc.Connectors.ContinueConnectionAsync(

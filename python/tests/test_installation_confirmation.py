@@ -177,10 +177,9 @@ async def _connect(handler=None, *, entra=None) -> _Harness:
     sdk_rpc = JsonRpcClient(sdk_process)
     peer_rpc = JsonRpcClient(peer_process)
     client = CopilotClient(
-        mode="coding-agent",
+        connection=RuntimeConnection.for_uri("localhost:1234"),
+        installation_confirmation_handler=handler,
         entra=entra,
-        runtime=RuntimeConnection.for_tcp("localhost", 1234),
-        installations={"confirmation_handler": handler},
     )
     client._client = sdk_rpc  # noqa: SLF001
     sdk_rpc.on_close = client._handle_connection_close  # noqa: SLF001

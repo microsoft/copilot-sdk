@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/microsoft/copilot-sdk/go/v2/internal/jsonrpc2"
-	"github.com/microsoft/copilot-sdk/go/v2/rpc"
+	"github.com/github/copilot-sdk/go/internal/jsonrpc2"
+	"github.com/github/copilot-sdk/go/rpc"
 )
 
 const installationConfirmationFixture = `{
@@ -150,8 +150,10 @@ func newInstallationConfirmationHarness(t *testing.T, handler InstallationConfir
 	clientConn, serverConn := net.Pipe()
 	rpcClient := jsonrpc2.NewClient(clientConn, clientConn)
 	client := &Client{
-		client:               rpcClient,
-		options:              *(&ClientOptions{Mode: ModeCodingAgent, Installations: ClientInstallationOptions{ConfirmationHandler: handler}}).normalize(),
+		client: rpcClient,
+		options: ClientOptions{
+			InstallationConfirmationHandler: handler,
+		},
 		sessions:             make(map[string]*Session),
 		gitHubTokenProviders: make(map[string]GitHubTokenProvider),
 		state:                stateConnected,

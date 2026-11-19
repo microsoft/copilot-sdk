@@ -42,16 +42,14 @@ Attach an image file to any message using the file attachment type. The path mus
 
 <!-- docs-validate: strict -->
 ```typescript
-import { CopilotClient } from "@microsoft/copilot-sdk";
+import { CopilotClient } from "@github/copilot-sdk";
 
-const client = new CopilotClient({ mode: "coding-agent" });
+const client = new CopilotClient();
 await client.start();
 
 const session = await client.createSession({
-    model: "auto",
-    permissions: {
-        onRequest: async () => ({ kind: "approve-once" }),
-    },
+    model: "gpt-5.4",
+    onPermissionRequest: async () => ({ kind: "approve-once" }),
 });
 
 await session.send({
@@ -74,12 +72,12 @@ await session.send({
 from copilot import CopilotClient
 from copilot.session import PermissionDecisionApproveOnce
 
-client = CopilotClient(mode="coding-agent")
+client = CopilotClient()
 await client.start()
 
 session = await client.create_session(
-    model="auto",
-    permissions={"on_request": lambda req, inv: PermissionDecisionApproveOnce()},
+    on_permission_request=lambda req, inv: PermissionDecisionApproveOnce(),
+    model="gpt-5.4",
 )
 
 await session.send(
@@ -104,33 +102,29 @@ package main
 
 import (
 	"context"
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
-	"github.com/microsoft/copilot-sdk/go/v2/rpc"
+	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/rpc"
 )
 
 func main() {
 	ctx := context.Background()
-	client := copilot.NewClient(&copilot.ClientOptions{Mode: copilot.ModeCodingAgent})
+	client := copilot.NewClient(nil)
 	client.Start(ctx)
 
-	session, _ := client.CreateSession(ctx, &copilot.CreateSessionOptions{
-		Model: "auto",
-		Permissions: copilot.SessionPermissionOptions{
-			OnRequest: func(req copilot.PermissionRequest, inv copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
-				return &rpc.PermissionDecisionApproveOnce{}, nil
-			},
+	session, _ := client.CreateSession(ctx, &copilot.SessionConfig{
+		Model: "gpt-5.4",
+		OnPermissionRequest: func(req copilot.PermissionRequest, inv copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
+			return &rpc.PermissionDecisionApproveOnce{}, nil
 		},
 	})
 
 	path := "/absolute/path/to/screenshot.png"
 	session.Send(ctx, copilot.MessageOptions{
-
 		Prompt: "Describe what you see in this image",
-
 		Attachments: []copilot.Attachment{
-			&copilot.AttachmentFile{
-				DisplayName: "screenshot.png",
-				Path:        path,
+            &copilot.AttachmentFile{
+                DisplayName: "screenshot.png",
+                Path:        path,
 			},
 		},
 	})
@@ -140,31 +134,26 @@ func main() {
 
 ```go
 ctx := context.Background()
-client := copilot.NewClient(&copilot.ClientOptions{Mode: copilot.ModeCodingAgent})
+client := copilot.NewClient(nil)
 client.Start(ctx)
 
-session, _ := client.CreateSession(ctx, &copilot.CreateSessionOptions{
-	Model: "auto",
-	Permissions: copilot.SessionPermissionOptions{
-		OnRequest: func(req copilot.PermissionRequest, inv copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
-			return &rpc.PermissionDecisionApproveOnce{}, nil
-		},
-	},
+session, _ := client.CreateSession(ctx, &copilot.SessionConfig{
+    Model: "gpt-5.4",
+    OnPermissionRequest: func(req copilot.PermissionRequest, inv copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
+        return &rpc.PermissionDecisionApproveOnce{}, nil
+    },
 })
 
 path := "/absolute/path/to/screenshot.png"
 session.Send(ctx, copilot.MessageOptions{
-
-	Prompt: "Describe what you see in this image",
-
-	Attachments: []copilot.Attachment{
-		&copilot.AttachmentFile{
-			DisplayName: "screenshot.png",
-			Path:        path,
-		},
-	},
+    Prompt: "Describe what you see in this image",
+    Attachments: []copilot.Attachment{
+        &copilot.AttachmentFile{
+            DisplayName: "screenshot.png",
+            Path:        path,
+        },
+    },
 })
-
 ```
 
 </details>
@@ -172,19 +161,52 @@ session.Send(ctx, copilot.MessageOptions{
 <details>
 <summary><strong>.NET</strong></summary>
 
+<!-- docs-validate: hidden -->
 ```csharp
-using Microsoft.Copilot;
-using Microsoft.Copilot.Rpc;
+using GitHub.Copilot;
+using GitHub.Copilot.Rpc;
 
-await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent });
-await using var session = await client.CreateSessionAsync(new CreateSessionOptions
+public static class ImageInputExample
 {
-    Model = "auto",
-    Permissions = new SessionPermissionOptions
+    public static async Task Main()
     {
-        OnRequest = (req, inv) => Task.FromResult(PermissionDecision.ApproveOnce())
+        await using var client = new CopilotClient();
+        await using var session = await client.CreateSessionAsync(new SessionConfig
+        {
+            Model = "gpt-5.4",
+            OnPermissionRequest = (req, inv) =>
+                Task.FromResult(PermissionDecision.ApproveOnce()),
+        });
+
+        await session.SendAsync(new MessageOptions
+        {
+            Prompt = "Describe what you see in this image",
+            Attachments = new List<Attachment>
+            {
+                new AttachmentFile
+                {
+                    Path = "/absolute/path/to/screenshot.png",
+                    DisplayName = "screenshot.png",
+                },
+            },
+        });
     }
+}
+```
+<!-- /docs-validate: hidden -->
+
+```csharp
+using GitHub.Copilot;
+using GitHub.Copilot.Rpc;
+
+await using var client = new CopilotClient();
+await using var session = await client.CreateSessionAsync(new SessionConfig
+{
+    Model = "gpt-5.4",
+    OnPermissionRequest = (req, inv) =>
+        Task.FromResult(PermissionDecision.ApproveOnce()),
 });
+
 await session.SendAsync(new MessageOptions
 {
     Prompt = "Describe what you see in this image",
@@ -205,28 +227,25 @@ await session.SendAsync(new MessageOptions
 <summary><strong>Java</strong></summary>
 
 ```java
-import com.microsoft.copilot.CopilotClient;
-import com.microsoft.copilot.rpc.*;
+import com.github.copilot.CopilotClient;
+import com.github.copilot.rpc.*;
 import java.util.List;
 
-try (var client = new CopilotClient(new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT))) {
-    client
-            .start()
-            .get();
+try (var client = new CopilotClient()) {
+    client.start().get();
 
-    var session = client
-            .createSession(new CreateSessionOptions()
-                    .setModel("auto")
-                    .setPermissions(new SessionPermissionOptions()
-                            .setOnRequest(PermissionHandler.APPROVE_ALL)))
-            .get();
+    var session = client.createSession(
+        new SessionConfig()
+            .setModel("gpt-5.4")
+            .setOnPermissionRequest(PermissionHandler.APPROVE_ALL)
+    ).get();
 
-    session
-            .send(new MessageOptions()
-                    .setPrompt("Describe what you see in this image")
-                    .setAttachments(List
-                            .of(new Attachment("file", "/absolute/path/to/screenshot.png", "screenshot.png"))))
-            .get();
+    session.send(new MessageOptions()
+        .setPrompt("Describe what you see in this image")
+        .setAttachments(List.of(
+            new Attachment("file", "/absolute/path/to/screenshot.png", "screenshot.png")
+        ))
+    ).get();
 }
 ```
 
@@ -241,16 +260,14 @@ When you already have image data in memory (e.g., a screenshot captured by your 
 
 <!-- docs-validate: strict -->
 ```typescript
-import { CopilotClient } from "@microsoft/copilot-sdk";
+import { CopilotClient } from "@github/copilot-sdk";
 
-const client = new CopilotClient({ mode: "coding-agent" });
+const client = new CopilotClient();
 await client.start();
 
 const session = await client.createSession({
-    model: "auto",
-    permissions: {
-        onRequest: async () => ({ kind: "approve-once" }),
-    },
+    model: "gpt-5.4",
+    onPermissionRequest: async () => ({ kind: "approve-once" }),
 });
 
 const base64ImageData = "..."; // your base64-encoded image
@@ -276,12 +293,12 @@ await session.send({
 from copilot import CopilotClient
 from copilot.session import PermissionDecisionApproveOnce
 
-client = CopilotClient(mode="coding-agent")
+client = CopilotClient()
 await client.start()
 
 session = await client.create_session(
-    model="auto",
-    permissions={"on_request": lambda req, inv: PermissionDecisionApproveOnce()},
+    on_permission_request=lambda req, inv: PermissionDecisionApproveOnce(),
+    model="gpt-5.4",
 )
 
 base64_image_data = "..."  # your base64-encoded image
@@ -309,21 +326,19 @@ package main
 
 import (
 	"context"
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
-	"github.com/microsoft/copilot-sdk/go/v2/rpc"
+	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/rpc"
 )
 
 func main() {
 	ctx := context.Background()
-	client := copilot.NewClient(&copilot.ClientOptions{Mode: copilot.ModeCodingAgent})
+	client := copilot.NewClient(nil)
 	client.Start(ctx)
 
-	session, _ := client.CreateSession(ctx, &copilot.CreateSessionOptions{
-		Model: "auto",
-		Permissions: copilot.SessionPermissionOptions{
-			OnRequest: func(req copilot.PermissionRequest, inv copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
-				return &rpc.PermissionDecisionApproveOnce{}, nil
-			},
+	session, _ := client.CreateSession(ctx, &copilot.SessionConfig{
+		Model: "gpt-5.4",
+		OnPermissionRequest: func(req copilot.PermissionRequest, inv copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
+			return &rpc.PermissionDecisionApproveOnce{}, nil
 		},
 	})
 
@@ -331,13 +346,11 @@ func main() {
 	mimeType := "image/png"
 	displayName := "screenshot.png"
 	session.Send(ctx, copilot.MessageOptions{
-
 		Prompt: "Describe what you see in this image",
-
 		Attachments: []copilot.Attachment{
-			&copilot.AttachmentBlob{
-				Data:        &base64ImageData,
-				MIMEType:    mimeType,
+            &copilot.AttachmentBlob{
+                Data:        &base64ImageData,
+                MIMEType:    mimeType,
 				DisplayName: &displayName,
 			},
 		},
@@ -368,22 +381,21 @@ session.Send(ctx, copilot.MessageOptions{
 
 <!-- docs-validate: hidden -->
 ```csharp
-using Microsoft.Copilot;
-using Microsoft.Copilot.Rpc;
+using GitHub.Copilot;
+using GitHub.Copilot.Rpc;
 
 public static class BlobAttachmentExample
 {
     public static async Task Main()
     {
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent });
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions
+        await using var client = new CopilotClient();
+        await using var session = await client.CreateSessionAsync(new SessionConfig
         {
-            Model = "auto",
-            Permissions = new SessionPermissionOptions
-            {
-                OnRequest = (req, inv) => Task.FromResult(PermissionDecision.ApproveOnce())
-            }
+            Model = "gpt-5.4",
+            OnPermissionRequest = (req, inv) =>
+                Task.FromResult(PermissionDecision.ApproveOnce()),
         });
+
         var base64ImageData = "...";
         await session.SendAsync(new MessageOptions
         {
@@ -425,32 +437,29 @@ await session.SendAsync(new MessageOptions
 <summary><strong>Java</strong></summary>
 
 ```java
-import com.microsoft.copilot.CopilotClient;
-import com.microsoft.copilot.rpc.*;
+import com.github.copilot.CopilotClient;
+import com.github.copilot.rpc.*;
 import java.util.List;
 
-try (var client = new CopilotClient(new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT))) {
-    client
-            .start()
-            .get();
+try (var client = new CopilotClient()) {
+    client.start().get();
 
-    var session = client
-            .createSession(new CreateSessionOptions()
-                    .setModel("auto")
-                    .setPermissions(new SessionPermissionOptions()
-                            .setOnRequest(PermissionHandler.APPROVE_ALL)))
-            .get();
+    var session = client.createSession(
+        new SessionConfig()
+            .setModel("gpt-5.4")
+            .setOnPermissionRequest(PermissionHandler.APPROVE_ALL)
+    ).get();
 
     var base64ImageData = "..."; // your base64-encoded image
-    session
-            .send(new MessageOptions()
-                    .setPrompt("Describe what you see in this image")
-                    .setAttachments(List
-                            .of(new BlobAttachment()
-                                    .setData(base64ImageData)
-                                    .setMimeType("image/png")
-                                    .setDisplayName("screenshot.png"))))
-            .get();
+    session.send(new MessageOptions()
+        .setPrompt("Describe what you see in this image")
+        .setAttachments(List.of(
+            new BlobAttachment()
+                .setData(base64ImageData)
+                .setMimeType("image/png")
+                .setDisplayName("screenshot.png")
+        ))
+    ).get();
 }
 ```
 

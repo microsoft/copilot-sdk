@@ -2,9 +2,9 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
-using Microsoft.Copilot.Rpc;
+using GitHub.Copilot.Rpc;
 
-namespace Microsoft.Copilot;
+namespace GitHub.Copilot;
 
 /// <summary>Provides pre-built permission request handlers.</summary>
 public static class PermissionHandler

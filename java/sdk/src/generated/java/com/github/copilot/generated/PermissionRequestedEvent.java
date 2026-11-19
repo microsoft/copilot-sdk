@@ -1,0 +1,66 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *--------------------------------------------------------------------------------------------*/
+
+// AUTO-GENERATED FILE - DO NOT EDIT
+// Generated from: session-events.schema.json
+
+package com.github.copilot.generated;
+
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.github.copilot.CopilotExperimental;
+import javax.annotation.processing.Generated;
+
+/**
+ * Session event "permission.requested". Permission request notification requiring client approval with request details
+ * @since 1.0.0
+ */
+@JsonIgnoreProperties(ignoreUnknown = true)
+@JsonInclude(JsonInclude.Include.NON_NULL)
+@javax.annotation.processing.Generated("copilot-sdk-codegen")
+public final class PermissionRequestedEvent extends SessionEvent {
+
+    @Override
+    public String getType() { return "permission.requested"; }
+
+    @JsonProperty("data")
+    private PermissionRequestedEventData data;
+
+    public PermissionRequestedEventData getData() { return data; }
+    public void setData(PermissionRequestedEventData data) { this.data = data; }
+
+    /** Data payload for {@link PermissionRequestedEvent}. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record PermissionRequestedEventData(
+        /** Unique identifier for this permission request; used to respond via session.respondToPermission() */
+        @JsonProperty("requestId") String requestId,
+        /** Details of the permission being requested */
+        @JsonProperty("permissionRequest") Object permissionRequest,
+        /** Derived user-facing permission prompt details for UI consumers */
+        @JsonProperty("promptRequest") Object promptRequest,
+        /** Canonical runtime-owned Assisted Permissions assessment. New runtimes emit this for every permission request; absence means the event predates this field. Consumers must use `permission.completed` for the final permission result. */
+        @CopilotExperimental
+        @JsonProperty("assistedApprovalAssessment") AssistedApprovalAssessment assistedApprovalAssessment,
+        /** Permission mode captured when evaluation began. Absent on historical events. */
+        @JsonProperty("permissionMode") PermissionMode permissionMode,
+        /** Agent mode captured from the owning turn when permission evaluation began. */
+        @JsonProperty("agentMode") SessionMode agentMode,
+        /** Execution session that owns permission recovery for this request. Absent on historical events. */
+        @JsonProperty("ownerSessionId") String ownerSessionId,
+        /** Delegated agent that owns permission recovery when the owner session multiplexes remote agents. Absent otherwise. */
+        @JsonProperty("ownerAgentId") String ownerAgentId,
+        /** Neutral risk metadata supplied by the tool host. Consumers may display this value but must not use it to bypass the permission decision. */
+        @JsonProperty("riskAssessment") Object riskAssessment,
+        /** When true, this permission was already resolved by a permissionRequest hook and requires no client action */
+        @JsonProperty("resolvedByHook") Boolean resolvedByHook,
+        /** Permission-recovery episode that authorized this request to surface for interactive attention */
+        @JsonProperty("recoveryEpisodeId") String recoveryEpisodeId,
+        /** Experimental HydraFusion attribution of the staged phase whose tool call raised this request. Absent outside a staged phase. */
+        @CopilotExperimental
+        @JsonProperty("fusion") FusionAttribution fusion
+    ) {
+    }
+}

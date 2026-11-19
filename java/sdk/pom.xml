@@ -6,17 +6,17 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>com.microsoft</groupId>
-        <artifactId>copilot-sdk-parent</artifactId>
+        <groupId>com.github</groupId>
+        <artifactId>copilot-sdk-java-parent</artifactId>
         <version>${revision}</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <groupId>com.microsoft</groupId>
-    <artifactId>copilot-sdk</artifactId>
+    <groupId>com.github</groupId>
+    <artifactId>copilot-sdk-java</artifactId>
     <packaging>jar</packaging>
 
-    <name>Microsoft Copilot SDK :: Java</name>
+    <name>GitHub Copilot SDK :: Java</name>
     <description>Official SDK for programmatic control of GitHub Copilot CLI</description>
     <url>https://github.com/github/copilot-sdk</url>
 
@@ -35,9 +35,10 @@
         <copilot.sdk.root>${project.basedir}/../..</copilot.sdk.root>
         <copilot.tests.dir>${copilot.sdk.root}/test</copilot.tests.dir>
         <!--
-            Optional runtime override for SDK tests. In-process tests otherwise
-            use the host classifier JAR; subprocess helpers prepare the release
-            pinned by nodejs/package.json. For a different runtime build:
+            Optional path to a Copilot CLI entry point used by the SDK tests.
+            When empty, the test helpers prepare the release pinned by
+            nodejs/package.json. Override on the command line to point at a
+            different CLI build, e.g.:
               mvn verify -Dcopilot.cli.path=/some/other/copilot
         -->
         <copilot.cli.path />
@@ -45,19 +46,15 @@
         <skip.test.harness>false</skip.test.harness>
         <!--
             Whether to skip the install-nodejs-cli-dependencies execution
-            (npm ci for the Node.js runtime preparation tooling and Java
-            compatibility fixtures). Also required by ordinary runtime-backed
-            tests, independently of compatibility fixture generation. Forced
-            to true when Maven tests are skipped (-DskipTests or
+            (npm ci for the Node.js runtime preparation tooling). Defaults to ${skip.test.harness}
+            so it tracks the rest of the test-harness setup, but is also
+            forced to true when Maven tests are skipped (-DskipTests or
             -Dmaven.test.skip) via the skip-cli-install-when-tests-skipped
             and skip-cli-install-when-maven-test-skip profiles below, so that
             non-test builds (e.g. package/deploy with tests skipped) do not
             require npm or network access.
         -->
-        <skip.cli.install>false</skip.cli.install>
-        <!-- Compiler-driven checks and fixtures opt in with -Pjava-compatibility. -->
-        <skip.java.compat.fixtures>true</skip.java.compat.fixtures>
-        <java.test.excluded.groups>java-compatibility</java.test.excluded.groups>
+        <skip.cli.install>${skip.test.harness}</skip.cli.install>
         <!-- Override with -Dnpm.loglevel=verbose when troubleshooting npm. -->
         <npm.loglevel>notice</npm.loglevel>
         <!-- Extra JVM args for Surefire; overridden by the jdk21+ profile -->
@@ -66,18 +63,6 @@
         <maven.deploy.skip>false</maven.deploy.skip>
         <!-- JNA version — pin deliberately; a JNA upgrade must rerun the callback spike. -->
         <jna.version>5.19.1</jna.version>
-        <!-- Host profiles below override the Linux x64 test classifier. -->
-        <copilot.native.classifier>linux-x64</copilot.native.classifier>
-        <!-- Class fixtures own their proxies; methods within one fixture stay serial. -->
-        <e2e.parallelism>4</e2e.parallelism>
-        <e2e.configurationParameters>
-            junit.jupiter.execution.parallel.enabled=true
-            junit.jupiter.execution.parallel.mode.default=same_thread
-            junit.jupiter.execution.parallel.mode.classes.default=concurrent
-            junit.jupiter.execution.parallel.config.strategy=fixed
-            junit.jupiter.execution.parallel.config.fixed.parallelism=${e2e.parallelism}
-            junit.jupiter.execution.parallel.config.fixed.max-pool-size=${e2e.parallelism}
-        </e2e.configurationParameters>
     </properties>
 
     <dependencies>
@@ -85,34 +70,37 @@
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
-            <version>2.23.0</version>
+            <version>2.22.4</version>
         </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-annotations</artifactId>
-            <version>2.23</version>
+            <version>2.22</version>
         </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.datatype</groupId>
             <artifactId>jackson-datatype-jsr310</artifactId>
-            <version>2.23.0</version>
+            <version>2.22.4</version>
         </dependency>
 
+        <!-- SpotBugs annotations for suppressing warnings -->
         <dependency>
-            <groupId>org.jspecify</groupId>
-            <artifactId>jspecify</artifactId>
-            <version>1.0.1</version>
+            <groupId>com.github.spotbugs</groupId>
+            <artifactId>spotbugs-annotations</artifactId>
+            <version>4.10.5</version>
             <scope>provided</scope>
         </dependency>
 
         <!--
-            JNA — required by the default in-process transport.
+            JNA — required only when using InProcess transport. Optional so that
+            subprocess-only consumers do not receive JNA transitively.
             Pin the version; a JNA upgrade must rerun the callback spike.
         -->
         <dependency>
             <groupId>net.java.dev.jna</groupId>
             <artifactId>jna</artifactId>
             <version>${jna.version}</version>
+            <optional>true</optional>
         </dependency>
 
         <!-- Test dependencies -->
@@ -164,7 +152,7 @@
                         <configuration>
                             <proc>full</proc>
                             <annotationProcessors>
-                                <annotationProcessor>com.microsoft.copilot.tool.CopilotResponseProcessor</annotationProcessor>
+                                <annotationProcessor>com.github.copilot.tool.CopilotResponseProcessor</annotationProcessor>
                             </annotationProcessors>
                             <compilerArgs combine.children="append">
                                 <arg>-processorpath</arg>
@@ -233,25 +221,6 @@
                             </arguments>
                         </configuration>
                     </execution>
-                    <execution>
-                        <id>generate-java-compatibility-fixtures</id>
-                        <phase>generate-test-resources</phase>
-                        <goals>
-                            <goal>exec</goal>
-                        </goals>
-                        <configuration>
-                            <skip>${skip.java.compat.fixtures}</skip>
-                            <executable>npm</executable>
-                            <workingDirectory>${copilot.sdk.root}/nodejs</workingDirectory>
-                            <arguments>
-                                <argument>run</argument>
-                                <argument>generate:java-compat-fixtures</argument>
-                                <argument>--</argument>
-                                <argument>--output</argument>
-                                <argument>${project.build.directory}/generated-test-resources/java-compatibility</argument>
-                            </arguments>
-                        </configuration>
-                    </execution>
                 </executions>
             </plugin>
             <plugin>
@@ -259,25 +228,6 @@
                 <artifactId>maven-dependency-plugin</artifactId>
                 <version>3.11.0</version>
                 <executions>
-                    <!-- Stage a stable path for direct Surefire goals on JDK 17 too. -->
-                    <execution>
-                        <id>prepare-mockito-agent</id>
-                        <phase>generate-test-resources</phase>
-                        <goals>
-                            <goal>copy</goal>
-                        </goals>
-                        <configuration>
-                            <skip>${maven.test.skip}</skip>
-                            <artifactItems>
-                                <artifactItem>
-                                    <groupId>org.mockito</groupId>
-                                    <artifactId>mockito-core</artifactId>
-                                    <outputDirectory>${project.build.directory}</outputDirectory>
-                                    <destFileName>mockito-agent.jar</destFileName>
-                                </artifactItem>
-                            </artifactItems>
-                        </configuration>
-                    </execution>
                     <execution>
                         <id>packaged-consumer-dependencies</id>
                         <phase>generate-test-resources</phase>
@@ -287,20 +237,8 @@
                         <configuration>
                             <skip>${maven.test.skip}</skip>
                             <includeScope>runtime</includeScope>
-                            <outputDirectory>${project.build.directory}/consumer-dependencies</outputDirectory>
-                        </configuration>
-                    </execution>
-                    <execution>
-                        <id>packaged-consumer-native-runtime</id>
-                        <phase>generate-test-resources</phase>
-                        <goals>
-                            <goal>copy-dependencies</goal>
-                        </goals>
-                        <configuration>
-                            <skip>${maven.test.skip}</skip>
-                            <includeScope>test</includeScope>
-                            <includeGroupIds>com.microsoft</includeGroupIds>
-                            <includeArtifactIds>copilot-sdk-runtime</includeArtifactIds>
+                            <!-- Default consumers do not receive optional JNA. -->
+                            <excludeArtifactIds>jna</excludeArtifactIds>
                             <outputDirectory>${project.build.directory}/consumer-dependencies</outputDirectory>
                         </configuration>
                     </execution>
@@ -311,7 +249,7 @@
                 JAR (after the package phase). Used to validate multi-release
                 JAR behaviour end-to-end without reflecting on private fields
                 or hand-rolling a synthetic JAR. See
-                src/test/java/com/microsoft/copilot/InternalExecutorProviderIT.java.
+                src/test/java/com/github/copilot/InternalExecutorProviderIT.java.
             -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -326,9 +264,6 @@
                 </executions>
                 <configuration>
                     <forkNode implementation="org.apache.maven.plugin.surefire.extensions.SurefireForkNodeFactory" />
-                    <properties>
-                        <configurationParameters>${e2e.configurationParameters}</configurationParameters>
-                    </properties>
                     <systemPropertyVariables>
                         <project.build.directory>${project.build.directory}</project.build.directory>
                         <project.build.finalName>${project.build.finalName}</project.build.finalName>
@@ -341,8 +276,6 @@
                     -->
                     <environmentVariables>
                         <COPILOT_CLI_PATH>${copilot.cli.path}</COPILOT_CLI_PATH>
-                        <!-- Host admission is separate from typed session feature flags. -->
-                        <COPILOT_MCP_APPS>true</COPILOT_MCP_APPS>
                     </environmentVariables>
                 </configuration>
             </plugin>
@@ -351,15 +284,13 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
                     <runOrder>alphabetical</runOrder>
-                    <excludedGroups>${java.test.excluded.groups}</excludedGroups>
                     <forkNode implementation="org.apache.maven.plugin.surefire.extensions.SurefireForkNodeFactory" />
-                    <!-- Initialize inline mocking without Mockito's external self-attachment. -->
-                    <argLine>${testExecutionAgentArgs} -javaagent:"${project.build.directory}/mockito-agent.jar" ${surefire.jvm.args} --add-opens com.microsoft.copilot.java/com.microsoft.copilot.e2e=ALL-UNNAMED</argLine>
+                    <!-- Inject JaCoCo agent + any JDK-version-specific flags -->
+                    <argLine>${testExecutionAgentArgs} ${surefire.jvm.args} --add-opens com.github.copilot.java/com.github.copilot.e2e=ALL-UNNAMED</argLine>
                     <rerunFailingTestsCount>0</rerunFailingTestsCount>
                     <systemPropertyVariables>
                         <copilot.tests.dir>${copilot.tests.dir}</copilot.tests.dir>
                         <copilot.sdk.dir>${copilot.sdk.root}</copilot.sdk.dir>
-                        <copilot.java.compat.fixtures.dir>${project.build.directory}/generated-test-resources/java-compatibility</copilot.java.compat.fixtures.dir>
                     </systemPropertyVariables>
                     <!--
                         Set COPILOT_CLI_PATH for the forked test JVM so the SDK
@@ -369,7 +300,6 @@
                     -->
                     <environmentVariables>
                         <COPILOT_CLI_PATH>${copilot.cli.path}</COPILOT_CLI_PATH>
-                        <COPILOT_MCP_APPS>true</COPILOT_MCP_APPS>
                     </environmentVariables>
                 </configuration>
                 <executions>
@@ -397,21 +327,7 @@
                     <execution>
                         <id>default-test</id>
                         <configuration>
-                            <excludedGroups>isolated-resume | e2e | ${java.test.excluded.groups}</excludedGroups>
-                        </configuration>
-                    </execution>
-                    <!-- Keep unit tests with global mocks outside the parallel E2E run. -->
-                    <execution>
-                        <id>e2e-tests</id>
-                        <phase>test</phase>
-                        <goals>
-                            <goal>test</goal>
-                        </goals>
-                        <configuration>
-                            <groups>e2e &amp; !isolated-resume</groups>
-                            <properties>
-                                <configurationParameters>${e2e.configurationParameters}</configurationParameters>
-                            </properties>
+                            <excludedGroups>isolated-resume</excludedGroups>
                         </configuration>
                     </execution>
                 </executions>
@@ -480,11 +396,11 @@
                             <propertyName>testExecutionAgentArgs</propertyName>
                             <!-- Focus on SDK package, exclude test harness utilities -->
                             <includes>
-                                <include>com/microsoft/copilot/**</include>
+                                <include>com/github/copilot/**</include>
                             </includes>
                             <excludes>
-                                <exclude>com/microsoft/copilot/E2ETestContext*</exclude>
-                                <exclude>com/microsoft/copilot/CapiProxy*</exclude>
+                                <exclude>com/github/copilot/E2ETestContext*</exclude>
+                                <exclude>com/github/copilot/CapiProxy*</exclude>
                             </excludes>
                         </configuration>
                     </execution>
@@ -570,9 +486,9 @@
                             <rules>
                                 <requireFilesExist>
                                     <files>
-                                        <file>${project.build.outputDirectory}/META-INF/versions/25/com/microsoft/copilot/InternalExecutorProvider.class</file>
+                                        <file>${project.build.outputDirectory}/META-INF/versions/25/com/github/copilot/InternalExecutorProvider.class</file>
                                     </files>
-                                    <message>Multi-Release JAR overlay missing: META-INF/versions/25/com/microsoft/copilot/InternalExecutorProvider.class was not compiled. Ensure the build runs on JDK 25+.</message>
+                                    <message>Multi-Release JAR overlay missing: META-INF/versions/25/com/github/copilot/InternalExecutorProvider.class was not compiled. Ensure the build runs on JDK 25+.</message>
                                 </requireFilesExist>
                             </rules>
                         </configuration>
@@ -583,42 +499,9 @@
     </build>
 
     <profiles>
-        <profile>
-            <id>java-compatibility</id>
-            <properties>
-                <skip.java.compat.fixtures>false</skip.java.compat.fixtures>
-                <skip.test.harness>true</skip.test.harness>
-                <java.test.excluded.groups>isolated-resume</java.test.excluded.groups>
-            </properties>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-surefire-plugin</artifactId>
-                        <configuration>
-                            <groups>java-compatibility</groups>
-                            <failIfNoTests>true</failIfNoTests>
-                        </configuration>
-                        <executions>
-                            <execution>
-                                <id>isolated-resume-tests</id>
-                                <configuration>
-                                    <skipTests>true</skipTests>
-                                </configuration>
-                            </execution>
-                            <execution>
-                                <id>e2e-tests</id>
-                                <configuration>
-                                    <skipTests>true</skipTests>
-                                </configuration>
-                            </execution>
-                        </executions>
-                    </plugin>
-                </plugins>
-            </build>
-        </profile>
-        <!-- Retain dynamic agent loading on JDK 21+ (JEP 451).
-             The flag does not exist on earlier JDKs, so it must be conditional. -->
+        <!-- Enable dynamic agent loading on JDK 21+ so Mockito/ByteBuddy
+             can attach at runtime (JEP 451). The flag does not exist on
+             earlier JDKs, so it must be conditional. -->
         <profile>
             <id>jdk21+</id>
             <activation>
@@ -688,12 +571,12 @@
                                     <target>
                                         <condition property="java25.overlay.present">
                                             <resourceexists>
-                                                <zipentry zipfile="${project.build.directory}/${project.build.finalName}.jar" name="META-INF/versions/25/com/microsoft/copilot/InternalExecutorProvider.class" />
+                                                <zipentry zipfile="${project.build.directory}/${project.build.finalName}.jar" name="META-INF/versions/25/com/github/copilot/InternalExecutorProvider.class" />
                                             </resourceexists>
                                         </condition>
                                         <fail unless="java25.overlay.present">
 JDK 25 multi-release overlay class is missing from the packaged JAR.
-Expected entry: META-INF/versions/25/com/microsoft/copilot/InternalExecutorProvider.class
+Expected entry: META-INF/versions/25/com/github/copilot/InternalExecutorProvider.class
 JAR: ${project.build.directory}/${project.build.finalName}.jar
 
 This usually means the 'java25-multi-release' Maven profile did not activate
@@ -716,41 +599,38 @@ did not produce the multi-release output. Re-build on JDK 25+ and verify the
                 <skip.test.harness>true</skip.test.harness>
             </properties>
         </profile>
-        <!-- Compiler-only checks retain the native-download opt-out. -->
-        <profile>
-            <id>native-test-runtime</id>
-            <activation>
-                <property>
-                    <name>copilot.native.skip.download</name>
-                    <value>!true</value>
-                </property>
-            </activation>
-            <dependencies>
-                <!-- Production consumers add their own matching native classifier. -->
-                <dependency>
-                    <groupId>com.microsoft</groupId>
-                    <artifactId>copilot-sdk-runtime</artifactId>
-                    <version>${project.version}</version>
-                    <classifier>${copilot.native.classifier}</classifier>
-                    <scope>test</scope>
-                </dependency>
-            </dependencies>
-        </profile>
         <!--
-            Runs the E2E suite explicitly over the default in-process (FFI)
-            transport. COPILOT_SDK_DEFAULT_CONNECTION
+            Runs the E2E suite over the in-process (FFI) transport instead of
+            the default child-process transport. COPILOT_SDK_DEFAULT_CONNECTION
             makes CopilotClient host the runtime in-process (see
-            CopilotClient.resolveDefaultConnection). Keep one JVM so concurrent
-            class fixtures exercise independent runtime hosts in the same process.
-            E2E class parallelism is shared with the subprocess run.
+            CopilotClient.resolveDefaultConnection). forkCount=1 and
+            parallel=none are required because InProcessEnvGuard and the FFI
+            host mutate process-global state (the native process environment
+            block and JNA callback registration).
         -->
         <profile>
             <id>inprocess</id>
             <properties>
                 <COPILOT_SDK_DEFAULT_CONNECTION>inprocess</COPILOT_SDK_DEFAULT_CONNECTION>
+                <copilot.native.classifier>linux-x64</copilot.native.classifier>
                 <!-- Force classpath resolution of runtime.node and the embedded CLI. -->
                 <copilot.inprocess.cli.path />
             </properties>
+            <dependencies>
+                <!--
+                    Classpath resource native/<classifier>/runtime.node, resolved by
+                    NativeRuntimeLoader when no runtime.node is found next to
+                    COPILOT_CLI_PATH. Test-scoped: production consumers add the
+                    classifier they need themselves.
+                -->
+                <dependency>
+                    <groupId>com.github</groupId>
+                    <artifactId>copilot-sdk-java-runtime</artifactId>
+                    <version>${project.version}</version>
+                    <classifier>${copilot.native.classifier}</classifier>
+                    <scope>test</scope>
+                </dependency>
+            </dependencies>
             <build>
                 <plugins>
                     <plugin>
@@ -759,6 +639,7 @@ did not produce the multi-release output. Re-build on JDK 25+ and verify the
                         <configuration>
                             <skipTests>false</skipTests>
                             <forkCount>1</forkCount>
+                            <parallel>none</parallel>
                             <environmentVariables>
                                 <COPILOT_CLI_PATH>${copilot.inprocess.cli.path}</COPILOT_CLI_PATH>
                                 <COPILOT_SDK_DEFAULT_CONNECTION>inprocess</COPILOT_SDK_DEFAULT_CONNECTION>
@@ -770,6 +651,7 @@ did not produce the multi-release output. Re-build on JDK 25+ and verify the
                         <artifactId>maven-failsafe-plugin</artifactId>
                         <configuration>
                             <forkCount>1</forkCount>
+                            <parallel>none</parallel>
                             <environmentVariables>
                                 <COPILOT_CLI_PATH>${copilot.inprocess.cli.path}</COPILOT_CLI_PATH>
                                 <COPILOT_SDK_DEFAULT_CONNECTION>inprocess</COPILOT_SDK_DEFAULT_CONNECTION>
@@ -887,7 +769,6 @@ did not produce the multi-release output. Re-build on JDK 25+ and verify the
             </activation>
             <properties>
                 <skip.cli.install>true</skip.cli.install>
-                <skip.java.compat.fixtures>true</skip.java.compat.fixtures>
             </properties>
         </profile>
         <!--
@@ -903,7 +784,6 @@ did not produce the multi-release output. Re-build on JDK 25+ and verify the
             </activation>
             <properties>
                 <skip.cli.install>true</skip.cli.install>
-                <skip.java.compat.fixtures>true</skip.java.compat.fixtures>
             </properties>
         </profile>
         <!-- Debug profile for FINE logging during tests -->

@@ -1,4 +1,4 @@
-//go:build !copilot_no_inprocess && (darwin || linux || windows) && (amd64 || arm64)
+//go:build copilot_inprocess && (darwin || linux || windows)
 
 package ffihost
 
@@ -131,26 +131,6 @@ func TestDisposeRetainsOutboundTargetUntilConnectionCloseSucceeds(t *testing.T) 
 	}
 	if got := shutdownCalls.Load(); got != 1 {
 		t.Fatalf("Expected exactly one host shutdown after repeated disposal, got %d", got)
-	}
-}
-
-func TestBuildEnvPreservesExplicitEmptyEnvironment(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name string
-		env  map[string]string
-		want string
-	}{
-		{name: "ambient", want: ""},
-		{name: "empty", env: map[string]string{}, want: "{}"},
-		{name: "configured", env: map[string]string{"TOKEN": "host-token"}, want: `{"TOKEN":"host-token"}`},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			host := &Host{environment: tc.env}
-			if got := string(host.buildEnv()); got != tc.want {
-				t.Fatalf("Native environment JSON = %q, want %q", got, tc.want)
-			}
-		})
 	}
 }
 

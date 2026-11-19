@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
-	"github.com/microsoft/copilot-sdk/go/v2/internal/e2e/testharness"
+	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/internal/e2e/testharness"
 )
 
 // TestSessionEventLoopLeakE2E is a regression test for the goroutine leak fixed
@@ -22,19 +22,25 @@ import (
 // caller ever receives the failed session to Disconnect() it. This test fails
 // without the fix and passes with it.
 func TestSessionEventLoopLeakE2E(t *testing.T) {
-	// The leak assertion samples the process-wide goroutine count.
 	ctx := testharness.NewTestContext(t)
 
 	t.Run("CreateSession failure does not leak the event loop goroutine", func(t *testing.T) {
 		ctx.ConfigureForTest(t)
 
-		// The harness routes GitHub API calls to the replay proxy; an invalid
-		// token must produce a real session.create RPC failure.
-		client := ctx.NewClient()
+		// Redirect the CLI's GitHub API calls at the replaying proxy so an
+		// invalid per-session token makes the real CLI reject session.create
+		// with a genuine RPC error (401 Unauthorized), exercising the same
+		// failure path a real user would hit — not a mocked transport.
+		client := ctx.NewClient(func(opts *copilot.ClientOptions) {
+			opts.Env = append(opts.Env, "COPILOT_DEBUG_GITHUB_API_URL="+ctx.ProxyURL)
+		})
 		t.Cleanup(func() { client.ForceStop() })
 
 		createFailing := func() {
-			if _, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, GitHub: copilot.SessionGitHubOptions{Token: "invalid-token"}}); err == nil {
+			if _, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+				OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+				GitHubToken:         "invalid-token",
+			}); err == nil {
 				t.Fatal("expected CreateSession to fail with an invalid token")
 			}
 		}
@@ -53,7 +59,9 @@ func TestSessionEventLoopLeakE2E(t *testing.T) {
 		t.Cleanup(func() { client.ForceStop() })
 
 		resumeNonExistent := func() {
-			if _, err := client.ResumeSession(t.Context(), "non-existent-leak-check-session", &copilot.ResumeSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}}); err == nil {
+			if _, err := client.ResumeSession(t.Context(), "non-existent-leak-check-session", &copilot.ResumeSessionConfig{
+				OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			}); err == nil {
 				t.Fatal("expected ResumeSession for a non-existent session to fail")
 			}
 		}

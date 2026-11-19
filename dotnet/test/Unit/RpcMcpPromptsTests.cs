@@ -5,7 +5,7 @@
 #if NET8_0_OR_GREATER
 using Xunit;
 
-namespace Microsoft.Copilot.Test.Unit;
+namespace GitHub.Copilot.Test.Unit;
 
 public sealed partial class ClientSessionLifetimeTests
 {
@@ -28,10 +28,9 @@ public sealed partial class ClientSessionLifetimeTests
         };
         await using var client = new CopilotClient(new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForTcp(server.Host, server.Port)
+            Connection = RuntimeConnection.ForUri(server.Url)
         });
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions());
+        await using var session = await client.CreateSessionAsync(new SessionConfig());
         server.ClearRequests();
 
         Assert.Empty((await session.Rpc.Mcp.Prompts.ListAsync("fixture")).Prompts);

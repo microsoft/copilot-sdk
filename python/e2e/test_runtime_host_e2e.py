@@ -81,16 +81,10 @@ class Application:
     def config(self, requested: dict) -> dict:
         return {
             **requested,
-            "permissions": {
-                **requested.get("permissions", {}),
-                "on_request": PermissionHandler.approve_all,
-            },
+            "on_permission_request": PermissionHandler.approve_all,
             "system_message": {"mode": "append", "content": MARKER},
-            "tools": {**requested.get("tools", {}), "definitions": [self.tool]},
-            "hooks": {
-                **requested.get("hooks", {}),
-                "handlers": {"on_pre_tool_use": self.pre_tool},
-            },
+            "tools": [self.tool],
+            "hooks": {"on_pre_tool_use": self.pre_tool},
         }
 
     async def create(self, request: AhpSessionCreateRequest) -> CopilotSession:
@@ -131,7 +125,6 @@ class Application:
 
         return AhpHostOptions(
             authentication=AhpHostAuthentication("github"),
-            workspace=self.work_dir,
             local_server=HostLocalServerOptions(),
             allow_creating_new_sessions=True,
             create_session=self.create,

@@ -4,12 +4,12 @@
 
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
-using Microsoft.Copilot.Rpc;
+using GitHub.Copilot.Rpc;
 using Xunit;
 
-#pragma warning disable MCPSDK001 // Exercise the public model RPC projection.
+#pragma warning disable GHCP001 // Exercise the public model RPC projection.
 
-namespace Microsoft.Copilot.Test.Unit;
+namespace GitHub.Copilot.Test.Unit;
 
 public class AutoTierIdentityTests
 {

@@ -1,12 +1,12 @@
-/*---------------------------------------------------------------------------------------------
+﻿/*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
-using Microsoft.Copilot.Rpc;
+using GitHub.Copilot.Rpc;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 
-namespace Microsoft.Copilot;
+namespace GitHub.Copilot;
 
 /// <summary>Raw bytes and the authoritative total file byte length captured by the same read.</summary>
 public sealed class SessionFsByteRange
@@ -30,7 +30,7 @@ public interface ISessionFsReadFileRangeProvider
     /// <param name="length">Maximum bytes from 0 through 9007199254740991. Null reads through EOF; zero returns only byte length.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The requested bytes and authoritative total file byte length.</returns>
-    Task<SessionFsByteRange> ReadFileRangeAsync(string path, long offset, long? length, CancellationToken cancellationToken = default);
+    Task<SessionFsByteRange> ReadFileRangeAsync(string path, long offset, long? length, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -89,13 +89,13 @@ public interface ISessionFsSqliteProvider
         SessionFsSqliteQueryType queryType,
         string query,
         IDictionary<string, object?>? bindParams,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken);
 
     /// <summary>
     /// Checks whether the per-session SQLite database already exists, without creating it.
     /// </summary>
     /// <param name="cancellationToken">Cancellation token.</param>
-    Task<bool> ExistsAsync(CancellationToken cancellationToken = default);
+    Task<bool> ExistsAsync(CancellationToken cancellationToken);
 }
 
 /// <summary>Optional interface for providers that support exact binary file reads and writes.</summary>
@@ -104,14 +104,14 @@ public interface ISessionFsBinaryProvider
     /// <summary>Reads exact bytes of a file in the session filesystem.</summary>
     /// <param name="path">Path to read.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    Task<byte[]> ReadFileBytesAsync(string path, CancellationToken cancellationToken = default);
+    Task<byte[]> ReadFileBytesAsync(string path, CancellationToken cancellationToken);
 
     /// <summary>Writes exact bytes of a file in the session filesystem.</summary>
     /// <param name="path">Path to write.</param>
     /// <param name="content">Exact file bytes.</param>
     /// <param name="mode">Optional POSIX-style permission mode.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    Task WriteFileBytesAsync(string path, ReadOnlyMemory<byte> content, int? mode, CancellationToken cancellationToken = default);
+    Task WriteFileBytesAsync(string path, ReadOnlyMemory<byte> content, int? mode, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -131,7 +131,7 @@ public interface ISessionFsSqliteTransactionProvider
     /// </exception>
     Task<IList<SessionFsSqliteResult>> TransactionAsync(
         IList<SessionFsSqliteStatement> statements,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -192,62 +192,62 @@ public abstract class SessionFsProvider : ISessionFsReadFileRangeHandler
     /// <param name="path">Absolute or relative path in the provider's filesystem namespace.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The file content as a UTF-8 string.</returns>
-    protected abstract Task<string> ReadFileAsync(string path, CancellationToken cancellationToken = default);
+    protected abstract Task<string> ReadFileAsync(string path, CancellationToken cancellationToken);
 
     /// <summary>Writes content to a file, creating it (and parent directories) if needed. Throw <see cref="SessionFsWriteException"/> if a failed write changed the target.</summary>
     /// <param name="path">Absolute or relative path in the provider's filesystem namespace.</param>
     /// <param name="content">Content to write.</param>
     /// <param name="mode">Optional POSIX-style permission mode. Null means use OS default.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    protected abstract Task WriteFileAsync(string path, string content, int? mode, CancellationToken cancellationToken = default);
+    protected abstract Task WriteFileAsync(string path, string content, int? mode, CancellationToken cancellationToken);
 
     /// <summary>Appends content to a file, creating it (and parent directories) if needed.</summary>
     /// <param name="path">Absolute or relative path in the provider's filesystem namespace.</param>
     /// <param name="content">Content to append.</param>
     /// <param name="mode">Optional POSIX-style permission mode. Null means use OS default.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    protected abstract Task AppendFileAsync(string path, string content, int? mode, CancellationToken cancellationToken = default);
+    protected abstract Task AppendFileAsync(string path, string content, int? mode, CancellationToken cancellationToken);
 
     /// <summary>Checks whether a path exists.</summary>
     /// <param name="path">Absolute or relative path in the provider's filesystem namespace.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns><c>true</c> if the path exists, <c>false</c> otherwise.</returns>
-    protected abstract Task<bool> ExistsAsync(string path, CancellationToken cancellationToken = default);
+    protected abstract Task<bool> ExistsAsync(string path, CancellationToken cancellationToken);
 
     /// <summary>Gets metadata about a file or directory. Throw if the path does not exist.</summary>
     /// <param name="path">Absolute or relative path in the provider's filesystem namespace.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    protected abstract Task<SessionFsStatResult> StatAsync(string path, CancellationToken cancellationToken = default);
+    protected abstract Task<SessionFsStatResult> StatAsync(string path, CancellationToken cancellationToken);
 
     /// <summary>Creates a directory. If <paramref name="recursive"/> is true, creates parent directories as needed.</summary>
     /// <param name="path">Absolute or relative path in the provider's filesystem namespace.</param>
     /// <param name="recursive">Whether to create parent directories.</param>
     /// <param name="mode">Optional POSIX-style permission mode (e.g., 0x1FF for 0777). Null means use OS default.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    protected abstract Task MakeDirectoryAsync(string path, bool recursive, int? mode, CancellationToken cancellationToken = default);
+    protected abstract Task MakeDirectoryAsync(string path, bool recursive, int? mode, CancellationToken cancellationToken);
 
     /// <summary>Lists entry names in a directory. Throw if the directory does not exist.</summary>
     /// <param name="path">Absolute or relative path in the provider's filesystem namespace.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    protected abstract Task<IList<string>> ReadDirectoryAsync(string path, CancellationToken cancellationToken = default);
+    protected abstract Task<IList<string>> ReadDirectoryAsync(string path, CancellationToken cancellationToken);
 
     /// <summary>Lists entries with type info in a directory. Throw if the directory does not exist.</summary>
     /// <param name="path">Absolute or relative path in the provider's filesystem namespace.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    protected abstract Task<IList<SessionFsReaddirWithTypesEntry>> ReadDirectoryWithTypesAsync(string path, CancellationToken cancellationToken = default);
+    protected abstract Task<IList<SessionFsReaddirWithTypesEntry>> ReadDirectoryWithTypesAsync(string path, CancellationToken cancellationToken);
 
     /// <summary>Removes a file or directory. Throw if the path does not exist (unless <paramref name="force"/> is true).</summary>
     /// <param name="path">Absolute or relative path in the provider's filesystem namespace.</param>
     /// <param name="recursive">Whether to remove directory contents recursively.</param>
     /// <param name="force">If true, do not throw when the path does not exist.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    protected abstract Task RemoveAsync(string path, bool recursive, bool force, CancellationToken cancellationToken = default);
+    protected abstract Task RemoveAsync(string path, bool recursive, bool force, CancellationToken cancellationToken);
 
     /// <summary>Renames/moves a file or directory.</summary>
     /// <param name="src">Absolute or relative source path in the provider's filesystem namespace.</param>
     /// <param name="dest">Absolute or relative destination path in the provider's filesystem namespace.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    protected abstract Task RenameAsync(string src, string dest, CancellationToken cancellationToken = default);
+    protected abstract Task RenameAsync(string src, string dest, CancellationToken cancellationToken);
 
     // ---- ISessionFsHandler implementation (private, handles error mapping) ----
 
@@ -638,9 +638,8 @@ public abstract class SessionFsProvider : ISessionFsReadFileRangeHandler
         return new SessionFsError { Code = code, Message = ex.Message };
     }
 
-    // ADO.NET readers (including Microsoft.Data.Sqlite) return SQL NULL as DBNull.Value.
     private static JsonElement ToJsonElement(object? value) =>
-        CopilotClient.ToJsonElementForWire(value is DBNull ? null : value) ?? JsonElement.Parse("null");
+        CopilotClient.ToJsonElementForWire(value) ?? JsonElement.Parse("null");
 
     private static object? JsonElementToValue(JsonElement element) => element.ValueKind switch
     {

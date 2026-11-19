@@ -4,12 +4,11 @@ import (
 	"strings"
 	"testing"
 
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
-	"github.com/microsoft/copilot-sdk/go/v2/internal/e2e/testharness"
+	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/internal/e2e/testharness"
 )
 
 func TestResumeMCPOAuthE2E(t *testing.T) {
-	t.Parallel()
 	ctx := testharness.NewTestContext(t)
 	client := ctx.NewClient()
 	t.Cleanup(func() { client.ForceStop() })
@@ -21,7 +20,10 @@ func TestResumeMCPOAuthE2E(t *testing.T) {
 			return copilot.MCPAuthResultCancelled(), nil
 		}
 
-		session1, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, MCP: copilot.SessionMCPOptions{OnAuthRequest: mcpAuthHandler}})
+		session1, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			OnMCPAuthRequest:    mcpAuthHandler,
+		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
 		}
@@ -45,7 +47,10 @@ func TestResumeMCPOAuthE2E(t *testing.T) {
 		newClient := ctx.NewClient()
 		t.Cleanup(func() { newClient.ForceStop() })
 
-		session2, err := newClient.ResumeSession(t.Context(), sessionID, &copilot.ResumeSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, MCP: copilot.SessionMCPOptions{OnAuthRequest: mcpAuthHandler}})
+		session2, err := newClient.ResumeSession(t.Context(), sessionID, &copilot.ResumeSessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			OnMCPAuthRequest:    mcpAuthHandler,
+		})
 		if err != nil {
 			t.Fatalf("Failed to resume session: %v", err)
 		}

@@ -10,19 +10,19 @@ import (
 )
 
 // ClientMode controls the default surface presented to sessions created by the
-// [Client]. A mode must be explicitly selected in [ClientOptions].
+// [Client]. The zero value is [ModeCopilotCli], matching the legacy CLI defaults.
 //
-// Set [clientOptions.Mode] to [ModeEmpty] to opt in to multi-tenant safe
+// Set [ClientOptions.Mode] to [ModeEmpty] to opt in to multi-tenant safe
 // defaults: no built-in tools by default (callers must specify
-// [sessionOptions.AvailableTools] explicitly), no environment_context section
+// [SessionConfig.AvailableTools] explicitly), no environment_context section
 // in the system message, telemetry off, custom instructions and remote-custom
 // agents disabled, etc.
 type ClientMode string
 
 const (
-	// ModeCodingAgent selects coding-agent defaults; sessions inherit the full Copilot
+	// ModeCopilotCli is the default mode; sessions inherit the full Copilot
 	// CLI experience (all built-in tools, host environment_context, etc.).
-	ModeCodingAgent ClientMode = "coding-agent"
+	ModeCopilotCli ClientMode = "copilot-cli"
 	// ModeEmpty is the multi-tenant safe-default mode. Sessions start with
 	// no built-in tools, no environment context, and various features
 	// (custom instructions, remote agents, telemetry, plugins) off by
@@ -32,7 +32,7 @@ const (
 
 // ToolSet builds a list of source-qualified tool filter patterns
 // (`builtin:*`, `mcp:<name>`, `custom:*`, ...) for use with
-// [sessionOptions.AvailableTools] or [sessionOptions.ExcludedTools].
+// [SessionConfig.AvailableTools] or [SessionConfig.ExcludedTools].
 //
 // Tools are classified by the runtime at registration time (not from name
 // parsing), so AddBuiltIn("foo") matches only tools the runtime registered as
@@ -40,7 +40,7 @@ const (
 // register a tool with the same wire name.
 //
 // ToolSet's zero value is ready to use. Convert to []string via [ToolSet.ToSlice]
-// before passing to [sessionOptions] fields, e.g.
+// before passing to [SessionConfig] fields, e.g.
 // `(&ToolSet{}).AddBuiltIn(...).ToSlice()`.
 type ToolSet struct {
 	items []string
@@ -62,7 +62,7 @@ func (s *ToolSet) AddBuiltIn(names ...string) *ToolSet {
 }
 
 // AddCustom adds a custom-tool pattern. Matches tools registered via
-// [sessionOptions.Tools] or via custom agents.
+// [SessionConfig.Tools] or via custom agents.
 func (s *ToolSet) AddCustom(name string) *ToolSet {
 	validateToolName("custom", name)
 	s.items = append(s.items, "custom:"+name)

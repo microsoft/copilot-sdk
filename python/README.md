@@ -11,48 +11,55 @@ To use the SDK, you'll need:
 ## Installation
 
 ```bash
-pip install microsoft-copilot-sdk
+pip install github-copilot-sdk
 ```
 
 To include OpenTelemetry support:
 
 ```bash
-pip install "microsoft-copilot-sdk[telemetry]"
+pip install "github-copilot-sdk[telemetry]"
 ```
 
 ## Runtime
 
-Published wheels pin the runtime version; after installing, pre-download the
-matching native bundle:
+Published wheels include a pinned runtime version. After installing, download the
+runtime:
 
 ```bash
-python -m copilot download-runtime --in-process
+python -m copilot download-runtime
 ```
 
 This downloads the platform release package, verifies it against the release's
 `SHA256SUMS.txt`, and directly stages `copilot-runtime`, its adjacent `runtime.node`,
 and the filtered hostless runtime assets locally without retaining the downloaded
 archive. If you skip this step, the SDK performs the same staging automatically on
-first use.
+first managed stdio/TCP use.
 
-The `--in-process` option also creates a `copilot` compatibility entrypoint from `copilot-runtime`
+To pre-provision the native library required by the in-process (FFI) transport
+(see [In-process (FFI) transport](#in-process-ffi-transport)), pass `--in-process`:
+
+```bash
+python -m copilot download-runtime --in-process
+```
+
+This also creates a `copilot` compatibility entrypoint from `copilot-runtime`
 inside the complete materialized bundle. Its adjacent `runtime.node` can then be
 used for in-process hosting. That canonical staged library is reused, so this does
 not download a second runtime artifact.
 
-| Platform | Cache path                                                         |
-| -------- | ------------------------------------------------------------------ |
-| Linux    | `~/.cache/copilot-sdk/cli/<version>/prebuilds/<platform>/`         |
-| macOS    | `~/Library/Caches/copilot-sdk/cli/<version>/prebuilds/<platform>/` |
-| Windows  | `%LOCALAPPDATA%\copilot-sdk\cli\<version>\prebuilds\<platform>\`   |
+| Platform | Cache path |
+|----------|-----------|
+| Linux | `~/.cache/github-copilot-sdk/cli/<version>/prebuilds/<platform>/` |
+| macOS | `~/Library/Caches/github-copilot-sdk/cli/<version>/prebuilds/<platform>/` |
+| Windows | `%LOCALAPPDATA%\github-copilot-sdk\cli\<version>\prebuilds\<platform>\` |
 
 ### Environment variables
 
-| Variable                        | Description                                                                          |
-| ------------------------------- | ------------------------------------------------------------------------------------ |
-| `COPILOT_CLI_PATH`              | Use this specific binary instead of downloading                                      |
-| `COPILOT_CLI_EXTRACT_DIR`       | Override the version-specific cache directory                                        |
-| `COPILOT_SKIP_CLI_DOWNLOAD`     | Set to `1` to disable auto-download                                                  |
+| Variable | Description |
+|----------|-------------|
+| `COPILOT_CLI_PATH` | Use this specific binary instead of downloading |
+| `COPILOT_CLI_EXTRACT_DIR` | Override the version-specific cache directory |
+| `COPILOT_SKIP_CLI_DOWNLOAD` | Set to `1` to disable auto-download |
 | `COPILOT_CLI_DOWNLOAD_BASE_URL` | Override the GitHub Releases download URL used for the runtime package and checksums |
 
 ## Run the Sample
@@ -101,10 +108,11 @@ from copilot.session import PermissionHandler
 
 async def main():
     # Client automatically starts on enter and cleans up on exit
-    async with CopilotClient(mode="coding-agent") as client:
+    async with CopilotClient() as client:
         # Create a session with automatic cleanup
         async with await client.create_session(
-            model="gpt-5", permissions={"on_request": PermissionHandler.approve_all}
+            on_permission_request=PermissionHandler.approve_all,
+            model="gpt-5",
         ) as session:
             # Wait for non-Autopilot idle or this request's Autopilot stop
             request_id = None
@@ -163,10 +171,6 @@ await session.send("Workspace context updated", source="system")
 unchanged after the `agent-` prefix, so `"reviewer"` becomes `"agent-reviewer"`.
 It does not trim whitespace, change case, or remove an existing prefix.
 
-Use `AutomationMessageSource(automation_id)` for a turn sent on behalf of an
-automation the user configured, such as a recurring check-in; it becomes
-`automation-<id>`. An automation turn defines the session's task like a user message but carries no human authority; see [Message provenance](../docs/features/steering-and-queueing.md#message-provenance).
-
 Leave source unset (or `None`) for ordinary human sends so the field stays omitted.
 Use `"user"` when you need to set it explicitly. Source is independent of delivery
 mode and does not replace the session's `system_message` configuration, set billing
@@ -203,12 +207,13 @@ from copilot.session import PermissionHandler
 
 
 async def main():
-    client = CopilotClient(mode="coding-agent")
+    client = CopilotClient()
     await client.start()
 
     # approve_all is only valid when managed settings are disabled.
     session = await client.create_session(
-        model="gpt-5", permissions={"on_request": PermissionHandler.approve_all}
+        on_permission_request=PermissionHandler.approve_all,
+        model="gpt-5",
     )
 
     request_id = None
@@ -272,7 +277,7 @@ providers fast because they run on the event loop.
 ```python
 import asyncio
 
-from copilot import CopilotClient, RuntimeConnection, SkillProvider, SkillProviderDescriptor
+from copilot import CopilotClient, SkillProvider, SkillProviderDescriptor
 
 
 class MemorySkills(SkillProvider):
@@ -291,11 +296,11 @@ class MemorySkills(SkillProvider):
 
 
 async def main():
-    async with CopilotClient(
-        mode="empty", runtime=RuntimeConnection.for_default(base_directory="./.copilot-empty")
-    ) as client:
+    async with CopilotClient(mode="empty", base_directory="./.copilot-empty") as client:
         async with await client.create_session(
-            tools={"available_tools": []}, skills={"enabled": True, "provider": MemorySkills()}
+            available_tools=[],
+            enable_skills=True,
+            skill_provider=MemorySkills(),
         ) as session:
             await session.send("Use /release-notes for this change set")
 
@@ -303,14 +308,15 @@ async def main():
 asyncio.run(main())
 ```
 
-In `"empty"` mode, set `skills={"enabled": True}`; otherwise the provider is bound but
+In `"empty"` mode, set `enable_skills=True`; otherwise the provider is bound but
 dormant. Providers are ephemeral and are not persisted, so pass `skill_provider=`
 again to `resume_session()`. Cloud sessions do not support skill providers.
 Providers must be safe for concurrent calls because the runtime may list or read
 skills from multiple agent paths at the same time. When the runtime cancels a
 call, for example after its 30-second limit or when the session disconnects, an
-async provider's task is cancelled and receives `asyncio.CancelledError`. The
-same happens when the connection closes or the client is force-stopped.
+async provider's task is cancelled and receives `asyncio.CancelledError`. Closing
+the connection or force-stopping the client doesn't cancel a running call; it
+continues until it returns.
 
 #### Supporting files (experimental)
 
@@ -339,9 +345,10 @@ See [Supporting files](../docs/features/skills.md#supporting-files-experimental)
 from copilot import CopilotClient
 from copilot.session import PermissionHandler
 
-async with CopilotClient(mode="coding-agent") as client:
+async with CopilotClient() as client:
     async with await client.create_session(
-        model="gpt-5", permissions={"on_request": PermissionHandler.approve_all}
+        on_permission_request=PermissionHandler.approve_all,
+        model="gpt-5",
     ) as session:
 
         def on_event(event):
@@ -359,81 +366,72 @@ async with CopilotClient(mode="coding-agent") as client:
 from copilot import CopilotClient, RuntimeConnection
 
 # Connect to an existing CLI server
-client = CopilotClient(mode="coding-agent", runtime=RuntimeConnection.for_tcp("localhost", 3000))
+client = CopilotClient(connection=RuntimeConnection.for_uri("localhost:3000"))
 ```
 
 **CopilotClient Constructor:**
 
 <!-- docs-validate: hidden -->
-
 ```python
-from copilot import CopilotClient
+from copilot import CopilotClient, RuntimeConnection
 
-CopilotClient(mode="coding-agent")
-CopilotClient(
-    mode="coding-agent",
-    observability={"log_level": "debug"},
-    github={"token": "token"},
-)
+CopilotClient()  # spawn the bundled runtime with defaults
+CopilotClient(connection=RuntimeConnection.for_stdio(), log_level="debug", github_token="token")
 ```
-
 <!-- /docs-validate: hidden -->
 
 ```python
-CopilotClient(mode="coding-agent")  # resolve the deployment's current runtime default
-CopilotClient(mode="coding-agent", observability={"log_level": "debug"}, github={"token": "token"})
+CopilotClient()                                                   # spawn the bundled runtime with defaults
+CopilotClient(connection=..., log_level="debug", github_token=..., ...)
 ```
 
-All options are keyword-only. Feature settings use nested dictionaries;
-`CreateSessionOptions` and `ResumeSessionOptions` type those session dictionaries.
-Dotted names below identify group leaves, not flat keywords.
-Grouped create/resume RPC payloads require protocol 4 runtimes.
+All options are kw-only parameters:
 
-- `runtime` (RuntimeConnection | None): How to reach the runtime. Use
-  `RuntimeConnection.for_spawned_stdio(...)`, `RuntimeConnection.for_spawned_tcp(...)`,
-  `RuntimeConnection.for_tcp(...)`, or `RuntimeConnection.for_inprocess(...)`.
-  Defaults to `RuntimeConnection.for_default()` at construction time (in-process unless the environment overrides it).
-- `runtime.working_directory` (str | None): Child-process working directory (default: current dir).
-- `observability.log_level` (str | None): Runtime log level; `None` preserves the default. Attached runtimes reject explicit values.
-- Spawned `runtime.env` (dict | None): Child environment; `None` inherits, `{}` clears inherited variables.
+- `connection` (RuntimeConnection | None): How to reach the runtime. Use
+  `RuntimeConnection.for_stdio(...)`, `RuntimeConnection.for_tcp(...)`,
+  `RuntimeConnection.for_uri(...)`, or `RuntimeConnection.for_inprocess(...)`.
+  Defaults to a stdio connection with the bundled binary.
+- `working_directory` (str | None): Working directory for the CLI process (default: current dir).
+- `log_level` (str): Log level (default: "info").
+- `env` (dict | None): Environment variables for the CLI process.
 
     For the native standalone runtime, include
-    `{"COPILOT_TELEMETRY_DISABLED": "true"}` in `runtime.env` before startup to
+    `{"COPILOT_TELEMETRY_DISABLED": "true"}` in `env` before startup to
     disable Copilot-owned GitHub and Entra authentication telemetry process-wide, including
-    sessionless events. Authentication, `github.on_telemetry` forwarding, and
+    sessionless events. Authentication, `on_github_telemetry` forwarding, and
     user-configured OpenTelemetry export remain unchanged. This is separate from
-    `github={"telemetry_enabled": False}`, which disables only a session's pipeline.
+    `enable_session_telemetry=False`, which disables only a session's pipeline.
     The value must be exactly `"true"`; changing it requires a process restart.
     `COPILOT_GITHUB_TELEMETRY_DISABLED` remains native-runtime/GitHub-only. In-process connections reject
-    process options; set the variable in the host process environment before
+    per-client `env`; set the variable in the host process environment before
     starting the runtime instead.
 
-- `github.token` (str | None): GitHub token for authentication. When provided, takes priority over other auth methods.
-- `runtime.base_directory` (str | None): Base directory for Copilot data (session state, config, etc.) on owned runtimes. Sets `COPILOT_HOME` on child processes. When `None`, the runtime defaults to `~/.copilot`. Not available on attached `TcpRuntimeConnection`.
-- `extensions.launch_provider` (ExtensionLaunchProviderHandler | None): Experimental connection-level resolver for extension launch profiles. The client installs the reverse-RPC handler and registers the provider during startup before sessions can be created.
-- `installations.confirmation_handler` (InstallationConfirmationHandler | None): Experimental connection-global human review for `installations.confirm`. Receives the typed request and one cancellation signal, and returns an explicit decision. Does not enable installation capabilities.
-- `network` (NetworkConfig | None): Experimental. Network callbacks through which the SDK host decides the runtime's proxies and supplies its Kerberos tokens and proxy credentials. The client installs the `network.resolveProxy`, `network.authenticateNegotiate` and `network.authenticateBasic` handlers and registers the configured callbacks and `scope` during startup before sessions can be created. See [Network callbacks](#network-callbacks-experimental).
-- `github.use_logged_in_user` (bool | None): Whether to use logged-in user for authentication (default: True, but False when `github.token` is provided).
-- `observability.telemetry` (dict | None): OpenTelemetry configuration for the CLI process. Providing this enables telemetry — no separate flag needed. See [Telemetry](#telemetry) below.
-- `session_fs` (dict | None): Connection-level session filesystem provider configuration. To let `view` read provider-only images, set `capabilities.binary` to `True` and return a provider implementing `SessionFsBinaryProvider` (`read_file_bytes(path)` and `write_file_bytes(path, content, mode=None)`) from `state.create_session_fs_provider`; image reads do not fall back to local files. Binary reads and writes are limited to 50,330,880 raw bytes (approximately 48 MiB); larger results return a filesystem error before encoding or decoding.
-- `runtime.session_idle_timeout_seconds` (int | None): Server-wide session idle timeout in seconds. Set to `None` or `0` to disable.
-- `models.on_list_models` (callable | None): Custom handler for `list_models()`. When provided, the handler is called instead of querying the runtime.
-- `mode` (str, required): Select `"coding-agent"` for CLI-like behavior or `"empty"` to opt into features explicitly.
+- `github_token` (str | None): GitHub token for authentication. When provided, takes priority over other auth methods.
+- `base_directory` (str | None): Base directory for Copilot data (session state, config, etc.). Sets `COPILOT_HOME` on the spawned CLI process. When `None`, the CLI defaults to `~/.copilot`. Useful in restricted environments where only specific directories are writable. Ignored when using a `UriRuntimeConnection`.
+- `extension_launch_provider` (ExtensionLaunchProviderHandler | None): Experimental connection-level resolver for extension launch profiles. The client installs the reverse-RPC handler and registers the provider during startup before sessions can be created.
+- `installation_confirmation_handler` (InstallationConfirmationHandler | None): Experimental connection-global human review for `installations.confirm`. Receives the typed request and one cancellation signal, and returns an explicit decision. Does not enable installation capabilities.
+- `kerberos_auth` (KerberosAuthConfig | None): Supplies Kerberos credentials from the SDK host. The client installs the `kerberosAuth.acquire` handler and registers `mode` and `scope` during startup before sessions can be created. See [Kerberos authentication callback](#kerberos-authentication-callback).
+- `use_logged_in_user` (bool | None): Whether to use logged-in user for authentication (default: True, but False when `github_token` is provided).
+- `telemetry` (dict | None): OpenTelemetry configuration for the CLI process. Providing this enables telemetry — no separate flag needed. See [Telemetry](#telemetry) below.
+- `session_fs` (dict | None): Connection-level session filesystem provider configuration. To let `view` read provider-only images, set `capabilities.binary` to `True` and return a provider implementing `SessionFsBinaryProvider` (`read_file_bytes(path)` and `write_file_bytes(path, content, mode=None)`) from `create_session_fs_handler`; image reads do not fall back to local files. Binary reads and writes are limited to 50,330,880 raw bytes (approximately 48 MiB); larger results return a filesystem error before encoding or decoding.
+- `session_idle_timeout_seconds` (int | None): Server-wide session idle timeout in seconds. Set to `None` or `0` to disable.
+- `on_list_models` (callable | None): Custom handler for `list_models()`. When provided, the handler is called instead of querying the runtime.
+- `mode` (str): Client mode (default: `"copilot-cli"`).
 
 **RuntimeConnection variants:**
 
-- `RuntimeConnection.for_spawned_stdio(path=None, args=(), env=None, working_directory=None)` — spawn a local CLI process and talk over stdio.
-- `RuntimeConnection.for_spawned_tcp(port=0, connection_token=None, path=None, args=(), env=None, working_directory=None)` — spawn a local CLI in TCP mode.
-- `RuntimeConnection.for_tcp(host, port, connection_token=None)` — connect to an existing CLI server at `host` and `port`.
+- `RuntimeConnection.for_stdio(path=None, args=None)` — spawn a local CLI process and talk over stdio.
+- `RuntimeConnection.for_tcp(port=0, connection_token=None, path=None, args=None)` — spawn a local CLI in TCP mode.
+- `RuntimeConnection.for_uri(url, connection_token=None)` — connect to an existing CLI server (e.g. `"localhost:8080"`).
 - `RuntimeConnection.for_inprocess()` — host the runtime in-process via its native C ABI (FFI). See [In-process (FFI) transport](#in-process-ffi-transport).
-- `RuntimeConnection.for_default(...)` — synchronously resolve `COPILOT_SDK_DEFAULT_CONNECTION` at invocation (`inprocess` when unset, or `stdio`), without starting a runtime. Owned variants accept `base_directory` and `session_idle_timeout_seconds`.
 
 Managed stdio and TCP connections use the downloaded `copilot-runtime`
 executable with adjacent `runtime.node` by default. An explicit connection
 path or `COPILOT_CLI_PATH` overrides the downloaded runtime.
 
-Child-process connections (`for_spawned_stdio`/`for_spawned_tcp`) expose `env` and
-`working_directory` only on the runtime. The mapping replaces the child's
+Child-process connections (`for_stdio`/`for_tcp`) also expose a per-connection
+`env` field for the spawned process. Set it on the returned connection instead of
+the client-level `env` — setting both raises. The mapping replaces the child's
 entire environment rather than adding to it, so start from `os.environ` to keep
 the variables the runtime needs, such as `PATH`:
 
@@ -442,13 +440,14 @@ import os
 
 from copilot import CopilotClient, RuntimeConnection
 
-conn = RuntimeConnection.for_spawned_stdio(env={**os.environ, "MY_VAR": "value"})
-client = CopilotClient(mode="coding-agent", runtime=conn)
+conn = RuntimeConnection.for_stdio()
+conn.env = {**os.environ, "MY_VAR": "value"}
+client = CopilotClient(connection=conn)  # do NOT also pass env=... here
 ```
 
 ### Installation confirmation (experimental)
 
-Set `installations.confirmation_handler` on `CopilotClient` to receive the
+Set `installation_confirmation_handler` on `CopilotClient` to receive the
 runtime's `installations.confirm` callback through
 `InstallationConfirmationHandler`. The handler receives the generated
 `InstallationConfirmationRequest` and an `InstallationConfirmationContext`, and
@@ -491,96 +490,56 @@ instead of falling back to raw configuration writes. Generated presence and
 transport tests do not establish a working installer, live OAuth or restart
 safety.
 
-### Network callbacks (experimental)
+### Kerberos authentication callback
 
-Provide `network` (a `NetworkConfig`) to `CopilotClient` when the SDK host should take over parts of the runtime's networking, for example when the runtime runs in WSL or a container and should use VS Code's proxy settings and the host's Kerberos tickets. Registration happens during `start()`, before sessions can be created; if it fails, `start()` fails. Without this option, or for a callback you leave out, the runtime handles that part itself.
-
-- `resolve_proxy` receives a `NetworkResolveProxyRequest` and decides the proxies for every request the runtime would otherwise route by ambient proxy settings: proxy environment variables, `NO_PROXY` and operating-system proxy settings are not consulted unless it returns `None`. `request.url` is the request target as a PAC script sees it: without credentials or fragment, and for `https` and `wss` also without path and query. Return a PAC-style list such as `PROXY proxy.example:8080; HTTPS proxy.example:443; DIRECT` (the format of Electron's `session.resolveProxy`); return `DIRECT` for a direct connection, or `None` to let the runtime resolve the proxy itself, as if no callback were registered. Entry types the runtime doesn't support, such as SOCKS and QUIC, are skipped. If the callback fails, the request fails rather than connecting directly. Requests to loopback targets, and requests with an explicitly configured proxy, never consult it. The runtime caches answers, including `None`, for 5 seconds and waits at most 10 seconds for the callback.
-- `authenticate_negotiate` receives a `NetworkAuthenticateNegotiateRequest` and supplies the Kerberos token for a proxy's Negotiate challenge instead of the runtime's native credential lookup. `request.spn` is a service principal in the platform-independent `service/host[@REALM]` form; validate it before issuing credentials. Return a fresh base64 SPNEGO token without the `Negotiate ` prefix, or `None` when credentials are unavailable, which fails the request unless the proxy also offers Basic and `authenticate_basic` supplies credentials. The runtime waits at most 30 seconds for the callback (less when the request's own deadline is sooner). Tokens are not cached and must not be logged or persisted. The callback supplies the initial SPNEGO token only; exchanges requiring continuation tokens are not supported. Proxies chosen by `resolve_proxy` are authenticated the same way.
-- `authenticate_basic` receives a `NetworkAuthenticateBasicRequest` and supplies the credentials for a proxy's Basic challenge on requests the runtime tunnels through the proxy (`https` and `wss`). `request.proxy` is `http://host:port` or `https://host:port`; `request.realm` comes from the proxy, so treat it as untrusted text. Return a `NetworkAuthenticateBasicResult(username=..., password=...)`, or `None` when credentials are unavailable, which fails the request with the proxy's challenge, as does an empty user name. The user name must not contain a colon, and neither the user name nor the password may contain control characters; an omitted password means an empty password. The runtime remembers the answer for that proxy and uses it for later connections, until the proxy rejects it; then it calls again with `request.previous_rejected` set, so return different credentials, for example by asking the user, or `None`. A later connection sends the answer without waiting for a challenge, unless the runtime may try Negotiate with that proxy first. A connection submits at most three sets of credentials. While a call is pending, other requests through that proxy wait for its answer. When a proxy offers both Negotiate and Basic, the runtime prefers Negotiate and answers with Basic when Negotiate is unavailable or the proxy rejects it. The runtime does not time the callback out: a request whose own deadline passes stops waiting, but the answer is still remembered. Credentials must not be logged or persisted.
-
-The callbacks may be sync or async. When the runtime stops waiting (it cancels the request, for example after its timeout, or the connection closes), an awaitable a callback returned is cancelled with `asyncio.CancelledError` and any later result is ignored; if that awaitable is cancelled otherwise, the runtime receives a callback failure. Like other client callbacks, the callbacks run on the client's event loop, so keep a sync callback fast and offload a blocking lookup, for example with `await asyncio.to_thread(lookup, request.url)`.
-
-By default the callbacks serve only requests made for sessions this client creates or resumes. With `"scope": "runtime"` they also serve the runtime's shared background traffic, such as catalog refreshes and telemetry; only one connection at a time can hold that scope, so `start()` fails if another client holds it. The registration ends when the connection closes; a `start()` that fails or is cancelled closes it.
+Provide `kerberos_auth={"mode": ..., "callback": ...}` (a `KerberosAuthConfig`) to `CopilotClient` when Kerberos tickets must be obtained by the SDK host, for example from Windows when the runtime runs in WSL. The runtime currently uses it for proxy authentication. The callback receives a `KerberosAuthAcquireRequest` whose `spn` is a service principal in the platform-independent `service/host[@REALM]` form, and returns a fresh base64 SPNEGO token without the `Negotiate ` prefix, or `None` when credentials are unavailable. The callback may be sync or async and should validate the principal before issuing credentials.
 
 <!-- docs-validate: hidden -->
-
 ```python
-from copilot import (
-    CopilotClient,
-    NetworkAuthenticateNegotiateRequest,
-    NetworkResolveProxyRequest,
-)
-
-
-async def lookup_proxy(url: str) -> str | None:
-    return None
+from copilot import CopilotClient, KerberosAuthAcquireRequest
 
 
 async def get_spnego_token(spn: str) -> str:
     return ""
 
 
-async def resolve_proxy(request: NetworkResolveProxyRequest) -> str | None:
-    return await lookup_proxy(request.url)  # For example, from VS Code's proxy settings.
-
-
-async def authenticate_negotiate(request: NetworkAuthenticateNegotiateRequest) -> str | None:
+async def acquire_token(request: KerberosAuthAcquireRequest) -> str | None:
     if request.spn != "HTTP/proxy.example.com":
         return None
     return await get_spnego_token(request.spn)  # Your Kerberos/SSPI integration.
 
 
-client = CopilotClient(
-    mode="coding-agent",
-    network={
-        "scope": "runtime",
-        "resolve_proxy": resolve_proxy,
-        "authenticate_negotiate": authenticate_negotiate,
-    },
-)
+client = CopilotClient(kerberos_auth={"mode": "fallback", "callback": acquire_token})
 ```
-
 <!-- /docs-validate: hidden -->
 
 ```python
-from copilot import (
-    CopilotClient,
-    NetworkAuthenticateNegotiateRequest,
-    NetworkResolveProxyRequest,
-)
+from copilot import CopilotClient, KerberosAuthAcquireRequest
 
 
-async def resolve_proxy(request: NetworkResolveProxyRequest) -> str | None:
-    return await lookup_proxy(request.url)  # For example, from VS Code's proxy settings.
-
-
-async def authenticate_negotiate(request: NetworkAuthenticateNegotiateRequest) -> str | None:
+async def acquire_token(request: KerberosAuthAcquireRequest) -> str | None:
     if request.spn != "HTTP/proxy.example.com":
         return None
     return await get_spnego_token(request.spn)  # Your Kerberos/SSPI integration.
 
 
-client = CopilotClient(
-    mode="coding-agent",
-    network={
-        "scope": "runtime",
-        "resolve_proxy": resolve_proxy,
-        "authenticate_negotiate": authenticate_negotiate,
-    },
-)
+client = CopilotClient(kerberos_auth={"mode": "fallback", "callback": acquire_token})
 ```
+
+With `mode="fallback"`, native credential acquisition (including the first token) is tried first; only failure invokes the callback. With `mode="always"`, native credential lookup is never attempted. Without this option, behavior is unchanged. Registration happens during `start()`, before sessions can be created; if it fails, `start()` fails.
+
+By default the callback authenticates only requests made for sessions this client creates or resumes. With `scope="runtime"` it also authenticates the runtime's shared background traffic, such as catalog refreshes and telemetry; only one connection at a time can hold that scope, so `start()` fails if another client holds it. The registration ends when the connection closes; a `start()` that fails or is cancelled closes it. In `fallback` mode, if the callback cannot supply a valid token, the native credential error is reported. In `always` mode, a disconnected, raising, or empty callback fails authentication. The runtime waits at most 30 seconds for the callback (less when the request's own deadline is sooner) and treats a timeout as a callback failure. When the runtime stops waiting or the connection closes, an awaitable the callback returned is cancelled with `asyncio.CancelledError`; if that awaitable is cancelled otherwise, the runtime receives a callback failure. Like other client callbacks, the callback runs on the client's event loop, so keep a sync callback fast and offload a blocking lookup, for example with `await asyncio.to_thread(lookup, request.spn)`; its late result is ignored. Tokens are not cached and must not be logged or persisted. The callback supplies the initial SPNEGO token only; exchanges requiring continuation tokens still need native negotiation.
 
 ### In-process (FFI) transport
 
-The default transport loads the runtime's native shared library into your process
-and drives JSON-RPC over its C ABI (via stdlib `ctypes`), instead of spawning a
-child process. This does not provide crash isolation or a sandbox.
+> ⚠️ **Experimental.** The in-process transport loads the runtime's native shared
+> library into your process and drives JSON-RPC over its C ABI (via stdlib
+> `ctypes`), instead of spawning a child process.
 
 ```python
 from copilot import CopilotClient, RuntimeConnection
 
-client = CopilotClient(mode="coding-agent", runtime=RuntimeConnection.for_inprocess())
+client = CopilotClient(connection=RuntimeConnection.for_inprocess())
 await client.start()
 try:
     pong = await client.ping("hello")
@@ -597,40 +556,38 @@ finally:
 - Set `COPILOT_CLI_PATH` only when using an externally provisioned compatible
   runtime package. In-process connections do not accept per-connection paths
   or raw process arguments.
-- Process options belong only on spawned runtimes;
-  typed `observability.telemetry` is scoped to this runtime. Set working
-  directories on individual sessions.
-- Set `COPILOT_SDK_DEFAULT_CONNECTION=stdio` to retain the subprocess default,
-  or pass `runtime=RuntimeConnection.for_spawned_stdio()` explicitly. Explicit
-  connections take precedence. See [v2 migration](../docs/setup/in-process-runtime.md#migrate-to-the-v2-default).
+- Because the runtime shares this single host process, per-client options that
+  lower to environment variables or a working directory **cannot** be honored and
+  are rejected: `env`, `telemetry`, and `working_directory` all raise `ValueError`
+  with `for_inprocess()`. Set the corresponding values on the host process
+  environment / working directory before creating the client instead.
+- Set `COPILOT_SDK_DEFAULT_CONNECTION=inprocess` to select the in-process
+  transport by default when no explicit `connection` is supplied.
 
 **`CopilotClient.create_session()`:**
 
 These are passed as keyword arguments to `create_session()`:
 
 - `model` (str): Model to use ("gpt-5", "claude-sonnet-4.5", etc.). **Required when using custom provider.**
-- `github.capi` (CapiSessionOptions): Copilot API options. With `model="auto"`, set `auto_tier` to `"efficiency"`, `"balance"`, `"intelligence"`, or `"fast"` to choose a routing preference. `"fast"` is an integrator-only latency preset, not a first-party GitHub Copilot product preference. Requires a runtime with Auto tier support and V2 Auto routing. Omission preserves default behavior. See [Auto tier persistence](../docs/features/session-persistence.md#auto-tier-persistence) for resume semantics. For Copilot Fusion, use `model="fusion"` and set `fusion_tier` to `"standard"`, `"high"`, or `"max"`; see [Copilot Fusion names](../docs/features/session-persistence.md#copilot-fusion-names).
-- `inference.reasoning_effort` (str): Reasoning effort level for models that support it ("low", "medium", "high", "xhigh", "max"). Use `list_models()` to check which models support this option.
+- `capi` (CapiSessionOptions): Copilot API options. With `model="auto"`, set `auto_tier` to `"efficiency"`, `"balance"`, `"intelligence"`, or `"fast"` to choose a routing preference. `"fast"` is an integrator-only latency preset, not a first-party GitHub Copilot product preference. Requires a runtime with Auto tier support and V2 Auto routing. Omission preserves default behavior. See [Auto tier persistence](../docs/features/session-persistence.md#auto-tier-persistence) for resume semantics.
+- `reasoning_effort` (str): Reasoning effort level for models that support it ("low", "medium", "high", "xhigh", "max"). Use `list_models()` to check which models support this option.
 - `session_id` (str): Custom session ID
-- `tools.definitions` (list): Custom tools exposed to the CLI. Tools with `handler=None` are declaration-only and must be resolved via pending tool-call RPCs.
+- `tools` (list): Custom tools exposed to the CLI. Tools with `handler=None` are declaration-only and must be resolved via pending tool-call RPCs.
 - `system_message` (SystemMessageConfig): System message configuration
-- `events.streaming` (bool): Enable streaming delta events
-- `inference.providers` (list[NamedProviderConfig]): Custom API provider configuration (BYOK). See [Custom Providers](#custom-providers) section.
-- `state.infinite_sessions` (InfiniteSessionConfig): Automatic context compaction configuration
-- `execution.autopilot` (AutopilotOptions, experimental): Autopilot policy, also accepted by `resume_session()`. `continuation_enabled` defaults to `True` and does not change session mode; `max_continues` limits continuations outside an active objective (non-negative integer, default five, zero allows none). Omitted fields preserve resident values on warm resume. Re-supply on cold resume.
+- `streaming` (bool): Enable streaming delta events
+- `provider` (ProviderConfig): Custom API provider configuration (BYOK). See [Custom Providers](#custom-providers) section.
+- `infinite_sessions` (InfiniteSessionConfig): Automatic context compaction configuration
+- `autopilot` (AutopilotOptions, experimental): Autopilot policy, also accepted by `resume_session()`. `continuation_enabled` defaults to `True` and does not change session mode; `max_continues` limits continuations outside an active objective (non-negative integer, default five, zero allows none). Omitted fields preserve resident values on warm resume. Re-supply on cold resume.
 - `working_directory` (str | None): Working directory for the session (default: runtime process working directory).
-- `state.enable_cross_session_store` (bool): Enables the cross-session store for search and retrieval across sessions. When unset in `"coding-agent"` mode, the runtime default applies (enabled). In `"empty"` mode, defaults to disabled.
-- `github.token_provider` (callable): Acquires rotating, session-scoped GitHub tokens. Token results require an `expiresIn` value in seconds remaining when the callback completes, of which more than one hour must still remain after the runtime validates the token; production tokens typically last eight hours. Cannot be combined with `github.token`.
-- `permissions.on_request` (callable): Optional handler called before each tool execution to approve or deny it. When omitted, permission requests are emitted as events and left pending for manual resolution. `PermissionHandler.approve_all` approves requests when managed settings are disabled and raises an error when `github.fetch_managed_settings` is true. Custom handlers can inspect `managed_approval_required` for human-facing confirmation logic. See [Permission Handling](#permission-handling) section.
-- `interaction.on_user_input_request` (callable): Handler for legacy question-and-answer requests from the agent. Enables the legacy `ask_user` tool. See [User Input Requests](#user-input-requests) section.
-- `interaction.on_shell_authentication_request` (callable): Handler for passwords and other answers that shell commands run by the agent ask for, such as `sudo -A`, `ssh`, and `git` over HTTPS. The answer goes only to the program that asked; the model never sees it. Without a handler, those commands fail as they do without a terminal. See [Shell password prompts](../docs/features/shell-password-prompts.md).
-- `interaction.ask_user_variant` (`"legacy"` | `"elicitation"`): Selects the model-facing shape of the `ask_user` tool. Defaults to `"legacy"`; use `"elicitation"` with `interaction.on_elicitation_request`. Re-supply this option when cold-resuming a session.
-- `github.interactive_user` (bool): Declares that a person types this session's messages, as in an editor chat panel. Enables the runtime's user-message analysis telemetry for user-authored messages; automated messages stay excluded. Defaults to `False`. Ignored for cloud sessions. Re-supply it when cold-resuming a session; it is ignored when resuming a session that is already active.
-- `permissions.mode` (PermissionMode): Applies `manual`, `assisted`, or `allow-all` before the session's first turn: before `create_session` returns, and before a resume continues pending work. Uses the same checks as `session.rpc.permissions.set_mode`; `session.permission_mode_result` reports whether it was applied and the authoritative mode. Not supported for cloud sessions.
-- `hooks.handlers` (SessionHooks): Hook handlers for session lifecycle events. See [Session Hooks](#session-hooks) section.
+- `enable_session_store` (bool): Enables the cross-session store for search and retrieval across sessions. When unset in `"copilot-cli"` mode, the runtime default applies (enabled). In `"empty"` mode, defaults to disabled.
+- `github_token_provider` (callable): Acquires rotating, session-scoped GitHub tokens. Token results require a positive `expiresIn` value in seconds remaining when the callback completes; production tokens typically last eight hours. Cannot be combined with `github_token`.
+- `on_permission_request` (callable): Optional handler called before each tool execution to approve or deny it. When omitted, permission requests are emitted as events and left pending for manual resolution. `PermissionHandler.approve_all` approves requests when managed settings are disabled and raises an error when `enable_managed_settings` is true. Custom handlers can inspect `managed_approval_required` for human-facing confirmation logic. See [Permission Handling](#permission-handling) section.
+- `on_user_input_request` (callable): Handler for legacy question-and-answer requests from the agent. Enables the legacy `ask_user` tool. See [User Input Requests](#user-input-requests) section.
+- `ask_user_variant` (`"legacy"` | `"elicitation"`): Selects the model-facing shape of the `ask_user` tool. Defaults to `"legacy"`; use `"elicitation"` with `on_elicitation_request`. Re-supply this option when cold-resuming a session.
+- `interactive_user` (bool): Declares that a person types this session's messages, as in an editor chat panel. Enables the runtime's user-message analysis telemetry for user-authored messages; automated messages stay excluded. Defaults to `False`. Ignored for cloud sessions. Re-supply it when cold-resuming a session; it is ignored when resuming a session that is already active.
+- `hooks` (SessionHooks): Hook handlers for session lifecycle events. See [Session Hooks](#session-hooks) section.
 
 <!-- docs-validate: hidden -->
-
 ```python
 async def acquire_token_for_host(host: str) -> str:
     return ""
@@ -644,9 +601,8 @@ async def provide_github_token(args):
     }
 
 
-session = await client.create_session(github={"token_provider": provide_github_token})
+session = await client.create_session(github_token_provider=provide_github_token)
 ```
-
 <!-- /docs-validate: hidden -->
 
 ```python
@@ -658,12 +614,12 @@ async def provide_github_token(args):
     }
 
 
-session = await client.create_session(github={"token_provider": provide_github_token})
+session = await client.create_session(github_token_provider=provide_github_token)
 ```
 
 Initial acquisition runs during session creation or resume. Cancellation, provider errors, and invalid token responses reject that operation instead of falling back to ambient authentication. Idle sessions refresh only before their next credential-consuming operation; there is no background refresh timer.
 
-- `tools.available_tools` / `tools.excluded_tools` / `default_agent.excluded_tools` / custom-agent `tools.definitions`: MCP tools registered from `mcp.servers` are exposed to the runtime as `<server-key>-<tool-name>`. For `tools.available_tools` and `tools.excluded_tools`, prefer `ToolSet().add_mcp("<server-key>-<tool-name>")` or the raw `mcp:<server-key>-<tool-name>` form. For custom-agent `tools.definitions` and `default_agent.excluded_tools`, use `<server-key>-<tool-name>` directly.
+- `available_tools` / `excluded_tools` / `default_agent.excluded_tools` / custom-agent `tools`: MCP tools registered from `mcp_servers` are exposed to the runtime as `<server-key>-<tool-name>`. For `available_tools` and `excluded_tools`, prefer `ToolSet().add_mcp("<server-key>-<tool-name>")` or the raw `mcp:<server-key>-<tool-name>` form. For custom-agent `tools` and `default_agent.excluded_tools`, use `<server-key>-<tool-name>` directly.
 
 **Session Lifecycle Methods:**
 
@@ -726,9 +682,9 @@ async def lookup_issue(params: LookupIssueParams) -> str:
 
 
 async with await client.create_session(
+    on_permission_request=PermissionHandler.approve_all,
     model="gpt-5",
-    permissions={"on_request": PermissionHandler.approve_all},
-    tools={"definitions": [lookup_issue]},
+    tools=[lookup_issue],
 ) as session:
     ...
 ```
@@ -751,9 +707,9 @@ async def lookup_issue(params: LookupIssueParams) -> str:
 
 
 async with await client.create_session(
+    on_permission_request=PermissionHandler.approve_all,
     model="gpt-5",
-    permissions={"on_request": PermissionHandler.approve_all},
-    tools={"definitions": [lookup_issue]},
+    tools=[lookup_issue],
 ) as session:
     ...
 ```
@@ -788,24 +744,22 @@ async def lookup_issue(invocation: ToolInvocation) -> ToolResult:
 
 
 async with await client.create_session(
+    on_permission_request=PermissionHandler.approve_all,
     model="gpt-5",
-    permissions={"on_request": PermissionHandler.approve_all},
-    tools={
-        "definitions": [
-            Tool(
-                name="lookup_issue",
-                description="Fetch issue details from our tracker",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "id": {"type": "string", "description": "Issue identifier"},
-                    },
-                    "required": ["id"],
+    tools=[
+        Tool(
+            name="lookup_issue",
+            description="Fetch issue details from our tracker",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "Issue identifier"},
                 },
-                handler=lookup_issue,
-            )
-        ]
-    },
+                "required": ["id"],
+            },
+            handler=lookup_issue,
+        )
+    ],
 ) as session:
     ...
 ```
@@ -829,24 +783,22 @@ async def lookup_issue(invocation: ToolInvocation) -> ToolResult:
 
 
 async with await client.create_session(
+    on_permission_request=PermissionHandler.approve_all,
     model="gpt-5",
-    permissions={"on_request": PermissionHandler.approve_all},
-    tools={
-        "definitions": [
-            Tool(
-                name="lookup_issue",
-                description="Fetch issue details from our tracker",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "id": {"type": "string", "description": "Issue identifier"},
-                    },
-                    "required": ["id"],
+    tools=[
+        Tool(
+            name="lookup_issue",
+            description="Fetch issue details from our tracker",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "Issue identifier"},
                 },
-                handler=lookup_issue,
-            )
-        ]
-    },
+                "required": ["id"],
+            },
+            handler=lookup_issue,
+        )
+    ],
 ) as session:
     ...
 ```
@@ -935,6 +887,8 @@ the shared behavior and active-turn limitations.
 
 If you register a tool with the same name as a built-in CLI tool (e.g. `edit_file`, `read_file`), the SDK will throw an error unless you explicitly opt in by setting `overrides_built_in_tool=True`. This flag signals that you intend to replace the built-in tool with your custom implementation.
 
+<!-- docs-validate: hidden -->
+<!--
 ```python
 from pydantic import BaseModel, Field
 from copilot import define_tool
@@ -953,6 +907,18 @@ class EditFileParams(BaseModel):
 async def edit_file(params: EditFileParams) -> str:
     # your logic
     return ""
+```
+-->
+<!-- /docs-validate: hidden -->
+
+```python
+class EditFileParams(BaseModel):
+    path: str = Field(description="File path")
+    content: str = Field(description="New file content")
+
+@define_tool(name="edit_file", description="Custom file editor with project-specific validation", overrides_built_in_tool=True)
+async def edit_file(params: EditFileParams) -> str:
+    # your logic
 ```
 
 An explicit `apply_patch` override can declare a root string schema with
@@ -1016,6 +982,8 @@ async def safe_lookup(params: LookupParams) -> str:
 
 Set `defer` to control whether a tool may be loaded lazily via tool search rather than always pre-loaded. Use `"auto"` to allow the tool to be deferred and surfaced through tool search, or `"never"` to force it to always be pre-loaded. Defaults to `"auto"`.
 
+<!-- docs-validate: hidden -->
+<!--
 ```python
 from pydantic import BaseModel, Field
 from copilot import define_tool
@@ -1029,6 +997,14 @@ class LookupParams(BaseModel):
 async def lookup_issue(params: LookupParams) -> str:
     # your logic
     return ""
+```
+-->
+<!-- /docs-validate: hidden -->
+
+```python
+@define_tool(name="lookup_issue", description="Fetch issue details", defer="auto")
+async def lookup_issue(params: LookupParams) -> str:
+    # your logic
 ```
 
 ## Auto routing tiers
@@ -1049,8 +1025,6 @@ await session.set_auto_tier(None)
 ```
 
 `set_model()` accepts the same preference through its `auto_tier` argument, which stages the tier atomically with selecting `auto`. Pass `None` to return to provider-default routing, or omit the argument to leave the current preference unchanged.
-
-For Copilot Fusion, use the CLI's names: `model="fusion"` with `capi={"fusion_tier": "high"}` on create or resume, `set_model("fusion", fusion_tier="high")`, or `set_fusion_tier("high")`. The tiers are `"standard"`, `"high"`, and `"max"`. The routing identifiers these replace (`balance`, `hydrafusion`, and `hydrafusion-max`, and the `hydrafusion` and `hydrafusion-max` model IDs) remain accepted but are deprecated. See [Copilot Fusion names](../docs/features/session-persistence.md#copilot-fusion-names).
 
 See [Auto tier persistence](../docs/features/session-persistence.md#auto-tier-persistence) for the full lifecycle rules.
 
@@ -1194,11 +1168,11 @@ from copilot.session import PermissionHandler
 
 
 async def main():
-    async with CopilotClient(mode="coding-agent") as client:
+    async with CopilotClient() as client:
         async with await client.create_session(
+            on_permission_request=PermissionHandler.approve_all,
             model="gpt-5",
-            permissions={"on_request": PermissionHandler.approve_all},
-            events={"streaming": True},
+            streaming=True,
         ) as session:
             # Wait for non-Autopilot idle or this request's Autopilot stop
             request_id = None
@@ -1269,7 +1243,8 @@ By default, sessions use **infinite sessions** which automatically manage contex
 ```python
 # Default: infinite sessions enabled with default thresholds
 async with await client.create_session(
-    model="gpt-5", permissions={"on_request": PermissionHandler.approve_all}
+    on_permission_request=PermissionHandler.approve_all,
+    model="gpt-5",
 ) as session:
     # Access the workspace path for checkpoints and files
     print(session.workspace_path)
@@ -1277,23 +1252,21 @@ async with await client.create_session(
 
 # Custom thresholds
 async with await client.create_session(
+    on_permission_request=PermissionHandler.approve_all,
     model="gpt-5",
-    permissions={"on_request": PermissionHandler.approve_all},
-    state={
-        "infinite_sessions": {
-            "enabled": True,
-            "background_compaction_threshold": 0.80,  # Start compacting at 80% context usage
-            "buffer_exhaustion_threshold": 0.95,  # Block at 95% until compaction completes
-        }
+    infinite_sessions={
+        "enabled": True,
+        "background_compaction_threshold": 0.80,  # Start compacting at 80% context usage
+        "buffer_exhaustion_threshold": 0.95,  # Block at 95% until compaction completes
     },
 ) as session:
     ...
 
 # Disable infinite sessions
 async with await client.create_session(
+    on_permission_request=PermissionHandler.approve_all,
     model="gpt-5",
-    permissions={"on_request": PermissionHandler.approve_all},
-    state={"infinite_sessions": {"enabled": False}},
+    infinite_sessions={"enabled": False},
 ) as session:
     ...
 ```
@@ -1310,22 +1283,22 @@ For more background, see [About GitHub Copilot Memory](https://docs.github.com/e
 
 ```python
 async with await client.create_session(
+    on_permission_request=PermissionHandler.approve_all,
     model="gpt-5",
-    permissions={"on_request": PermissionHandler.approve_all},
-    state={"memory": {"enabled": True}},
+    memory={"enabled": True},
 ) as session:
     ...
 ```
 
-When `state.memory` is omitted, no memory configuration is sent and the runtime default applies. In `"coding-agent"` client mode the SDK leaves `state.memory` unset so the runtime applies its own default, while `"empty"` mode defaults `state.memory` to disabled unless you set it explicitly.
+When `memory` is omitted, no memory configuration is sent and the runtime default applies. In the default `"copilot-cli"` client mode the SDK leaves `memory` unset so the runtime applies its own default, while `"empty"` mode defaults `memory` to disabled unless you set it explicitly.
 
 ## Custom Providers
 
 The SDK supports custom OpenAI-compatible API providers (BYOK - Bring Your Own Key), including local providers like Ollama. When using a custom provider, you must specify the `model` explicitly.
 
-**NamedProviderConfig fields:**
+**ProviderConfig fields:**
 
-- `type` (str): Provider type - `"openai"`, `"azure"`, `"anthropic"`, or `"google"` (default: `"openai"`). `"google"` (experimental) uses Google's native Gemini Interactions API.
+- `type` (str): Provider type - `"openai"`, `"azure"`, or `"anthropic"` (default: `"openai"`)
 - `base_url` (str): API endpoint URL (required)
 - `api_key` (str): API key (optional for local providers like Ollama)
 - `bearer_token` (str): Bearer token for authentication (takes precedence over `api_key`)
@@ -1336,19 +1309,12 @@ The SDK supports custom OpenAI-compatible API providers (BYOK - Bring Your Own K
 
 ```python
 async with await client.create_session(
-    model="deepseek-coder-v2:16b",
-    permissions={"on_request": PermissionHandler.approve_all},
-    github={"capi": {"enabled": False}},
-    inference={
-        "default_provider": "byok",
-        "providers": [
-            {
-                "name": "byok",
-                "type": "openai",
-                "base_url": "http://localhost:11434/v1",  # Ollama endpoint
-                # api_key not required for Ollama
-            }
-        ],
+    on_permission_request=PermissionHandler.approve_all,
+    model="deepseek-coder-v2:16b",  # Required when using custom provider
+    provider={
+        "type": "openai",
+        "base_url": "http://localhost:11434/v1",  # Ollama endpoint
+        # api_key not required for Ollama
     },
 ) as session:
     await session.send("Hello!")
@@ -1360,19 +1326,12 @@ async with await client.create_session(
 import os
 
 async with await client.create_session(
+    on_permission_request=PermissionHandler.approve_all,
     model="gpt-4",
-    permissions={"on_request": PermissionHandler.approve_all},
-    github={"capi": {"enabled": False}},
-    inference={
-        "default_provider": "byok",
-        "providers": [
-            {
-                "name": "byok",
-                "type": "openai",
-                "base_url": "https://my-api.example.com/v1",
-                "api_key": os.environ["MY_API_KEY"],
-            }
-        ],
+    provider={
+        "type": "openai",
+        "base_url": "https://my-api.example.com/v1",
+        "api_key": os.environ["MY_API_KEY"],
     },
 ) as session:
     ...
@@ -1384,22 +1343,15 @@ async with await client.create_session(
 import os
 
 async with await client.create_session(
+    on_permission_request=PermissionHandler.approve_all,
     model="gpt-4",
-    permissions={"on_request": PermissionHandler.approve_all},
-    github={"capi": {"enabled": False}},
-    inference={
-        "default_provider": "byok",
-        "providers": [
-            {
-                "name": "byok",
-                "type": "azure",  # Must be "azure" for Azure endpoints, NOT "openai"
-                "base_url": "https://my-resource.openai.azure.com",  # Just the host, no path
-                "api_key": os.environ["AZURE_OPENAI_KEY"],
-                "azure": {
-                    "api_version": "2024-10-21",
-                },
-            }
-        ],
+    provider={
+        "type": "azure",  # Must be "azure" for Azure endpoints, NOT "openai"
+        "base_url": "https://my-resource.openai.azure.com",  # Just the host, no path
+        "api_key": os.environ["AZURE_OPENAI_KEY"],
+        "azure": {
+            "api_version": "2024-10-21",
+        },
     },
 ) as session:
     ...
@@ -1417,6 +1369,7 @@ Control the system prompt using `system_message` in session config:
 
 ```python
 async with await client.create_session(
+    on_permission_request=PermissionHandler.approve_all,
     model="gpt-5",
     system_message={
         "mode": "append",
@@ -1427,7 +1380,6 @@ async with await client.create_session(
 </workflow_rules>
 """,
     },
-    permissions={"on_request": PermissionHandler.approve_all},
 ) as session:
     ...
 ```
@@ -1438,6 +1390,7 @@ Use `mode: "customize"` to selectively override individual sections of the promp
 
 ```python
 async with await client.create_session(
+    on_permission_request=PermissionHandler.approve_all,
     model="gpt-5",
     system_message={
         "mode": "customize",
@@ -1451,7 +1404,6 @@ async with await client.create_session(
         },
         "content": "Focus on financial analysis and reporting.",
     },
-    permissions={"on_request": PermissionHandler.approve_all},
 ) as session:
     ...
 ```
@@ -1470,6 +1422,7 @@ def redact_paths(content: str) -> str:
 
 
 async with await client.create_session(
+    on_permission_request=PermissionHandler.approve_all,
     model="gpt-5",
     system_message={
         "mode": "customize",
@@ -1477,7 +1430,6 @@ async with await client.create_session(
             "environment_context": {"action": redact_paths},
         },
     },
-    permissions={"on_request": PermissionHandler.approve_all},
 ) as session:
     ...
 ```
@@ -1488,29 +1440,26 @@ For full control (removes all SDK guardrails including security restrictions), u
 
 ```python
 async with await client.create_session(
+    on_permission_request=PermissionHandler.approve_all,
     model="gpt-5",
     system_message={
         "mode": "replace",
         "content": "You are a helpful assistant.",
     },
-    permissions={"on_request": PermissionHandler.approve_all},
 ) as session:
     ...
 ```
 
 ## Telemetry
 
-The SDK supports OpenTelemetry for distributed tracing. Provide a `observability.telemetry` config to enable trace export and automatic W3C Trace Context propagation.
+The SDK supports OpenTelemetry for distributed tracing. Provide a `telemetry` config to enable trace export and automatic W3C Trace Context propagation.
 
 ```python
 from copilot import CopilotClient
 
 client = CopilotClient(
-    mode="coding-agent",
-    observability={
-        "telemetry": {
-            "otlp_endpoint": "http://localhost:4318",
-        }
+    telemetry={
+        "otlp_endpoint": "http://localhost:4318",
     },
 )
 ```
@@ -1526,13 +1475,13 @@ client = CopilotClient(
 
 Trace context (`traceparent`/`tracestate`) is automatically propagated between the SDK and CLI on `create_session`, `resume_session`, and `send` calls, and inbound when the CLI invokes tool handlers.
 
-Install with telemetry extras: `pip install "microsoft-copilot-sdk[telemetry]"` (provides `opentelemetry-api`)
+Install with telemetry extras: `pip install "github-copilot-sdk[telemetry]"` (provides `opentelemetry-api`)
 
 ## Permission Handling
 
-An `permissions.on_request` handler is optional when you create or resume a session. When provided, it is called before the agent executes each tool (file writes, shell commands, custom tools, etc.) and returns a decision. When omitted, permission requests are emitted as events and left pending for the consumer to resolve with the pending permission RPC.
+An `on_permission_request` handler is optional when you create or resume a session. When provided, it is called before the agent executes each tool (file writes, shell commands, custom tools, etc.) and returns a decision. When omitted, permission requests are emitted as events and left pending for the consumer to resolve with the pending permission RPC.
 
-Callbacks receive optional derived prompt context as `invocation["prompt_request"]`, matching `PermissionRequestedData.prompt_request`. The raw request's `managed_approval_required` remains managed-policy provenance and enforces one-shot restrictions. Only derived `interaction.commands`, `read`, `write`, `url`, and `workflow` prompts can clear the human requirement after Assisted approval; for missing or other prompt kinds, keep the raw marker authoritative.
+Callbacks receive optional derived prompt context as `invocation["prompt_request"]`, matching `PermissionRequestedData.prompt_request`. The raw request's `managed_approval_required` remains managed-policy provenance and enforces one-shot restrictions. Only derived `commands`, `read`, `write`, `url`, and `workflow` prompts can clear the human requirement after Assisted approval; for missing or other prompt kinds, keep the raw marker authoritative.
 
 ### Approve All (simplest)
 
@@ -1543,11 +1492,12 @@ from copilot import CopilotClient
 from copilot.session import PermissionHandler
 
 session = await client.create_session(
-    model="gpt-5", permissions={"on_request": PermissionHandler.approve_all}
+    on_permission_request=PermissionHandler.approve_all,
+    model="gpt-5",
 )
 ```
 
-When `github.fetch_managed_settings` is true for the session, `approve_all` raises an error. Use a custom handler for managed sessions; request-level `managed_approval_required` remains available for human-facing confirmation logic.
+When `enable_managed_settings` is true for the session, `approve_all` raises an error. Use a custom handler for managed sessions; request-level `managed_approval_required` remains available for human-facing confirmation logic.
 
 ### Custom Permission Handler
 
@@ -1584,9 +1534,10 @@ def on_permission_request(
             return PermissionDecisionApproveOnce()
 
 
-async with CopilotClient(mode="coding-agent") as client:
+async with CopilotClient() as client:
     session = await client.create_session(
-        model="gpt-5", permissions={"on_request": on_permission_request}
+        on_permission_request=on_permission_request,
+        model="gpt-5",
     )
 ```
 
@@ -1613,33 +1564,34 @@ async def on_permission_request(
 
 ### Permission Result Kinds
 
-The handler returns a `PermissionRequestResult`, which is an alias for
-`PermissionDecision | PermissionNoResult` (the generated wire-level
+The handler returns a ``PermissionRequestResult``, which is an alias for
+``PermissionDecision | PermissionNoResult`` (the generated wire-level
 union of every decision variant, plus a sentinel that suppresses this SDK
 client's response).
 Approval decisions are present-tense — they describe the decision to
 apply, not the past-tense outcome reported back on `permission.completed`
 session events.
 
-| Variant                                  | Meaning                                                                                                                                                             |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PermissionDecisionApproveOnce()`        | Allow this single request                                                                                                                                           |
-| `PermissionDecisionReject(feedback="…")` | Deny the request (optional feedback string forwarded to the LLM)                                                                                                    |
-| `PermissionDecisionUserNotAvailable()`   | Deny the request because no user is available to confirm it (the default)                                                                                           |
-| `PermissionNoResult()`                   | During event-based dispatch, suppress this SDK client's response so another connected client can answer the pending request; legacy direct callbacks cannot abstain |
+| Variant                                       | Meaning                                                                                     |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `PermissionDecisionApproveOnce()`             | Allow this single request                                                                   |
+| `PermissionDecisionReject(feedback="…")`      | Deny the request (optional feedback string forwarded to the LLM)                            |
+| `PermissionDecisionUserNotAvailable()`        | Deny the request because no user is available to confirm it (the default)                   |
+| `PermissionNoResult()`                        | During event-based dispatch, suppress this SDK client's response so another connected client can answer the pending request; legacy direct callbacks cannot abstain |
 
-Several richer variants (`PermissionDecisionApproveForSession`,
-`PermissionDecisionApproveForLocation`, `PermissionDecisionApprovePermanently`,
+Several richer variants (``PermissionDecisionApproveForSession``,
+``PermissionDecisionApproveForLocation``, ``PermissionDecisionApprovePermanently``,
 …) are available for granting longer-lived approvals; see the generated
-`copilot.rpc` module for the full list.
+``copilot.rpc`` module for the full list.
 
 ### Resuming Sessions
 
-You may pass `permissions.on_request` when resuming a session too:
+You may pass `on_permission_request` when resuming a session too:
 
 ```python
 session = await client.resume_session(
-    "session-id", permissions={"on_request": PermissionHandler.approve_all}
+    "session-id",
+    on_permission_request=PermissionHandler.approve_all,
 )
 ```
 
@@ -1659,7 +1611,7 @@ To let a specific custom tool bypass the permission prompt entirely, set `skip_p
 
 ## User Input Requests
 
-Enable the legacy question-and-answer `ask_user` tool by providing an `interaction.on_user_input_request` handler:
+Enable the legacy question-and-answer `ask_user` tool by providing an `on_user_input_request` handler:
 
 ```python
 async def handle_user_input(request, invocation):
@@ -1681,53 +1633,16 @@ async def handle_user_input(request, invocation):
 
 
 async with await client.create_session(
+    on_permission_request=PermissionHandler.approve_all,
     model="gpt-5",
-    permissions={"on_request": PermissionHandler.approve_all},
-    interaction={"on_user_input_request": handle_user_input},
+    on_user_input_request=handle_user_input,
 ) as session:
     ...
 ```
 
-### Reporting a person's answers
-
-When a person answers a prompt in your UI, label the result with `create_attributed_result` so Assisted Permissions can treat the answer as the person's own authority. The same label works for permission, user-input, plan-review, and elicitation handlers:
-
-```python
-from copilot import create_attributed_result
-from copilot.rpc import (
-    PermissionDecisionContext,
-    PermissionDecisionOutcome,
-    PermissionDecisionSource,
-    PermissionDecisionSurface,
-    PermissionResponseCapability,
-)
-
-person_answered = PermissionDecisionContext(
-    source=PermissionDecisionSource.HUMAN_RESPONSE,
-    response_capability=PermissionResponseCapability.INTERACTIVE,
-    surface=PermissionDecisionSurface.SDK,
-    outcome=PermissionDecisionOutcome.PROMPTED_USER,
-)
-
-session = await client.create_session(
-    permissions={"on_request": PermissionHandler.approve_all},
-    model="gpt-5",
-    interaction={
-        "on_user_input_request": lambda request, invocation: create_attributed_result(
-            {"answer": "Only src/app.ts", "wasFreeform": True}, person_answered
-        ),
-        "on_exit_plan_mode_request": lambda request, invocation: create_attributed_result(
-            {"approved": True, "selectedAction": "interactive"}, person_answered
-        ),
-    },
-)
-```
-
-Label a person's declines and dismissals too; the runtime decides which answers carry authority. It accepts the label only from the connection that owns the session, so other connections' answers still settle, without it. Leave automated answers unlabeled.
-
 ## Session Hooks
 
-Hook into session lifecycle events by providing handlers in the `hooks.handlers` configuration:
+Hook into session lifecycle events by providing handlers in the `hooks` configuration:
 
 ```python
 from copilot import (
@@ -1807,20 +1722,18 @@ async def on_error_occurred(input, invocation):
 
 
 async with await client.create_session(
+    on_permission_request=PermissionHandler.approve_all,
     model="gpt-5",
-    permissions={"on_request": PermissionHandler.approve_all},
     hooks={
-        "handlers": {
-            "on_pre_tool_use": on_pre_tool_use,
-            "on_post_tool_use": on_post_tool_use,
-            "on_post_tool_use_failure": on_post_tool_use_failure,
-            "on_user_prompt_submitted": on_user_prompt_submitted,
-            "on_session_start": on_session_start,
-            "on_session_end": on_session_end,
-            "on_subagent_start": on_subagent_start,
-            "on_subagent_stop": on_subagent_stop,
-            "on_error_occurred": on_error_occurred,
-        }
+        "on_pre_tool_use": on_pre_tool_use,
+        "on_post_tool_use": on_post_tool_use,
+        "on_post_tool_use_failure": on_post_tool_use_failure,
+        "on_user_prompt_submitted": on_user_prompt_submitted,
+        "on_session_start": on_session_start,
+        "on_session_end": on_session_end,
+        "on_subagent_start": on_subagent_start,
+        "on_subagent_stop": on_subagent_stop,
+        "on_error_occurred": on_error_occurred,
     },
 ) as session:
     ...
@@ -1866,21 +1779,19 @@ async def handle_deploy(ctx: CommandContext) -> None:
 
 
 async with await client.create_session(
-    permissions={"on_request": PermissionHandler.approve_all},
-    interaction={
-        "commands": [
-            CommandDefinition(
-                name="deploy",
-                description="Deploy the app",
-                handler=handle_deploy,
-            ),
-            CommandDefinition(
-                name="rollback",
-                description="Rollback to previous version",
-                handler=lambda ctx: print("Rolling back..."),
-            ),
-        ]
-    },
+    on_permission_request=PermissionHandler.approve_all,
+    commands=[
+        CommandDefinition(
+            name="deploy",
+            description="Deploy the app",
+            handler=handle_deploy,
+        ),
+        CommandDefinition(
+            name="rollback",
+            description="Rollback to previous version",
+            handler=lambda ctx: print("Rolling back..."),
+        ),
+    ],
 ) as session:
     ...
 ```
@@ -1964,7 +1875,7 @@ if result["action"] == "accept":
 
 ## Elicitation Request Handler
 
-When the server (or an MCP tool) needs to ask the end-user a question, it sends an `elicitation.requested` event. Provide an `interaction.on_elicitation_request` handler to respond:
+When the server (or an MCP tool) needs to ask the end-user a question, it sends an `elicitation.requested` event. Provide an `on_elicitation_request` handler to respond:
 
 ```python
 from copilot.session import ElicitationContext, ElicitationResult, PermissionHandler
@@ -1988,13 +1899,13 @@ async def handle_elicitation(
 
 
 async with await client.create_session(
-    permissions={"on_request": PermissionHandler.approve_all},
-    interaction={"on_elicitation_request": handle_elicitation},
+    on_permission_request=PermissionHandler.approve_all,
+    on_elicitation_request=handle_elicitation,
 ) as session:
     ...
 ```
 
-When `interaction.on_elicitation_request` is provided, the SDK automatically:
+When `on_elicitation_request` is provided, the SDK automatically:
 
 - Sends `requestElicitation: true` to the server during session creation/resumption
 - Reports the `elicitation` capability on the session

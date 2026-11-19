@@ -2,11 +2,11 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
-using Microsoft.Copilot.Test.Harness;
+using GitHub.Copilot.Test.Harness;
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Microsoft.Copilot.Test.E2E;
+namespace GitHub.Copilot.Test.E2E;
 
 public class SystemMessageTransformE2ETests(E2ETestFixture fixture, ITestOutputHelper output) : E2ETestBase(fixture, "system_message_transform", output)
 {
@@ -16,8 +16,9 @@ public class SystemMessageTransformE2ETests(E2ETestFixture fixture, ITestOutputH
         var identityCallbackInvoked = false;
         var toneCallbackInvoked = false;
 
-        var session = await CreateSessionAsync(new CreateSessionOptions
+        var session = await CreateSessionAsync(new SessionConfig
         {
+            OnPermissionRequest = PermissionHandler.ApproveAll,
             SystemMessage = new SystemMessageConfig
             {
                 Mode = SystemMessageMode.Customize,
@@ -26,24 +27,23 @@ public class SystemMessageTransformE2ETests(E2ETestFixture fixture, ITestOutputH
                     [SystemMessageSection.Identity] = new SectionOverride
                     {
                         Transform = async (content) =>
-        {
-            Assert.False(string.IsNullOrEmpty(content));
-            identityCallbackInvoked = true;
-            return content;
-        }
+                        {
+                            Assert.False(string.IsNullOrEmpty(content));
+                            identityCallbackInvoked = true;
+                            return content;
+                        }
                     },
                     [SystemMessageSection.Tone] = new SectionOverride
                     {
                         Transform = async (content) =>
-{
-    Assert.False(string.IsNullOrEmpty(content));
-    toneCallbackInvoked = true;
-    return content;
-}
+                        {
+                            Assert.False(string.IsNullOrEmpty(content));
+                            toneCallbackInvoked = true;
+                            return content;
+                        }
                     }
                 }
-            },
-            Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll }
+            }
         });
 
         await File.WriteAllTextAsync(Path.Combine(Ctx.WorkDir, "test.txt"), "Hello transform!");
@@ -60,8 +60,9 @@ public class SystemMessageTransformE2ETests(E2ETestFixture fixture, ITestOutputH
     [Fact]
     public async Task Should_Apply_Transform_Modifications_To_Section_Content()
     {
-        var session = await CreateSessionAsync(new CreateSessionOptions
+        var session = await CreateSessionAsync(new SessionConfig
         {
+            OnPermissionRequest = PermissionHandler.ApproveAll,
             SystemMessage = new SystemMessageConfig
             {
                 Mode = SystemMessageMode.Customize,
@@ -70,13 +71,12 @@ public class SystemMessageTransformE2ETests(E2ETestFixture fixture, ITestOutputH
                     [SystemMessageSection.Identity] = new SectionOverride
                     {
                         Transform = async (content) =>
-        {
-            return content + "\nAlways end your reply with TRANSFORM_MARKER";
-        }
+                        {
+                            return content + "\nAlways end your reply with TRANSFORM_MARKER";
+                        }
                     }
                 }
-            },
-            Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll }
+            }
         });
 
         await File.WriteAllTextAsync(Path.Combine(Ctx.WorkDir, "hello.txt"), "Hello!");
@@ -98,25 +98,28 @@ public class SystemMessageTransformE2ETests(E2ETestFixture fixture, ITestOutputH
     {
         var transformCallbackInvoked = false;
 
-        var session = await CreateSessionAsync(new CreateSessionOptions
+        var session = await CreateSessionAsync(new SessionConfig
         {
+            OnPermissionRequest = PermissionHandler.ApproveAll,
             SystemMessage = new SystemMessageConfig
             {
                 Mode = SystemMessageMode.Customize,
                 Sections = new Dictionary<SystemMessageSection, SectionOverride>
                 {
-                    [SystemMessageSection.Safety] = new SectionOverride { Action = SectionOverrideAction.Remove },
+                    [SystemMessageSection.Safety] = new SectionOverride
+                    {
+                        Action = SectionOverrideAction.Remove
+                    },
                     [SystemMessageSection.Identity] = new SectionOverride
                     {
                         Transform = async (content) =>
-        {
-            transformCallbackInvoked = true;
-            return content;
-        }
+                        {
+                            transformCallbackInvoked = true;
+                            return content;
+                        }
                     }
                 }
-            },
-            Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll }
+            }
         });
 
         await File.WriteAllTextAsync(Path.Combine(Ctx.WorkDir, "combo.txt"), "Combo test!");

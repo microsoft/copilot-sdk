@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use copilot_sdk::session_fs::{FsError, FsErrorKind};
-use copilot_sdk::{
-    CreateSessionOptions, DirEntry, DirEntryKind, FileInfo, SessionFsCapabilities, SessionFsConfig,
+use github_copilot_sdk::session_fs::{FsError, FsErrorKind};
+use github_copilot_sdk::{
+    DirEntry, DirEntryKind, FileInfo, SessionConfig, SessionFsCapabilities, SessionFsConfig,
     SessionFsConventions, SessionFsProvider, SessionFsSqliteProvider, SessionFsSqliteQueryResult,
     SessionFsSqliteQueryType, SessionFsSqliteTransactionError, SessionFsSqliteTransactionStatement,
 };
@@ -391,7 +391,9 @@ fn sqlite_session_fs_config() -> SessionFsConfig {
     .with_capabilities(SessionFsCapabilities::new().with_sqlite(true))
 }
 
-fn sqlite_client_options(context: &super::support::E2eContext) -> copilot_sdk::ClientOptions {
+fn sqlite_client_options(
+    context: &super::support::E2eContext,
+) -> github_copilot_sdk::ClientOptions {
     context
         .client_options()
         .with_session_fs(sqlite_session_fs_config())
@@ -400,9 +402,9 @@ fn sqlite_client_options(context: &super::support::E2eContext) -> copilot_sdk::C
 fn sqlite_session_config(
     ctx: &super::support::E2eContext,
     provider: Arc<InMemorySqliteProvider>,
-) -> CreateSessionOptions {
+) -> SessionConfig {
     ctx.approve_all_session_config()
-        .with_state(|group| group.with_session_fs_provider(provider))
+        .with_session_fs_provider(provider)
 }
 
 // TODO(cli-1.0.81-2): CLI 1.0.81-2 hangs servicing the nested SQL tool request, so this test

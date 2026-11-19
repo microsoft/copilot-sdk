@@ -1,12 +1,15 @@
 use std::sync::Arc;
 
-use copilot_sdk::CreateSessionOptions;
-use copilot_sdk::handler::ApproveAllHandler;
+use github_copilot_sdk::SessionConfig;
+use github_copilot_sdk::handler::ApproveAllHandler;
 
 use super::support::with_e2e_context;
 
 #[tokio::test]
 async fn session_uses_client_token_when_no_session_token_is_supplied() {
+    if super::support::skip_inprocess("client-level GitHub tokens are not supported in-process") {
+        return;
+    }
     with_e2e_context(
         "per-session-auth",
         "session_uses_client_token_when_no_session_token_is_supplied",
@@ -14,17 +17,17 @@ async fn session_uses_client_token_when_no_session_token_is_supplied() {
             Box::pin(async move {
                 let token = "alice-token";
                 ctx.set_copilot_user_by_token_with_login(token, "alice");
-                let client = copilot_sdk::Client::start(
-                    ctx.client_options()
-                        .with_github(|group| group.with_token(token)),
+                let client = github_copilot_sdk::Client::start(
+                    ctx.client_options().with_github_token(token),
                 )
                 .await
                 .expect("start client");
 
                 let session = client
-                    .create_session(CreateSessionOptions::default().with_permissions(|group| {
-                        group.with_on_request(Arc::new(ApproveAllHandler))
-                    }))
+                    .create_session(
+                        SessionConfig::default()
+                            .with_permission_handler(Arc::new(ApproveAllHandler)),
+                    )
                     .await
                     .expect("create session");
                 let status = session
@@ -47,6 +50,9 @@ async fn session_uses_client_token_when_no_session_token_is_supplied() {
 
 #[tokio::test]
 async fn session_token_overrides_client_token() {
+    if super::support::skip_inprocess("client-level GitHub tokens are not supported in-process") {
+        return;
+    }
     with_e2e_context(
         "per-session-auth",
         "session_token_overrides_client_token",
@@ -54,20 +60,17 @@ async fn session_token_overrides_client_token() {
             Box::pin(async move {
                 ctx.set_copilot_user_by_token_with_login("alice-token", "alice");
                 ctx.set_copilot_user_by_token_with_login("bob-token", "bob");
-                let client = copilot_sdk::Client::start(
-                    ctx.client_options()
-                        .with_github(|group| group.with_token("alice-token")),
+                let client = github_copilot_sdk::Client::start(
+                    ctx.client_options().with_github_token("alice-token"),
                 )
                 .await
                 .expect("start client");
 
                 let session = client
                     .create_session(
-                        CreateSessionOptions::default()
-                            .with_permissions(|group| {
-                                group.with_on_request(Arc::new(ApproveAllHandler))
-                            })
-                            .with_github(|group| group.with_token("bob-token")),
+                        SessionConfig::default()
+                            .with_permission_handler(Arc::new(ApproveAllHandler))
+                            .with_github_token("bob-token"),
                     )
                     .await
                     .expect("create session");
@@ -96,16 +99,16 @@ async fn session_auth_status_is_unauthenticated_without_token() {
         "session_auth_status_is_unauthenticated_without_token",
         |ctx| {
             Box::pin(async move {
-                let client = copilot_sdk::Client::start(
-                    ctx.client_options()
-                        .with_github(|group| group.with_use_logged_in_user(false)),
+                let client = github_copilot_sdk::Client::start(
+                    ctx.client_options().with_use_logged_in_user(false),
                 )
                 .await
                 .expect("start client");
                 let session = client
-                    .create_session(CreateSessionOptions::default().with_permissions(|group| {
-                        group.with_on_request(Arc::new(ApproveAllHandler))
-                    }))
+                    .create_session(
+                        SessionConfig::default()
+                            .with_permission_handler(Arc::new(ApproveAllHandler)),
+                    )
                     .await
                     .expect("create session");
                 let status = session
@@ -138,11 +141,9 @@ async fn session_fails_with_invalid_token() {
 
                 let err = match client
                     .create_session(
-                        CreateSessionOptions::default()
-                            .with_permissions(|group| {
-                                group.with_on_request(Arc::new(ApproveAllHandler))
-                            })
-                            .with_github(|group| group.with_token("invalid-token")),
+                        SessionConfig::default()
+                            .with_permission_handler(Arc::new(ApproveAllHandler))
+                            .with_github_token("invalid-token"),
                     )
                     .await
                 {

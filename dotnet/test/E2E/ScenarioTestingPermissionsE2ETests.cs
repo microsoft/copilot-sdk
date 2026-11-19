@@ -2,13 +2,13 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
-using Microsoft.Copilot.Rpc;
+using GitHub.Copilot.Rpc;
 using Microsoft.Extensions.AI;
 using System.ComponentModel;
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Microsoft.Copilot.Test.E2E;
+namespace GitHub.Copilot.Test.E2E;
 
 public class ScenarioTestingPermissionsE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
     : ScenarioTestingE2ETestBase(fixture, "scenario_testing_permissions", output)
@@ -19,20 +19,23 @@ public class ScenarioTestingPermissionsE2ETests(E2ETestFixture fixture, ITestOut
         var enforced = new TaskCompletionSource<SessionManagedSettingsEnforcedEvent>(
             TaskCreationOptions.RunContinuationsAsynchronously);
 
-        await using var session = await CreateSessionAsync(new CreateSessionOptions
+        await using var session = await CreateSessionAsync(new SessionConfig
         {
-            GitHub = new SessionGitHubOptions { FetchManagedSettings = true },
-            Policy = new SessionPolicyOptions { ManagedSettings = new ManagedSettings { Permissions = new ManagedSettingsPermissions { DisableBypassPermissionsMode = DisableBypassPermissionsModes.Disable, }, } },
-            Events = new SessionEventOptions
+            EnableManagedSettings = true,
+            ManagedSettings = new ManagedSettings
             {
-                OnEvent = evt =>
-        {
-            if (evt is SessionManagedSettingsEnforcedEvent enforcedEvent)
+                Permissions = new ManagedSettingsPermissions
+                {
+                    DisableBypassPermissionsMode = DisableBypassPermissionsModes.Disable,
+                },
+            },
+            OnEvent = evt =>
             {
-                enforced.TrySetResult(enforcedEvent);
-            }
-        }
-            }
+                if (evt is SessionManagedSettingsEnforcedEvent enforcedEvent)
+                {
+                    enforced.TrySetResult(enforcedEvent);
+                }
+            },
         });
 
         var resolved = await session.Rpc.ManagedSettings.GetAsync();
@@ -61,17 +64,20 @@ public class ScenarioTestingPermissionsE2ETests(E2ETestFixture fixture, ITestOut
         var callback = new TaskCompletionSource<(PermissionRequestCustomTool Request, PermissionInvocation Invocation)>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         CopilotSession? session = null;
-        session = await CreateSessionAsync(new CreateSessionOptions
+        session = await CreateSessionAsync(new SessionConfig
         {
-            Tools = new SessionToolOptions { Definitions = [AIFunctionFactory.Create(ScenarioPermissionTool, "scenario_permission_tool", "Reads a scenario-owned value after user approval")] },
-            Permissions = new SessionPermissionOptions
+            Tools =
+            [
+                AIFunctionFactory.Create(
+                    ScenarioPermissionTool,
+                    "scenario_permission_tool",
+                    "Reads a scenario-owned value after user approval")
+            ],
+            OnPermissionRequest = (request, invocation) =>
             {
-                OnRequest = (request, invocation) =>
-        {
-            callback.TrySetResult((Assert.IsType<PermissionRequestCustomTool>(request), invocation));
-            return Task.FromResult<PermissionDecision>(PermissionDecision.ApproveOnce());
-        }
-            }
+                callback.TrySetResult((Assert.IsType<PermissionRequestCustomTool>(request), invocation));
+                return Task.FromResult<PermissionDecision>(PermissionDecision.ApproveOnce());
+            },
         });
 
         var response = await session.SendAndWaitAsync(new MessageOptions

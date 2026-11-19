@@ -4,12 +4,11 @@ import (
 	"testing"
 	"time"
 
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
-	"github.com/microsoft/copilot-sdk/go/v2/internal/e2e/testharness"
+	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/internal/e2e/testharness"
 )
 
 func TestExternalToolCancellationE2E(t *testing.T) {
-	t.Parallel()
 	ctx := testharness.NewTestContext(t)
 	client := ctx.NewClient()
 	t.Cleanup(func() { client.ForceStop() })
@@ -43,7 +42,10 @@ func TestExternalToolCancellationE2E(t *testing.T) {
 			})
 		slowTool.SkipPermission = true
 
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Tools: copilot.SessionToolOptions{Definitions: []copilot.Tool{slowTool}}})
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			Tools:               []copilot.Tool{slowTool},
+		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
 		}

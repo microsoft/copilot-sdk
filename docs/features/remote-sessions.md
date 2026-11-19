@@ -7,6 +7,7 @@ For running sessions on GitHub-hosted compute, see [Cloud Sessions](./cloud-sess
 ## Prerequisites
 
 * The user must be authenticated (GitHub token or logged-in user)
+* The session's working directory must be a GitHub repository
 
 ## Enabling remote sessions
 
@@ -21,13 +22,9 @@ Use the experimental raw `session.rpc.remote.enable()` API with export mode to s
 <!-- docs-validate: strict -->
 <!-- docs-validate: hidden -->
 ```typescript
-import { approveAll } from "@microsoft/copilot-sdk";
+import { approveAll } from "@github/copilot-sdk";
 
-const session = await client.createSession({
-    permissions: {
-        onRequest: approveAll,
-    },
-});
+const session = await client.createSession({ onPermissionRequest: approveAll });
 
 const result = await session.rpc.remote.enable({ mode: "export" });
 console.log("Remote URL:", result.url);
@@ -49,7 +46,7 @@ await session.rpc.remote.disable();
 
 <!-- docs-validate: hidden -->
 ```python
-from copilot.rpc import RemoteEnableRequest, RemoteSessionMode
+from copilot.generated.rpc import RemoteEnableRequest, RemoteSessionMode
 from copilot.session import CopilotSession
 
 async def main(session: CopilotSession):
@@ -62,7 +59,7 @@ async def main(session: CopilotSession):
 <!-- /docs-validate: hidden -->
 
 ```python
-from copilot.rpc import RemoteEnableRequest, RemoteSessionMode
+from copilot.generated.rpc import RemoteEnableRequest, RemoteSessionMode
 
 result = await session.rpc.remote.enable(RemoteEnableRequest(mode=RemoteSessionMode.EXPORT))
 print(f"Remote URL: {result.url}")
@@ -82,18 +79,16 @@ import (
 	"fmt"
 	"log"
 
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
-	"github.com/microsoft/copilot-sdk/go/v2/rpc"
+	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/rpc"
 )
 
 func main() {
 	ctx := context.Background()
-	client := copilot.NewClient(&copilot.ClientOptions{Mode: copilot.ModeCodingAgent})
+	client := copilot.NewClient(nil)
 
-	session, err := client.CreateSession(ctx, &copilot.CreateSessionOptions{
-		Permissions: copilot.SessionPermissionOptions{
-			OnRequest: copilot.PermissionHandler.ApproveAll,
-		},
+	session, err := client.CreateSession(ctx, &copilot.SessionConfig{
+		OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -130,8 +125,25 @@ _, err = session.RPC.Remote.Disable(ctx)
 
 #### C#
 
+<!-- docs-validate: hidden -->
 ```csharp
-#pragma warning disable MCPSDK001 // The remote RPC API is experimental.
+await using var client = new CopilotClient();
+await using var session = await client.CreateSessionAsync(new SessionConfig
+{
+    OnPermissionRequest = PermissionHandler.ApproveAll,
+});
+
+#pragma warning disable GHCP001 // The remote RPC API is experimental.
+var result = await session.Rpc.Remote.EnableAsync(mode: RemoteSessionMode.Export);
+Console.WriteLine($"Remote URL: {result.Url}");
+
+// Later: stop sharing
+await session.Rpc.Remote.DisableAsync();
+```
+<!-- /docs-validate: hidden -->
+
+```csharp
+#pragma warning disable GHCP001 // The remote RPC API is experimental.
 var result = await session.Rpc.Remote.EnableAsync(mode: RemoteSessionMode.Export);
 Console.WriteLine($"Remote URL: {result.Url}");
 
@@ -142,7 +154,7 @@ await session.Rpc.Remote.DisableAsync();
 #### Rust
 
 ```rust
-use copilot_sdk::rpc::{RemoteEnableRequest, RemoteSessionMode};
+use github_copilot_sdk::rpc::{RemoteEnableRequest, RemoteSessionMode};
 
 let result = session
     .rpc()
@@ -173,5 +185,5 @@ The remote URL can be rendered as a QR code for easy mobile access. The SDK prov
 
 ## Notes
 
-* If the working directory is not a GitHub repository, on-demand export still starts and returns its URL, but the exported session is not linked to a repository.
+* If the working directory is not a GitHub repository, on-demand export returns an error.
 * Remote sessions require authentication. Ensure `gitHubToken` or `useLoggedInUser` is configured.

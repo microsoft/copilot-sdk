@@ -10,9 +10,9 @@ using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Copilot.Rpc;
+using GitHub.Copilot.Rpc;
 
-namespace Microsoft.Copilot;
+namespace GitHub.Copilot;
 
 /// <summary>
 /// Declarative metadata for a single canvas, sent over the wire on
@@ -143,7 +143,7 @@ internal static class CanvasErrorHelpers
 /// </summary>
 /// <remarks>
 /// A session installs a single <see cref="ICanvasHandler"/> via
-/// <c>SessionOptionsBase.CanvasHandler</c>. The handler receives every
+/// <c>SessionConfigBase.CanvasHandler</c>. The handler receives every
 /// inbound <c>canvas.open</c> / <c>canvas.close</c> / <c>canvas.action.invoke</c>
 /// JSON-RPC request the runtime issues for this session and decides — typically
 /// by inspecting <see cref="CanvasProviderOpenRequest.CanvasId"/> — which
@@ -162,10 +162,10 @@ internal static class CanvasErrorHelpers
 public interface ICanvasHandler
 {
     /// <summary>Open a new canvas instance.</summary>
-    Task<CanvasProviderOpenResult> OnOpenAsync(CanvasProviderOpenRequest context, CancellationToken cancellationToken = default);
+    Task<CanvasProviderOpenResult> OnOpenAsync(CanvasProviderOpenRequest context, CancellationToken cancellationToken);
 
     /// <summary>Canvas was closed by the user or agent. Default: no-op.</summary>
-    Task OnCloseAsync(CanvasProviderCloseRequest context, CancellationToken cancellationToken = default);
+    Task OnCloseAsync(CanvasProviderCloseRequest context, CancellationToken cancellationToken);
 
     /// <summary>
     /// Handle a non-lifecycle action declared by the canvas.
@@ -177,7 +177,7 @@ public interface ICanvasHandler
     /// <see cref="ToolResultObject"/> with <see cref="ToolResultObject.BinaryResultsForLlm"/>;
     /// any other value is rendered to the model as JSON text.
     /// </remarks>
-    Task<object?> OnActionAsync(CanvasProviderInvokeActionRequest context, CancellationToken cancellationToken = default);
+    Task<object?> OnActionAsync(CanvasProviderInvokeActionRequest context, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -188,10 +188,10 @@ public interface ICanvasHandler
 public abstract class CanvasHandlerBase : ICanvasHandler
 {
     /// <inheritdoc />
-    public abstract Task<CanvasProviderOpenResult> OnOpenAsync(CanvasProviderOpenRequest context, CancellationToken cancellationToken = default);
+    public abstract Task<CanvasProviderOpenResult> OnOpenAsync(CanvasProviderOpenRequest context, CancellationToken cancellationToken);
 
     /// <inheritdoc />
-    public virtual Task OnCloseAsync(CanvasProviderCloseRequest context, CancellationToken cancellationToken = default)
+    public virtual Task OnCloseAsync(CanvasProviderCloseRequest context, CancellationToken cancellationToken)
 #if NET8_0_OR_GREATER
         => Task.CompletedTask;
 #else
@@ -199,6 +199,6 @@ public abstract class CanvasHandlerBase : ICanvasHandler
 #endif
 
     /// <inheritdoc />
-    public virtual Task<object?> OnActionAsync(CanvasProviderInvokeActionRequest context, CancellationToken cancellationToken = default)
+    public virtual Task<object?> OnActionAsync(CanvasProviderInvokeActionRequest context, CancellationToken cancellationToken)
         => Task.FromException<object?>(CanvasException.NoHandler());
 }

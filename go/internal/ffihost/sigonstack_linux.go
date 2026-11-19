@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-//go:build !copilot_no_inprocess && linux && (amd64 || arm64)
+//go:build copilot_inprocess && linux
 
 package ffihost
 

@@ -2,8 +2,8 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
-using Microsoft.Copilot.Rpc;
-using Microsoft.Copilot.Test.Harness;
+using GitHub.Copilot.Rpc;
+using GitHub.Copilot.Test.Harness;
 using System.Diagnostics;
 using System.Net.Http;
 using System.Net;
@@ -12,7 +12,7 @@ using System.Threading.Channels;
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Microsoft.Copilot.Test.E2E;
+namespace GitHub.Copilot.Test.E2E;
 
 public class McpOAuthE2ETests(E2ETestFixture fixture, ITestOutputHelper output) : E2ETestBase(fixture, "mcp_oauth", output)
 {
@@ -66,8 +66,14 @@ public class McpOAuthE2ETests(E2ETestFixture fixture, ITestOutputHelper output) 
     {
         await using var oauthServer = await OAuthMcpServer.StartAsync(ExpectedToken, cimdSupported: true);
         const string serverName = "oauth-cimd-mcp";
-        await using var session = await CreateSessionAsync(new CreateSessionOptions
-        { Mcp = new SessionMcpOptions { AuthClientIdMetadataUrl = CimdUrl, Servers = new Dictionary<string, McpServerConfig> { [serverName] = new McpHttpServerConfig { Url = $"{oauthServer.Url}/mcp", Tools = ["*"] } } } });
+        await using var session = await CreateSessionAsync(new SessionConfig
+        {
+            AuthClientIdMetadataUrl = CimdUrl,
+            McpServers = new Dictionary<string, McpServerConfig>
+            {
+                [serverName] = new McpHttpServerConfig { Url = $"{oauthServer.Url}/mcp", Tools = ["*"] }
+            }
+        });
         await WaitForMcpServerStatusAsync(session, serverName, McpServerStatus.NeedsAuth);
         var result = await session.Rpc.Mcp.Oauth.LoginAsync(serverName);
         Assert.NotNull(result.AuthorizationUrl);
@@ -85,16 +91,25 @@ public class McpOAuthE2ETests(E2ETestFixture fixture, ITestOutputHelper output) 
         var serverName = "oauth-protected-mcp";
         McpAuthContext? observedRequest = null;
 
-        await using var session = await CreateSessionAsync(new CreateSessionOptions
+        await using var session = await CreateSessionAsync(new SessionConfig
         {
-            Mcp = new SessionMcpOptions
+            OnMcpAuthRequest = request =>
             {
-                OnAuthRequest = request =>
-        {
-            observedRequest = request;
-            return Task.FromResult<McpAuthResult?>(McpAuthResult.FromToken(new McpAuthToken { AccessToken = ExpectedToken, TokenType = "Bearer", ExpiresIn = 3600 }));
-        },
-                Servers = new Dictionary<string, McpServerConfig> { [serverName] = new McpHttpServerConfig { Url = $"{oauthServer.Url}/mcp", Tools = ["*"] } }
+                observedRequest = request;
+                return Task.FromResult<McpAuthResult?>(McpAuthResult.FromToken(new McpAuthToken
+                {
+                    AccessToken = ExpectedToken,
+                    TokenType = "Bearer",
+                    ExpiresIn = 3600
+                }));
+            },
+            McpServers = new Dictionary<string, McpServerConfig>
+            {
+                [serverName] = new McpHttpServerConfig
+                {
+                    Url = $"{oauthServer.Url}/mcp",
+                    Tools = ["*"]
+                }
             }
         });
 
@@ -129,17 +144,21 @@ public class McpOAuthE2ETests(E2ETestFixture fixture, ITestOutputHelper output) 
         var authRequests = Channel.CreateUnbounded<McpAuthContext>();
         var releaseHandler = new TaskCompletionSource<McpAuthResult?>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        await using var session = await CreateSessionAsync(new CreateSessionOptions
+        await using var session = await CreateSessionAsync(new SessionConfig
         {
-            Mcp = new SessionMcpOptions
+            OnMcpAuthRequest = request =>
             {
-                OnAuthRequest = request =>
-        {
-            authRequests.Writer.TryWrite(request);
-            return releaseHandler.Task;
-        },
-                Servers = new Dictionary<string, McpServerConfig> { [serverName] = new McpHttpServerConfig { Url = $"{oauthServer.Url}/mcp", Tools = ["*"], }, }
-            }
+                authRequests.Writer.TryWrite(request);
+                return releaseHandler.Task;
+            },
+            McpServers = new Dictionary<string, McpServerConfig>
+            {
+                [serverName] = new McpHttpServerConfig
+                {
+                    Url = $"{oauthServer.Url}/mcp",
+                    Tools = ["*"],
+                },
+            },
         });
 
         var reload = session.Rpc.Mcp.ReloadAsync();
@@ -185,40 +204,53 @@ public class McpOAuthE2ETests(E2ETestFixture fixture, ITestOutputHelper output) 
         List<McpOauthRequestReason> observedReasons = [];
         var refreshCount = 0;
 
-        await using var session = await CreateSessionAsync(new CreateSessionOptions
+        await using var session = await CreateSessionAsync(new SessionConfig
         {
-            Mcp = new SessionMcpOptions
+            EnableMcpApps = true,
+            OnMcpAuthRequest = request =>
             {
-                EnableApps = true,
-                OnAuthRequest = request =>
-        {
-            observedReasons.Add(request.Reason);
-            if (request.Reason == McpOauthRequestReason.Refresh)
-            {
-                refreshCount++;
-                Assert.NotNull(request.WwwAuthenticateParams);
-                Assert.Null(request.WwwAuthenticateParams!.ResourceMetadataUrl);
-                Assert.Equal("invalid_token", request.WwwAuthenticateParams.Error);
-                if (refreshCount > 1)
+                observedReasons.Add(request.Reason);
+                if (request.Reason == McpOauthRequestReason.Refresh)
                 {
-                    return Task.FromResult<McpAuthResult?>(McpAuthResult.Cancel());
+                    refreshCount++;
+                    Assert.NotNull(request.WwwAuthenticateParams);
+                    Assert.Null(request.WwwAuthenticateParams!.ResourceMetadataUrl);
+                    Assert.Equal("invalid_token", request.WwwAuthenticateParams.Error);
+                    if (refreshCount > 1)
+                    {
+                        return Task.FromResult<McpAuthResult?>(McpAuthResult.Cancel());
+                    }
+                }
+
+                if (request.Reason == McpOauthRequestReason.Upscope)
+                {
+                    Assert.NotNull(request.WwwAuthenticateParams);
+                    Assert.Equal($"{oauthServer.Url}/.well-known/oauth-protected-resource", request.WwwAuthenticateParams!.ResourceMetadataUrl);
+                    Assert.Equal("mcp.read mcp.write", request.WwwAuthenticateParams.Scope);
+                    Assert.Equal("insufficient_scope", request.WwwAuthenticateParams.Error);
+                }
+
+                var token = request.Reason == McpOauthRequestReason.Refresh
+                    ? RefreshToken
+                    : request.Reason == McpOauthRequestReason.Upscope
+                        ? UpscopeToken
+                        : request.Reason == McpOauthRequestReason.Reauth
+                            ? ReauthToken
+                            : ExpectedToken;
+
+                return Task.FromResult<McpAuthResult?>(McpAuthResult.FromToken(new McpAuthToken
+                {
+                    AccessToken = token
+                }));
+            },
+            McpServers = new Dictionary<string, McpServerConfig>
+            {
+                [serverName] = new McpHttpServerConfig
+                {
+                    Url = $"{oauthServer.Url}/mcp",
+                    Tools = ["*"]
                 }
             }
-
-            if (request.Reason == McpOauthRequestReason.Upscope)
-            {
-                Assert.NotNull(request.WwwAuthenticateParams);
-                Assert.Equal($"{oauthServer.Url}/.well-known/oauth-protected-resource", request.WwwAuthenticateParams!.ResourceMetadataUrl);
-                Assert.Equal("mcp.read mcp.write", request.WwwAuthenticateParams.Scope);
-                Assert.Equal("insufficient_scope", request.WwwAuthenticateParams.Error);
-            }
-
-            var token = request.Reason == McpOauthRequestReason.Refresh ? RefreshToken : request.Reason == McpOauthRequestReason.Upscope ? UpscopeToken : request.Reason == McpOauthRequestReason.Reauth ? ReauthToken : ExpectedToken;
-            return Task.FromResult<McpAuthResult?>(McpAuthResult.FromToken(new McpAuthToken { AccessToken = token }));
-        },
-                Servers = new Dictionary<string, McpServerConfig> { [serverName] = new McpHttpServerConfig { Url = $"{oauthServer.Url}/mcp", Tools = ["*"] } }
-            },
-            Experiments = new SessionExperimentOptions { Flags = new Dictionary<string, bool> { ["MCP_APPS"] = true } }
         });
 
         await session.Rpc.Mcp.ReloadAsync();
@@ -251,16 +283,20 @@ public class McpOAuthE2ETests(E2ETestFixture fixture, ITestOutputHelper output) 
         var serverName = "oauth-cancelled-mcp";
         var authRequest = new TaskCompletionSource<McpAuthContext>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        await using var session = await CreateSessionAsync(new CreateSessionOptions
+        await using var session = await CreateSessionAsync(new SessionConfig
         {
-            Mcp = new SessionMcpOptions
+            OnMcpAuthRequest = request =>
             {
-                OnAuthRequest = request =>
-        {
-            authRequest.TrySetResult(request);
-            return Task.FromResult<McpAuthResult?>(McpAuthResult.Cancel());
-        },
-                Servers = new Dictionary<string, McpServerConfig> { [serverName] = new McpHttpServerConfig { Url = $"{oauthServer.Url}/mcp", Tools = ["*"] } }
+                authRequest.TrySetResult(request);
+                return Task.FromResult<McpAuthResult?>(McpAuthResult.Cancel());
+            },
+            McpServers = new Dictionary<string, McpServerConfig>
+            {
+                [serverName] = new McpHttpServerConfig
+                {
+                    Url = $"{oauthServer.Url}/mcp",
+                    Tools = ["*"]
+                }
             }
         });
 

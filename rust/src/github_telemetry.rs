@@ -5,7 +5,7 @@
 //! payload types (`GitHubTelemetryNotification`, `GitHubTelemetryEvent`,
 //! `GitHubTelemetryClientInfo`) are generated from the protocol schema and
 //! re-exported here so consumers can register a callback against them via
-//! [`ClientGitHubOptions::on_telemetry`](crate::ClientGitHubOptions::on_telemetry).
+//! [`ClientOptions::on_github_telemetry`](crate::ClientOptions::on_github_telemetry).
 //!
 //! Experimental: this surface is part of the GitHub telemetry forwarding
 //! feature and may change or be removed without notice.
@@ -21,12 +21,8 @@ pub use crate::generated::api_types::{
 /// the runtime to a connection that opted into telemetry forwarding.
 ///
 /// Set via
-/// [`ClientGitHubOptions::on_telemetry`](crate::ClientGitHubOptions::on_telemetry).
+/// [`ClientOptions::on_github_telemetry`](crate::ClientOptions::on_github_telemetry).
 /// Registering a callback auto-enables telemetry forwarding on every session
 /// created or resumed by the client.
-///
-/// Runs on its own task, in arrival order, so a slow callback delays only
-/// later telemetry, not session or lifecycle events. It still occupies a
-/// runtime worker thread while it runs, so return promptly.
 #[doc(hidden)]
 pub type GitHubTelemetryCallback = Arc<dyn Fn(GitHubTelemetryNotification) + Send + Sync>;

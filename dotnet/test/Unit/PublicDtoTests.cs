@@ -7,7 +7,7 @@ using System.Reflection;
 using System.Text.Json;
 using Xunit;
 
-namespace Microsoft.Copilot.Test.Unit;
+namespace GitHub.Copilot.Test.Unit;
 
 /// <summary>
 /// Reflection-based safety net that exercises the get/set surface of every public DTO in
@@ -20,14 +20,6 @@ namespace Microsoft.Copilot.Test.Unit;
 /// </summary>
 public class PublicDtoTests
 {
-    [Theory]
-    [InlineData(typeof(Rpc.ProtocolExternalToolDefinition))]
-    [InlineData(typeof(ExternalToolRequestedData))]
-    public void CallbackOwnership_IsNotPublic(Type type)
-    {
-        Assert.Null(type.GetProperty("HasHandler"));
-    }
-
     [Fact]
     public void McpAuth_Result_Factories_Represent_Token_And_Cancellation()
     {
@@ -63,7 +55,7 @@ public class PublicDtoTests
             .GetTypes()
             .Where(type =>
                 type is { IsClass: true, IsAbstract: false, IsPublic: true } &&
-                type.Namespace?.StartsWith("Microsoft.Copilot", StringComparison.Ordinal) == true &&
+                type.Namespace?.StartsWith("GitHub.Copilot", StringComparison.Ordinal) == true &&
                 type.GetConstructor(Type.EmptyTypes) is not null)
             .OrderBy(type => type.FullName, StringComparer.Ordinal);
 

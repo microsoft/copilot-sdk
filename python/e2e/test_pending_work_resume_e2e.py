@@ -43,15 +43,16 @@ PENDING_WORK_TIMEOUT = 60.0
 
 def _make_subprocess_client(ctx: E2ETestContext, *, use_stdio: bool = True) -> CopilotClient:
     if use_stdio:
-        connection = RuntimeConnection.for_spawned_stdio(path=ctx.cli_path)
+        connection = RuntimeConnection.for_stdio(path=ctx.cli_path)
     else:
-        connection = RuntimeConnection.for_spawned_tcp(
+        connection = RuntimeConnection.for_tcp(
             path=ctx.cli_path, connection_token="py-tcp-shared-test-token"
         )
-    connection.working_directory = ctx.work_dir
-    connection.env = ctx.get_env()
     return CopilotClient(
-        mode="coding-agent", runtime=connection, github={"token": DEFAULT_GITHUB_TOKEN}
+        connection=connection,
+        working_directory=ctx.work_dir,
+        env=ctx.get_env(),
+        github_token=DEFAULT_GITHUB_TOKEN,
     )
 
 
@@ -158,8 +159,7 @@ class TestPendingWorkResume:
         server = _make_subprocess_client(ctx, use_stdio=False)
         await server.start()
         try:
-            actual_port = server.runtime_port
-            assert actual_port is not None, "Server should have a port after starting"
+            cli_url = f"localhost:{server.runtime_port}"
 
             release_original: asyncio.Future = asyncio.get_event_loop().create_future()
             captured_request: asyncio.Future = asyncio.get_event_loop().create_future()
@@ -173,18 +173,13 @@ class TestPendingWorkResume:
                 return f"ORIGINAL_SHOULD_NOT_RUN_{args.get('value', '')}"
 
             suspended_client = CopilotClient(
-                mode="coding-agent",
-                runtime=RuntimeConnection.for_tcp(
-                    "localhost", actual_port, connection_token="py-tcp-shared-test-token"
-                ),
+                connection=RuntimeConnection.for_uri(
+                    cli_url, connection_token="py-tcp-shared-test-token"
+                )
             )
             session1 = await suspended_client.create_session(
-                permissions={"on_request": hold_permission},
-                tools={
-                    "definitions": [
-                        _make_pending_tool("resume_permission_tool", original_tool_handler)
-                    ]
-                },
+                on_permission_request=hold_permission,
+                tools=[_make_pending_tool("resume_permission_tool", original_tool_handler)],
             )
             session_id = session1.session_id
 
@@ -207,21 +202,17 @@ class TestPendingWorkResume:
                     return f"PERMISSION_RESUMED_{args['value'].upper()}"
 
                 resumed_client = CopilotClient(
-                    mode="coding-agent",
-                    runtime=RuntimeConnection.for_tcp(
-                        "localhost", actual_port, connection_token="py-tcp-shared-test-token"
-                    ),
+                    connection=RuntimeConnection.for_uri(
+                        cli_url, connection_token="py-tcp-shared-test-token"
+                    )
                 )
                 try:
                     session2 = await resumed_client.resume_session(
                         session_id,
+                        # The manual approval below owns this response.
+                        on_permission_request=lambda req, inv: PermissionNoResult(),
                         continue_pending_work=True,
-                        permissions={"on_request": lambda req, inv: PermissionNoResult()},
-                        tools={
-                            "definitions": [
-                                _make_pending_tool("resume_permission_tool", resumed_tool_handler)
-                            ]
-                        },
+                        tools=[_make_pending_tool("resume_permission_tool", resumed_tool_handler)],
                     )
                     await _assert_cold_pending_resume(session2)
 
@@ -254,8 +245,7 @@ class TestPendingWorkResume:
         server = _make_subprocess_client(ctx, use_stdio=False)
         await server.start()
         try:
-            actual_port = server.runtime_port
-            assert actual_port is not None, "Server should have a port after starting"
+            cli_url = f"localhost:{server.runtime_port}"
 
             tool_started: asyncio.Future = asyncio.get_event_loop().create_future()
             release_original: asyncio.Future = asyncio.get_event_loop().create_future()
@@ -267,18 +257,13 @@ class TestPendingWorkResume:
                 return await release_original
 
             suspended_client = CopilotClient(
-                mode="coding-agent",
-                runtime=RuntimeConnection.for_tcp(
-                    "localhost", actual_port, connection_token="py-tcp-shared-test-token"
-                ),
+                connection=RuntimeConnection.for_uri(
+                    cli_url, connection_token="py-tcp-shared-test-token"
+                )
             )
             session1 = await suspended_client.create_session(
-                permissions={"on_request": PermissionHandler.approve_all},
-                tools={
-                    "definitions": [
-                        _make_pending_tool("resume_external_tool", blocking_external_tool)
-                    ]
-                },
+                on_permission_request=PermissionHandler.approve_all,
+                tools=[_make_pending_tool("resume_external_tool", blocking_external_tool)],
             )
             session_id = session1.session_id
 
@@ -302,16 +287,15 @@ class TestPendingWorkResume:
                 await _force_stop_for_cold_resume(ctx, suspended_client, session_id)
 
                 resumed_client = CopilotClient(
-                    mode="coding-agent",
-                    runtime=RuntimeConnection.for_tcp(
-                        "localhost", actual_port, connection_token="py-tcp-shared-test-token"
-                    ),
+                    connection=RuntimeConnection.for_uri(
+                        cli_url, connection_token="py-tcp-shared-test-token"
+                    )
                 )
                 try:
                     session2 = await resumed_client.resume_session(
                         session_id,
+                        on_permission_request=PermissionHandler.approve_all,
                         continue_pending_work=True,
-                        permissions={"on_request": PermissionHandler.approve_all},
                     )
                     await _assert_cold_pending_resume(session2)
 
@@ -340,8 +324,7 @@ class TestPendingWorkResume:
         server = _make_subprocess_client(ctx, use_stdio=False)
         await server.start()
         try:
-            actual_port = server.runtime_port
-            assert actual_port is not None, "Server should have a port after starting"
+            cli_url = f"localhost:{server.runtime_port}"
 
             tool_a_started: asyncio.Future = asyncio.get_event_loop().create_future()
             tool_b_started: asyncio.Future = asyncio.get_event_loop().create_future()
@@ -359,19 +342,16 @@ class TestPendingWorkResume:
                 return await release_b
 
             suspended_client = CopilotClient(
-                mode="coding-agent",
-                runtime=RuntimeConnection.for_tcp(
-                    "localhost", actual_port, connection_token="py-tcp-shared-test-token"
-                ),
+                connection=RuntimeConnection.for_uri(
+                    cli_url, connection_token="py-tcp-shared-test-token"
+                )
             )
             session1 = await suspended_client.create_session(
-                permissions={"on_request": PermissionHandler.approve_all},
-                tools={
-                    "definitions": [
-                        _make_pending_tool("pending_lookup_a", tool_a),
-                        _make_pending_tool("pending_lookup_b", tool_b),
-                    ]
-                },
+                on_permission_request=PermissionHandler.approve_all,
+                tools=[
+                    _make_pending_tool("pending_lookup_a", tool_a),
+                    _make_pending_tool("pending_lookup_b", tool_b),
+                ],
             )
             session_id = session1.session_id
 
@@ -410,16 +390,15 @@ class TestPendingWorkResume:
                 await _force_stop_for_cold_resume(ctx, suspended_client, session_id)
 
                 resumed_client = CopilotClient(
-                    mode="coding-agent",
-                    runtime=RuntimeConnection.for_tcp(
-                        "localhost", actual_port, connection_token="py-tcp-shared-test-token"
-                    ),
+                    connection=RuntimeConnection.for_uri(
+                        cli_url, connection_token="py-tcp-shared-test-token"
+                    )
                 )
                 try:
                     session2 = await resumed_client.resume_session(
                         session_id,
+                        on_permission_request=PermissionHandler.approve_all,
                         continue_pending_work=True,
-                        permissions={"on_request": PermissionHandler.approve_all},
                     )
                     await _assert_cold_pending_resume(session2)
 
@@ -462,18 +441,16 @@ class TestPendingWorkResume:
         server = _make_subprocess_client(ctx, use_stdio=False)
         await server.start()
         try:
-            actual_port = server.runtime_port
-            assert actual_port is not None, "Server should have a port after starting"
+            cli_url = f"localhost:{server.runtime_port}"
 
             first_client = CopilotClient(
-                mode="coding-agent",
-                runtime=RuntimeConnection.for_tcp(
-                    "localhost", actual_port, connection_token="py-tcp-shared-test-token"
-                ),
+                connection=RuntimeConnection.for_uri(
+                    cli_url, connection_token="py-tcp-shared-test-token"
+                )
             )
             try:
                 first_session = await first_client.create_session(
-                    permissions={"on_request": PermissionHandler.approve_all}
+                    on_permission_request=PermissionHandler.approve_all,
                 )
                 session_id = first_session.session_id
                 first_answer = await first_session.send_and_wait(
@@ -485,16 +462,15 @@ class TestPendingWorkResume:
                 await _safe_force_stop(first_client)
 
             resumed_client = CopilotClient(
-                mode="coding-agent",
-                runtime=RuntimeConnection.for_tcp(
-                    "localhost", actual_port, connection_token="py-tcp-shared-test-token"
-                ),
+                connection=RuntimeConnection.for_uri(
+                    cli_url, connection_token="py-tcp-shared-test-token"
+                )
             )
             try:
                 resumed_session = await resumed_client.resume_session(
                     session_id,
+                    on_permission_request=PermissionHandler.approve_all,
                     continue_pending_work=True,
-                    permissions={"on_request": PermissionHandler.approve_all},
                 )
                 follow_up = await resumed_session.send_and_wait(
                     "Reply with exactly: NO_PENDING_TURN_TWO"
@@ -551,23 +527,17 @@ class TestPendingWorkResume:
         server = _make_subprocess_client(ctx, use_stdio=False)
         await server.start()
         try:
-            actual_port = server.runtime_port
-            assert actual_port is not None, "Server should have a port after starting"
+            cli_url = f"localhost:{server.runtime_port}"
             lock_observer: CopilotClient | None = None
 
             suspended_client = CopilotClient(
-                mode="coding-agent",
-                runtime=RuntimeConnection.for_tcp(
-                    "localhost", actual_port, connection_token="py-tcp-shared-test-token"
-                ),
+                connection=RuntimeConnection.for_uri(
+                    cli_url, connection_token="py-tcp-shared-test-token"
+                )
             )
             session1 = await suspended_client.create_session(
-                permissions={"on_request": PermissionHandler.approve_all},
-                tools={
-                    "definitions": [
-                        _make_pending_tool("resume_external_tool", blocking_external_tool)
-                    ]
-                },
+                on_permission_request=PermissionHandler.approve_all,
+                tools=[_make_pending_tool("resume_external_tool", blocking_external_tool)],
             )
             session_id = session1.session_id
 
@@ -628,10 +598,9 @@ class TestPendingWorkResume:
                     lock_observer = None
 
                 resumed_client = CopilotClient(
-                    mode="coding-agent",
-                    runtime=RuntimeConnection.for_tcp(
-                        "localhost", actual_port, connection_token="py-tcp-shared-test-token"
-                    ),
+                    connection=RuntimeConnection.for_uri(
+                        cli_url, connection_token="py-tcp-shared-test-token"
+                    )
                 )
                 try:
                     # In warm mode the original client still owns the tool registration;
@@ -649,9 +618,9 @@ class TestPendingWorkResume:
                     )
                     session2 = await resumed_client.resume_session(
                         session_id,
+                        on_permission_request=PermissionHandler.approve_all,
                         continue_pending_work=False,
-                        permissions={"on_request": PermissionHandler.approve_all},
-                        tools={"definitions": resume_tools},
+                        tools=resume_tools,
                     )
 
                     messages = await session2.get_events()
@@ -704,18 +673,16 @@ class TestPendingWorkResume:
         server = _make_subprocess_client(ctx, use_stdio=False)
         await server.start()
         try:
-            actual_port = server.runtime_port
-            assert actual_port is not None, "Server should have a port after starting"
+            cli_url = f"localhost:{server.runtime_port}"
 
             first_client = CopilotClient(
-                mode="coding-agent",
-                runtime=RuntimeConnection.for_tcp(
-                    "localhost", actual_port, connection_token="py-tcp-shared-test-token"
-                ),
+                connection=RuntimeConnection.for_uri(
+                    cli_url, connection_token="py-tcp-shared-test-token"
+                )
             )
             try:
                 first_session = await first_client.create_session(
-                    permissions={"on_request": PermissionHandler.approve_all}
+                    on_permission_request=PermissionHandler.approve_all,
                 )
                 session_id = first_session.session_id
                 first_answer = await first_session.send_and_wait(
@@ -728,16 +695,15 @@ class TestPendingWorkResume:
                 await _safe_force_stop(first_client)
 
             resumed_client = CopilotClient(
-                mode="coding-agent",
-                runtime=RuntimeConnection.for_tcp(
-                    "localhost", actual_port, connection_token="py-tcp-shared-test-token"
-                ),
+                connection=RuntimeConnection.for_uri(
+                    cli_url, connection_token="py-tcp-shared-test-token"
+                )
             )
             try:
                 resumed_session = await resumed_client.resume_session(
                     session_id,
+                    on_permission_request=PermissionHandler.approve_all,
                     continue_pending_work=True,
-                    permissions={"on_request": PermissionHandler.approve_all},
                 )
 
                 messages = await resumed_session.get_events()

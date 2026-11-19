@@ -1,4 +1,4 @@
-use copilot_sdk::session_events::SessionEventType;
+use github_copilot_sdk::session_events::SessionEventType;
 
 use super::support::wait_for_event;
 

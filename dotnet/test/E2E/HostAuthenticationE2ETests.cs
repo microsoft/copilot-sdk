@@ -4,12 +4,12 @@
 
 #if NET8_0_OR_GREATER
 using System.Text.Json;
-using Microsoft.Copilot.Rpc;
-using Microsoft.Copilot.Test.Harness;
+using GitHub.Copilot.Rpc;
+using GitHub.Copilot.Test.Harness;
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Microsoft.Copilot.Test.E2E;
+namespace GitHub.Copilot.Test.E2E;
 
 public sealed class HostAuthenticationE2ETests : E2ETestBase
 {
@@ -34,13 +34,7 @@ public sealed class HostAuthenticationE2ETests : E2ETestBase
         var environment = Ctx.GetEnvironment();
         foreach (var key in new[] { "GH_TOKEN", "GITHUB_TOKEN", "COPILOT_GITHUB_TOKEN", "COPILOT_HMAC_KEY", "CAPI_HMAC_KEY" })
             environment[key] = "";
-        // These cases prove auth without ambient credentials, which are process-wide.
-        return Ctx.CreateClient(new()
-        {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForSpawnedStdio(),
-            GitHub = new ClientGitHubOptions { UseLoggedInUser = false }
-        }, autoInjectGitHubToken: false, environment: environment);
+        return Ctx.CreateClient(new() { UseLoggedInUser = false }, autoInjectGitHubToken: false, environment: environment);
     }
 
     private static AhpHostAuthentication.Custom Custom(
@@ -83,17 +77,15 @@ public sealed class HostAuthenticationE2ETests : E2ETestBase
         await using (var host = await owner.StartAhpHostAsync(new()
         {
             Authentication = policy,
-            Workspace = Ctx.WorkDir,
             LocalServer = new() { Token = "independent-listener-secret" },
             AllowCreatingNewSessions = true,
             CreateSession = async request =>
             {
                 creates++;
                 AssertAdmission(request.Authentication);
-                request.Config.Inference = ByokTestOptions.Inference(provider, request.Config.Inference);
-                (request.Config.GitHub.Capi ??= new()).Enabled = false;
+                request.Config.Provider = provider;
                 request.Config.Model = "local-model";
-                request.Config.Permissions.OnRequest = PermissionHandler.ApproveAll;
+                request.Config.OnPermissionRequest = PermissionHandler.ApproveAll;
                 return original = await Ctx.CreateSessionAsync(owner, request.Config);
             }
         }))
@@ -118,17 +110,15 @@ public sealed class HostAuthenticationE2ETests : E2ETestBase
         await using (var host = await replacement.StartAhpHostAsync(new()
         {
             Authentication = policy,
-            Workspace = Ctx.WorkDir,
             LocalServer = new(),
             ResumeSession = async request =>
             {
                 resumes++;
                 AssertAdmission(request.Authentication);
                 Assert.Equal(original!.SessionId, request.SessionId);
-                request.Config.Inference = ByokTestOptions.Inference(provider, request.Config.Inference);
-                (request.Config.GitHub.Capi ??= new()).Enabled = false;
+                request.Config.Provider = provider;
                 request.Config.Model = "local-model";
-                request.Config.Permissions.OnRequest = PermissionHandler.ApproveAll;
+                request.Config.OnPermissionRequest = PermissionHandler.ApproveAll;
                 return resumed = await Ctx.ResumeSessionAsync(replacement, request.SessionId, request.Config);
             }
         }))

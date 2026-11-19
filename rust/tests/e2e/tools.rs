@@ -2,10 +2,10 @@
 
 use std::sync::Arc;
 
-use copilot_sdk::handler::{ApproveAllHandler, PermissionHandler, PermissionResult};
-use copilot_sdk::tool::ToolHandler;
-use copilot_sdk::{
-    CreateSessionOptions, Error, PermissionRequestData, RequestId, SessionId, Tool, ToolInvocation,
+use github_copilot_sdk::handler::{ApproveAllHandler, PermissionHandler, PermissionResult};
+use github_copilot_sdk::tool::ToolHandler;
+use github_copilot_sdk::{
+    Error, PermissionRequestData, RequestId, SessionConfig, SessionId, Tool, ToolInvocation,
     ToolResult, ToolSet,
 };
 use serde_json::json;
@@ -25,7 +25,7 @@ async fn string_schema_apply_patch_override_binds_patch_input() {
                 ctx.set_default_copilot_user();
                 let client = ctx.start_client().await;
                 let (tx, mut rx) = mpsc::unbounded_channel();
-                let tool = copilot_sdk::tool::define_tool::<String, _, _>(
+                let tool = github_copilot_sdk::tool::define_tool::<String, _, _>(
                     "apply_patch",
                     "Apply a patch",
                     move |_invocation, input| {
@@ -38,7 +38,7 @@ async fn string_schema_apply_patch_override_binds_patch_input() {
                 )
                 .with_overrides_built_in_tool(true);
                 let session = client
-                    .create_session(ctx.approve_all_session_config().with_tools(|group| group.with_definitions(vec![tool])))
+                    .create_session(ctx.approve_all_session_config().with_tools(vec![tool]))
                     .await
                     .expect("create session");
                 let response = session
@@ -92,6 +92,38 @@ async fn invokes_built_in_tools() {
 }
 
 #[tokio::test]
+async fn invokes_custom_tool() {
+    super::support::with_shared_e2e_context(&E2E, "tools", "invokes_custom_tool", |ctx| {
+        Box::pin(async move {
+            ctx.set_default_copilot_user();
+            let client = ctx.start_client().await;
+            let __perm = Arc::new(ApproveAllHandler);
+            let tools = vec![encrypt_string_tool()];
+            let session = client
+                .create_session(
+                    SessionConfig::default()
+                        .with_github_token(super::support::DEFAULT_TEST_TOKEN)
+                        .with_permission_handler(__perm)
+                        .with_tools(tools),
+                )
+                .await
+                .expect("create session");
+
+            let answer = session
+                .send_and_wait("Use encrypt_string to encrypt this string: Hello")
+                .await
+                .expect("send")
+                .expect("assistant message");
+            assert!(assistant_message_content(&answer).contains("HELLO"));
+
+            session.disconnect().await.expect("disconnect session");
+            client.stop().await.expect("stop client");
+        })
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn low_level_tool_definition() {
     super::support::with_shared_e2e_context(&E2E, "tools", "low_level_tool_definition", |ctx| {
         Box::pin(async move {
@@ -111,11 +143,11 @@ async fn low_level_tool_definition() {
                 .into_vec();
             let session = client
                 .create_session(
-                    CreateSessionOptions::default()
-                        .with_github(|group| group.with_token(super::support::DEFAULT_TEST_TOKEN))
-                        .with_permissions(|group| group.with_on_request(__perm))
-                        .with_tools(|group| group.with_definitions(tools))
-                        .with_tools(|group| group.with_available_tools(available_tools)),
+                    SessionConfig::default()
+                        .with_github_token(super::support::DEFAULT_TEST_TOKEN)
+                        .with_permission_handler(__perm)
+                        .with_tools(tools)
+                        .with_available_tools(available_tools),
                 )
                 .await
                 .expect("create session");
@@ -150,10 +182,10 @@ async fn handles_tool_calling_errors() {
             let tools = vec![error_tool()];
             let session = client
                 .create_session(
-                    CreateSessionOptions::default()
-                        .with_github(|group| group.with_token(super::support::DEFAULT_TEST_TOKEN))
-                        .with_permissions(|group| group.with_on_request(__perm))
-                        .with_tools(|group| group.with_definitions(tools)),
+                    SessionConfig::default()
+                        .with_github_token(super::support::DEFAULT_TEST_TOKEN)
+                        .with_permission_handler(__perm)
+                        .with_tools(tools),
                 )
                 .await
                 .expect("create session");
@@ -199,10 +231,10 @@ async fn can_receive_and_return_complex_types() {
             let tools = vec![db_query_tool()];
             let session = client
                 .create_session(
-                    CreateSessionOptions::default()
-                        .with_github(|group| group.with_token(super::support::DEFAULT_TEST_TOKEN))
-                        .with_permissions(|group| group.with_on_request(__perm))
-                        .with_tools(|group| group.with_definitions(tools)),
+                    SessionConfig::default()
+                        .with_github_token(super::support::DEFAULT_TEST_TOKEN)
+                        .with_permission_handler(__perm)
+                        .with_tools(tools),
                 )
                 .await
                 .expect("create session");
@@ -242,12 +274,10 @@ async fn overrides_built_in_tool_with_custom_tool() {
                 let tools = vec![custom_grep_tool()];
                 let session = client
                     .create_session(
-                        CreateSessionOptions::default()
-                            .with_github(|group| {
-                                group.with_token(super::support::DEFAULT_TEST_TOKEN)
-                            })
-                            .with_permissions(|group| group.with_on_request(__perm))
-                            .with_tools(|group| group.with_definitions(tools)),
+                        SessionConfig::default()
+                            .with_github_token(super::support::DEFAULT_TEST_TOKEN)
+                            .with_permission_handler(__perm)
+                            .with_tools(tools),
                     )
                     .await
                     .expect("create session");
@@ -286,12 +316,10 @@ async fn skippermission_sent_in_tool_definition() {
                 let tools = vec![safe_lookup_tool()];
                 let session = client
                     .create_session(
-                        CreateSessionOptions::default()
-                            .with_github(|group| {
-                                group.with_token(super::support::DEFAULT_TEST_TOKEN)
-                            })
-                            .with_permissions(|group| group.with_on_request(__perm))
-                            .with_tools(|group| group.with_definitions(tools)),
+                        SessionConfig::default()
+                            .with_github_token(super::support::DEFAULT_TEST_TOKEN)
+                            .with_permission_handler(__perm)
+                            .with_tools(tools),
                     )
                     .await
                     .expect("create session");
@@ -339,12 +367,10 @@ async fn invokes_custom_tool_with_permission_handler() {
                 let tools = vec![encrypt_string_tool()];
                 let session = client
                     .create_session(
-                        CreateSessionOptions::default()
-                            .with_github(|group| {
-                                group.with_token(super::support::DEFAULT_TEST_TOKEN)
-                            })
-                            .with_permissions(|group| group.with_on_request(__perm))
-                            .with_tools(|group| group.with_definitions(tools)),
+                        SessionConfig::default()
+                            .with_github_token(super::support::DEFAULT_TEST_TOKEN)
+                            .with_permission_handler(__perm)
+                            .with_tools(tools),
                     )
                     .await
                     .expect("create session");
@@ -386,12 +412,10 @@ async fn denies_custom_tool_when_permission_denied() {
                 let tools = vec![tracked_encrypt_string_tool(call_tx)];
                 let session = client
                     .create_session(
-                        CreateSessionOptions::default()
-                            .with_github(|group| {
-                                group.with_token(super::support::DEFAULT_TEST_TOKEN)
-                            })
-                            .with_permissions(|group| group.with_on_request(__perm))
-                            .with_tools(|group| group.with_definitions(tools)),
+                        SessionConfig::default()
+                            .with_github_token(super::support::DEFAULT_TEST_TOKEN)
+                            .with_permission_handler(__perm)
+                            .with_tools(tools),
                     )
                     .await
                     .expect("create session");
@@ -433,10 +457,10 @@ async fn should_execute_multiple_custom_tools_in_parallel_single_turn() {
                 ];
                 let session = client
                     .create_session(
-                        CreateSessionOptions::default()
-                            .with_github(|group| group.with_token(super::support::DEFAULT_TEST_TOKEN))
-                            .with_permissions(|group| group.with_on_request(__perm))
-                            .with_tools(|group| group.with_definitions(tools)),
+                        SessionConfig::default()
+                            .with_github_token(super::support::DEFAULT_TEST_TOKEN)
+                            .with_permission_handler(__perm)
+                            .with_tools(tools),
                     )
                     .await
                     .expect("create session");
@@ -454,6 +478,54 @@ async fn should_execute_multiple_custom_tools_in_parallel_single_turn() {
                 let content = assistant_message_content(&answer);
                 assert!(content.contains("CITY_PARIS"));
                 assert!(content.contains("COUNTRY_FRANCE"));
+
+                session.disconnect().await.expect("disconnect session");
+                client.stop().await.expect("stop client");
+            })
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn should_respect_availabletools_and_excludedtools_combined() {
+    super::support::with_shared_e2e_context(
+        &E2E,
+        "tools",
+        "should_respect_availabletools_and_excludedtools_combined",
+        |ctx| {
+            Box::pin(async move {
+                ctx.set_default_copilot_user();
+                let client = ctx.start_client().await;
+                let (excluded_tx, mut excluded_rx) = mpsc::unbounded_channel();
+                let __perm = Arc::new(ApproveAllHandler);
+                let tools = vec![allowed_tool(), excluded_tool(excluded_tx)];
+                let session = client
+                    .create_session(
+                        SessionConfig::default()
+                            .with_github_token(super::support::DEFAULT_TEST_TOKEN)
+                            .with_permission_handler(__perm)
+                            .with_tools(tools)
+                            .with_available_tools(["allowed_tool", "excluded_tool"])
+                            .with_excluded_tools(["excluded_tool"]),
+                    )
+                    .await
+                    .expect("create session");
+
+                let answer = session
+                    .send_and_wait(
+                        "Use the allowed_tool with input 'test'. Do NOT use excluded_tool.",
+                    )
+                    .await
+                    .expect("send")
+                    .expect("assistant message");
+                assert!(assistant_message_content(&answer).contains("ALLOWED_TEST"));
+                assert!(
+                    tokio::time::timeout(std::time::Duration::from_millis(100), excluded_rx.recv())
+                        .await
+                        .is_err(),
+                    "excluded tool should not be invoked"
+                );
 
                 session.disconnect().await.expect("disconnect session");
                 client.stop().await.expect("stop client");
@@ -720,6 +792,69 @@ impl ToolHandler for LookupCountryTool {
     }
 }
 
+struct AllowedTool;
+
+fn allowed_tool() -> Tool {
+    Tool::new("allowed_tool")
+        .with_description("An allowed tool")
+        .with_parameters(json!({
+            "type": "object",
+            "properties": {
+                "input": { "type": "string", "description": "Input value" }
+            },
+            "required": ["input"]
+        }))
+        .with_handler(Arc::new(AllowedTool))
+}
+
+#[async_trait::async_trait]
+impl ToolHandler for AllowedTool {
+    async fn call(&self, invocation: ToolInvocation) -> Result<ToolResult, Error> {
+        let input = invocation
+            .arguments
+            .get("input")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        Ok(ToolResult::Text(format!(
+            "ALLOWED_{}",
+            input.to_uppercase()
+        )))
+    }
+}
+
+struct ExcludedTool {
+    call_tx: mpsc::UnboundedSender<()>,
+}
+
+fn excluded_tool(call_tx: mpsc::UnboundedSender<()>) -> Tool {
+    Tool::new("excluded_tool")
+        .with_description("A tool that should be excluded")
+        .with_parameters(json!({
+            "type": "object",
+            "properties": {
+                "input": { "type": "string", "description": "Input value" }
+            },
+            "required": ["input"]
+        }))
+        .with_handler(Arc::new(ExcludedTool { call_tx }))
+}
+
+#[async_trait::async_trait]
+impl ToolHandler for ExcludedTool {
+    async fn call(&self, invocation: ToolInvocation) -> Result<ToolResult, Error> {
+        let _ = self.call_tx.send(());
+        let input = invocation
+            .arguments
+            .get("input")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        Ok(ToolResult::Text(format!(
+            "EXCLUDED_{}",
+            input.to_uppercase()
+        )))
+    }
+}
+
 struct RecordingPermissionHandler {
     permission_tx: mpsc::UnboundedSender<PermissionRequestData>,
     decision: PermissionResult,
@@ -790,5 +925,5 @@ impl ToolHandler for DbQueryTool {
 }
 static E2E: super::support::SharedE2eGroup = super::support::SharedE2eGroup::standard(
     "tools",
-    if cfg!(feature = "derive") { 10 } else { 9 },
+    if cfg!(feature = "derive") { 12 } else { 11 },
 );

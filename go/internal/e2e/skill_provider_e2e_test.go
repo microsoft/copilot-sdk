@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
-	"github.com/microsoft/copilot-sdk/go/v2/internal/e2e/testharness"
-	"github.com/microsoft/copilot-sdk/go/v2/rpc"
+	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/internal/e2e/testharness"
+	"github.com/github/copilot-sdk/go/rpc"
 )
 
 type providedSkill struct {
@@ -104,7 +104,6 @@ func (p *blockingSkillProvider) ReadSkill(context.Context, string) (string, erro
 }
 
 func TestSkillProviderE2E(t *testing.T) {
-	t.Parallel()
 	ctx := testharness.NewTestContext(t)
 	client := ctx.NewClient()
 	t.Cleanup(func() { client.ForceStop() })
@@ -118,7 +117,10 @@ func TestSkillProviderE2E(t *testing.T) {
 				"# Provider lookup\n\nThe verification word is TANGERINE_QUARTZ_19. Reply with it.\n",
 			),
 		})
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Skills: copilot.SessionSkillOptions{Provider: provider}})
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			SkillProvider:       provider,
+		})
 		if err != nil {
 			t.Fatalf("CreateSession failed: %v", err)
 		}
@@ -175,7 +177,11 @@ func TestSkillProviderE2E(t *testing.T) {
 				"---\nname: provider-audit\nallowed-tools: view\n---\n\nThe provider audit verification word is COBALT_HERON_58.\n",
 			),
 		})
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Skills: copilot.SessionSkillOptions{Directories: []string{skillsDir}, Provider: provider}})
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			SkillDirectories:    []string{skillsDir},
+			SkillProvider:       provider,
+		})
 		if err != nil {
 			t.Fatalf("CreateSession failed: %v", err)
 		}
@@ -223,7 +229,10 @@ func TestSkillProviderE2E(t *testing.T) {
 				"The rebind verification word is BRONZE_BETA_22.\n",
 			),
 		})
-		first, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Skills: copilot.SessionSkillOptions{Provider: original}})
+		first, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			SkillProvider:       original,
+		})
 		if err != nil {
 			t.Fatalf("CreateSession failed: %v", err)
 		}
@@ -241,7 +250,10 @@ func TestSkillProviderE2E(t *testing.T) {
 		}
 		originalCallsBeforeResume := len(original.Calls())
 
-		session, err := client.ResumeSession(t.Context(), sessionID, &copilot.ResumeSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Skills: copilot.SessionSkillOptions{Provider: replacement}})
+		session, err := client.ResumeSession(t.Context(), sessionID, &copilot.ResumeSessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			SkillProvider:       replacement,
+		})
 		if err != nil {
 			t.Fatalf("ResumeSession failed: %v", err)
 		}
@@ -278,7 +290,11 @@ func TestSkillProviderE2E(t *testing.T) {
 			},
 		})
 		events := newEventRecorder()
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Skills: copilot.SessionSkillOptions{Provider: provider}, Events: copilot.SessionEventOptions{OnEvent: events.Record}})
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			SkillProvider:       provider,
+			OnEvent:             events.Record,
+		})
 		if err != nil {
 			t.Fatalf("CreateSession failed: %v", err)
 		}
@@ -321,7 +337,11 @@ func TestSkillProviderE2E(t *testing.T) {
 			},
 		})
 		events := newEventRecorder()
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Skills: copilot.SessionSkillOptions{Provider: provider}, Events: copilot.SessionEventOptions{OnEvent: events.Record}})
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			SkillProvider:       provider,
+			OnEvent:             events.Record,
+		})
 		if err != nil {
 			t.Fatalf("CreateSession failed: %v", err)
 		}
@@ -355,7 +375,11 @@ func TestSkillProviderE2E(t *testing.T) {
 		provider := newTestSkillProvider([]providedSkill{
 			providedSkillWithMarkdown("dormant-lookup", "Never listed.", "Never read.\n"),
 		})
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Skills: copilot.SessionSkillOptions{Enabled: copilot.Bool(false), Provider: provider}})
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			EnableSkills:        copilot.Bool(false),
+			SkillProvider:       provider,
+		})
 		if err != nil {
 			t.Fatalf("CreateSession failed: %v", err)
 		}
@@ -381,7 +405,10 @@ func TestSkillProviderE2E(t *testing.T) {
 		provider := newTestSkillProvider([]providedSkill{
 			providedSkillWithMarkdown("unbound-lookup", "Reports the unbound lookup word.", "Unbound.\n"),
 		})
-		first, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Skills: copilot.SessionSkillOptions{Provider: provider}})
+		first, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			SkillProvider:       provider,
+		})
 		if err != nil {
 			t.Fatalf("CreateSession failed: %v", err)
 		}
@@ -394,7 +421,9 @@ func TestSkillProviderE2E(t *testing.T) {
 		}
 		callsBeforeResume := len(provider.Calls())
 
-		session, err := client.ResumeSession(t.Context(), first.SessionID, &copilot.ResumeSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}})
+		session, err := client.ResumeSession(t.Context(), first.SessionID, &copilot.ResumeSessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+		})
 		if err != nil {
 			t.Fatalf("ResumeSession failed: %v", err)
 		}
@@ -418,7 +447,10 @@ func TestSkillProviderE2E(t *testing.T) {
 	t.Run("should cancel a blocked provider call when the session disconnects", func(t *testing.T) {
 		ctx.ConfigureWithoutSnapshot(t)
 		provider := newBlockingSkillProvider()
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Skills: copilot.SessionSkillOptions{Provider: provider}})
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			SkillProvider:       provider,
+		})
 		if err != nil {
 			t.Fatalf("CreateSession failed: %v", err)
 		}
@@ -448,7 +480,11 @@ func TestSkillProviderE2E(t *testing.T) {
 			providedSkillWithMarkdown("cloud-lookup", "Never listed.", "Never read.\n"),
 		})
 
-		_, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Cloud: &copilot.CloudSessionOptions{}, Skills: copilot.SessionSkillOptions{Provider: provider}})
+		_, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			Cloud:               &copilot.CloudSessionOptions{},
+			SkillProvider:       provider,
+		})
 		if err == nil || err.Error() != "Skill providers are not supported for cloud sessions." {
 			t.Fatalf("CreateSession error = %v, want cloud skill provider rejection", err)
 		}

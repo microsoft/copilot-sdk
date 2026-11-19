@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
-	"github.com/microsoft/copilot-sdk/go/v2/internal/e2e/testharness"
-	"github.com/microsoft/copilot-sdk/go/v2/rpc"
+	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/internal/e2e/testharness"
+	"github.com/github/copilot-sdk/go/rpc"
 )
 
 const skillMarker = "PINEAPPLE_COCONUT_42"
@@ -48,7 +48,6 @@ IMPORTANT: You MUST include the exact text "` + marker + `" somewhere in EVERY r
 }
 
 func TestSkillsE2E(t *testing.T) {
-	t.Parallel()
 	ctx := testharness.NewTestContext(t)
 	client := ctx.NewClient()
 	t.Cleanup(func() { client.ForceStop() })
@@ -58,7 +57,10 @@ func TestSkillsE2E(t *testing.T) {
 		cleanSkillsDir(t, ctx.WorkDir)
 		skillsDir := createTestSkillDir(t, ctx.WorkDir, skillMarker)
 
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Skills: copilot.SessionSkillOptions{Directories: []string{skillsDir}}})
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			SkillDirectories:    []string{skillsDir},
+		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
 		}
@@ -83,7 +85,11 @@ func TestSkillsE2E(t *testing.T) {
 		cleanSkillsDir(t, ctx.WorkDir)
 		skillsDir := createTestSkillDir(t, ctx.WorkDir, skillMarker)
 
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Skills: copilot.SessionSkillOptions{Directories: []string{skillsDir}, DisabledSkills: []string{"test-skill"}}})
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			SkillDirectories:    []string{skillsDir},
+			DisabledSkills:      []string{"test-skill"},
+		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
 		}
@@ -117,7 +123,12 @@ func TestSkillsE2E(t *testing.T) {
 			},
 		}
 
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Skills: copilot.SessionSkillOptions{Directories: []string{skillsDir}}, Agents: copilot.SessionAgentOptions{Definitions: customAgents, Selected: "skill-agent"}})
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			SkillDirectories:    []string{skillsDir},
+			CustomAgents:        customAgents,
+			Agent:               "skill-agent",
+		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
 		}
@@ -150,7 +161,12 @@ func TestSkillsE2E(t *testing.T) {
 			},
 		}
 
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Skills: copilot.SessionSkillOptions{Directories: []string{skillsDir}}, Agents: copilot.SessionAgentOptions{Definitions: customAgents, Selected: "no-skill-agent"}})
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			SkillDirectories:    []string{skillsDir},
+			CustomAgents:        customAgents,
+			Agent:               "no-skill-agent",
+		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
 		}
@@ -177,7 +193,7 @@ func TestSkillsE2E(t *testing.T) {
 		skillsDir := createTestSkillDir(t, ctx.WorkDir, skillMarker)
 
 		// Create a session without skills first
-		session1, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}})
+		session1, err := client.CreateSession(t.Context(), &copilot.SessionConfig{OnPermissionRequest: copilot.PermissionHandler.ApproveAll})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
 		}
@@ -194,7 +210,10 @@ func TestSkillsE2E(t *testing.T) {
 		}
 
 		// Resume with skillDirectories - skill should now be active
-		session2, err := client.ResumeSession(t.Context(), sessionID, &copilot.ResumeSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Skills: copilot.SessionSkillOptions{Directories: []string{skillsDir}}})
+		session2, err := client.ResumeSessionWithOptions(t.Context(), sessionID, &copilot.ResumeSessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			SkillDirectories:    []string{skillsDir},
+		})
 		if err != nil {
 			t.Fatalf("Failed to resume session: %v", err)
 		}
@@ -236,7 +255,11 @@ func TestSkillsE2E(t *testing.T) {
 		}
 
 		// Discovery disabled: ambient project skill should NOT appear in Skills.List.
-		disabledSession, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, WorkingDirectory: projectDir, EnableConfigDiscovery: copilot.Bool(false)})
+		disabledSession, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest:   copilot.PermissionHandler.ApproveAll,
+			WorkingDirectory:      projectDir,
+			EnableConfigDiscovery: copilot.Bool(false),
+		})
 		if err != nil {
 			t.Fatalf("CreateSession (disabled) failed: %v", err)
 		}
@@ -252,7 +275,11 @@ func TestSkillsE2E(t *testing.T) {
 		_ = disabledSession.Disconnect()
 
 		// Discovery enabled: ambient project skill should appear with Source=project.
-		enabledSession, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, WorkingDirectory: projectDir, EnableConfigDiscovery: copilot.Bool(true)})
+		enabledSession, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest:   copilot.PermissionHandler.ApproveAll,
+			WorkingDirectory:      projectDir,
+			EnableConfigDiscovery: copilot.Bool(true),
+		})
 		if err != nil {
 			t.Fatalf("CreateSession (enabled) failed: %v", err)
 		}

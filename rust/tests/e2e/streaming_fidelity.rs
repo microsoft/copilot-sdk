@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use copilot_sdk::ResumeSessionOptions;
-use copilot_sdk::handler::ApproveAllHandler;
-use copilot_sdk::session_events::{
+use github_copilot_sdk::ResumeSessionConfig;
+use github_copilot_sdk::handler::ApproveAllHandler;
+use github_copilot_sdk::session_events::{
     AssistantMessageData, AssistantMessageDeltaData, AssistantMessageStartData, SessionEventType,
     SessionStartData,
 };
@@ -20,10 +20,7 @@ async fn should_produce_delta_events_when_streaming_is_enabled() {
                 ctx.set_default_copilot_user();
                 let client = ctx.start_client().await;
                 let session = client
-                    .create_session(
-                        ctx.approve_all_session_config()
-                            .with_events(|group| group.with_streaming(true)),
-                    )
+                    .create_session(ctx.approve_all_session_config().with_streaming(true))
                     .await
                     .expect("create session");
                 let events = session.subscribe();
@@ -77,7 +74,7 @@ async fn should_not_produce_deltas_when_streaming_is_disabled() {
                 ctx.set_default_copilot_user();
                 let client = ctx.start_client().await;
                 let session = client
-                    .create_session(ctx.approve_all_session_config().with_events(|group| group.with_streaming(false)))
+                    .create_session(ctx.approve_all_session_config().with_streaming(false))
                     .await
                     .expect("create session");
                 let events = session.subscribe();
@@ -119,10 +116,7 @@ async fn should_produce_deltas_after_session_resume() {
                 ctx.set_default_copilot_user();
                 let client = ctx.start_client().await;
                 let session = client
-                    .create_session(
-                        ctx.approve_all_session_config()
-                            .with_events(|group| group.with_streaming(false)),
-                    )
+                    .create_session(ctx.approve_all_session_config().with_streaming(false))
                     .await
                     .expect("create session");
                 session
@@ -136,14 +130,10 @@ async fn should_produce_deltas_after_session_resume() {
                 let new_client = ctx.start_client().await;
                 let resumed = new_client
                     .resume_session(
-                        ResumeSessionOptions::new(session_id)
-                            .with_events(|group| group.with_streaming(true))
-                            .with_permissions(|group| {
-                                group.with_on_request(Arc::new(ApproveAllHandler))
-                            })
-                            .with_github(|group| {
-                                group.with_token(super::support::DEFAULT_TEST_TOKEN)
-                            }),
+                        ResumeSessionConfig::new(session_id)
+                            .with_streaming(true)
+                            .with_permission_handler(Arc::new(ApproveAllHandler))
+                            .with_github_token(super::support::DEFAULT_TEST_TOKEN),
                     )
                     .await
                     .expect("resume session");
@@ -182,7 +172,7 @@ async fn should_not_produce_deltas_after_session_resume_with_streaming_disabled(
                 ctx.set_default_copilot_user();
                 let client = ctx.start_client().await;
                 let session = client
-                    .create_session(ctx.approve_all_session_config().with_events(|group| group.with_streaming(true)))
+                    .create_session(ctx.approve_all_session_config().with_streaming(true))
                     .await
                     .expect("create session");
                 session
@@ -196,10 +186,10 @@ async fn should_not_produce_deltas_after_session_resume_with_streaming_disabled(
                 let new_client = ctx.start_client().await;
                 let resumed = new_client
                     .resume_session(
-                        ResumeSessionOptions::new(session_id)
-                            .with_events(|group| group.with_streaming(false))
-                            .with_permissions(|group| group.with_on_request(Arc::new(ApproveAllHandler)))
-                            .with_github(|group| group.with_token(super::support::DEFAULT_TEST_TOKEN)),
+                        ResumeSessionConfig::new(session_id)
+                            .with_streaming(false)
+                            .with_permission_handler(Arc::new(ApproveAllHandler))
+                            .with_github_token(super::support::DEFAULT_TEST_TOKEN),
                     )
                     .await
                     .expect("resume session");
@@ -249,8 +239,8 @@ async fn should_emit_streaming_deltas_with_reasoning_effort_configured() {
                     .create_session(
                         ctx.approve_all_session_config()
                             .with_model("gpt-5.4")
-                            .with_events(|group| group.with_streaming(true))
-                            .with_inference(|group| group.with_reasoning_effort("high")),
+                            .with_streaming(true)
+                            .with_reasoning_effort("high"),
                     )
                     .await
                     .expect("create session");
@@ -300,10 +290,7 @@ async fn should_emit_assistantmessage_start_before_deltas_with_matching_messagei
                 ctx.set_default_copilot_user();
                 let client = ctx.start_client().await;
                 let session = client
-                    .create_session(
-                        ctx.approve_all_session_config()
-                            .with_events(|group| group.with_streaming(true)),
-                    )
+                    .create_session(ctx.approve_all_session_config().with_streaming(true))
                     .await
                     .expect("create session");
                 let events = session.subscribe();
@@ -361,7 +348,7 @@ async fn should_emit_assistantmessage_start_before_deltas_with_matching_messagei
     .await;
 }
 
-fn assert_has_content_deltas(events: &[copilot_sdk::SessionEvent]) {
+fn assert_has_content_deltas(events: &[github_copilot_sdk::SessionEvent]) {
     let deltas: Vec<_> = events
         .iter()
         .filter(|event| event.parsed_type() == SessionEventType::AssistantMessageDelta)

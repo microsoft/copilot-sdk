@@ -8,10 +8,10 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization.Metadata;
 using System.Text.RegularExpressions;
-using Microsoft.Copilot.Rpc;
+using GitHub.Copilot.Rpc;
 using Microsoft.Extensions.Logging;
 
-namespace Microsoft.Copilot;
+namespace GitHub.Copilot;
 
 /// <summary>Reports termination of a connection-owned AHP listener.</summary>
 /// <param name="HostId">The listener identity.</param>
@@ -52,7 +52,7 @@ public sealed record AhpAuthenticationResult(string Identity, string ExpiresAt);
 /// <param name="CancellationToken">Cancelled when participation ends, including before the factory returns.</param>
 /// <param name="Authentication">Trusted host admission context, never session configuration or inference authentication.</param>
 [Experimental(Diagnostics.Experimental)]
-public sealed record AhpSessionCreateRequest(CreateSessionOptions Config, HostSessionAuthentication Authentication, CancellationToken CancellationToken = default);
+public sealed record AhpSessionCreateRequest(SessionConfig Config, HostSessionAuthentication Authentication, CancellationToken CancellationToken);
 
 /// <summary>Resume the requested identity with Config, or return its retained original.</summary>
 /// <param name="SessionId">The durable application session identity.</param>
@@ -60,7 +60,7 @@ public sealed record AhpSessionCreateRequest(CreateSessionOptions Config, HostSe
 /// <param name="CancellationToken">Cancelled when participation ends.</param>
 /// <param name="Authentication">Trusted admission context under the current host policy.</param>
 [Experimental(Diagnostics.Experimental)]
-public sealed record AhpSessionResumeRequest(string SessionId, ResumeSessionOptions Config, HostSessionAuthentication Authentication, CancellationToken CancellationToken = default);
+public sealed record AhpSessionResumeRequest(string SessionId, ResumeSessionConfig Config, HostSessionAuthentication Authentication, CancellationToken CancellationToken);
 
 /// <summary>
 /// Transport options and local application callbacks for in-process AHP hosting.
@@ -146,7 +146,7 @@ public sealed class AhpHost : IAsyncDisposable
     public ValueTask DisposeAsync() => new(DisposeAsync(CancellationToken.None));
 
     /// <summary>Every disposal reaches the runtime, including repeated and concurrent calls.</summary>
-    public Task DisposeAsync(CancellationToken cancellationToken = default) => _rpc.DisposeAsync(HostId, cancellationToken);
+    public Task DisposeAsync(CancellationToken cancellationToken) => _rpc.DisposeAsync(HostId, cancellationToken);
 }
 
 public sealed partial class CopilotClient
@@ -201,17 +201,18 @@ public sealed partial class CopilotClient
         var hostId = Guid.NewGuid().ToString();
         lock (_ahpGate) _ahpHosts.Add(hostId, options);
         var rpc = connection.Server.Host;
-        var startup = rpc.StartAsync(
-            hostId: hostId,
-            authentication: wireAuthentication,
-            computeId: options.ComputeId,
-            workspace: options.Workspace,
-            allowCreatingNewSessions: options.AllowCreatingNewSessions,
-            localServer: localServer,
-            githubEnvironment: githubEnvironment,
-            sessionFactory: options.CreateSession is not null ? true : null,
-            resumeFactory: options.ResumeSession is not null ? true : null,
-            cancellationToken: CancellationToken.None);
+        var startup = rpc.StartAsync(new HostStartRequest
+        {
+            HostId = hostId,
+            Authentication = wireAuthentication,
+            ComputeId = options.ComputeId,
+            Workspace = options.Workspace,
+            AllowCreatingNewSessions = options.AllowCreatingNewSessions,
+            LocalServer = localServer,
+            GitHubEnvironment = githubEnvironment,
+            SessionFactory = options.CreateSession is not null ? true : null,
+            ResumeFactory = options.ResumeSession is not null ? true : null
+        }, CancellationToken.None);
         try
         {
             var info = await startup.WaitAsync(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
@@ -453,22 +454,13 @@ public sealed partial class CopilotClient
         }
     }
 
-    private void CaptureAhpSession<T>(CopilotSession session, T request, JsonTypeInfo<T> typeInfo, AppliedSessionOptions? appliedOptions)
+    private void CaptureAhpSession<T>(CopilotSession session, T request, JsonTypeInfo<T> typeInfo)
     {
         AhpHandoff[] entries;
         lock (_ahpGate)
             entries = _ahpHandoffs.Values.Where(entry => entry.SessionId == session.SessionId && entry.Configs is not null).ToArray();
         if (entries.Length == 0) return;
-        var config = JsonSerializer.SerializeToNode(request, typeInfo)!.AsObject();
-        // These settings are sent by the post-create options patch, never in
-        // the create or resume request, so record the values that patch applied.
-        if (appliedOptions?.SkipCustomInstructions is { } skipCustomInstructions)
-            SetAhpSetting(config, "skipCustomInstructions", JsonValue.Create(skipCustomInstructions));
-        if (appliedOptions?.CoauthorEnabled is { } coauthorEnabled)
-            SetAhpSetting(config, "coauthorEnabled", JsonValue.Create(coauthorEnabled));
-        if (appliedOptions?.ManageScheduleEnabled is { } manageScheduleEnabled)
-            SetAhpSetting(config, "manageScheduleEnabled", JsonValue.Create(manageScheduleEnabled));
-        var snapshot = JsonSerializer.SerializeToElement(config, TypesJsonContext.Default.JsonObject);
+        var snapshot = JsonSerializer.SerializeToElement(request, typeInfo);
         lock (_ahpGate)
             foreach (var entry in entries)
                 if (!entry.Released && entry.Configs is { } configs) configs[session] = snapshot;
@@ -482,66 +474,6 @@ public sealed partial class CopilotClient
             (AhpHostAuthentication.None, HostSessionAuthenticationNone) => true,
             _ => false
         };
-
-    // The host's private settings remain flat; application factories use SDK groups.
-    private static void SetAhpSetting(JsonObject config, string name, JsonNode? value)
-    {
-        var (group, field) = name switch
-        {
-            "enableExperimentalMode" => ("experiments", "enableExperimentalMode"),
-            "infiniteSessions" => ("state", "infiniteSessions"),
-            "additionalDirectories" => ("filesystem", "additionalDirectories"),
-            "streaming" => ("events", "streaming"),
-            "gitHubToken" => ("github", "token"),
-            "mcpOAuthTokenStorage" => ("mcp", "oauthTokenStorage"),
-            "featureFlags" => ("experiments", "flags"),
-            "enableManagedSettings" => ("github", "fetchManagedSettings"),
-            "excludedManagedSettings" => ("policy", "excludedManagedSettings"),
-            "enableSessionStore" => ("state", "enableCrossSessionStore"),
-            "availableTools" => ("tools", "availableTools"),
-            "excludedTools" => ("tools", "excludedTools"),
-            "allowedModels" => ("policy", "allowedModels"),
-            "skipCustomInstructions" => ("instructions", "skipCustomInstructions"),
-            "refreshCustomInstructions" => ("instructions", "refreshCustomInstructions"),
-            "customAgentsLocalOnly" => ("agents", "localDiscoveryOnly"),
-            "coauthorEnabled" => ("git", "coauthorEnabled"),
-            "manageScheduleEnabled" => ("tools", "manageScheduleEnabled"),
-            "memory" => ("state", "memory"),
-            "pluginDirectories" => ("plugins", "directories"),
-            "skillDirectories" => ("skills", "directories"),
-            "agentDirectories" => ("agents", "directories"),
-            "hookDirectories" => ("hooks", "directories"),
-            "instructionDirectories" => ("instructions", "directories"),
-            "enableMcpApps" => ("mcp", "enableApps"),
-            "reasoningEffort" => ("inference", "reasoningEffort"),
-            "allowMultipleToolCalls" => ("inference", "allowMultipleToolCalls"),
-            "contextTier" => ("inference", "contextTier"),
-            "providers" => ("inference", "providers"),
-            "models" => ("inference", "models"),
-            "defaultProvider" => ("inference", "defaultProvider"),
-            "capi" => ("github", "capi"),
-            "autopilot" => ("execution", "autopilot"),
-            "sessionLimits" => ("execution", "limits"),
-            "permissionMode" => ("permissions", "mode"),
-            "configDir" => ("", "configDirectory"),
-            _ => ("", name)
-        };
-        if (group.Length == 0)
-            config[field] = value;
-        else
-        {
-            config[group] ??= new JsonObject();
-            config[group]![field] = value;
-        }
-    }
-
-    private static JsonObject GroupAhpSettings(JsonElement settings)
-    {
-        var result = new JsonObject();
-        foreach (var property in settings.EnumerateObject())
-            SetAhpSetting(result, property.Name, JsonNode.Parse(property.Value.GetRawText()));
-        return result;
-    }
 
     private async Task<AhpMaterializeResult> MaterializeAhpSessionAsync(AhpMaterializeRequest request)
     {
@@ -564,19 +496,23 @@ public sealed partial class CopilotClient
         {
             try
             {
-                var config = GroupAhpSettings(request.Config);
-                var expected = JsonSerializer.SerializeToElement(config, TypesJsonContext.Default.JsonObject);
+                var config = JsonNode.Parse(request.Config.GetRawText())!.AsObject();
+                if (config.TryGetPropertyValue("configDir", out var directory))
+                {
+                    config.Remove("configDir");
+                    config["configDirectory"] = directory;
+                }
                 CopilotSession session;
                 if (request.Resume)
                 {
                     config.Remove("sessionId");
-                    var options = config.Deserialize(ClientJsonContext.Default.ResumeSessionOptions)
+                    var options = config.Deserialize(ClientJsonContext.Default.ResumeSessionConfig)
                         ?? throw new InvalidOperationException("Invalid AHP resume configuration");
                     session = await entry.Options.ResumeSession!(new(sessionId, options, request.Authentication, entry.Token)).ConfigureAwait(false);
                 }
                 else
                 {
-                    var options = config.Deserialize(ClientJsonContext.Default.CreateSessionOptions)
+                    var options = config.Deserialize(ClientJsonContext.Default.SessionConfig)
                         ?? throw new InvalidOperationException("Invalid AHP create configuration");
                     session = await entry.Options.CreateSession!(new(options, request.Authentication, entry.Token)).ConfigureAwait(false);
                 }
@@ -598,7 +534,7 @@ public sealed partial class CopilotClient
                     var actual = default(JsonElement);
                     var captured = entry.Configs?.TryGetValue(session, out actual) == true;
                     entry.Configs = null;
-                    if ((!request.Resume || captured) && !ContainsAhpConfig(actual, expected, root: true))
+                    if ((!request.Resume || captured) && !ContainsAhpConfig(actual, request.Config, root: true))
                         throw new InvalidOperationException("AHP callback must preserve the supplied session configuration");
                 }
                 return new AhpMaterializeResult(sessionId);
@@ -635,12 +571,18 @@ public sealed partial class CopilotClient
         if (actual.ValueKind != JsonValueKind.Object) return false;
         foreach (var property in expected.EnumerateObject())
         {
-            var name = property.Name;
+            var name = root ? property.Name switch
+            {
+                "suppressResumeEvent" => "disableResume",
+                "enableExperimentalMode" => "isExperimentalMode",
+                "enableMcpApps" => "requestMcpApps",
+                _ => property.Name
+            } : property.Name;
             if (!actual.TryGetProperty(name, out var value))
             {
                 // These default-false flags are omitted by the session request builder.
-                if (property.Value.ValueKind == JsonValueKind.False &&
-                    name is "streaming" or "enableApps" or "suppressResumeEvent") continue;
+                if (root && property.Value.ValueKind == JsonValueKind.False &&
+                    name is "streaming" or "requestMcpApps" or "disableResume") continue;
                 return false;
             }
             if (!ContainsAhpConfig(value, property.Value)) return false;

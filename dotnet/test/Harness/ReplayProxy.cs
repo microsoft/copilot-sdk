@@ -12,7 +12,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 
-namespace Microsoft.Copilot.Test.Harness;
+namespace GitHub.Copilot.Test.Harness;
 
 public sealed partial class ReplayProxy : IAsyncDisposable
 {

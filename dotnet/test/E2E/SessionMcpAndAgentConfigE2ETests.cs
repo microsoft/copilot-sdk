@@ -2,20 +2,22 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
-using Microsoft.Copilot.Rpc;
-using Microsoft.Copilot.Test.Harness;
+using GitHub.Copilot.Rpc;
+using GitHub.Copilot.Test.Harness;
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Microsoft.Copilot.Test.E2E;
+namespace GitHub.Copilot.Test.E2E;
 
 public class SessionMcpAndAgentConfigE2ETests(E2ETestFixture fixture, ITestOutputHelper output) : E2ETestBase(fixture, "mcp_and_agents", output)
 {
     [Fact]
     public async Task Should_Accept_MCP_Server_Configuration_On_Session_Create()
     {
-        var session = await CreateSessionAsync(new CreateSessionOptions
-        { Mcp = new SessionMcpOptions { Servers = CreateTestMcpServers("test-server") } });
+        var session = await CreateSessionAsync(new SessionConfig
+        {
+            McpServers = CreateTestMcpServers("test-server")
+        });
 
         Assert.Matches(@"^[a-f0-9-]+$", session.SessionId);
         await WaitForMcpServerStatusAsync(session, "test-server", McpServerStatus.Connected);
@@ -40,8 +42,10 @@ public class SessionMcpAndAgentConfigE2ETests(E2ETestFixture fixture, ITestOutpu
             }
         };
 
-        var session = await CreateSessionAsync(new CreateSessionOptions
-        { Mcp = new SessionMcpOptions { Servers = mcpServers } });
+        var session = await CreateSessionAsync(new SessionConfig
+        {
+            McpServers = mcpServers
+        });
 
         Assert.Matches(@"^[a-f0-9-]+$", session.SessionId);
 
@@ -58,8 +62,10 @@ public class SessionMcpAndAgentConfigE2ETests(E2ETestFixture fixture, ITestOutpu
         await session1.DisposeAsync();
 
         // Resume with MCP servers
-        var session2 = await ResumeSessionAsync(sessionId, new ResumeSessionOptions
-        { Mcp = new SessionMcpOptions { Servers = CreateTestMcpServers("test-server") } });
+        var session2 = await ResumeSessionAsync(sessionId, new ResumeSessionConfig
+        {
+            McpServers = CreateTestMcpServers("test-server")
+        });
 
         Assert.Equal(sessionId, session2.SessionId);
         await WaitForMcpServerStatusAsync(session2, "test-server", McpServerStatus.Connected);
@@ -70,8 +76,10 @@ public class SessionMcpAndAgentConfigE2ETests(E2ETestFixture fixture, ITestOutpu
     [Fact]
     public async Task Should_Handle_Multiple_MCP_Servers()
     {
-        var session = await CreateSessionAsync(new CreateSessionOptions
-        { Mcp = new SessionMcpOptions { Servers = CreateTestMcpServers("server1", "server2") } });
+        var session = await CreateSessionAsync(new SessionConfig
+        {
+            McpServers = CreateTestMcpServers("server1", "server2")
+        });
 
         Assert.Matches(@"^[a-f0-9-]+$", session.SessionId);
         await WaitForMcpServerStatusAsync(session, "server1", McpServerStatus.Connected);
@@ -94,8 +102,10 @@ public class SessionMcpAndAgentConfigE2ETests(E2ETestFixture fixture, ITestOutpu
             }
         };
 
-        var session = await CreateSessionAsync(new CreateSessionOptions
-        { Agents = new SessionAgentOptions { Definitions = customAgents } });
+        var session = await CreateSessionAsync(new SessionConfig
+        {
+            CustomAgents = customAgents
+        });
 
         Assert.Matches(@"^[a-f0-9-]+$", session.SessionId);
 
@@ -128,8 +138,10 @@ public class SessionMcpAndAgentConfigE2ETests(E2ETestFixture fixture, ITestOutpu
             }
         };
 
-        var session2 = await ResumeSessionAsync(sessionId, new ResumeSessionOptions
-        { Agents = new SessionAgentOptions { Definitions = customAgents } });
+        var session2 = await ResumeSessionAsync(sessionId, new ResumeSessionConfig
+        {
+            CustomAgents = customAgents
+        });
 
         Assert.Equal(sessionId, session2.SessionId);
 
@@ -156,8 +168,10 @@ public class SessionMcpAndAgentConfigE2ETests(E2ETestFixture fixture, ITestOutpu
             }
         };
 
-        var session = await CreateSessionAsync(new CreateSessionOptions
-        { Agents = new SessionAgentOptions { Definitions = customAgents } });
+        var session = await CreateSessionAsync(new SessionConfig
+        {
+            CustomAgents = customAgents
+        });
 
         Assert.Matches(@"^[a-f0-9-]+$", session.SessionId);
         await session.DisposeAsync();
@@ -178,8 +192,10 @@ public class SessionMcpAndAgentConfigE2ETests(E2ETestFixture fixture, ITestOutpu
             }
         };
 
-        var session = await CreateSessionAsync(new CreateSessionOptions
-        { Agents = new SessionAgentOptions { Definitions = customAgents } });
+        var session = await CreateSessionAsync(new SessionConfig
+        {
+            CustomAgents = customAgents
+        });
 
         Assert.Matches(@"^[a-f0-9-]+$", session.SessionId);
         await session.DisposeAsync();
@@ -207,8 +223,10 @@ public class SessionMcpAndAgentConfigE2ETests(E2ETestFixture fixture, ITestOutpu
             }
         };
 
-        var session = await CreateSessionAsync(new CreateSessionOptions
-        { Agents = new SessionAgentOptions { Definitions = customAgents } });
+        var session = await CreateSessionAsync(new SessionConfig
+        {
+            CustomAgents = customAgents
+        });
 
         Assert.Matches(@"^[a-f0-9-]+$", session.SessionId);
         await session.DisposeAsync();
@@ -230,8 +248,11 @@ public class SessionMcpAndAgentConfigE2ETests(E2ETestFixture fixture, ITestOutpu
             }
         };
 
-        var session = await CreateSessionAsync(new CreateSessionOptions
-        { Mcp = new SessionMcpOptions { Servers = mcpServers }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
+        var session = await CreateSessionAsync(new SessionConfig
+        {
+            McpServers = mcpServers,
+            OnPermissionRequest = PermissionHandler.ApproveAll,
+        });
 
         Assert.Matches(@"^[a-f0-9-]+$", session.SessionId);
 
@@ -288,18 +309,19 @@ public class SessionMcpAndAgentConfigE2ETests(E2ETestFixture fixture, ITestOutpu
             }
         };
 
-        var session = await CreateSessionAsync(new CreateSessionOptions
+        var session = await CreateSessionAsync(new SessionConfig
         {
-            Mcp = new SessionMcpOptions { Servers = mcpServers },
-            Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll },
-            Interaction = new SessionInteractionOptions
+            McpServers = mcpServers,
+            OnPermissionRequest = PermissionHandler.ApproveAll,
+            OnElicitationRequest = context =>
             {
-                OnElicitationRequest = context =>
-        {
-            elicitationContext.TrySetResult(context);
-            return Task.FromResult(new ElicitationResult { Action = UIElicitationResponseAction.Accept, Content = new Dictionary<string, object> { ["color"] = "blue" } });
-        }
-            }
+                elicitationContext.TrySetResult(context);
+                return Task.FromResult(new ElicitationResult
+                {
+                    Action = UIElicitationResponseAction.Accept,
+                    Content = new Dictionary<string, object> { ["color"] = "blue" }
+                });
+            },
         });
 
         await WaitForMcpServerStatusAsync(session, "test-elicitation-server", McpServerStatus.Connected);
@@ -336,8 +358,11 @@ public class SessionMcpAndAgentConfigE2ETests(E2ETestFixture fixture, ITestOutpu
             }
         };
 
-        var session = await CreateSessionAsync(new CreateSessionOptions
-        { Mcp = new SessionMcpOptions { Servers = CreateTestMcpServers("shared-server") }, Agents = new SessionAgentOptions { Definitions = customAgents } });
+        var session = await CreateSessionAsync(new SessionConfig
+        {
+            McpServers = CreateTestMcpServers("shared-server"),
+            CustomAgents = customAgents
+        });
 
         Assert.Matches(@"^[a-f0-9-]+$", session.SessionId);
         await WaitForMcpServerStatusAsync(session, "shared-server", McpServerStatus.Connected);

@@ -7,12 +7,12 @@ using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using Microsoft.Copilot.Test.Harness;
+using GitHub.Copilot.Test.Harness;
 using Microsoft.Extensions.AI;
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Microsoft.Copilot.Test.E2E;
+namespace GitHub.Copilot.Test.E2E;
 
 public sealed class RuntimeHostE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
     : E2ETestBase(fixture, "runtime_host", output, replayOnly: true)
@@ -53,12 +53,12 @@ public sealed class RuntimeHostE2ETests(E2ETestFixture fixture, ITestOutputHelpe
         public readonly TaskCompletionSource Exited = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public int ExitCount;
 
-        public void Configure(SessionOptionsBase config)
+        public void Configure(SessionConfigBase config)
         {
-            config.Permissions.OnRequest = PermissionHandler.ApproveAll;
+            config.OnPermissionRequest = PermissionHandler.ApproveAll;
             config.SystemMessage = new SystemMessageConfig { Mode = SystemMessageMode.Append, Content = Marker };
-            config.Tools.Definitions = [AIFunctionFactory.Create(MagicNumber, "magic_number")];
-            config.Hooks.Handlers = new SessionHooks
+            config.Tools = [AIFunctionFactory.Create(MagicNumber, "magic_number")];
+            config.Hooks = new SessionHooks
             {
                 OnPreToolUse = (_, invocation) =>
                 {
@@ -79,7 +79,6 @@ public sealed class RuntimeHostE2ETests(E2ETestFixture fixture, ITestOutputHelpe
         public AhpHostOptions Options() => new()
         {
             Authentication = new AhpHostAuthentication.GitHub(),
-            Workspace = context.WorkDir,
             LocalServer = new(),
             AllowCreatingNewSessions = true,
             CreateSession = async request =>
@@ -157,7 +156,7 @@ public sealed class RuntimeHostE2ETests(E2ETestFixture fixture, ITestOutputHelpe
         await using var ahp = await AhpTestClient.StartAsync();
         if (publish)
         {
-            var config = new CreateSessionOptions { WorkingDirectory = Ctx.WorkDir };
+            var config = new SessionConfig { WorkingDirectory = Ctx.WorkDir };
             app.Configure(config);
             app.Session = await Ctx.CreateSessionAsync(owner, config);
         }

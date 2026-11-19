@@ -2,13 +2,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use copilot_sdk::ResumeSessionOptions;
-use copilot_sdk::canvas::{CanvasDeclaration, CanvasError, CanvasHandler, CanvasResult};
-use copilot_sdk::rpc::{
+use github_copilot_sdk::ResumeSessionConfig;
+use github_copilot_sdk::canvas::{CanvasDeclaration, CanvasError, CanvasHandler, CanvasResult};
+use github_copilot_sdk::rpc::{
     CanvasAction, CanvasProviderCloseRequest, CanvasProviderInvokeActionRequest,
     CanvasProviderOpenRequest, CanvasProviderOpenResult,
 };
-use copilot_sdk::types::{CanvasProviderIdentity, ExtensionInfo};
+use github_copilot_sdk::types::{CanvasProviderIdentity, ExtensionInfo};
 use parking_lot::Mutex;
 use serde_json::{Value, json};
 use tokio::sync::Notify;
@@ -110,7 +110,7 @@ impl CanvasHandler for TestCanvasHandler {
 fn canvas_session_config(
     ctx: &super::support::E2eContext,
     handler: Arc<TestCanvasHandler>,
-) -> copilot_sdk::types::CreateSessionOptions {
+) -> github_copilot_sdk::types::SessionConfig {
     let mut decl = CanvasDeclaration::new("counter", "Counter", "Tracks a counter value.");
     decl.actions = Some(vec![CanvasAction {
         name: "increment".to_string(),
@@ -119,18 +119,14 @@ fn canvas_session_config(
     }]);
 
     ctx.approve_all_session_config()
-        .with_canvases(|group| group.with_request_renderer(true))
-        .with_extensions(|group| {
-            group.with_identity(ExtensionInfo::new("rust-sdk-tests", "canvas-provider"))
-        })
-        .with_canvases(|group| {
-            group.with_provider(
-                CanvasProviderIdentity::new("scenario:builtin:rust-canvas")
-                    .with_name("Rust canvas E2E"),
-            )
-        })
-        .with_canvases(|group| group.with_definitions([decl]))
-        .with_canvases(|group| group.with_handler(handler))
+        .with_request_canvas_renderer(true)
+        .with_extension_info(ExtensionInfo::new("rust-sdk-tests", "canvas-provider"))
+        .with_canvas_provider(
+            CanvasProviderIdentity::new("scenario:builtin:rust-canvas")
+                .with_name("Rust canvas E2E"),
+        )
+        .with_canvases([decl])
+        .with_canvas_handler(handler)
 }
 
 #[tokio::test]
@@ -182,7 +178,7 @@ async fn canvas_open_round_trip() {
             let open_result = session
                 .rpc()
                 .canvas()
-                .open(copilot_sdk::rpc::CanvasOpenRequest {
+                .open(github_copilot_sdk::rpc::CanvasOpenRequest {
                     canvas_id: "counter".to_string(),
                     instance_id: "counter-1".to_string(),
                     extension_id: Some(canvas.extension_id.clone()),
@@ -244,7 +240,7 @@ async fn canvas_invoke_action_round_trip() {
                 session
                     .rpc()
                     .canvas()
-                    .open(copilot_sdk::rpc::CanvasOpenRequest {
+                    .open(github_copilot_sdk::rpc::CanvasOpenRequest {
                         canvas_id: "counter".to_string(),
                         instance_id: "counter-2".to_string(),
                         extension_id: Some(canvas.extension_id.clone()),
@@ -257,7 +253,7 @@ async fn canvas_invoke_action_round_trip() {
                     .rpc()
                     .canvas()
                     .action()
-                    .invoke(copilot_sdk::rpc::CanvasActionInvokeRequest {
+                    .invoke(github_copilot_sdk::rpc::CanvasActionInvokeRequest {
                         instance_id: "counter-2".to_string(),
                         action_name: "increment".to_string(),
                         input: Some(json!({ "delta": 1 })),
@@ -302,7 +298,7 @@ async fn canvas_close_round_trip() {
             session
                 .rpc()
                 .canvas()
-                .open(copilot_sdk::rpc::CanvasOpenRequest {
+                .open(github_copilot_sdk::rpc::CanvasOpenRequest {
                     canvas_id: "counter".to_string(),
                     instance_id: "counter-3".to_string(),
                     extension_id: Some(canvas.extension_id.clone()),
@@ -316,7 +312,7 @@ async fn canvas_close_round_trip() {
             session
                 .rpc()
                 .canvas()
-                .close(copilot_sdk::rpc::CanvasCloseRequest {
+                .close(github_copilot_sdk::rpc::CanvasCloseRequest {
                     instance_id: "counter-3".to_string(),
                 })
                 .await
@@ -372,7 +368,7 @@ async fn structured_canvas_open_error_surfaces_to_caller() {
                 let error = session
                     .rpc()
                     .canvas()
-                    .open(copilot_sdk::rpc::CanvasOpenRequest {
+                    .open(github_copilot_sdk::rpc::CanvasOpenRequest {
                         canvas_id: "counter".to_string(),
                         instance_id: "counter-error".to_string(),
                         extension_id: Some(canvas.extension_id),
@@ -427,7 +423,7 @@ async fn structured_canvas_action_error_surfaces_to_caller() {
                 session
                     .rpc()
                     .canvas()
-                    .open(copilot_sdk::rpc::CanvasOpenRequest {
+                    .open(github_copilot_sdk::rpc::CanvasOpenRequest {
                         canvas_id: "counter".to_string(),
                         instance_id: "counter-error".to_string(),
                         extension_id: Some(canvas.extension_id),
@@ -440,7 +436,7 @@ async fn structured_canvas_action_error_surfaces_to_caller() {
                     .rpc()
                     .canvas()
                     .action()
-                    .invoke(copilot_sdk::rpc::CanvasActionInvokeRequest {
+                    .invoke(github_copilot_sdk::rpc::CanvasActionInvokeRequest {
                         instance_id: "counter-error".to_string(),
                         action_name: "increment".to_string(),
                         input: Some(json!({ "value": "after" })),
@@ -494,7 +490,7 @@ async fn structured_canvas_close_error_is_best_effort() {
                 session
                     .rpc()
                     .canvas()
-                    .open(copilot_sdk::rpc::CanvasOpenRequest {
+                    .open(github_copilot_sdk::rpc::CanvasOpenRequest {
                         canvas_id: "counter".to_string(),
                         instance_id: "counter-error".to_string(),
                         extension_id: Some(canvas.extension_id),
@@ -506,7 +502,7 @@ async fn structured_canvas_close_error_is_best_effort() {
                 session
                     .rpc()
                     .canvas()
-                    .close(copilot_sdk::rpc::CanvasCloseRequest {
+                    .close(github_copilot_sdk::rpc::CanvasCloseRequest {
                         instance_id: "counter-error".to_string(),
                     })
                     .await
@@ -553,7 +549,7 @@ async fn resumed_canvas_reattaches_and_routes_all_callbacks() {
                 session
                     .rpc()
                     .canvas()
-                    .open(copilot_sdk::rpc::CanvasOpenRequest {
+                    .open(github_copilot_sdk::rpc::CanvasOpenRequest {
                         canvas_id: "counter".to_string(),
                         instance_id: "counter-resume".to_string(),
                         extension_id: Some(canvas.extension_id),
@@ -586,21 +582,17 @@ async fn resumed_canvas_reattaches_and_routes_all_callbacks() {
                 }]);
                 let resumed = client
                     .resume_session(
-                        ResumeSessionOptions::new(session_id.clone())
-                            .with_github(|group| {
-                                group.with_token(super::support::DEFAULT_TEST_TOKEN)
-                            })
-                            .with_permissions(|group| group.approve_all_permissions())
-                            .with_canvases(|group| group.with_request_renderer(true))
-                            .with_canvases(|group| {
-                                group.with_provider(
-                                    CanvasProviderIdentity::new("scenario:builtin:rust-canvas")
-                                        .with_name("Rust canvas E2E"),
-                                )
-                            })
-                            .with_canvases(|group| group.with_definitions([declaration]))
-                            .with_canvases(|group| group.with_handler(resumed_handler.clone()))
-                            .with_canvases(|group| group.with_open(snapshots)),
+                        ResumeSessionConfig::new(session_id.clone())
+                            .with_github_token(super::support::DEFAULT_TEST_TOKEN)
+                            .approve_all_permissions()
+                            .with_request_canvas_renderer(true)
+                            .with_canvas_provider(
+                                CanvasProviderIdentity::new("scenario:builtin:rust-canvas")
+                                    .with_name("Rust canvas E2E"),
+                            )
+                            .with_canvases([declaration])
+                            .with_canvas_handler(resumed_handler.clone())
+                            .with_open_canvases(snapshots),
                     )
                     .await
                     .expect("resume session");
@@ -635,7 +627,7 @@ async fn resumed_canvas_reattaches_and_routes_all_callbacks() {
                     .rpc()
                     .canvas()
                     .action()
-                    .invoke(copilot_sdk::rpc::CanvasActionInvokeRequest {
+                    .invoke(github_copilot_sdk::rpc::CanvasActionInvokeRequest {
                         instance_id: "counter-resume".to_string(),
                         action_name: "increment".to_string(),
                         input: Some(json!({ "value": "resumed" })),
@@ -646,7 +638,7 @@ async fn resumed_canvas_reattaches_and_routes_all_callbacks() {
                 resumed
                     .rpc()
                     .canvas()
-                    .close(copilot_sdk::rpc::CanvasCloseRequest {
+                    .close(github_copilot_sdk::rpc::CanvasCloseRequest {
                         instance_id: "counter-resume".to_string(),
                     })
                     .await

@@ -1,8 +1,5 @@
 #![allow(clippy::unwrap_used)]
 
-#[path = "session_test/auto_mode_recovery.rs"]
-mod auto_mode_recovery;
-
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
@@ -10,34 +7,31 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use copilot_sdk::canvas::{CanvasDeclaration, CanvasHandler, CanvasResult};
-use copilot_sdk::github_token::{
+use github_copilot_sdk::canvas::{CanvasDeclaration, CanvasHandler, CanvasResult};
+use github_copilot_sdk::github_token::{
     GitHubToken, GitHubTokenProviderArgs, GitHubTokenProviderResult, GitHubTokenRequestReason,
 };
-use copilot_sdk::handler::{
-    ApproveAllHandler, AttributedResult, AutoModeSwitchHandler, AutoModeSwitchResponse,
-    ElicitationHandler, ExitPlanModeHandler, ExitPlanModeResult, McpAuthHandler, McpAuthRequest,
-    McpAuthResponse, McpAuthResult, PermissionHandler, PermissionResult,
-    ShellAuthenticationHandler, ShellAuthenticationInputKind, ShellAuthenticationRequest,
-    ShellAuthenticationResponse, UserInputHandler, UserInputResponse,
+use github_copilot_sdk::handler::{
+    ApproveAllHandler, AutoModeSwitchHandler, AutoModeSwitchResponse, ElicitationHandler,
+    ExitPlanModeHandler, ExitPlanModeResult, McpAuthHandler, McpAuthRequest, McpAuthResponse,
+    McpAuthResult, PermissionHandler, PermissionResult, UserInputHandler, UserInputResponse,
 };
-use copilot_sdk::rpc::{
+use github_copilot_sdk::rpc::{
     CanvasProviderInvokeActionRequest, CanvasProviderOpenRequest, CanvasProviderOpenResult,
     ModelSetAllowedModelsRequest, OpenCanvasInstance, SendRequest,
 };
-use copilot_sdk::types::{
+use github_copilot_sdk::types::{
     CanvasProviderIdentity, CloudSessionOptions, CloudSessionRepository, CommandContext,
-    CommandDefinition, CommandHandler, CreateSessionOptions, DeliveryMode, ElicitationRequest,
-    ElicitationResult, ExitPlanModeData, ExtensionInfo, MessageOptions, PermissionDecisionContext,
-    PermissionDecisionOutcome, PermissionDecisionSource, PermissionDecisionSurface,
-    PermissionResponseCapability, RequestId, SessionId, Tool, ToolInvocation, ToolResult,
+    CommandDefinition, CommandHandler, DeliveryMode, ElicitationRequest, ElicitationResult,
+    ExitPlanModeData, ExtensionInfo, MessageOptions, PermissionDecisionContext,
+    PermissionDecisionOutcome, PermissionDecisionSource, PermissionDecisionSurface, RequestId,
+    SessionConfig, SessionId, Tool, ToolInvocation, ToolResult,
 };
-use copilot_sdk::{Client, ErrorKind, MessageSource, ProtocolErrorKind, tool};
+use github_copilot_sdk::{Client, ErrorKind, MessageSource, ProtocolErrorKind, tool};
 use serde_json::Value;
 use tokio::io::{AsyncWrite, AsyncWriteExt, duplex};
 use tokio::sync::Notify;
 use tokio::time::timeout;
-use tokio_util::sync::CancellationToken;
 use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id, Record};
 use tracing::{Event, Metadata, Subscriber};
@@ -62,39 +56,13 @@ impl CapturedTraceEvent {
     }
 }
 
-/// A recorded span, its parent resolved the way a registry resolves it.
-#[derive(Clone, Copy)]
-struct CapturedSpan {
-    name: &'static str,
-    parent: Option<u64>,
-}
-
 #[derive(Clone, Default)]
 struct TraceCapture {
     events: Arc<std::sync::Mutex<Vec<CapturedTraceEvent>>>,
-    spans: Arc<std::sync::Mutex<HashMap<u64, CapturedSpan>>>,
     changed: Arc<Notify>,
 }
 
 impl TraceCapture {
-    /// The ancestor names, nearest first, of every recorded span called `name`.
-    fn span_ancestors(&self, name: &str) -> Vec<Vec<&'static str>> {
-        let spans = self.spans.lock().unwrap();
-        spans
-            .values()
-            .filter(|span| span.name == name)
-            .map(|span| {
-                let mut ancestors = Vec::new();
-                let mut next = span.parent;
-                while let Some(id) = next {
-                    ancestors.push(spans[&id].name);
-                    next = spans[&id].parent;
-                }
-                ancestors
-            })
-            .collect()
-    }
-
     fn permission_outcome(&self, request_id: &str) -> Option<CapturedTraceEvent> {
         self.events
             .lock()
@@ -161,10 +129,6 @@ impl Visit for TraceFieldVisitor {
 struct CaptureSubscriber {
     capture: TraceCapture,
     next_span_id: AtomicU64,
-    /// Spans currently entered. `capture_traces` installs this subscriber as
-    /// the thread's default and `#[tokio::test]` polls every task on that
-    /// thread, so one stack is the thread's stack.
-    entered: std::sync::Mutex<Vec<u64>>,
 }
 
 impl CaptureSubscriber {
@@ -172,7 +136,6 @@ impl CaptureSubscriber {
         Self {
             capture,
             next_span_id: AtomicU64::new(1),
-            entered: std::sync::Mutex::new(Vec::new()),
         }
     }
 }
@@ -182,23 +145,8 @@ impl Subscriber for CaptureSubscriber {
         true
     }
 
-    fn new_span(&self, span: &Attributes<'_>) -> Id {
-        let id = self.next_span_id.fetch_add(1, Ordering::Relaxed);
-        let parent = if span.is_root() {
-            None
-        } else if let Some(parent) = span.parent() {
-            Some(parent.into_u64())
-        } else {
-            self.entered.lock().unwrap().last().copied()
-        };
-        self.capture.spans.lock().unwrap().insert(
-            id,
-            CapturedSpan {
-                name: span.metadata().name(),
-                parent,
-            },
-        );
-        Id::from_u64(id)
+    fn new_span(&self, _span: &Attributes<'_>) -> Id {
+        Id::from_u64(self.next_span_id.fetch_add(1, Ordering::Relaxed))
     }
 
     fn record(&self, _span: &Id, _values: &Record<'_>) {}
@@ -218,16 +166,9 @@ impl Subscriber for CaptureSubscriber {
         self.capture.changed.notify_one();
     }
 
-    fn enter(&self, span: &Id) {
-        self.entered.lock().unwrap().push(span.into_u64());
-    }
+    fn enter(&self, _span: &Id) {}
 
-    fn exit(&self, span: &Id) {
-        let mut entered = self.entered.lock().unwrap();
-        if let Some(position) = entered.iter().rposition(|id| *id == span.into_u64()) {
-            entered.remove(position);
-        }
-    }
+    fn exit(&self, _span: &Id) {}
 }
 
 fn capture_traces() -> (TraceCapture, tracing::dispatcher::DefaultGuard) {
@@ -267,7 +208,10 @@ struct CapturingTool {
 
 #[async_trait]
 impl tool::ToolHandler for CapturingTool {
-    async fn call(&self, _invocation: ToolInvocation) -> Result<ToolResult, copilot_sdk::Error> {
+    async fn call(
+        &self,
+        _invocation: ToolInvocation,
+    ) -> Result<ToolResult, github_copilot_sdk::Error> {
         Ok(ToolResult::Text("captured handler".to_string()))
     }
 }
@@ -278,7 +222,7 @@ impl PermissionHandler for PendingPermissionHandler {
         &self,
         _session_id: SessionId,
         _request_id: RequestId,
-        _data: copilot_sdk::PermissionRequestData,
+        _data: github_copilot_sdk::PermissionRequestData,
     ) -> PermissionResult {
         let _on_drop = NotifyOnDrop(self.dropped.clone());
         self.entered.notify_one();
@@ -292,7 +236,7 @@ impl PermissionHandler for GatedApproveHandler {
         &self,
         _session_id: SessionId,
         _request_id: RequestId,
-        _data: copilot_sdk::PermissionRequestData,
+        _data: github_copilot_sdk::PermissionRequestData,
     ) -> PermissionResult {
         self.entered.notify_one();
         self.release.notified().await;
@@ -306,7 +250,7 @@ impl PermissionHandler for ContextualApproveHandler {
         &self,
         _session_id: SessionId,
         _request_id: RequestId,
-        _data: copilot_sdk::PermissionRequestData,
+        _data: github_copilot_sdk::PermissionRequestData,
     ) -> PermissionResult {
         PermissionResult::approve_once().with_context(PermissionDecisionContext {
             outcome: PermissionDecisionOutcome::PromptedUser,
@@ -399,13 +343,7 @@ async fn read_framed_bytes(reader: &mut (impl tokio::io::AsyncRead + Unpin)) -> 
 fn make_client() -> (Client, tokio::io::DuplexStream, tokio::io::DuplexStream) {
     let (client_write, server_read) = duplex(8192);
     let (server_write, client_read) = duplex(8192);
-    let client = Client::from_streams(
-        copilot_sdk::ClientMode::CodingAgent,
-        client_read,
-        client_write,
-        std::env::temp_dir(),
-    )
-    .unwrap();
+    let client = Client::from_streams(client_read, client_write, std::env::temp_dir()).unwrap();
     (client, server_read, server_write)
 }
 
@@ -515,21 +453,21 @@ impl FakeServer {
     }
 }
 
-async fn create_session_pair() -> (copilot_sdk::session::Session, FakeServer) {
+async fn create_session_pair() -> (github_copilot_sdk::session::Session, FakeServer) {
     create_session_pair_with_config(|cfg| cfg).await
 }
 
 async fn create_session_pair_with_capabilities(
     capabilities: Value,
-) -> (copilot_sdk::session::Session, FakeServer) {
+) -> (github_copilot_sdk::session::Session, FakeServer) {
     create_session_pair_inner(|cfg| cfg, capabilities).await
 }
 
 async fn create_session_pair_with_config<F>(
     configure: F,
-) -> (copilot_sdk::session::Session, FakeServer)
+) -> (github_copilot_sdk::session::Session, FakeServer)
 where
-    F: FnOnce(CreateSessionOptions) -> CreateSessionOptions + Send + 'static,
+    F: FnOnce(SessionConfig) -> SessionConfig + Send + 'static,
 {
     create_session_pair_inner(configure, serde_json::json!(null)).await
 }
@@ -537,9 +475,9 @@ where
 async fn create_session_pair_inner<F>(
     configure: F,
     capabilities: Value,
-) -> (copilot_sdk::session::Session, FakeServer)
+) -> (github_copilot_sdk::session::Session, FakeServer)
 where
-    F: FnOnce(CreateSessionOptions) -> CreateSessionOptions + Send + 'static,
+    F: FnOnce(SessionConfig) -> SessionConfig + Send + 'static,
 {
     let (client, server_read, server_write) = make_client();
 
@@ -553,7 +491,7 @@ where
         let client = client.clone();
         async move {
             client
-                .create_session(configure(CreateSessionOptions::default()))
+                .create_session(configure(SessionConfig::default()))
                 .await
                 .unwrap()
         }
@@ -598,7 +536,7 @@ async fn github_token_provider_uses_global_registration_and_maps_results() {
                     8 * 60 * 60,
                 ))),
                 "cancel.example" => Ok(GitHubTokenProviderResult::Cancelled),
-                _ => Err(copilot_sdk::Error::with_message(
+                _ => Err(github_copilot_sdk::Error::with_message(
                     ErrorKind::GitHubTokenProvider,
                     "credential service unavailable",
                 )),
@@ -610,9 +548,9 @@ async fn github_token_provider_uses_global_registration_and_maps_results() {
         async move {
             client
                 .create_session(
-                    CreateSessionOptions::default()
+                    SessionConfig::default()
                         .with_session_id("github-token-session")
-                        .with_github(|group| group.with_token_provider(provider)),
+                        .with_github_token_provider(provider),
                 )
                 .await
                 .unwrap()
@@ -621,8 +559,8 @@ async fn github_token_provider_uses_global_registration_and_maps_results() {
 
     let create_request = server.read_request().await;
     assert_eq!(create_request["method"], "session.create");
-    assert!(create_request["params"]["github"].get("token").is_none());
-    let registration_id = create_request["params"]["github"]["tokenProviderRegistrationId"]
+    assert!(create_request["params"].get("gitHubToken").is_none());
+    let registration_id = create_request["params"]["gitHubTokenProviderRegistrationId"]
         .as_str()
         .unwrap()
         .to_string();
@@ -738,34 +676,17 @@ async fn github_token_provider_is_mutually_exclusive_and_rolls_back_failed_creat
         Ok(GitHubTokenProviderResult::Cancelled)
     });
     let (client, server_read, server_write) = make_client();
-    for token in ["static", ""] {
-        let result = client
-            .create_session(CreateSessionOptions::default().with_github(|group| {
-                group
-                    .with_token(token)
-                    .with_token_provider(provider.clone())
-            }))
-            .await;
-        let Err(error) = result else {
-            panic!("mutually exclusive GitHub credentials must be rejected");
-        };
-        assert!(matches!(error.kind(), ErrorKind::InvalidConfig));
-        let result = client
-            .resume_session(
-                copilot_sdk::ResumeSessionOptions::new(SessionId::from("credentials")).with_github(
-                    |group| {
-                        group
-                            .with_token(token)
-                            .with_token_provider(provider.clone())
-                    },
-                ),
-            )
-            .await;
-        let Err(error) = result else {
-            panic!("mutually exclusive GitHub credentials must be rejected on resume");
-        };
-        assert!(matches!(error.kind(), ErrorKind::InvalidConfig));
-    }
+    let result = client
+        .create_session(
+            SessionConfig::default()
+                .with_github_token("static")
+                .with_github_token_provider(provider.clone()),
+        )
+        .await;
+    let Err(error) = result else {
+        panic!("mutually exclusive GitHub credentials must be rejected");
+    };
+    assert!(matches!(error.kind(), ErrorKind::InvalidConfig));
 
     let mut server = FakeServer {
         read: server_read,
@@ -777,15 +698,15 @@ async fn github_token_provider_is_mutually_exclusive_and_rolls_back_failed_creat
         async move {
             client
                 .create_session(
-                    CreateSessionOptions::default()
+                    SessionConfig::default()
                         .with_session_id("failed-create")
-                        .with_github(|group| group.with_token_provider(provider)),
+                        .with_github_token_provider(provider),
                 )
                 .await
         }
     });
     let create_request = server.read_request().await;
-    let registration_id = create_request["params"]["github"]["tokenProviderRegistrationId"]
+    let registration_id = create_request["params"]["gitHubTokenProviderRegistrationId"]
         .as_str()
         .unwrap()
         .to_string();
@@ -821,22 +742,19 @@ async fn github_token_provider_is_mutually_exclusive_and_rolls_back_failed_creat
 async fn create_token_test_session(
     client: &Client,
     server: &mut FakeServer,
-    provider: Arc<dyn copilot_sdk::github_token::GitHubTokenProvider>,
-) -> (copilot_sdk::session::Session, String) {
+    provider: Arc<dyn github_copilot_sdk::github_token::GitHubTokenProvider>,
+) -> (github_copilot_sdk::session::Session, String) {
     let create = tokio::spawn({
         let client = client.clone();
         async move {
             client
-                .create_session(
-                    CreateSessionOptions::default()
-                        .with_github(|group| group.with_token_provider(provider)),
-                )
+                .create_session(SessionConfig::default().with_github_token_provider(provider))
                 .await
                 .unwrap()
         }
     });
     let request = server.read_request().await;
-    let registration = request["params"]["github"]["tokenProviderRegistrationId"]
+    let registration = request["params"]["gitHubTokenProviderRegistrationId"]
         .as_str()
         .unwrap()
         .to_string();
@@ -1045,25 +963,24 @@ fn requested_session_id(request: &Value) -> &str {
         .expect("session request should include sessionId")
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn create_session_registers_mcp_auth_interest_only_with_handler() {
     let (client, mut server_read, mut server_write) = make_client();
-    let create_handle =
-        tokio::spawn({
-            let client = client.clone();
-            async move {
-                client
-                    .create_session(CreateSessionOptions::default().with_permissions(|group| {
-                        group.with_on_request(Arc::new(ApproveAllHandler))
-                    }))
-                    .await
-                    .unwrap()
-            }
-        });
+    let create_handle = tokio::spawn({
+        let client = client.clone();
+        async move {
+            client
+                .create_session(
+                    SessionConfig::default().with_permission_handler(Arc::new(ApproveAllHandler)),
+                )
+                .await
+                .unwrap()
+        }
+    });
 
     let create_req = read_framed(&mut server_read).await;
     assert_eq!(create_req["method"], "session.create");
-    assert_eq!(create_req["params"]["permissions"]["request"], true);
+    assert_eq!(create_req["params"]["requestPermission"], true);
     let session_id = requested_session_id(&create_req).to_string();
     server_respond_create(&mut server_write, &create_req, &session_id).await;
     let session = timeout(TIMEOUT, create_handle).await.unwrap().unwrap();
@@ -1078,13 +995,9 @@ async fn create_session_registers_mcp_auth_interest_only_with_handler() {
         async move {
             client
                 .create_session(
-                    CreateSessionOptions::default()
-                        .with_permissions(|group| {
-                            group.with_on_request(Arc::new(ApproveAllHandler))
-                        })
-                        .with_mcp(|group| {
-                            group.with_on_auth_request(Arc::new(CancelMcpAuthHandler))
-                        }),
+                    SessionConfig::default()
+                        .with_permission_handler(Arc::new(ApproveAllHandler))
+                        .with_mcp_auth_handler(Arc::new(CancelMcpAuthHandler)),
                 )
                 .await
                 .unwrap()
@@ -1093,7 +1006,7 @@ async fn create_session_registers_mcp_auth_interest_only_with_handler() {
 
     let create_req = read_framed(&mut server_read).await;
     assert_eq!(create_req["method"], "session.create");
-    assert_eq!(create_req["params"]["permissions"]["request"], true);
+    assert_eq!(create_req["params"]["requestPermission"], true);
     let session_id = requested_session_id(&create_req).to_string();
     server_respond_create(&mut server_write, &create_req, &session_id).await;
 
@@ -1137,7 +1050,7 @@ async fn create_session_mcp_auth_registration_failure_cancels_external_tools() {
         async fn call(
             &self,
             _invocation: ToolInvocation,
-        ) -> Result<ToolResult, copilot_sdk::Error> {
+        ) -> Result<ToolResult, github_copilot_sdk::Error> {
             if let Some(sender) = self.started.lock().take() {
                 let _ = sender.send(());
             }
@@ -1154,34 +1067,24 @@ async fn create_session_mcp_auth_registration_failure_cancels_external_tools() {
         async move {
             client
                 .create_session(
-                    CreateSessionOptions::default()
-                        .with_permissions(|group| {
-                            group.with_on_request(Arc::new(ApproveAllHandler))
-                        })
-                        .with_mcp(|group| {
-                            group.with_on_auth_request(Arc::new(CancelMcpAuthHandler))
-                        })
-                        .with_tools(|group| {
-                            group.with_definitions(vec![
-                                Tool::new("blocked_tool")
-                                    .with_description("Blocks")
-                                    .with_parameters(serde_json::json!({"type":"object"}))
-                                    .with_handler(Arc::new(BlockingTool {
-                                        started: parking_lot::Mutex::new(Some(started_tx)),
-                                        cancelled: parking_lot::Mutex::new(Some(cancelled_tx)),
-                                    })),
-                            ])
-                        }),
+                    SessionConfig::default()
+                        .with_permission_handler(Arc::new(ApproveAllHandler))
+                        .with_mcp_auth_handler(Arc::new(CancelMcpAuthHandler))
+                        .with_tools(vec![
+                            Tool::new("blocked_tool")
+                                .with_description("Blocks")
+                                .with_parameters(serde_json::json!({"type":"object"}))
+                                .with_handler(Arc::new(BlockingTool {
+                                    started: parking_lot::Mutex::new(Some(started_tx)),
+                                    cancelled: parking_lot::Mutex::new(Some(cancelled_tx)),
+                                })),
+                        ]),
                 )
                 .await
         }
     });
 
     let create_req = read_framed(&mut server_read).await;
-    assert_eq!(
-        create_req["params"]["tools"]["definitions"][0]["hasHandler"],
-        true
-    );
     let session_id = requested_session_id(&create_req).to_string();
     server_respond_create(&mut server_write, &create_req, &session_id).await;
     let interest_req = read_framed(&mut server_read).await;
@@ -1227,7 +1130,7 @@ async fn create_session_mcp_auth_registration_failure_cancels_external_tools() {
     timeout(TIMEOUT, cancelled_rx).await.unwrap().unwrap();
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn cloud_create_session_registers_mcp_auth_interest_after_create_only_with_handler() {
     let cloud = || {
         CloudSessionOptions::with_repository(
@@ -1241,10 +1144,8 @@ async fn cloud_create_session_registers_mcp_auth_interest_after_create_only_with
         async move {
             client
                 .create_session(
-                    CreateSessionOptions::default()
-                        .with_permissions(|group| {
-                            group.with_on_request(Arc::new(ApproveAllHandler))
-                        })
+                    SessionConfig::default()
+                        .with_permission_handler(Arc::new(ApproveAllHandler))
                         .with_cloud(cloud()),
                 )
                 .await
@@ -1255,7 +1156,7 @@ async fn cloud_create_session_registers_mcp_auth_interest_after_create_only_with
     let create_req = read_framed(&mut server_read).await;
     assert_eq!(create_req["method"], "session.create");
     assert!(create_req["params"].get("sessionId").is_none());
-    assert_eq!(create_req["params"]["permissions"]["request"], true);
+    assert_eq!(create_req["params"]["requestPermission"], true);
     server_respond_create(&mut server_write, &create_req, "server-assigned-session-1").await;
     let session = timeout(TIMEOUT, create_handle).await.unwrap().unwrap();
     let no_extra_request = timeout(Duration::from_millis(50), read_framed(&mut server_read)).await;
@@ -1268,13 +1169,9 @@ async fn cloud_create_session_registers_mcp_auth_interest_after_create_only_with
         async move {
             client
                 .create_session(
-                    CreateSessionOptions::default()
-                        .with_permissions(|group| {
-                            group.with_on_request(Arc::new(ApproveAllHandler))
-                        })
-                        .with_mcp(|group| {
-                            group.with_on_auth_request(Arc::new(CancelMcpAuthHandler))
-                        })
+                    SessionConfig::default()
+                        .with_permission_handler(Arc::new(ApproveAllHandler))
+                        .with_mcp_auth_handler(Arc::new(CancelMcpAuthHandler))
                         .with_cloud(cloud()),
                 )
                 .await
@@ -1285,7 +1182,7 @@ async fn cloud_create_session_registers_mcp_auth_interest_after_create_only_with
     let create_req = read_framed(&mut server_read).await;
     assert_eq!(create_req["method"], "session.create");
     assert!(create_req["params"].get("sessionId").is_none());
-    assert_eq!(create_req["params"]["permissions"]["request"], true);
+    assert_eq!(create_req["params"]["requestPermission"], true);
     server_respond_create(&mut server_write, &create_req, "server-assigned-session-2").await;
 
     let interest_req = read_framed(&mut server_read).await;
@@ -1309,9 +1206,9 @@ async fn cloud_create_session_registers_mcp_auth_interest_after_create_only_with
     let _session = timeout(TIMEOUT, create_handle).await.unwrap().unwrap();
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn resume_session_registers_mcp_auth_interest_only_with_handler() {
-    use copilot_sdk::types::ResumeSessionOptions;
+    use github_copilot_sdk::types::ResumeSessionConfig;
 
     let (client, mut server_read, mut server_write) = make_client();
     let resume_handle = tokio::spawn({
@@ -1319,10 +1216,8 @@ async fn resume_session_registers_mcp_auth_interest_only_with_handler() {
         async move {
             client
                 .resume_session(
-                    ResumeSessionOptions::new(SessionId::from("session-without-auth"))
-                        .with_permissions(|group| {
-                            group.with_on_request(Arc::new(ApproveAllHandler))
-                        }),
+                    ResumeSessionConfig::new(SessionId::from("session-without-auth"))
+                        .with_permission_handler(Arc::new(ApproveAllHandler)),
                 )
                 .await
                 .unwrap()
@@ -1331,7 +1226,7 @@ async fn resume_session_registers_mcp_auth_interest_only_with_handler() {
 
     let resume_req = read_framed(&mut server_read).await;
     assert_eq!(resume_req["method"], "session.resume");
-    assert_eq!(resume_req["params"]["permissions"]["request"], true);
+    assert_eq!(resume_req["params"]["requestPermission"], true);
     server_respond_create(&mut server_write, &resume_req, "session-without-auth").await;
     respond_to_reload(&mut server_read, &mut server_write).await;
     let session = timeout(TIMEOUT, resume_handle).await.unwrap().unwrap();
@@ -1345,13 +1240,9 @@ async fn resume_session_registers_mcp_auth_interest_only_with_handler() {
         async move {
             client
                 .resume_session(
-                    ResumeSessionOptions::new(SessionId::from("session-with-auth"))
-                        .with_permissions(|group| {
-                            group.with_on_request(Arc::new(ApproveAllHandler))
-                        })
-                        .with_mcp(|group| {
-                            group.with_on_auth_request(Arc::new(CancelMcpAuthHandler))
-                        }),
+                    ResumeSessionConfig::new(SessionId::from("session-with-auth"))
+                        .with_permission_handler(Arc::new(ApproveAllHandler))
+                        .with_mcp_auth_handler(Arc::new(CancelMcpAuthHandler)),
                 )
                 .await
                 .unwrap()
@@ -1360,7 +1251,7 @@ async fn resume_session_registers_mcp_auth_interest_only_with_handler() {
 
     let resume_req = read_framed(&mut server_read).await;
     assert_eq!(resume_req["method"], "session.resume");
-    assert_eq!(resume_req["params"]["permissions"]["request"], true);
+    assert_eq!(resume_req["params"]["requestPermission"], true);
     server_respond_create(&mut server_write, &resume_req, "session-with-auth").await;
 
     let interest_req = read_framed(&mut server_read).await;
@@ -1454,17 +1345,16 @@ async fn session_subscribe_yields_events_observe_only() {
 async fn create_session_forwards_refresh_custom_instructions_only_when_set() {
     for refresh in [Some(true), Some(false), None] {
         let (client, mut server_read, mut server_write) = make_client();
-        let mut config = CreateSessionOptions::default();
+        let mut config = SessionConfig::default();
         if let Some(refresh) = refresh {
-            config =
-                config.with_instructions(|group| group.with_refresh_custom_instructions(refresh));
+            config = config.with_refresh_custom_instructions(refresh);
         }
         let create = Box::pin(client.create_session(config));
         let server = Box::pin(async {
             let request = read_framed(&mut server_read).await;
             assert_eq!(request["method"], "session.create");
             assert_eq!(
-                request["params"]["instructions"].get("refreshCustomInstructions"),
+                request["params"].get("refreshCustomInstructions"),
                 refresh.map(Value::Bool).as_ref(),
                 "refresh_custom_instructions = {refresh:?}"
             );
@@ -1485,73 +1375,6 @@ async fn create_session_forwards_refresh_custom_instructions_only_when_set() {
 }
 
 #[tokio::test]
-async fn create_and_resume_forward_permission_mode_and_surface_the_result() {
-    use copilot_sdk::types::{PermissionMode, ResumeSessionOptions};
-
-    for mode in [None, Some(PermissionMode::AllowAll)] {
-        // A refused outcome proves the session reports the runtime's result,
-        // not the request.
-        let result = mode
-            .as_ref()
-            .map(|_| serde_json::json!({ "success": false, "mode": "manual" }));
-        for resume in [false, true] {
-            let (client, mut server_read, mut server_write) = make_client();
-            let open = Box::pin(async {
-                if resume {
-                    let mut config = ResumeSessionOptions::new(SessionId::from("permission-mode"));
-                    if let Some(mode) = &mode {
-                        config = config.with_permissions(|group| group.with_mode(mode.clone()));
-                    }
-                    client.resume_session(config).await
-                } else {
-                    let mut config = CreateSessionOptions::default();
-                    if let Some(mode) = &mode {
-                        config = config.with_permissions(|group| group.with_mode(mode.clone()));
-                    }
-                    client.create_session(config).await
-                }
-            });
-            let server = Box::pin(async {
-                let request = read_framed(&mut server_read).await;
-                assert_eq!(
-                    request["params"]["permissions"].get("mode"),
-                    mode.as_ref()
-                        .map(|_| Value::String("allow-all".to_owned()))
-                        .as_ref(),
-                    "permission_mode = {mode:?}, resume = {resume}"
-                );
-                let mut body = serde_json::json!({ "sessionId": requested_session_id(&request) });
-                if let Some(result) = &result {
-                    body["permissionModeResult"] = result.clone();
-                }
-                let response = serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": request["id"],
-                    "result": body,
-                });
-                write_framed(&mut server_write, &serde_json::to_vec(&response).unwrap()).await;
-                if resume {
-                    respond_to_reload(&mut server_read, &mut server_write).await;
-                }
-            });
-
-            let (session, ()) = timeout(TIMEOUT, Box::pin(async { tokio::join!(open, server) }))
-                .await
-                .unwrap();
-            let session = session.unwrap();
-            match session.permission_mode_result() {
-                None => assert!(mode.is_none(), "missing result for resume = {resume}"),
-                Some(reported) => {
-                    assert!(mode.is_some(), "unexpected result for resume = {resume}");
-                    assert!(!reported.success);
-                    assert_eq!(reported.mode, PermissionMode::Manual);
-                }
-            }
-        }
-    }
-}
-
-#[tokio::test]
 async fn create_session_omits_unset_diagnostics() {
     let (client, mut server_read, mut server_write) = make_client();
 
@@ -1559,7 +1382,7 @@ async fn create_session_omits_unset_diagnostics() {
         let client = client.clone();
         async move {
             client
-                .create_session(CreateSessionOptions::default())
+                .create_session(SessionConfig::default())
                 .await
                 .unwrap()
         }
@@ -1568,10 +1391,10 @@ async fn create_session_omits_unset_diagnostics() {
     let request = read_framed(&mut server_read).await;
     assert_eq!(request["method"], "session.create");
     assert!(request["params"].get("diagnostics").is_none());
-    assert!(request["params"]["github"].get("interactiveUser").is_none());
+    assert!(request["params"].get("interactiveUser").is_none());
     assert!(
-        request["params"]["github"]
-            .get("telemetryForwarding")
+        request["params"]
+            .get("enableGitHubTelemetryForwarding")
             .is_none_or(Value::is_null),
         "forwarding flag should be omitted when no callback is registered"
     );
@@ -1583,7 +1406,7 @@ async fn create_session_omits_unset_diagnostics() {
 
 #[tokio::test]
 async fn cold_resume_session_omits_unset_diagnostics() {
-    use copilot_sdk::types::ResumeSessionOptions;
+    use github_copilot_sdk::types::ResumeSessionConfig;
 
     let (client, mut server_read, mut server_write) = make_client();
 
@@ -1591,7 +1414,7 @@ async fn cold_resume_session_omits_unset_diagnostics() {
         let client = client.clone();
         async move {
             client
-                .resume_session(ResumeSessionOptions::new(SessionId::from(
+                .resume_session(ResumeSessionConfig::new(SessionId::from(
                     "diagnostics-default",
                 )))
                 .await
@@ -1602,10 +1425,10 @@ async fn cold_resume_session_omits_unset_diagnostics() {
     let request = read_framed(&mut server_read).await;
     assert_eq!(request["method"], "session.resume");
     assert!(request["params"].get("diagnostics").is_none());
-    assert!(request["params"]["github"].get("interactiveUser").is_none());
+    assert!(request["params"].get("interactiveUser").is_none());
     assert!(
-        request["params"]["github"]
-            .get("telemetryForwarding")
+        request["params"]
+            .get("enableGitHubTelemetryForwarding")
             .is_none_or(Value::is_null),
         "forwarding flag should be omitted when no callback is registered"
     );
@@ -1624,20 +1447,15 @@ async fn create_session_sends_canvas_wire_fields() {
         async move {
             client
                 .create_session(
-                    CreateSessionOptions::default()
-                        .with_canvases(|group| group.with_definitions([test_canvas("counter")]))
-                        .with_canvases(|group| group.with_request_renderer(true))
-                        .with_extensions(|group| group.with_enabled(true))
-                        .with_extensions(|group| {
-                            group
-                                .with_identity(ExtensionInfo::new("github-app", "counter-provider"))
-                        })
-                        .with_canvases(|group| {
-                            group.with_provider(
-                                CanvasProviderIdentity::new("app:builtin:window-1")
-                                    .with_name("Built-in"),
-                            )
-                        }),
+                    SessionConfig::default()
+                        .with_canvases([test_canvas("counter")])
+                        .with_request_canvas_renderer(true)
+                        .with_request_extensions(true)
+                        .with_extension_info(ExtensionInfo::new("github-app", "counter-provider"))
+                        .with_canvas_provider(
+                            CanvasProviderIdentity::new("app:builtin:window-1")
+                                .with_name("Built-in"),
+                        ),
                 )
                 .await
                 .unwrap()
@@ -1646,32 +1464,23 @@ async fn create_session_sends_canvas_wire_fields() {
 
     let request = read_framed(&mut server_read).await;
     assert_eq!(request["method"], "session.create");
+    assert_eq!(request["params"]["canvases"][0]["id"], "counter");
     assert_eq!(
-        request["params"]["canvases"]["definitions"][0]["id"],
-        "counter"
-    );
-    assert_eq!(
-        request["params"]["canvases"]["definitions"][0]["displayName"],
+        request["params"]["canvases"][0]["displayName"],
         "Test Canvas"
     );
-    assert_eq!(request["params"]["canvases"]["requestRenderer"], true);
-    assert_eq!(request["params"]["extensions"]["enabled"], true);
+    assert_eq!(request["params"]["requestCanvasRenderer"], true);
+    assert_eq!(request["params"]["requestExtensions"], true);
+    assert_eq!(request["params"]["extensionInfo"]["source"], "github-app");
     assert_eq!(
-        request["params"]["extensions"]["identity"]["source"],
-        "github-app"
-    );
-    assert_eq!(
-        request["params"]["extensions"]["identity"]["name"],
+        request["params"]["extensionInfo"]["name"],
         "counter-provider"
     );
     assert_eq!(
-        request["params"]["canvases"]["provider"]["id"],
+        request["params"]["canvasProvider"]["id"],
         "app:builtin:window-1"
     );
-    assert_eq!(
-        request["params"]["canvases"]["provider"]["name"],
-        "Built-in"
-    );
+    assert_eq!(request["params"]["canvasProvider"]["name"], "Built-in");
 
     let id = request["id"].as_u64().unwrap();
     let session_id = requested_session_id(&request).to_string();
@@ -1686,7 +1495,7 @@ async fn create_session_sends_canvas_wire_fields() {
 }
 
 fn make_client_with_telemetry(
-    callback: copilot_sdk::github_telemetry::GitHubTelemetryCallback,
+    callback: github_copilot_sdk::github_telemetry::GitHubTelemetryCallback,
 ) -> (Client, tokio::io::DuplexStream, tokio::io::DuplexStream) {
     let (client_write, server_read) = duplex(8192);
     let (server_write, client_read) = duplex(8192);
@@ -1702,9 +1511,9 @@ fn make_client_with_telemetry(
 
 #[tokio::test]
 async fn create_and_resume_send_github_telemetry_forwarding_when_callback_registered() {
-    use copilot_sdk::types::ResumeSessionOptions;
+    use github_copilot_sdk::types::ResumeSessionConfig;
 
-    let callback: copilot_sdk::github_telemetry::GitHubTelemetryCallback =
+    let callback: github_copilot_sdk::github_telemetry::GitHubTelemetryCallback =
         Arc::new(|_notification| {});
     let (client, mut server_read, mut server_write) = make_client_with_telemetry(callback);
 
@@ -1712,7 +1521,7 @@ async fn create_and_resume_send_github_telemetry_forwarding_when_callback_regist
         let client = client.clone();
         async move {
             client
-                .create_session(CreateSessionOptions::default())
+                .create_session(SessionConfig::default())
                 .await
                 .unwrap()
         }
@@ -1720,7 +1529,7 @@ async fn create_and_resume_send_github_telemetry_forwarding_when_callback_regist
 
     let request = read_framed(&mut server_read).await;
     assert_eq!(request["method"], "session.create");
-    assert_eq!(request["params"]["github"]["telemetryForwarding"], true);
+    assert_eq!(request["params"]["enableGitHubTelemetryForwarding"], true);
 
     let id = request["id"].as_u64().unwrap();
     let session_id = requested_session_id(&request).to_string();
@@ -1737,7 +1546,7 @@ async fn create_and_resume_send_github_telemetry_forwarding_when_callback_regist
         let session_id = session_id.clone();
         async move {
             client
-                .resume_session(ResumeSessionOptions::new(SessionId::from(session_id)))
+                .resume_session(ResumeSessionConfig::new(SessionId::from(session_id)))
                 .await
                 .unwrap()
         }
@@ -1745,7 +1554,7 @@ async fn create_and_resume_send_github_telemetry_forwarding_when_callback_regist
 
     let request = read_framed(&mut server_read).await;
     assert_eq!(request["method"], "session.resume");
-    assert_eq!(request["params"]["github"]["telemetryForwarding"], true);
+    assert_eq!(request["params"]["enableGitHubTelemetryForwarding"], true);
 
     let id = request["id"].as_u64().unwrap();
     let response = serde_json::json!({
@@ -1766,7 +1575,7 @@ async fn create_and_resume_send_github_telemetry_forwarding_when_callback_regist
 
 #[tokio::test]
 async fn connect_sends_github_telemetry_forwarding_when_callback_registered() {
-    let callback: copilot_sdk::github_telemetry::GitHubTelemetryCallback =
+    let callback: github_copilot_sdk::github_telemetry::GitHubTelemetryCallback =
         Arc::new(|_notification| {});
     let (client, mut server_read, mut server_write) = make_client_with_telemetry(callback);
 
@@ -1783,7 +1592,7 @@ async fn connect_sends_github_telemetry_forwarding_when_callback_registered() {
     let response = serde_json::json!({
         "jsonrpc": "2.0",
         "id": id,
-        "result": { "ok": true, "protocolVersion": 4, "version": "test" },
+        "result": { "ok": true, "protocolVersion": 3, "version": "test" },
     });
     write_framed(&mut server_write, &serde_json::to_vec(&response).unwrap()).await;
     timeout(TIMEOUT, handle).await.unwrap().unwrap();
@@ -1811,7 +1620,7 @@ async fn connect_omits_github_telemetry_forwarding_without_callback() {
     let response = serde_json::json!({
         "jsonrpc": "2.0",
         "id": id,
-        "result": { "ok": true, "protocolVersion": 4, "version": "test" },
+        "result": { "ok": true, "protocolVersion": 3, "version": "test" },
     });
     write_framed(&mut server_write, &serde_json::to_vec(&response).unwrap()).await;
     timeout(TIMEOUT, handle).await.unwrap().unwrap();
@@ -1854,10 +1663,10 @@ async fn connect_rejects_invalid_protocol_version_values() {
 
 #[tokio::test]
 async fn github_telemetry_event_dispatches_to_callback() {
-    use copilot_sdk::github_telemetry::GitHubTelemetryNotification;
+    use github_copilot_sdk::github_telemetry::GitHubTelemetryNotification;
 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<GitHubTelemetryNotification>();
-    let callback: copilot_sdk::github_telemetry::GitHubTelemetryCallback =
+    let callback: github_copilot_sdk::github_telemetry::GitHubTelemetryCallback =
         Arc::new(move |notification| {
             let _ = tx.send(notification);
         });
@@ -1867,7 +1676,7 @@ async fn github_telemetry_event_dispatches_to_callback() {
         let client = client.clone();
         async move {
             client
-                .create_session(CreateSessionOptions::default())
+                .create_session(SessionConfig::default())
                 .await
                 .unwrap()
         }
@@ -1926,8 +1735,8 @@ async fn github_telemetry_event_dispatches_to_callback() {
 #[tokio::test]
 async fn provider_canvas_dispatch_routes_direct_canvas_action_requests() {
     let (session, mut server) = create_session_pair_with_config(|cfg| {
-        cfg.with_canvases(|group| group.with_definitions([test_canvas("counter")]))
-            .with_canvases(|group| group.with_handler(test_canvas_handler()))
+        cfg.with_canvases([test_canvas("counter")])
+            .with_canvas_handler(test_canvas_handler())
     })
     .await;
 
@@ -1967,25 +1776,8 @@ fn agent_source_preserves_opaque_ids() {
             wire
         );
     }
-    for invalid in ["unknown", "USER", "Agent-sender", "Automation-check"] {
+    for invalid in ["unknown", "USER", "Agent-sender"] {
         assert!(serde_json::from_value::<MessageSource>(serde_json::json!(invalid)).is_err());
-    }
-}
-
-#[test]
-fn automation_source_preserves_opaque_ids() {
-    for id in ["merge-check", "automation-check"] {
-        let source = MessageSource::Automation(id.into());
-        let wire = format!("automation-{id}");
-        assert_eq!(serde_json::to_value(&source).unwrap(), wire);
-        assert_eq!(
-            serde_json::from_value::<MessageSource>(serde_json::json!(wire)).unwrap(),
-            source
-        );
-        assert_eq!(
-            serde_json::to_value(SendRequest::default().with_source(source.clone())).unwrap()["source"],
-            wire
-        );
     }
 }
 
@@ -2061,41 +1853,8 @@ async fn send_omits_request_headers_when_unset_or_empty() {
 }
 
 #[tokio::test]
-async fn send_forwards_client_turn_id_only_when_set() {
-    let (session, mut server) = create_session_pair().await;
-    let session = Arc::new(session);
-
-    let handle = tokio::spawn({
-        let session = session.clone();
-        async move {
-            session
-                .send(MessageOptions::new("hi").with_client_turn_id("host-turn-1"))
-                .await
-        }
-    });
-    let request = server.read_request().await;
-    assert_eq!(request["method"], "session.send");
-    assert_eq!(request["params"]["clientTurnId"], "host-turn-1");
-    server.respond(&request, serde_json::json!({})).await;
-    timeout(TIMEOUT, handle).await.unwrap().unwrap().unwrap();
-
-    let handle = tokio::spawn({
-        let session = session.clone();
-        async move { session.send(MessageOptions::new("plain")).await }
-    });
-    let request = server.read_request().await;
-    assert!(
-        request["params"].get("clientTurnId").is_none(),
-        "clientTurnId should be omitted when unset, got: {}",
-        request["params"]
-    );
-    server.respond(&request, serde_json::json!({})).await;
-    timeout(TIMEOUT, handle).await.unwrap().unwrap().unwrap();
-}
-
-#[tokio::test]
 async fn typed_replay_read_preserves_checkpoint_metadata() {
-    use copilot_sdk::rpc::{EventLogReadRequest, EventsReadView};
+    use github_copilot_sdk::rpc::{EventLogReadOptions, EventsReadView};
 
     let (session, mut server) = create_session_pair().await;
     let session = Arc::new(session);
@@ -2105,10 +1864,7 @@ async fn typed_replay_read_preserves_checkpoint_metadata() {
             session
                 .rpc()
                 .event_log()
-                .read(EventLogReadRequest {
-                    view: Some(EventsReadView::Replay),
-                    ..Default::default()
-                })
+                .read_with_options(EventLogReadOptions::new().view(EventsReadView::Replay))
                 .await
         }
     });
@@ -2308,7 +2064,7 @@ async fn list_sessions_returns_typed_metadata() {
 
 #[tokio::test]
 async fn list_sessions_serializes_typed_filter() {
-    use copilot_sdk::SessionListFilter;
+    use github_copilot_sdk::SessionListFilter;
 
     let (client, mut server_read, mut server_write) = make_client();
 
@@ -2353,7 +2109,7 @@ async fn list_sessions_serializes_typed_filter() {
 fn mcp_server_config_roundtrips_through_tagged_enum() {
     use std::collections::HashMap;
 
-    use copilot_sdk::{McpServerConfig, McpStdioServerConfig};
+    use github_copilot_sdk::{McpServerConfig, McpStdioServerConfig};
 
     let stdio = McpServerConfig::Stdio(McpStdioServerConfig {
         command: "node".to_string(),
@@ -2375,7 +2131,7 @@ fn mcp_server_config_roundtrips_through_tagged_enum() {
     .unwrap();
     assert!(matches!(local, McpServerConfig::Stdio(_)));
 
-    // CreateSessionOptions.mcp_servers round-trips a typed map.
+    // SessionConfig.mcp_servers round-trips a typed map.
     let mut servers = HashMap::new();
     servers.insert("github".to_string(), stdio.clone());
     let cfg_json = serde_json::to_value(&servers).unwrap();
@@ -2384,7 +2140,7 @@ fn mcp_server_config_roundtrips_through_tagged_enum() {
 
 #[test]
 fn mcp_stdio_tools_tri_state_serializes_correctly() {
-    use copilot_sdk::McpStdioServerConfig;
+    use github_copilot_sdk::McpStdioServerConfig;
 
     // None → field omitted (= "expose all tools")
     let cfg = McpStdioServerConfig {
@@ -2426,9 +2182,7 @@ async fn session_retirement_releases_retained_tool_handler_captures() {
         });
         let retained = Arc::downgrade(&handler);
         let (session, server) = create_session_pair_with_config(move |cfg| {
-            cfg.with_tools(|group| {
-                group.with_definitions(vec![Tool::new("capture").with_handler(handler)])
-            })
+            cfg.with_tools(vec![Tool::new("capture").with_handler(handler)])
         })
         .await;
         assert!(
@@ -2455,8 +2209,8 @@ async fn session_retirement_releases_retained_tool_handler_captures() {
 
 #[tokio::test]
 async fn force_stop_closes_retained_session_subscriptions() {
-    use copilot_sdk::subscription::RecvErrorKind;
     use futures_util::FutureExt as _;
+    use github_copilot_sdk::subscription::RecvErrorKind;
     use tokio_stream::StreamExt as _;
 
     let (session, mut server) = create_session_pair().await;
@@ -2507,13 +2261,11 @@ async fn force_stop_closes_retained_session_subscriptions() {
 
 #[tokio::test]
 async fn force_stop_closes_unstarted_prepared_subscriptions() {
-    use copilot_sdk::subscription::RecvErrorKind;
     use futures_util::FutureExt as _;
+    use github_copilot_sdk::subscription::RecvErrorKind;
 
     let (client, _server_read, _server_write) = make_client();
-    let prepared = client
-        .prepare_session(CreateSessionOptions::default())
-        .unwrap();
+    let prepared = client.prepare_session(SessionConfig::default()).unwrap();
     let mut existing = prepared.subscribe();
     assert!(existing.recv().now_or_never().is_none());
     client.force_stop();
@@ -2530,8 +2282,8 @@ async fn force_stop_closes_unstarted_prepared_subscriptions() {
 
 #[tokio::test]
 async fn stopped_event_loop_closes_subscriptions_without_dropping_session() {
-    use copilot_sdk::subscription::RecvErrorKind;
     use futures_util::FutureExt as _;
+    use github_copilot_sdk::subscription::RecvErrorKind;
 
     let (session, _server) = create_session_pair().await;
     let existing = session.subscribe();
@@ -2549,8 +2301,8 @@ async fn stopped_event_loop_closes_subscriptions_without_dropping_session() {
 
 #[tokio::test]
 async fn owner_connection_loss_retires_retained_session_subscriptions() {
-    use copilot_sdk::subscription::RecvErrorKind;
     use futures_util::FutureExt as _;
+    use github_copilot_sdk::subscription::RecvErrorKind;
 
     let (session, server) = create_session_pair().await;
     let existing = session.subscribe();
@@ -2569,8 +2321,8 @@ async fn owner_connection_loss_retires_retained_session_subscriptions() {
 
 #[tokio::test]
 async fn replacing_router_registration_retires_only_previous_session() {
-    use copilot_sdk::subscription::RecvErrorKind;
     use futures_util::FutureExt as _;
+    use github_copilot_sdk::subscription::RecvErrorKind;
 
     let (session, mut server) = create_session_pair().await;
     let lifetime = session.cancellation_token();
@@ -2579,7 +2331,7 @@ async fn replacing_router_registration_retires_only_previous_session() {
         let session_id = session.id().clone();
         async move {
             client
-                .create_session(CreateSessionOptions::default().with_session_id(session_id))
+                .create_session(SessionConfig::default().with_session_id(session_id))
                 .await
                 .unwrap()
         }
@@ -2630,8 +2382,14 @@ async fn force_stop_is_idempotent_with_no_child() {
 }
 
 #[tokio::test]
+async fn stop_is_safe_to_call() {
+    let (client, _server_read, _server_write) = make_client();
+    client.stop().await.expect("stop should succeed");
+}
+
+#[tokio::test]
 async fn lifecycle_subscribe_yields_events_with_filter() {
-    use copilot_sdk::SessionLifecycleEventType as Type;
+    use github_copilot_sdk::SessionLifecycleEventType as Type;
 
     let (client, _server_read, mut server_write) = make_client();
 
@@ -2757,13 +2515,14 @@ async fn get_session_metadata_returns_typed_metadata() {
 }
 
 #[tokio::test]
-async fn get_events_returns_persisted_events() {
+#[allow(deprecated)]
+async fn deprecated_get_messages_alias_still_works() {
     let (session, mut server) = create_session_pair().await;
     let session = Arc::new(session);
 
     let handle = tokio::spawn({
         let session = session.clone();
-        async move { session.get_events().await.unwrap() }
+        async move { session.get_messages().await.unwrap() }
     });
 
     let request = server.read_request().await;
@@ -2784,48 +2543,6 @@ async fn get_events_returns_persisted_events() {
 
     let events = timeout(TIMEOUT, handle).await.unwrap().unwrap();
     assert_eq!(events.len(), 1);
-}
-
-#[tokio::test]
-async fn raw_history_preserves_analytics_archive() {
-    let (session, mut server) = create_session_pair().await;
-    let original = serde_json::json!({
-        "id": "event-1",
-        "parentId": null,
-        "timestamp": "2026-01-01T00:00:00.000Z",
-        "type": "user.message",
-        "data": {"content": "Fix the build", "future": {"detail": [null, "kept"]}},
-        "futureEnvelope": {"kept": true},
-    });
-    let handle = tokio::spawn(async move {
-        let events = session.get_raw_events().await.unwrap();
-        let request = copilot_sdk::rpc::TaskAnalyticsClassifyTrajectoryRequest {
-            events,
-            ..Default::default()
-        };
-        session
-            .client()
-            .rpc()
-            .task_analytics()
-            .classify_trajectory(request)
-            .await
-    });
-    let history = timeout(TIMEOUT, server.read_request()).await.unwrap();
-    assert_eq!(history["method"], "session.getMessages");
-    assert_eq!(history["params"]["sessionId"], server.session_id);
-    server
-        .respond(&history, serde_json::json!({"events": [original.clone()]}))
-        .await;
-    let classification = timeout(TIMEOUT, server.read_request()).await.unwrap();
-    assert_eq!(classification["method"], "taskAnalytics.classifyTrajectory");
-    server
-        .respond(&classification, serde_json::json!({"classifications": []}))
-        .await;
-    timeout(TIMEOUT, handle).await.unwrap().unwrap().unwrap();
-    assert_eq!(
-        classification["params"]["events"],
-        serde_json::json!([original])
-    );
 }
 
 #[tokio::test]
@@ -2871,356 +2588,47 @@ async fn elicitation_returns_typed_result() {
     assert_eq!(result.content.unwrap()["name"], "Octocat");
 }
 
-/// Answers each shell password prompt, or waits until it is cancelled.
-#[derive(Default)]
-struct SecretPrompts {
-    answer: Option<&'static str>,
-    requests: std::sync::Mutex<Vec<ShellAuthenticationRequest>>,
-    cancellations: std::sync::Mutex<Vec<CancellationToken>>,
-    started: Notify,
-}
-
-impl SecretPrompts {
-    fn answering(answer: &'static str) -> Self {
-        Self {
-            answer: Some(answer),
-            ..Self::default()
-        }
-    }
-
-    fn all_cancelled(&self) -> bool {
-        let cancellations = self.cancellations.lock().unwrap();
-        !cancellations.is_empty() && cancellations.iter().all(CancellationToken::is_cancelled)
-    }
-}
-
-#[async_trait]
-impl ShellAuthenticationHandler for SecretPrompts {
-    async fn handle(
-        &self,
-        _session_id: SessionId,
-        request: ShellAuthenticationRequest,
-        cancellation: CancellationToken,
-    ) -> ShellAuthenticationResponse {
-        self.requests.lock().unwrap().push(request);
-        self.cancellations
-            .lock()
-            .unwrap()
-            .push(cancellation.clone());
-        self.started.notify_one();
-        match self.answer {
-            Some(answer) => ShellAuthenticationResponse::Accept(answer.to_string()),
-            None => {
-                cancellation.cancelled().await;
-                ShellAuthenticationResponse::Accept("too late".to_string())
-            }
-        }
-    }
-}
-
-fn secret_prompt_params(session_id: &str, request_id: &str) -> Value {
-    serde_json::json!({
-        "sessionId": session_id,
-        "requestId": request_id,
-        "program": "git",
-        "prompt": "Password for 'https://example.test': ",
-        "inputKind": "secret",
-        "command": "git fetch",
-        "cwd": "/repo",
-    })
-}
-
-/// Reads `count` responses, which may arrive in any order, keyed by ID.
-async fn read_results(server: &mut FakeServer, count: usize) -> HashMap<u64, Value> {
-    let mut results = HashMap::new();
-    for _ in 0..count {
-        let response = timeout(TIMEOUT, server.read_response()).await.unwrap();
-        results.insert(response["id"].as_u64().unwrap(), response["result"].clone());
-    }
-    results
-}
-
 #[tokio::test]
-async fn shell_authentication_wire_flag_follows_handler() {
-    use copilot_sdk::types::ResumeSessionOptions;
-
-    for with_handler in [false, true] {
-        let (client, mut server_read, mut server_write) = make_client();
-        let create_handle = tokio::spawn({
-            let client = client.clone();
-            async move {
-                let mut config = CreateSessionOptions::default();
-                if with_handler {
-                    config = config.with_interaction(|group| {
-                        group.with_on_shell_authentication_request(Arc::new(
-                            SecretPrompts::default(),
-                        ))
-                    });
-                }
-                client.create_session(config).await.unwrap()
-            }
-        });
-        let create_req = read_framed(&mut server_read).await;
-        assert_eq!(create_req["method"], "session.create");
-        assert_eq!(
-            create_req["params"]["interaction"]
-                .get("requestShellAuthentication")
-                .cloned(),
-            with_handler.then_some(Value::Bool(true))
-        );
-        let session_id = requested_session_id(&create_req).to_string();
-        server_respond_create(&mut server_write, &create_req, &session_id).await;
-        let _session = timeout(TIMEOUT, create_handle).await.unwrap().unwrap();
+async fn user_input_request_dispatches_to_handler() {
+    struct InputHandler;
+    #[async_trait]
+    impl UserInputHandler for InputHandler {
+        async fn handle(
+            &self,
+            _session_id: SessionId,
+            _request_id: Option<RequestId>,
+            question: String,
+            _choices: Option<Vec<String>>,
+            _allow_freeform: Option<bool>,
+        ) -> Option<UserInputResponse> {
+            assert_eq!(question, "Pick a color");
+            Some(UserInputResponse {
+                answer: "blue".to_string(),
+                was_freeform: true,
+            })
+        }
     }
 
-    let (client, mut server_read, mut server_write) = make_client();
-    let resume_handle = tokio::spawn({
-        let client = client.clone();
-        async move {
-            client
-                .resume_session(
-                    ResumeSessionOptions::new(SessionId::from("resumed-shell-authentication"))
-                        .with_interaction(|group| {
-                            group.with_on_shell_authentication_request(Arc::new(
-                                SecretPrompts::default(),
-                            ))
-                        }),
-                )
-                .await
-                .unwrap()
-        }
-    });
-    let resume_req = read_framed(&mut server_read).await;
-    assert_eq!(resume_req["method"], "session.resume");
-    assert_eq!(
-        resume_req["params"]["interaction"]["requestShellAuthentication"],
-        true
-    );
-    server_respond_create(
-        &mut server_write,
-        &resume_req,
-        "resumed-shell-authentication",
-    )
-    .await;
-    respond_to_reload(&mut server_read, &mut server_write).await;
-    let _session = timeout(TIMEOUT, resume_handle).await.unwrap().unwrap();
-}
-
-#[tokio::test]
-async fn shell_authentication_request_dispatches_to_handler() {
-    let prompts = Arc::new(SecretPrompts::answering("hunter22"));
-    let handler = prompts.clone();
-    let (_session, mut server) = create_session_pair_with_config(move |cfg| {
-        cfg.with_interaction(|group| group.with_on_shell_authentication_request(handler))
-    })
-    .await;
-
-    let params = secret_prompt_params(&server.session_id, "prompt-1");
+    let (_session, mut server) =
+        create_session_pair_with_config(|cfg| cfg.with_user_input_handler(Arc::new(InputHandler)))
+            .await;
     server
-        .send_request(400, "shellAuthentication.request", params)
+        .send_request(
+            300,
+            "userInput.request",
+            serde_json::json!({
+                "sessionId": server.session_id,
+                "question": "Pick a color",
+                "choices": ["red", "blue"],
+                "allowFreeform": true,
+            }),
+        )
         .await;
 
     let response = timeout(TIMEOUT, server.read_response()).await.unwrap();
-    assert_eq!(response["id"], 400);
-    assert_eq!(
-        response["result"],
-        serde_json::json!({ "action": "accept", "value": "hunter22" })
-    );
-    let requests = prompts.requests.lock().unwrap();
-    assert_eq!(requests.len(), 1);
-    assert_eq!(requests[0].request_id, RequestId::new("prompt-1"));
-    assert_eq!(requests[0].program, "git");
-    assert_eq!(requests[0].input_kind, ShellAuthenticationInputKind::Secret);
-    assert_eq!(requests[0].command, "git fetch");
-    assert_eq!(requests[0].cwd, "/repo");
-}
-
-#[tokio::test]
-async fn shell_authentication_request_without_handler_is_cancelled() {
-    let (_session, mut server) = create_session_pair().await;
-
-    let params = secret_prompt_params(&server.session_id, "prompt-1");
-    server
-        .send_request(405, "shellAuthentication.request", params)
-        .await;
-
-    let response = timeout(TIMEOUT, server.read_response()).await.unwrap();
-    assert_eq!(response["id"], 405);
-    assert_eq!(
-        response["result"],
-        serde_json::json!({ "action": "cancel" })
-    );
-}
-
-struct PanickingSecretPrompt;
-
-#[async_trait]
-impl ShellAuthenticationHandler for PanickingSecretPrompt {
-    async fn handle(
-        &self,
-        _session_id: SessionId,
-        _request: ShellAuthenticationRequest,
-        _cancellation: CancellationToken,
-    ) -> ShellAuthenticationResponse {
-        panic!("rejected HUNTER2-FAKE-0004");
-    }
-}
-
-#[tokio::test]
-async fn shell_authentication_handler_panic_is_logged_and_cancels_the_prompt() {
-    let (capture, _guard) = capture_traces();
-    let (_session, mut server) = create_session_pair_with_config(|cfg| {
-        cfg.with_interaction(|group| {
-            group.with_on_shell_authentication_request(Arc::new(PanickingSecretPrompt))
-        })
-    })
-    .await;
-
-    let params = secret_prompt_params(&server.session_id, "prompt-1");
-    server
-        .send_request(406, "shellAuthentication.request", params)
-        .await;
-
-    let response = timeout(TIMEOUT, server.read_response()).await.unwrap();
-    assert_eq!(response["id"], 406);
-    assert_eq!(
-        response["result"],
-        serde_json::json!({ "action": "cancel" })
-    );
-    let events = capture.events.lock().unwrap();
-    let panics: Vec<_> = events
-        .iter()
-        .filter(|event| event.message_contains("shell authentication handler panicked"))
-        .collect();
-    assert_eq!(panics.len(), 1);
-    assert!(panics[0].field_is("session_id", &server.session_id));
-    assert!(panics[0].field_is("request_id", "prompt-1"));
-    // The panic message could contain the answer, so it is never logged.
-    assert!(
-        !events
-            .iter()
-            .any(|event| event.fields.values().any(|value| value.contains("HUNTER2")))
-    );
-}
-
-#[tokio::test]
-async fn shell_authentication_cancel_closes_the_open_prompt() {
-    let prompts = Arc::new(SecretPrompts::default());
-    let handler = prompts.clone();
-    let (_session, mut server) = create_session_pair_with_config(move |cfg| {
-        cfg.with_interaction(|group| group.with_on_shell_authentication_request(handler))
-    })
-    .await;
-
-    let params = secret_prompt_params(&server.session_id, "prompt-1");
-    server
-        .send_request(410, "shellAuthentication.request", params)
-        .await;
-    timeout(TIMEOUT, prompts.started.notified()).await.unwrap();
-    let cancel = serde_json::json!({ "sessionId": server.session_id, "requestId": "prompt-1" });
-    server
-        .send_request(411, "shellAuthentication.cancel", cancel)
-        .await;
-
-    let results = read_results(&mut server, 2).await;
-    assert_eq!(results[&410], serde_json::json!({ "action": "cancel" }));
-    assert_eq!(results[&411], serde_json::json!({}));
-    assert!(prompts.all_cancelled());
-}
-
-#[tokio::test]
-async fn shell_authentication_prompt_closes_when_resume_retires_its_session() {
-    use copilot_sdk::types::ResumeSessionOptions;
-
-    let prompts = Arc::new(SecretPrompts::default());
-    let (client, mut server_read, mut server_write) = make_client();
-    let create_handle =
-        tokio::spawn({
-            let client = client.clone();
-            let handler = prompts.clone();
-            async move {
-                client
-                    .create_session(CreateSessionOptions::default().with_interaction(|group| {
-                        group.with_on_shell_authentication_request(handler)
-                    }))
-                    .await
-                    .unwrap()
-            }
-        });
-    let create_req = read_framed(&mut server_read).await;
-    let session_id = requested_session_id(&create_req).to_string();
-    server_respond_create(&mut server_write, &create_req, &session_id).await;
-    let _original = timeout(TIMEOUT, create_handle).await.unwrap().unwrap();
-    let mut server = FakeServer {
-        read: server_read,
-        write: server_write,
-        session_id: session_id.clone(),
-    };
-    let params = secret_prompt_params(&session_id, "prompt-1");
-    server
-        .send_request(420, "shellAuthentication.request", params)
-        .await;
-    timeout(TIMEOUT, prompts.started.notified()).await.unwrap();
-
-    let resume_handle = tokio::spawn({
-        let client = client.clone();
-        let session_id = SessionId::from(session_id.clone());
-        async move {
-            client
-                .resume_session(
-                    ResumeSessionOptions::new(session_id).with_interaction(|group| {
-                        group.with_on_shell_authentication_request(Arc::new(
-                            SecretPrompts::answering("hunter22"),
-                        ))
-                    }),
-                )
-                .await
-                .unwrap()
-        }
-    });
-    // The retired session's reply can land anywhere in the resume handshake.
-    let mut prompt_result = None;
-    let mut reloaded = false;
-    while prompt_result.is_none() || !reloaded {
-        let message = timeout(TIMEOUT, server.read_response()).await.unwrap();
-        match message["method"].as_str() {
-            Some("session.resume") => {
-                let created = serde_json::json!({ "sessionId": session_id, "workspacePath": "/tmp/workspace" });
-                server.respond(&message, created).await;
-            }
-            Some("session.skills.reload") => {
-                server.respond(&message, serde_json::json!({})).await;
-                reloaded = true;
-            }
-            Some(other) => panic!("unexpected request {other}"),
-            None => {
-                assert_eq!(message["id"], 420);
-                prompt_result = Some(message["result"].clone());
-            }
-        }
-    }
-    let _resumed = timeout(TIMEOUT, resume_handle).await.unwrap().unwrap();
-    assert_eq!(
-        prompt_result,
-        Some(serde_json::json!({ "action": "cancel" }))
-    );
-    assert!(prompts.all_cancelled());
-
-    let cancel = serde_json::json!({ "sessionId": session_id, "requestId": "prompt-1" });
-    server
-        .send_request(421, "shellAuthentication.cancel", cancel)
-        .await;
-    let params = secret_prompt_params(&session_id, "prompt-2");
-    server
-        .send_request(422, "shellAuthentication.request", params)
-        .await;
-
-    let results = read_results(&mut server, 2).await;
-    assert_eq!(results[&421], serde_json::json!({}));
-    assert_eq!(
-        results[&422],
-        serde_json::json!({ "action": "accept", "value": "hunter22" })
-    );
+    assert_eq!(response["id"], 300);
+    assert_eq!(response["result"]["answer"], "blue");
+    assert_eq!(response["result"]["wasFreeform"], true);
 }
 
 #[tokio::test]
@@ -3250,7 +2658,7 @@ async fn exit_plan_mode_request_dispatches_to_handler() {
     }
 
     let (_session, mut server) = create_session_pair_with_config(|cfg| {
-        cfg.with_interaction(|group| group.with_on_exit_plan_mode_request(Arc::new(ExitHandler)))
+        cfg.with_exit_plan_mode_handler(Arc::new(ExitHandler))
     })
     .await;
     server
@@ -3274,164 +2682,6 @@ async fn exit_plan_mode_request_dispatches_to_handler() {
     assert_eq!(response["result"]["feedback"], "Looks good");
 }
 
-fn person_answered() -> PermissionDecisionContext {
-    PermissionDecisionContext {
-        outcome: PermissionDecisionOutcome::PromptedUser,
-        response_capability: Some(PermissionResponseCapability::Interactive),
-        source: PermissionDecisionSource::HumanResponse,
-        surface: PermissionDecisionSurface::Sdk,
-        user_feedback: None,
-    }
-}
-
-/// A handler that labels its answer through `handle_attributed` reaches the
-/// runtime with the label where the runtime reads it: inside the callback
-/// reply for user input and plan review, and beside `result` (never inside it)
-/// on `handlePendingElicitation`.
-#[tokio::test]
-async fn attributed_prompt_answers_carry_the_label_on_the_wire() {
-    struct PersonAnswers;
-    #[async_trait]
-    impl UserInputHandler for PersonAnswers {
-        async fn handle(
-            &self,
-            _session_id: SessionId,
-            _request_id: Option<RequestId>,
-            _question: String,
-            _choices: Option<Vec<String>>,
-            _allow_freeform: Option<bool>,
-        ) -> Option<UserInputResponse> {
-            unreachable!("the SDK calls handle_attributed")
-        }
-
-        async fn handle_attributed(
-            &self,
-            _session_id: SessionId,
-            _request_id: Option<RequestId>,
-            _question: String,
-            _choices: Option<Vec<String>>,
-            _allow_freeform: Option<bool>,
-        ) -> Option<AttributedResult<UserInputResponse>> {
-            Some(AttributedResult::new(
-                UserInputResponse {
-                    answer: "Only src/app.rs".to_string(),
-                    was_freeform: true,
-                },
-                person_answered(),
-            ))
-        }
-    }
-    #[async_trait]
-    impl ExitPlanModeHandler for PersonAnswers {
-        async fn handle(
-            &self,
-            _session_id: SessionId,
-            _request_id: Option<RequestId>,
-            _data: ExitPlanModeData,
-        ) -> ExitPlanModeResult {
-            unreachable!("the SDK calls handle_attributed")
-        }
-
-        async fn handle_attributed(
-            &self,
-            _session_id: SessionId,
-            _request_id: Option<RequestId>,
-            _data: ExitPlanModeData,
-        ) -> AttributedResult<ExitPlanModeResult> {
-            AttributedResult::new(
-                ExitPlanModeResult {
-                    approved: true,
-                    selected_action: Some("interactive".to_string()),
-                    feedback: None,
-                },
-                person_answered(),
-            )
-        }
-    }
-    #[async_trait]
-    impl ElicitationHandler for PersonAnswers {
-        async fn handle(
-            &self,
-            _session_id: SessionId,
-            _request_id: RequestId,
-            _request: ElicitationRequest,
-        ) -> ElicitationResult {
-            unreachable!("the SDK calls handle_attributed")
-        }
-
-        async fn handle_attributed(
-            &self,
-            _session_id: SessionId,
-            _request_id: RequestId,
-            _request: ElicitationRequest,
-        ) -> AttributedResult<ElicitationResult> {
-            AttributedResult::new(
-                ElicitationResult {
-                    action: "accept".to_string(),
-                    content: Some(serde_json::json!({ "target": "staging" })),
-                },
-                person_answered(),
-            )
-        }
-    }
-
-    let (_session, mut server) = create_session_pair_with_config(|cfg| {
-        cfg.with_interaction(|options| {
-            options
-                .with_on_user_input_request(Arc::new(PersonAnswers))
-                .with_on_exit_plan_mode_request(Arc::new(PersonAnswers))
-                .with_on_elicitation_request(Arc::new(PersonAnswers))
-        })
-    })
-    .await;
-    let label = serde_json::to_value(person_answered()).unwrap();
-
-    server
-        .send_request(
-            330,
-            "userInput.request",
-            serde_json::json!({ "sessionId": server.session_id, "question": "Which files?" }),
-        )
-        .await;
-    let response = timeout(TIMEOUT, server.read_response()).await.unwrap();
-    assert_eq!(response["result"]["answer"], "Only src/app.rs");
-    assert_eq!(response["result"]["decisionContext"], label);
-
-    server
-        .send_request(
-            331,
-            "exitPlanMode.request",
-            serde_json::json!({ "sessionId": server.session_id, "summary": "Ready" }),
-        )
-        .await;
-    let response = timeout(TIMEOUT, server.read_response()).await.unwrap();
-    assert_eq!(response["result"]["approved"], true);
-    assert_eq!(response["result"]["decisionContext"], label);
-
-    server
-        .send_event(
-            "elicitation.requested",
-            serde_json::json!({
-                "requestId": "elicit-labeled",
-                "message": "Which environment?",
-                "requestedSchema": {
-                    "type": "object",
-                    "properties": { "target": { "type": "string" } },
-                },
-                "mode": "form",
-            }),
-        )
-        .await;
-    let rpc_call = timeout(TIMEOUT, server.read_request()).await.unwrap();
-    assert_eq!(rpc_call["method"], "session.ui.handlePendingElicitation");
-    assert_eq!(rpc_call["params"]["decisionContext"], label);
-    assert_eq!(rpc_call["params"]["result"]["content"]["target"], "staging");
-    assert!(
-        rpc_call["params"]["result"]
-            .get("decisionContext")
-            .is_none()
-    );
-}
 #[tokio::test]
 async fn legacy_callbacks_forward_runtime_request_ids() {
     type Recorded = Arc<std::sync::Mutex<Vec<Option<RequestId>>>>;
@@ -3472,12 +2722,8 @@ async fn legacy_callbacks_forward_runtime_request_ids() {
         let user_input = user_input.clone();
         let exit_plan = exit_plan.clone();
         move |cfg| {
-            cfg.with_interaction(|group| {
-                group.with_on_user_input_request(Arc::new(RequestIdHandler(user_input)))
-            })
-            .with_interaction(|group| {
-                group.with_on_exit_plan_mode_request(Arc::new(RequestIdHandler(exit_plan)))
-            })
+            cfg.with_user_input_handler(Arc::new(RequestIdHandler(user_input)))
+                .with_exit_plan_mode_handler(Arc::new(RequestIdHandler(exit_plan)))
         }
     })
     .await;
@@ -3493,10 +2739,6 @@ async fn legacy_callbacks_forward_runtime_request_ids() {
         let response = timeout(TIMEOUT, server.read_response()).await.unwrap();
         assert_eq!(response["id"], id);
         assert_eq!(response["result"]["answer"], "yes");
-        assert!(
-            response["result"].get("decisionContext").is_none(),
-            "an answer from `handle` alone carries no label"
-        );
     }
     for (id, request_id) in [(322, Some("plan-1")), (323, None)] {
         let mut params = serde_json::json!({
@@ -3542,9 +2784,7 @@ async fn auto_mode_switch_request_dispatches_to_handler() {
     }
 
     let (_session, mut server) = create_session_pair_with_config(|cfg| {
-        cfg.with_interaction(|group| {
-            group.with_on_auto_mode_switch_request(Arc::new(AutoModeHandler))
-        })
+        cfg.with_auto_mode_switch_handler(Arc::new(AutoModeHandler))
     })
     .await;
     server
@@ -3567,7 +2807,7 @@ async fn auto_mode_switch_request_dispatches_to_handler() {
 #[tokio::test]
 async fn default_exit_plan_mode_response_omits_optional_fields() {
     let (_session, mut server) = create_session_pair_with_config(|cfg| {
-        cfg.with_permissions(|group| group.with_on_request(Arc::new(ApproveAllHandler)))
+        cfg.with_permission_handler(Arc::new(ApproveAllHandler))
     })
     .await;
     server
@@ -3588,7 +2828,7 @@ async fn default_exit_plan_mode_response_omits_optional_fields() {
     assert!(response["result"].get("feedback").is_none());
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn user_input_requested_notification_does_not_double_dispatch() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     // Regression for a double-dispatched prompt. The CLI sends BOTH a
@@ -3623,10 +2863,8 @@ async fn user_input_requested_notification_does_not_double_dispatch() {
     let handler = Arc::new(CountingHandler {
         invocations: invocations.clone(),
     });
-    let (_session, mut server) = create_session_pair_with_config(move |cfg| {
-        cfg.with_interaction(|group| group.with_on_user_input_request(handler))
-    })
-    .await;
+    let (_session, mut server) =
+        create_session_pair_with_config(move |cfg| cfg.with_user_input_handler(handler)).await;
 
     server
         .send_event(
@@ -3672,250 +2910,44 @@ async fn user_input_requested_notification_does_not_double_dispatch() {
 }
 
 #[tokio::test]
-async fn managed_review_forwards_original_typed_permission_handler_request() {
-    use copilot_sdk::PermissionRequestData;
-    use copilot_sdk::rpc::SessionPermissionsManagedReviewRequiredParams;
-
-    struct ForwardingHandler {
-        session: Arc<std::sync::OnceLock<std::sync::Weak<copilot_sdk::session::Session>>>,
-        completed: tokio::sync::mpsc::UnboundedSender<(bool, bool)>,
-    }
-
-    #[async_trait]
-    impl PermissionHandler for ForwardingHandler {
-        async fn handle(
-            &self,
-            session_id: SessionId,
-            _request_id: RequestId,
-            data: PermissionRequestData,
-        ) -> PermissionResult {
-            let session = self.session.get().unwrap().upgrade().unwrap();
-            assert_eq!(session.id(), &session_id);
-            let original = serde_json::to_value(&data).unwrap();
-            let borrowed = session
-                .rpc()
-                .permissions()
-                .managed_review_required(SessionPermissionsManagedReviewRequiredParams {
-                    request: (&data).into(),
-                })
-                .await
-                .unwrap();
-            assert_eq!(serde_json::to_value(&data).unwrap(), original);
-            let owned = session
-                .rpc()
-                .permissions()
-                .managed_review_required(SessionPermissionsManagedReviewRequiredParams {
-                    request: data.into(),
-                })
-                .await
-                .unwrap();
-            self.completed.send((borrowed, owned)).unwrap();
-            PermissionResult::no_result()
-        }
-    }
-
-    let session_slot = Arc::new(std::sync::OnceLock::new());
-    let (completed, mut results) = tokio::sync::mpsc::unbounded_channel();
-    let handler = Arc::new(ForwardingHandler {
-        session: session_slot.clone(),
-        completed,
-    });
-    let (session, mut server) = create_session_pair_with_config(move |cfg| {
-        cfg.with_permissions(|group| group.with_on_request(handler))
+async fn permission_confirmation_success_behavior_is_unchanged() {
+    let (capture, _guard) = capture_traces();
+    let (_session, mut server) = create_session_pair_with_config(|cfg| {
+        cfg.with_permission_handler(Arc::new(ApproveAllHandler))
     })
     .await;
-    let session = Arc::new(session);
-    assert!(session_slot.set(Arc::downgrade(&session)).is_ok());
-
-    for (kind, nested) in [
-        ("write", true),
-        ("future-permission", true),
-        ("write", false),
-    ] {
-        let original = serde_json::json!({
-            "kind": kind,
-            "path": "/workspace/protected.txt",
-            "requestId": "permission-forward",
-            "toolCallId": "tool-forward",
-            "managedApprovalRequired": true,
-            "sessionId": "request-specific-session",
-            "future": {"nullable": null, "values": [false, 0, {"key": "value"}]},
-        });
-        let event_data = if nested {
-            serde_json::json!({
-                "requestId": "permission-forward",
-                "sessionId": "envelope-session",
-                "permissionRequest": original,
-                "futureEnvelopeField": "not part of the original request",
-            })
-        } else {
-            original.clone()
-        };
-        server.send_event("permission.requested", event_data).await;
-
-        for required in [true, false] {
-            let request = timeout(TIMEOUT, server.read_request()).await.unwrap();
-            assert_eq!(
-                request["method"],
-                "session.permissions.managedReviewRequired"
-            );
-            assert_eq!(
-                request["params"],
-                serde_json::json!({"sessionId": session.id(), "request": original}),
-            );
-            server.respond(&request, serde_json::json!(required)).await;
-        }
-        assert_eq!(
-            timeout(TIMEOUT, results.recv()).await.unwrap(),
-            Some((true, false)),
-        );
-    }
-
-    let raw = serde_json::json!({
-        "kind": "future-permission",
-        "permissionRequest": {"requestSpecific": [null, {"future": true}]},
-    });
-    let call = tokio::spawn({
-        let session = session.clone();
-        let raw = raw.clone();
-        async move {
-            session
-                .rpc()
-                .permissions()
-                .managed_review_required(SessionPermissionsManagedReviewRequiredParams {
-                    request: raw,
-                })
-                .await
-                .unwrap()
-        }
-    });
-    let request = timeout(TIMEOUT, server.read_request()).await.unwrap();
-    assert_eq!(
-        request["method"],
-        "session.permissions.managedReviewRequired"
-    );
-    assert_eq!(
-        request["params"],
-        serde_json::json!({"sessionId": session.id(), "request": raw}),
-    );
-    server.respond(&request, serde_json::json!(true)).await;
-    assert!(timeout(TIMEOUT, call).await.unwrap().unwrap());
-}
-
-/// Creates or cold-resumes a session from inside the application's own
-/// `app_request` span, lets that span finish, then has the runtime ask for a
-/// permission decision.
-async fn request_permission_after_session_start_in_app_span(resume: bool) {
-    use copilot_sdk::types::ResumeSessionOptions;
-    use tracing::Instrument;
-
-    let (client, server_read, server_write) = make_client();
-    let mut server = FakeServer {
-        read: server_read,
-        write: server_write,
-        session_id: String::new(),
-    };
-    let start = {
-        let client = client.clone();
-        async move {
-            let handler = Arc::new(ApproveAllHandler);
-            let session = if resume {
-                client
-                    .resume_session(
-                        ResumeSessionOptions::new(SessionId::from("resumed-in-app-span"))
-                            .with_permissions(|group| group.with_on_request(handler)),
-                    )
-                    .await
-            } else {
-                client
-                    .create_session(
-                        CreateSessionOptions::default()
-                            .with_permissions(|group| group.with_on_request(handler)),
-                    )
-                    .await
-            };
-            // A span the application itself opens here must stay its child.
-            drop(tracing::info_span!("app_work"));
-            session.unwrap()
-        }
-        .instrument(tracing::info_span!("app_request"))
-    };
-    let start_handle = tokio::spawn(start);
-
-    let request = timeout(TIMEOUT, server.read_request()).await.unwrap();
-    let method = if resume {
-        "session.resume"
-    } else {
-        "session.create"
-    };
-    assert_eq!(request["method"], method);
-    server.session_id = requested_session_id(&request).to_string();
-    let result = serde_json::json!({
-        "sessionId": server.session_id.clone(),
-        "workspacePath": "/tmp/workspace",
-    });
-    server.respond(&request, result).await;
-    if resume {
-        let reload = timeout(TIMEOUT, server.read_request()).await.unwrap();
-        assert_eq!(reload["method"], "session.skills.reload");
-        server.respond(&reload, serde_json::json!({})).await;
-    }
-    let _session = timeout(TIMEOUT, start_handle).await.unwrap().unwrap();
 
     server
         .send_event(
             "permission.requested",
             serde_json::json!({
-                "requestId": "perm-after-app-span",
+                "requestId": "perm-auto",
                 "sessionId": server.session_id,
                 "permissionRequest": { "kind": "shell" },
             }),
         )
         .await;
+
     let request = timeout(TIMEOUT, server.read_request()).await.unwrap();
-    assert_eq!(request["method"], PERMISSION_CONFIRMATION_METHOD);
-    assert_eq!(request["params"]["requestId"], "perm-after-app-span");
+    assert_eq!(
+        request["method"],
+        "session.permissions.handlePendingPermissionRequest"
+    );
+    assert_eq!(request["params"]["requestId"], "perm-auto");
+    assert_eq!(request["params"]["result"]["kind"], "approve-once");
     server.respond(&request, serde_json::json!({})).await;
-}
 
-fn assert_session_spans_are_not_under_app_span(capture: &TraceCapture) {
-    // The subscriber does resolve contextual parents, so the checks below
-    // cannot pass just because no span ever had one.
-    assert_eq!(
-        capture.span_ancestors("app_work"),
-        vec![vec!["app_request"]]
-    );
-    assert_eq!(
-        capture.span_ancestors("session_event_loop"),
-        vec![Vec::<&str>::new()],
-        "the session event loop span must be a root"
-    );
-    assert_eq!(
-        capture.span_ancestors("permission_request_handler"),
-        vec![vec!["session_event_loop"]],
-        "a later callback span must sit under the session loop only"
-    );
-}
-
-#[tokio::test]
-async fn session_callbacks_are_not_traced_under_the_span_current_at_create() {
-    let (capture, _guard) = capture_traces();
-    request_permission_after_session_start_in_app_span(false).await;
-    assert_session_spans_are_not_under_app_span(&capture);
-}
-
-#[tokio::test]
-async fn session_callbacks_are_not_traced_under_the_span_current_at_resume() {
-    let (capture, _guard) = capture_traces();
-    request_permission_after_session_start_in_app_span(true).await;
-    assert_session_spans_are_not_under_app_span(&capture);
+    let outcome = capture.wait_for_permission_outcome("perm-auto").await;
+    assert!(outcome.message_contains("Session::handle_notification response sent successfully"));
+    assert!(outcome.field_is("session_id", &server.session_id));
+    assert!(outcome.field_is("request_id", "perm-auto"));
 }
 
 #[tokio::test]
 async fn permission_confirmation_json_rpc_error_is_observable_and_connection_stays_responsive() {
     let (capture, _guard) = capture_traces();
     let (session, mut server) = create_session_pair_with_config(|cfg| {
-        cfg.with_permissions(|group| group.with_on_request(Arc::new(ApproveAllHandler)))
+        cfg.with_permission_handler(Arc::new(ApproveAllHandler))
     })
     .await;
     let session = Arc::new(session);
@@ -3964,10 +2996,8 @@ async fn permission_confirmation_write_failure_is_observable_and_events_stay_res
         entered: entered.clone(),
         release: release.clone(),
     });
-    let (session, mut server) = create_session_pair_with_config(move |cfg| {
-        cfg.with_permissions(|group| group.with_on_request(handler))
-    })
-    .await;
+    let (session, mut server) =
+        create_session_pair_with_config(move |cfg| cfg.with_permission_handler(handler)).await;
     let mut subscription = session.subscribe();
 
     server
@@ -4028,7 +3058,7 @@ async fn permission_confirmation_write_failure_is_observable_and_events_stay_res
 async fn permission_confirmation_without_response_does_not_block_events_or_other_rpcs() {
     let (capture, _guard) = capture_traces();
     let (session, mut server) = create_session_pair_with_config(|cfg| {
-        cfg.with_permissions(|group| group.with_on_request(Arc::new(ApproveAllHandler)))
+        cfg.with_permission_handler(Arc::new(ApproveAllHandler))
     })
     .await;
     let session = Arc::new(session);
@@ -4081,7 +3111,7 @@ async fn permission_confirmation_without_response_does_not_block_events_or_other
 async fn permission_confirmation_wait_is_cancelled_on_session_teardown() {
     let (capture, _guard) = capture_traces();
     let (session, mut server) = create_session_pair_with_config(|cfg| {
-        cfg.with_permissions(|group| group.with_on_request(Arc::new(ApproveAllHandler)))
+        cfg.with_permission_handler(Arc::new(ApproveAllHandler))
     })
     .await;
     let session_id = server.session_id.clone();
@@ -4111,7 +3141,7 @@ async fn permission_confirmation_wait_is_cancelled_on_session_teardown() {
 #[tokio::test]
 async fn permission_result_forwards_context_beside_result() {
     let (_session, mut server) = create_session_pair_with_config(|cfg| {
-        cfg.with_permissions(|group| group.with_on_request(Arc::new(ContextualApproveHandler)))
+        cfg.with_permission_handler(Arc::new(ContextualApproveHandler))
     })
     .await;
 
@@ -4202,7 +3232,7 @@ async fn session_event_notification_preserves_unknown_event_payloads() {
     }
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn router_routes_to_correct_session() {
     let (client, mut server_read, mut server_write) = make_client();
 
@@ -4213,7 +3243,7 @@ async fn router_routes_to_correct_session() {
             let client = client.clone();
             async move {
                 client
-                    .create_session(CreateSessionOptions::default())
+                    .create_session(SessionConfig::default())
                     .await
                     .unwrap()
             }
@@ -4284,10 +3314,8 @@ async fn router_routes_to_correct_session() {
 
 #[tokio::test]
 async fn send_and_wait_completion_is_independent_of_the_public_event_buffer() {
-    let (session, mut server) = create_session_pair_with_config(|config| {
-        config.with_events(|group| group.with_buffer_capacity(1))
-    })
-    .await;
+    let (session, mut server) =
+        create_session_pair_with_config(|config| config.with_event_buffer_capacity(1)).await;
     let mut events = session.subscribe();
     let waiting = session.send_and_wait("question");
     tokio::pin!(waiting);
@@ -4326,7 +3354,7 @@ async fn send_and_wait_completion_is_independent_of_the_public_event_buffer() {
             Err(error)
                 if matches!(
                     error.kind(),
-                    copilot_sdk::subscription::RecvErrorKind::Lagged(_)
+                    github_copilot_sdk::subscription::RecvErrorKind::Lagged(_)
                 ) => {}
             Err(error) => panic!("event delivery stopped before the sentinel: {error}"),
         }
@@ -4360,7 +3388,7 @@ async fn send_and_wait_completion_reports_event_loop_retirement_without_aborting
         assert!(
             matches!(
                 error.kind(),
-                ErrorKind::Session(copilot_sdk::SessionErrorKind::EventLoopClosed)
+                ErrorKind::Session(github_copilot_sdk::SessionErrorKind::EventLoopClosed)
             ),
             "{error:?}"
         );
@@ -4436,16 +3464,8 @@ async fn send_and_wait_completion_preserves_agent_and_admission_error_kinds() {
             .await
             .unwrap();
         assert_eq!(request["method"], "session.sendAndWait");
-        let data = execution_failure.then(|| {
-            serde_json::json!({
-                "completionEventId": "owned-error",
-                "errorType": "query",
-                "statusCode": 400,
-                "providerErrorCode": "provider_rejected",
-                "providerErrorType": "invalid_request_error",
-                "providerErrorParam": "input",
-            })
-        });
+        let data =
+            execution_failure.then(|| serde_json::json!({ "completionEventId": "owned-error" }));
         let response = serde_json::json!({
             "jsonrpc": "2.0", "id": request["id"],
             "error": { "code": -32603, "message": "owned failure", "data": data },
@@ -4474,7 +3494,7 @@ async fn send_and_wait_completion_preserves_agent_and_admission_error_kinds() {
             assert!(
                 matches!(
                     error.kind(),
-                    ErrorKind::Session(copilot_sdk::SessionErrorKind::AgentError)
+                    ErrorKind::Session(github_copilot_sdk::SessionErrorKind::AgentError)
                 ),
                 "{error:?}"
             );
@@ -4485,7 +3505,6 @@ async fn send_and_wait_completion_preserves_agent_and_admission_error_kinds() {
             );
         }
         assert_eq!(error.message(), Some("owned failure"));
-        assert_eq!(error.rpc_data(), data.as_ref());
     }
 }
 
@@ -4582,13 +3601,13 @@ async fn send_and_wait_ignores_idle_from_an_earlier_request_during_trace_resolut
     }
 
     #[async_trait]
-    impl copilot_sdk::types::TraceContextProvider for SendTraceGate {
-        async fn get_trace_context(&self) -> copilot_sdk::types::TraceContext {
+    impl github_copilot_sdk::types::TraceContextProvider for SendTraceGate {
+        async fn get_trace_context(&self) -> github_copilot_sdk::types::TraceContext {
             if self.calls.fetch_add(1, Ordering::SeqCst) == 2 {
                 self.waiting.notify_one();
                 self.release.notified().await;
             }
-            copilot_sdk::types::TraceContext::default()
+            github_copilot_sdk::types::TraceContext::default()
         }
     }
 
@@ -4607,7 +3626,7 @@ async fn send_and_wait_ignores_idle_from_an_earlier_request_during_trace_resolut
         let client = client.clone();
         async move {
             client
-                .create_session(CreateSessionOptions::default())
+                .create_session(SessionConfig::default())
                 .await
                 .unwrap()
         }
@@ -5653,7 +4672,7 @@ async fn structured_output_rejects_aborted_missing_and_tool_only_responses() {
     }
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn structured_output_timeout_and_cancellation_do_not_block_later_sends() {
     let (session, mut server) = create_session_pair().await;
     let session = Arc::new(session);
@@ -5922,7 +4941,7 @@ async fn send_and_wait_source_preserves_errors() {
             } else {
                 assert!(matches!(
                     error.kind(),
-                    ErrorKind::Session(copilot_sdk::SessionErrorKind::AgentError)
+                    ErrorKind::Session(github_copilot_sdk::SessionErrorKind::AgentError)
                 ));
                 assert!(error.to_string().contains("agent failed"));
             }
@@ -5963,7 +4982,9 @@ async fn send_and_wait_returns_error_on_session_error() {
     assert!(
         matches!(
             err.kind(),
-            copilot_sdk::ErrorKind::Session(copilot_sdk::SessionErrorKind::AgentError)
+            github_copilot_sdk::ErrorKind::Session(
+                github_copilot_sdk::SessionErrorKind::AgentError
+            )
         ) && err.to_string().contains("something went wrong")
     );
 }
@@ -5974,8 +4995,8 @@ async fn send_and_wait_queues_terminal_event_before_waking_caller() {
     use std::sync::atomic::AtomicBool;
     use std::task::{Context, Wake, Waker};
 
-    use copilot_sdk::subscription::EventSubscription;
     use futures_util::FutureExt;
+    use github_copilot_sdk::subscription::EventSubscription;
 
     struct InspectQueueOnWake {
         events: std::sync::Mutex<EventSubscription>,
@@ -6181,7 +5202,7 @@ async fn send_and_wait_ignores_child_events_even_when_child_was_not_announced() 
     );
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn send_and_wait_times_out() {
     let (session, mut server) = create_session_pair().await;
     let session = Arc::new(session);
@@ -6207,7 +5228,7 @@ async fn send_and_wait_times_out() {
         .unwrap_err();
     assert!(matches!(
         err.kind(),
-        copilot_sdk::ErrorKind::Session(copilot_sdk::SessionErrorKind::Timeout(_))
+        github_copilot_sdk::ErrorKind::Session(github_copilot_sdk::SessionErrorKind::Timeout(_))
     ));
 }
 
@@ -6217,7 +5238,7 @@ async fn send_and_wait_times_out() {
 /// `send_and_wait` calls must succeed without `SendWhileWaiting`.
 ///
 /// Closes RFD-400 review finding #2.
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn send_and_wait_outer_cancellation_clears_waiter() {
     let (session, mut server) = create_session_pair().await;
     let session = Arc::new(session);
@@ -6346,6 +5367,7 @@ async fn stop_event_loop_completes_in_flight_handler() {
         ) -> Option<UserInputResponse> {
             self.entered.notify_one();
             self.release.notified().await;
+            tokio::time::sleep(Duration::from_millis(150)).await;
             Some(UserInputResponse {
                 answer: "completed".to_string(),
                 was_freeform: false,
@@ -6359,10 +5381,8 @@ async fn stop_event_loop_completes_in_flight_handler() {
         entered: entered.clone(),
         release: release.clone(),
     });
-    let (session, mut server) = create_session_pair_with_config(|cfg| {
-        cfg.with_interaction(|group| group.with_on_user_input_request(handler))
-    })
-    .await;
+    let (session, mut server) =
+        create_session_pair_with_config(|cfg| cfg.with_user_input_handler(handler)).await;
     let session = Arc::new(session);
 
     server
@@ -6424,7 +5444,7 @@ async fn panicking_request_handler_responds_with_internal_error() {
     }
 
     let (session, mut server) = create_session_pair_with_config(|cfg| {
-        cfg.with_interaction(|group| group.with_on_user_input_request(Arc::new(PanickingHandler)))
+        cfg.with_user_input_handler(Arc::new(PanickingHandler))
     })
     .await;
 
@@ -6490,6 +5510,7 @@ async fn drop_session_does_not_abort_handler() {
         ) -> Option<UserInputResponse> {
             self.entered.notify_one();
             self.release.notified().await;
+            tokio::time::sleep(Duration::from_millis(100)).await;
             self.completed.store(true, Ordering::SeqCst);
             Some(UserInputResponse {
                 answer: "done".to_string(),
@@ -6505,10 +5526,8 @@ async fn drop_session_does_not_abort_handler() {
         entered: entered.clone(),
         release: release.clone(),
     });
-    let (session, mut server) = create_session_pair_with_config(move |cfg| {
-        cfg.with_interaction(|group| group.with_on_user_input_request(handler))
-    })
-    .await;
+    let (session, mut server) =
+        create_session_pair_with_config(move |cfg| cfg.with_user_input_handler(handler)).await;
 
     server
         .send_request(
@@ -6547,7 +5566,7 @@ async fn drop_session_does_not_abort_handler() {
 #[tokio::test]
 async fn cancellation_token_fires_on_session_drop() {
     let (session, _server) = create_session_pair_with_config(|cfg| {
-        cfg.with_permissions(|group| group.with_on_request(Arc::new(ApproveAllHandler)))
+        cfg.with_permission_handler(Arc::new(ApproveAllHandler))
     })
     .await;
 
@@ -6570,7 +5589,7 @@ async fn cancellation_token_fires_on_session_drop() {
 #[tokio::test]
 async fn cancellation_token_child_cancel_does_not_kill_session() {
     let (session, _server) = create_session_pair_with_config(|cfg| {
-        cfg.with_permissions(|group| group.with_on_request(Arc::new(ApproveAllHandler)))
+        cfg.with_permission_handler(Arc::new(ApproveAllHandler))
     })
     .await;
 
@@ -6585,7 +5604,7 @@ async fn cancellation_token_child_cancel_does_not_kill_session() {
 
 #[tokio::test]
 async fn elicitation_requested_dispatches_to_handler_and_responds() {
-    use copilot_sdk::types::ElicitationResult;
+    use github_copilot_sdk::types::ElicitationResult;
 
     struct ElicitHandler;
     #[async_trait]
@@ -6605,7 +5624,7 @@ async fn elicitation_requested_dispatches_to_handler_and_responds() {
     }
 
     let (_session, mut server) = create_session_pair_with_config(|cfg| {
-        cfg.with_interaction(|group| group.with_on_elicitation_request(Arc::new(ElicitHandler)))
+        cfg.with_elicitation_handler(Arc::new(ElicitHandler))
     })
     .await;
 
@@ -6636,7 +5655,7 @@ async fn elicitation_requested_dispatches_to_handler_and_responds() {
 
 #[tokio::test]
 async fn elicitation_requested_forwards_the_wire_schema_verbatim() {
-    use copilot_sdk::types::ElicitationResult;
+    use github_copilot_sdk::types::ElicitationResult;
 
     struct CaptureHandler(std::sync::Mutex<Option<serde_json::Value>>);
     #[async_trait]
@@ -6658,7 +5677,7 @@ async fn elicitation_requested_forwards_the_wire_schema_verbatim() {
     let handler = Arc::new(CaptureHandler(std::sync::Mutex::new(None)));
     let (_session, mut server) = create_session_pair_with_config({
         let handler = handler.clone();
-        |cfg| cfg.with_interaction(|group| group.with_on_elicitation_request(handler))
+        |cfg| cfg.with_elicitation_handler(handler)
     })
     .await;
 
@@ -6705,6 +5724,42 @@ async fn elicitation_requested_forwards_the_wire_schema_verbatim() {
     assert_eq!(keys(&seen), ["service", "replicas", "tier"]);
 }
 
+#[tokio::test]
+async fn elicitation_requested_cancels_on_handler_error() {
+    struct FailHandler;
+    #[async_trait]
+    impl ElicitationHandler for FailHandler {
+        async fn handle(
+            &self,
+            _session_id: SessionId,
+            _request_id: RequestId,
+            _request: ElicitationRequest,
+        ) -> ElicitationResult {
+            ElicitationResult {
+                action: "cancel".to_string(),
+                content: None,
+            }
+        }
+    }
+
+    let (_session, mut server) =
+        create_session_pair_with_config(|cfg| cfg.with_elicitation_handler(Arc::new(FailHandler)))
+            .await;
+    server
+        .send_event(
+            "elicitation.requested",
+            serde_json::json!({
+                "requestId": "elicit-2",
+                "message": "Pick something",
+            }),
+        )
+        .await;
+
+    let rpc_call = timeout(TIMEOUT, server.read_request()).await.unwrap();
+    assert_eq!(rpc_call["method"], "session.ui.handlePendingElicitation");
+    assert_eq!(rpc_call["params"]["result"]["action"], "cancel");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn nested_handler_panics_still_send_cancellation_replies() {
     struct PanickingHandler;
@@ -6743,11 +5798,9 @@ async fn nested_handler_panics_still_send_cancellation_replies() {
     let create = tokio::spawn(async move {
         client
             .create_session(
-                CreateSessionOptions::default()
-                    .with_interaction(|group| {
-                        group.with_on_elicitation_request(Arc::new(PanickingHandler))
-                    })
-                    .with_mcp(|group| group.with_on_auth_request(Arc::new(PanickingHandler))),
+                SessionConfig::default()
+                    .with_elicitation_handler(Arc::new(PanickingHandler))
+                    .with_mcp_auth_handler(Arc::new(PanickingHandler)),
             )
             .await
     });
@@ -6825,8 +5878,7 @@ async fn mcp_auth_runtime_refresh_without_capability_sends_cancelled() {
     let create = tokio::spawn(async move {
         client
             .create_session(
-                CreateSessionOptions::default()
-                    .with_mcp(|group| group.with_on_auth_request(Arc::new(RuntimeRefreshHandler))),
+                SessionConfig::default().with_mcp_auth_handler(Arc::new(RuntimeRefreshHandler)),
             )
             .await
     });
@@ -6875,7 +5927,10 @@ async fn external_tool_requested_dispatches_to_handler_and_responds() {
     struct RunTestsTool;
     #[async_trait]
     impl tool::ToolHandler for RunTestsTool {
-        async fn call(&self, invocation: ToolInvocation) -> Result<ToolResult, copilot_sdk::Error> {
+        async fn call(
+            &self,
+            invocation: ToolInvocation,
+        ) -> Result<ToolResult, github_copilot_sdk::Error> {
             assert_eq!(invocation.tool_name, "run_tests");
             assert_eq!(invocation.tool_call_id, "tc-ext-1");
             assert_eq!(invocation.arguments["suite"], "unit");
@@ -6884,14 +5939,12 @@ async fn external_tool_requested_dispatches_to_handler_and_responds() {
     }
 
     let (_session, mut server) = create_session_pair_with_config(|cfg| {
-        cfg.with_tools(|group| {
-            group.with_definitions(vec![
-                Tool::new("run_tests")
-                    .with_description("Run tests")
-                    .with_parameters(serde_json::json!({"type":"object"}))
-                    .with_handler(Arc::new(RunTestsTool)),
-            ])
-        })
+        cfg.with_tools(vec![
+            Tool::new("run_tests")
+                .with_description("Run tests")
+                .with_parameters(serde_json::json!({"type":"object"}))
+                .with_handler(Arc::new(RunTestsTool)),
+        ])
     })
     .await;
 
@@ -6914,237 +5967,6 @@ async fn external_tool_requested_dispatches_to_handler_and_responds() {
     assert_eq!(rpc_call["params"]["result"], "all tests passed");
 }
 
-/// A pooled connection carries every session's notifications through one
-/// client-wide hop. A telemetry callback that blocks while thousands of
-/// events arrive must not lose any of them: a lost `external_tool.requested`
-/// leaves the runtime waiting forever for the result. A handler that never
-/// returns must not hold up the other sessions either.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn backed_up_notifications_still_deliver_every_external_tool_request() {
-    const SESSIONS: usize = 41;
-    const FILLER_PER_SESSION: usize = 50;
-
-    struct RecordingTool {
-        invoked: tokio::sync::mpsc::UnboundedSender<String>,
-    }
-    #[async_trait]
-    impl tool::ToolHandler for RecordingTool {
-        async fn call(&self, invocation: ToolInvocation) -> Result<ToolResult, copilot_sdk::Error> {
-            let stuck = invocation.tool_call_id == "tc-0";
-            let _ = self.invoked.send(invocation.tool_call_id);
-            if stuck {
-                std::future::pending::<()>().await;
-            }
-            Ok(ToolResult::Text("done".to_string()))
-        }
-    }
-
-    // The client once ran this callback on the hop that routes session events,
-    // which then overflowed and dropped them while it blocked.
-    let (gate_tx, gate_rx) = std::sync::mpsc::channel::<()>();
-    let gate_rx = Arc::new(std::sync::Mutex::new(gate_rx));
-    let (entered_tx, mut entered_rx) = tokio::sync::mpsc::unbounded_channel();
-    let callback: copilot_sdk::github_telemetry::GitHubTelemetryCallback = Arc::new(move |_| {
-        let _ = entered_tx.send(());
-        let _ = gate_rx.lock().unwrap().recv();
-    });
-    let (client, mut server_read, mut server_write) = make_client_with_telemetry(callback);
-    let (invoked_tx, mut invoked_rx) = tokio::sync::mpsc::unbounded_channel();
-
-    let mut sessions = Vec::new();
-    let mut session_ids = Vec::new();
-    for _ in 0..SESSIONS {
-        let create = tokio::spawn({
-            let client = client.clone();
-            let invoked = invoked_tx.clone();
-            async move {
-                client
-                    .create_session(CreateSessionOptions::default().with_tools(|group| {
-                        group.with_definitions(vec![
-                            Tool::new("record").with_handler(Arc::new(RecordingTool { invoked })),
-                        ])
-                    }))
-                    .await
-                    .unwrap()
-            }
-        });
-        let request = timeout(TIMEOUT, read_framed(&mut server_read))
-            .await
-            .unwrap();
-        assert_eq!(request["method"], "session.create");
-        let session_id = requested_session_id(&request).to_string();
-        let response = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": request["id"],
-            "result": { "sessionId": session_id, "workspacePath": "/tmp/workspace" },
-        });
-        write_framed(&mut server_write, &serde_json::to_vec(&response).unwrap()).await;
-        sessions.push(timeout(TIMEOUT, create).await.unwrap().unwrap());
-        session_ids.push(session_id);
-    }
-
-    let notification = |method: &str, params: Value| {
-        serde_json::to_vec(&serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params,
-        }))
-        .unwrap()
-    };
-    let event = |session_id: &str, event_type: &str, data: Value| {
-        notification(
-            "session.event",
-            serde_json::json!({
-                "sessionId": session_id,
-                "event": {
-                    "id": format!("evt-{}", rand_id()),
-                    "timestamp": "2025-01-01T00:00:00Z",
-                    "type": event_type,
-                    "data": data,
-                },
-            }),
-        )
-    };
-
-    write_framed(
-        &mut server_write,
-        &notification(
-            "gitHubTelemetry.event",
-            serde_json::json!({
-                "restricted": false,
-                "event": {
-                    "kind": "gate",
-                    "properties": {},
-                    "metrics": {},
-                    "created_at": "2025-01-01T00:00:00Z",
-                },
-            }),
-        ),
-    )
-    .await;
-    timeout(TIMEOUT, entered_rx.recv()).await.unwrap().unwrap();
-
-    for (index, session_id) in session_ids.iter().enumerate() {
-        write_framed(
-            &mut server_write,
-            &event(
-                session_id,
-                "external_tool.requested",
-                serde_json::json!({
-                    "requestId": format!("req-{index}"),
-                    "sessionId": session_id,
-                    "toolCallId": format!("tc-{index}"),
-                    "toolName": "record",
-                    "arguments": {},
-                }),
-            ),
-        )
-        .await;
-    }
-    for n in 0..FILLER_PER_SESSION {
-        for session_id in &session_ids {
-            write_framed(
-                &mut server_write,
-                &event(
-                    session_id,
-                    "assistant.message_delta",
-                    serde_json::json!({ "messageId": "m", "deltaContent": format!("{n}") }),
-                ),
-            )
-            .await;
-        }
-    }
-
-    // Every session but the stuck one answers its request, possibly before
-    // the sync below.
-    async fn answer(
-        server_write: &mut tokio::io::DuplexStream,
-        request: Value,
-        answered: &mut std::collections::HashSet<String>,
-    ) {
-        assert_eq!(request["method"], "session.tools.handlePendingToolCall");
-        assert_ne!(request["params"]["requestId"], "req-0");
-        assert!(answered.insert(request["params"]["requestId"].as_str().unwrap().to_string()));
-        let response = serde_json::json!({ "jsonrpc": "2.0", "id": request["id"], "result": {} });
-        write_framed(server_write, &serde_json::to_vec(&response).unwrap()).await;
-    }
-    let mut answered = std::collections::HashSet::new();
-
-    // The read loop handles frames in order, so once this response resolves
-    // the call, every notification above has been read off the connection.
-    let synced = tokio::spawn({
-        let client = client.clone();
-        async move { client.call("test.sync", None).await }
-    });
-    let sync = loop {
-        let request = timeout(TIMEOUT, read_framed(&mut server_read))
-            .await
-            .unwrap();
-        if request["method"] == "test.sync" {
-            break request;
-        }
-        answer(&mut server_write, request, &mut answered).await;
-    };
-    let response = serde_json::json!({ "jsonrpc": "2.0", "id": sync["id"], "result": {} });
-    write_framed(&mut server_write, &serde_json::to_vec(&response).unwrap()).await;
-    timeout(TIMEOUT, synced).await.unwrap().unwrap().unwrap();
-
-    gate_tx.send(()).unwrap();
-
-    let mut invoked = std::collections::HashSet::new();
-    while invoked.len() < SESSIONS {
-        let tool_call_id = timeout(Duration::from_secs(10), invoked_rx.recv())
-            .await
-            .unwrap_or_else(|_| {
-                panic!(
-                    "only {} of {SESSIONS} external tool requests reached a handler",
-                    invoked.len()
-                )
-            })
-            .unwrap();
-        assert!(invoked.insert(tool_call_id));
-    }
-
-    while answered.len() < SESSIONS - 1 {
-        let request = timeout(Duration::from_secs(10), read_framed(&mut server_read))
-            .await
-            .unwrap();
-        answer(&mut server_write, request, &mut answered).await;
-    }
-    drop(sessions);
-}
-
-#[tokio::test]
-async fn external_tool_result_that_fails_to_send_is_answered_with_the_error() {
-    let (_session, mut server) = create_session_pair_with_config(|cfg| {
-        cfg.with_tools(|group| group.with_definitions(vec![label_tool("record_note", "ok")]))
-    })
-    .await;
-
-    request_external_tool(&mut server, "req-delivery", "record_note").await;
-    let delivery = timeout(TIMEOUT, server.read_request()).await.unwrap();
-    assert_eq!(delivery["method"], "session.tools.handlePendingToolCall");
-    assert_eq!(delivery["params"]["requestId"], "req-delivery");
-    assert_eq!(delivery["params"]["result"], "ok");
-    server
-        .respond_error(&delivery, -32603, "tool result rejected")
-        .await;
-
-    // The runtime is still waiting on the call, so it is answered with the failure.
-    let answer = timeout(TIMEOUT, server.read_request()).await.unwrap();
-    assert_eq!(answer["method"], "session.tools.handlePendingToolCall");
-    assert_eq!(answer["params"]["requestId"], "req-delivery");
-    assert_eq!(
-        answer["params"]["error"],
-        "RPC error -32603: tool result rejected"
-    );
-    assert!(
-        answer["params"].get("result").is_none(),
-        "the failure must not be sent as a result: {answer}"
-    );
-    server.respond(&answer, serde_json::json!({})).await;
-}
-
 #[tokio::test]
 async fn external_tool_handler_error_is_reported_on_error_param() {
     struct FailingTool;
@@ -7153,7 +5975,7 @@ async fn external_tool_handler_error_is_reported_on_error_param() {
         async fn call(
             &self,
             _invocation: ToolInvocation,
-        ) -> Result<ToolResult, copilot_sdk::Error> {
+        ) -> Result<ToolResult, github_copilot_sdk::Error> {
             Err(std::io::Error::other("backend unavailable").into())
         }
     }
@@ -7163,27 +5985,24 @@ async fn external_tool_handler_error_is_reported_on_error_param() {
         async fn call(
             &self,
             _invocation: ToolInvocation,
-        ) -> Result<ToolResult, copilot_sdk::Error> {
-            Ok(ToolResult::Expanded(copilot_sdk::ToolResultExpanded::new(
-                "quota exceeded",
-                "failure",
-            )))
+        ) -> Result<ToolResult, github_copilot_sdk::Error> {
+            Ok(ToolResult::Expanded(
+                github_copilot_sdk::ToolResultExpanded::new("quota exceeded", "failure"),
+            ))
         }
     }
 
     let (_session, mut server) = create_session_pair_with_config(|cfg| {
-        cfg.with_tools(|group| {
-            group.with_definitions(vec![
-                Tool::new("failing")
-                    .with_description("Fails")
-                    .with_parameters(serde_json::json!({"type": "object"}))
-                    .with_handler(Arc::new(FailingTool)),
-                Tool::new("reports_failure")
-                    .with_description("Returns a failure result")
-                    .with_parameters(serde_json::json!({"type": "object"}))
-                    .with_handler(Arc::new(FailureResultTool)),
-            ])
-        })
+        cfg.with_tools(vec![
+            Tool::new("failing")
+                .with_description("Fails")
+                .with_parameters(serde_json::json!({"type": "object"}))
+                .with_handler(Arc::new(FailingTool)),
+            Tool::new("reports_failure")
+                .with_description("Returns a failure result")
+                .with_parameters(serde_json::json!({"type": "object"}))
+                .with_handler(Arc::new(FailureResultTool)),
+        ])
     })
     .await;
 
@@ -7194,7 +6013,7 @@ async fn external_tool_handler_error_is_reported_on_error_param() {
     assert_eq!(reply["params"]["requestId"], "req-err");
     assert_eq!(
         reply["params"]["error"],
-        copilot_sdk::Error::from(std::io::Error::other("backend unavailable")).to_string()
+        github_copilot_sdk::Error::from(std::io::Error::other("backend unavailable")).to_string()
     );
     assert!(
         reply["params"].get("result").is_none(),
@@ -7206,166 +6025,6 @@ async fn external_tool_handler_error_is_reported_on_error_param() {
     let result = read_tool_result(&mut server, "req-failure").await;
     assert_eq!(result["textResultForLlm"], "quota exceeded");
     assert_eq!(result["resultType"], "failure");
-}
-
-#[tokio::test]
-async fn external_tool_handler_error_with_empty_message_reports_its_kind() {
-    struct EmptyErrorTool(fn() -> copilot_sdk::Error);
-    #[async_trait]
-    impl tool::ToolHandler for EmptyErrorTool {
-        async fn call(
-            &self,
-            _invocation: ToolInvocation,
-        ) -> Result<ToolResult, copilot_sdk::Error> {
-            Err((self.0)())
-        }
-    }
-
-    let (_session, mut server) = create_session_pair_with_config(|cfg| {
-        cfg.with_tools(|group| {
-            group.with_definitions(vec![
-                Tool::new("empty_source")
-                    .with_description("Fails with an empty source error")
-                    .with_parameters(serde_json::json!({"type": "object"}))
-                    .with_handler(Arc::new(EmptyErrorTool(|| {
-                        copilot_sdk::Error::from(std::io::Error::other(""))
-                    }))),
-                Tool::new("empty_message")
-                    .with_description("Fails with an empty message")
-                    .with_parameters(serde_json::json!({"type": "object"}))
-                    .with_handler(Arc::new(EmptyErrorTool(|| {
-                        copilot_sdk::Error::with_message(ErrorKind::InvalidConfig, "")
-                    }))),
-            ])
-        })
-    })
-    .await;
-
-    // An empty `error` reads as no error, so the call would count as a success.
-    for (request_id, tool_name, expected) in [
-        ("req-empty-source", "empty_source", ErrorKind::Io),
-        (
-            "req-empty-message",
-            "empty_message",
-            ErrorKind::InvalidConfig,
-        ),
-    ] {
-        request_external_tool(&mut server, request_id, tool_name).await;
-        let reply = timeout(TIMEOUT, server.read_request()).await.unwrap();
-        assert_eq!(reply["method"], "session.tools.handlePendingToolCall");
-        assert_eq!(reply["params"]["requestId"], request_id);
-        assert_eq!(reply["params"]["error"], expected.to_string());
-        assert!(
-            reply["params"].get("result").is_none(),
-            "a handler error must not be sent as a result: {reply}"
-        );
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-enum ToolPanicPhase {
-    Construction,
-    Poll,
-    Drop,
-}
-
-struct PanickingTool(ToolPanicPhase);
-
-// Implement the expanded trait directly so construction and drop happen outside polling.
-impl tool::ToolHandler for PanickingTool {
-    fn call<'life0, 'async_trait>(
-        &'life0 self,
-        _invocation: ToolInvocation,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<Output = Result<ToolResult, copilot_sdk::Error>>
-                + Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        Self: 'async_trait,
-    {
-        if matches!(self.0, ToolPanicPhase::Construction) {
-            panic!("tool future construction exploded");
-        }
-        Box::pin(PanickingToolFuture(self.0))
-    }
-}
-
-struct PanickingToolFuture(ToolPanicPhase);
-
-impl std::future::Future for PanickingToolFuture {
-    type Output = Result<ToolResult, copilot_sdk::Error>;
-
-    fn poll(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
-        if matches!(self.0, ToolPanicPhase::Poll) {
-            panic!("tool future polling exploded");
-        }
-        std::task::Poll::Ready(Ok(ToolResult::Text("finished".to_string())))
-    }
-}
-
-impl Drop for PanickingToolFuture {
-    fn drop(&mut self) {
-        if matches!(self.0, ToolPanicPhase::Drop) {
-            panic!("tool future drop exploded");
-        }
-    }
-}
-
-async fn assert_tool_handler_panic_is_answered_with_error(phase: ToolPanicPhase) {
-    let (_session, mut server) = create_session_pair_with_config(move |cfg| {
-        cfg.with_tools(|group| {
-            group.with_definitions(vec![
-                Tool::new("panicking")
-                    .with_description("Panics")
-                    .with_parameters(serde_json::json!({"type": "object"}))
-                    .with_handler(Arc::new(PanickingTool(phase))),
-                label_tool("record_note", "ok"),
-            ])
-        })
-    })
-    .await;
-
-    request_external_tool(&mut server, "req-panic", "panicking").await;
-    let reply = timeout(TIMEOUT, server.read_request())
-        .await
-        .expect("a panicking tool handler must still answer the pending tool call");
-    assert_eq!(reply["method"], "session.tools.handlePendingToolCall");
-    assert_eq!(reply["params"]["requestId"], "req-panic");
-    assert_eq!(
-        reply["params"]["error"], "tool handler panicked",
-        "got: {reply}"
-    );
-    assert!(
-        reply["params"].get("result").is_none(),
-        "a panic must not be sent as a result: {reply}"
-    );
-    server.respond(&reply, serde_json::json!({})).await;
-
-    // Later tool calls are still dispatched.
-    request_external_tool(&mut server, "req-after-panic", "record_note").await;
-    assert_eq!(read_tool_result(&mut server, "req-after-panic").await, "ok");
-}
-
-#[tokio::test]
-async fn external_tool_handler_panic_is_answered_with_error() {
-    assert_tool_handler_panic_is_answered_with_error(ToolPanicPhase::Poll).await;
-}
-
-#[tokio::test]
-async fn external_tool_handler_construction_panic_is_answered_with_error() {
-    assert_tool_handler_panic_is_answered_with_error(ToolPanicPhase::Construction).await;
-}
-
-#[tokio::test]
-async fn external_tool_handler_drop_panic_is_answered_with_error() {
-    assert_tool_handler_panic_is_answered_with_error(ToolPanicPhase::Drop).await;
 }
 
 #[tokio::test]
@@ -7390,7 +6049,7 @@ async fn external_tool_completed_cancels_blocked_handler() {
         async fn call(
             &self,
             _invocation: ToolInvocation,
-        ) -> Result<ToolResult, copilot_sdk::Error> {
+        ) -> Result<ToolResult, github_copilot_sdk::Error> {
             if let Some(sender) = self.started.lock().take() {
                 let _ = sender.send(());
             }
@@ -7402,17 +6061,15 @@ async fn external_tool_completed_cancels_blocked_handler() {
     let (started_tx, started_rx) = tokio::sync::oneshot::channel();
     let (cancelled_tx, cancelled_rx) = tokio::sync::oneshot::channel();
     let (_session, mut server) = create_session_pair_with_config(|cfg| {
-        cfg.with_tools(|group| {
-            group.with_definitions(vec![
-                Tool::new("blocked_tool")
-                    .with_description("Blocks")
-                    .with_parameters(serde_json::json!({"type":"object"}))
-                    .with_handler(Arc::new(BlockingTool {
-                        started: parking_lot::Mutex::new(Some(started_tx)),
-                        cancelled: parking_lot::Mutex::new(Some(cancelled_tx)),
-                    })),
-            ])
-        })
+        cfg.with_tools(vec![
+            Tool::new("blocked_tool")
+                .with_description("Blocks")
+                .with_parameters(serde_json::json!({"type":"object"}))
+                .with_handler(Arc::new(BlockingTool {
+                    started: parking_lot::Mutex::new(Some(started_tx)),
+                    cancelled: parking_lot::Mutex::new(Some(cancelled_tx)),
+                })),
+        ])
     })
     .await;
 
@@ -7462,7 +6119,7 @@ async fn connection_close_cancels_blocked_external_tool() {
         async fn call(
             &self,
             _invocation: ToolInvocation,
-        ) -> Result<ToolResult, copilot_sdk::Error> {
+        ) -> Result<ToolResult, github_copilot_sdk::Error> {
             if let Some(sender) = self.started.lock().take() {
                 let _ = sender.send(());
             }
@@ -7474,17 +6131,15 @@ async fn connection_close_cancels_blocked_external_tool() {
     let (started_tx, started_rx) = tokio::sync::oneshot::channel();
     let (cancelled_tx, cancelled_rx) = tokio::sync::oneshot::channel();
     let (_session, mut server) = create_session_pair_with_config(|cfg| {
-        cfg.with_tools(|group| {
-            group.with_definitions(vec![
-                Tool::new("blocked_tool")
-                    .with_description("Blocks")
-                    .with_parameters(serde_json::json!({"type":"object"}))
-                    .with_handler(Arc::new(BlockingTool {
-                        started: parking_lot::Mutex::new(Some(started_tx)),
-                        cancelled: parking_lot::Mutex::new(Some(cancelled_tx)),
-                    })),
-            ])
-        })
+        cfg.with_tools(vec![
+            Tool::new("blocked_tool")
+                .with_description("Blocks")
+                .with_parameters(serde_json::json!({"type":"object"}))
+                .with_handler(Arc::new(BlockingTool {
+                    started: parking_lot::Mutex::new(Some(started_tx)),
+                    cancelled: parking_lot::Mutex::new(Some(cancelled_tx)),
+                })),
+        ])
     })
     .await;
 
@@ -7507,7 +6162,7 @@ async fn connection_close_cancels_blocked_external_tool() {
     timeout(TIMEOUT, cancelled_rx).await.unwrap().unwrap();
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn disconnect_cancels_external_tools_before_stopping_session() {
     struct DropProbe(Option<tokio::sync::oneshot::Sender<()>>);
 
@@ -7529,7 +6184,7 @@ async fn disconnect_cancels_external_tools_before_stopping_session() {
         async fn call(
             &self,
             _invocation: ToolInvocation,
-        ) -> Result<ToolResult, copilot_sdk::Error> {
+        ) -> Result<ToolResult, github_copilot_sdk::Error> {
             if let Some(sender) = self.started.lock().take() {
                 let _ = sender.send(());
             }
@@ -7541,17 +6196,15 @@ async fn disconnect_cancels_external_tools_before_stopping_session() {
     let (started_tx, started_rx) = tokio::sync::oneshot::channel();
     let (cancelled_tx, mut cancelled_rx) = tokio::sync::oneshot::channel();
     let (session, mut server) = create_session_pair_with_config(|cfg| {
-        cfg.with_tools(|group| {
-            group.with_definitions(vec![
-                Tool::new("blocked_tool")
-                    .with_description("Blocks")
-                    .with_parameters(serde_json::json!({"type":"object"}))
-                    .with_handler(Arc::new(BlockingTool {
-                        started: parking_lot::Mutex::new(Some(started_tx)),
-                        cancelled: parking_lot::Mutex::new(Some(cancelled_tx)),
-                    })),
-            ])
-        })
+        cfg.with_tools(vec![
+            Tool::new("blocked_tool")
+                .with_description("Blocks")
+                .with_parameters(serde_json::json!({"type":"object"}))
+                .with_handler(Arc::new(BlockingTool {
+                    started: parking_lot::Mutex::new(Some(started_tx)),
+                    cancelled: parking_lot::Mutex::new(Some(cancelled_tx)),
+                })),
+        ])
     })
     .await;
     let session = Arc::new(session);
@@ -7597,7 +6250,7 @@ async fn disconnect_cancels_external_tools_before_stopping_session() {
     assert!(lifetime.is_cancelled());
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn external_tool_broadcast_for_unknown_tool_is_not_responded_to() {
     // Phase H multi-client safety: a handler that doesn't claim the
     // requested tool name must not send an RPC response — another client
@@ -7608,20 +6261,18 @@ async fn external_tool_broadcast_for_unknown_tool_is_not_responded_to() {
         async fn call(
             &self,
             _invocation: ToolInvocation,
-        ) -> Result<ToolResult, copilot_sdk::Error> {
+        ) -> Result<ToolResult, github_copilot_sdk::Error> {
             Ok(ToolResult::Text("foo".to_string()))
         }
     }
 
     let (_session, mut server) = create_session_pair_with_config(|cfg| {
-        cfg.with_tools(|group| {
-            group.with_definitions(vec![
-                Tool::new("foo")
-                    .with_description("foo")
-                    .with_parameters(serde_json::json!({"type":"object"}))
-                    .with_handler(Arc::new(FooTool)),
-            ])
-        })
+        cfg.with_tools(vec![
+            Tool::new("foo")
+                .with_description("foo")
+                .with_parameters(serde_json::json!({"type":"object"}))
+                .with_handler(Arc::new(FooTool)),
+        ])
     })
     .await;
     server
@@ -7652,7 +6303,10 @@ struct LabelTool(&'static str);
 
 #[async_trait]
 impl tool::ToolHandler for LabelTool {
-    async fn call(&self, _invocation: ToolInvocation) -> Result<ToolResult, copilot_sdk::Error> {
+    async fn call(
+        &self,
+        _invocation: ToolInvocation,
+    ) -> Result<ToolResult, github_copilot_sdk::Error> {
         Ok(ToolResult::Text(self.0.to_string()))
     }
 }
@@ -7724,14 +6378,14 @@ async fn set_tools_rejects_acknowledgment_after_event_loop_retirement() {
         error.to_string(),
         format!(
             "RPC error -32603: {}",
-            copilot_sdk::SessionErrorKind::EventLoopClosed
+            github_copilot_sdk::SessionErrorKind::EventLoopClosed
         )
     );
     timeout(TIMEOUT, dropped.notified()).await.unwrap();
     assert!(retained.upgrade().is_none());
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn set_tools_rejects_queued_and_late_admission_after_retirement() {
     let (session, mut server) = create_session_pair().await;
     let session = Arc::new(session);
@@ -7758,7 +6412,7 @@ async fn set_tools_rejects_queued_and_late_admission_after_retirement() {
         error.to_string(),
         format!(
             "RPC error -32603: {}",
-            copilot_sdk::SessionErrorKind::EventLoopClosed
+            github_copilot_sdk::SessionErrorKind::EventLoopClosed
         )
     );
     for result in [
@@ -7771,7 +6425,7 @@ async fn set_tools_rejects_queued_and_late_admission_after_retirement() {
         assert!(
             matches!(
                 error.kind(),
-                ErrorKind::Session(copilot_sdk::SessionErrorKind::EventLoopClosed)
+                ErrorKind::Session(github_copilot_sdk::SessionErrorKind::EventLoopClosed)
             ),
             "{error}"
         );
@@ -7779,10 +6433,10 @@ async fn set_tools_rejects_queued_and_late_admission_after_retirement() {
     assert_no_request(&mut server).await;
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn set_tools_replaces_the_definitions_and_handlers_together() {
     let (session, mut server) = create_session_pair_with_config(|cfg| {
-        cfg.with_tools(|group| group.with_definitions(vec![label_tool("old", "old handler")]))
+        cfg.with_tools(vec![label_tool("old", "old handler")])
     })
     .await;
     let session = Arc::new(session);
@@ -7805,8 +6459,8 @@ async fn set_tools_replaces_the_definitions_and_handlers_together() {
         serde_json::json!({
             "sessionId": server.session_id,
             "tools": [
-                { "name": "new", "description": "new tool", "parameters": { "type": "object" }, "hasHandler": true },
-                { "name": "declared", "description": "Declared only", "hasHandler": false },
+                { "name": "new", "description": "new tool", "parameters": { "type": "object" } },
+                { "name": "declared", "description": "Declared only" },
             ],
         })
     );
@@ -7830,7 +6484,7 @@ async fn set_tools_replaces_the_definitions_and_handlers_together() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn set_tools_keeps_the_previous_handlers_until_the_runtime_accepts_the_replacement() {
     let (session, mut server) = create_session_pair_with_config(|cfg| {
-        cfg.with_tools(|group| group.with_definitions(vec![label_tool("old", "old handler")]))
+        cfg.with_tools(vec![label_tool("old", "old handler")])
     })
     .await;
     let session = Arc::new(session);
@@ -7878,7 +6532,7 @@ async fn set_tools_lets_a_running_call_finish_on_its_original_handler() {
         async fn call(
             &self,
             _invocation: ToolInvocation,
-        ) -> Result<ToolResult, copilot_sdk::Error> {
+        ) -> Result<ToolResult, github_copilot_sdk::Error> {
             if let Some(started) = self.started.lock().take() {
                 let _ = started.send(());
             }
@@ -7896,10 +6550,8 @@ async fn set_tools_lets_a_running_call_finish_on_its_original_handler() {
             started: parking_lot::Mutex::new(Some(started_tx)),
             release: release.clone(),
         }));
-    let (session, mut server) = create_session_pair_with_config(move |cfg| {
-        cfg.with_tools(|group| group.with_definitions(vec![gated]))
-    })
-    .await;
+    let (session, mut server) =
+        create_session_pair_with_config(move |cfg| cfg.with_tools(vec![gated])).await;
     let session = Arc::new(session);
 
     request_external_tool(&mut server, "req-running", "lookup").await;
@@ -7931,10 +6583,10 @@ async fn set_tools_lets_a_running_call_finish_on_its_original_handler() {
     );
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn set_tools_leaves_the_handlers_unchanged_when_the_runtime_rejects_it() {
     let (session, mut server) = create_session_pair_with_config(|cfg| {
-        cfg.with_tools(|group| group.with_definitions(vec![label_tool("old", "old handler")]))
+        cfg.with_tools(vec![label_tool("old", "old handler")])
     })
     .await;
     let session = Arc::new(session);
@@ -7975,10 +6627,10 @@ async fn set_tools_leaves_the_handlers_unchanged_when_the_runtime_rejects_it() {
     );
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn set_tools_completes_the_replacement_when_the_caller_stops_waiting() {
     let (session, mut server) = create_session_pair_with_config(|cfg| {
-        cfg.with_tools(|group| group.with_definitions(vec![label_tool("old", "old handler")]))
+        cfg.with_tools(vec![label_tool("old", "old handler")])
     })
     .await;
     let session = Arc::new(session);
@@ -8025,7 +6677,7 @@ async fn set_tools_completes_the_replacement_when_the_caller_stops_waiting() {
 #[tokio::test]
 async fn set_tools_applies_a_replacement_the_runtime_accepts_after_a_null_id_error() {
     let (session, mut server) = create_session_pair_with_config(|cfg| {
-        cfg.with_tools(|group| group.with_definitions(vec![label_tool("swap", "old handler")]))
+        cfg.with_tools(vec![label_tool("swap", "old handler")])
     })
     .await;
     let session = Arc::new(session);
@@ -8063,7 +6715,7 @@ async fn set_tools_applies_a_replacement_the_runtime_accepts_after_a_null_id_err
 #[tokio::test]
 async fn set_tools_keeps_a_later_replacement_when_the_runtime_accepts_an_earlier_one_last() {
     let (session, mut server) = create_session_pair_with_config(|cfg| {
-        cfg.with_tools(|group| group.with_definitions(vec![label_tool("swap", "original handler")]))
+        cfg.with_tools(vec![label_tool("swap", "original handler")])
     })
     .await;
     let session = Arc::new(session);
@@ -8119,7 +6771,7 @@ async fn set_tools_keeps_a_later_replacement_when_the_runtime_accepts_an_earlier
 #[tokio::test]
 async fn set_tools_fails_locally_for_a_schema_the_runtime_cannot_read() {
     let (session, mut server) = create_session_pair_with_config(|cfg| {
-        cfg.with_tools(|group| group.with_definitions(vec![label_tool("old", "old handler")]))
+        cfg.with_tools(vec![label_tool("old", "old handler")])
     })
     .await;
     let session = Arc::new(session);
@@ -8184,7 +6836,7 @@ async fn set_tools_fails_locally_for_a_schema_the_runtime_cannot_read() {
 #[tokio::test]
 async fn set_tools_rejects_duplicate_handlers_without_contacting_the_runtime() {
     let (session, mut server) = create_session_pair_with_config(|cfg| {
-        cfg.with_tools(|group| group.with_definitions(vec![label_tool("old", "old handler")]))
+        cfg.with_tools(vec![label_tool("old", "old handler")])
     })
     .await;
     let session = Arc::new(session);
@@ -8212,7 +6864,50 @@ async fn set_tools_rejects_duplicate_handlers_without_contacting_the_runtime() {
     );
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
+async fn set_tools_applies_concurrent_replacements_in_order() {
+    let (session, mut server) = create_session_pair().await;
+    let session = Arc::new(session);
+
+    let first = tokio::spawn({
+        let session = session.clone();
+        async move {
+            session
+                .set_tools([label_tool("first", "first handler")])
+                .await
+        }
+    });
+    let first_request = timeout(TIMEOUT, server.read_request()).await.unwrap();
+    assert_eq!(first_request["params"]["tools"][0]["name"], "first");
+
+    let second = tokio::spawn({
+        let session = session.clone();
+        async move {
+            session
+                .set_tools([label_tool("second", "second handler")])
+                .await
+        }
+    });
+    // The second replacement waits for the runtime to answer the first.
+    assert_no_request(&mut server).await;
+    server.respond(&first_request, serde_json::json!({})).await;
+    timeout(TIMEOUT, first).await.unwrap().unwrap().unwrap();
+
+    let second_request = timeout(TIMEOUT, server.read_request()).await.unwrap();
+    assert_eq!(second_request["params"]["tools"][0]["name"], "second");
+    server.respond(&second_request, serde_json::json!({})).await;
+    timeout(TIMEOUT, second).await.unwrap().unwrap().unwrap();
+
+    request_external_tool(&mut server, "req-first", "first").await;
+    assert_no_request(&mut server).await;
+    request_external_tool(&mut server, "req-second", "second").await;
+    assert_eq!(
+        read_tool_result(&mut server, "req-second").await,
+        "second handler"
+    );
+}
+
+#[tokio::test]
 async fn set_tools_sends_nothing_when_dropped_while_queued() {
     let (session, mut server) = create_session_pair().await;
     let session = Arc::new(session);
@@ -8252,12 +6947,54 @@ async fn set_tools_sends_nothing_when_dropped_while_queued() {
     );
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
+async fn set_tools_replaces_the_tools_of_a_resumed_session() {
+    use github_copilot_sdk::types::ResumeSessionConfig;
+
+    let (client, server_read, server_write) = make_client();
+    let mut server = FakeServer {
+        read: server_read,
+        write: server_write,
+        session_id: "resumed-with-tools".to_string(),
+    };
+    let resume = tokio::spawn({
+        let client = client.clone();
+        async move {
+            client
+                .resume_session(
+                    ResumeSessionConfig::new(SessionId::from("resumed-with-tools"))
+                        .with_tools(vec![label_tool("old", "old handler")]),
+                )
+                .await
+                .unwrap()
+        }
+    });
+    let resume_request = timeout(TIMEOUT, server.read_request()).await.unwrap();
+    assert_eq!(resume_request["method"], "session.resume");
+    server_respond_create(&mut server.write, &resume_request, "resumed-with-tools").await;
+    respond_to_reload(&mut server.read, &mut server.write).await;
+    let session = Arc::new(timeout(TIMEOUT, resume).await.unwrap().unwrap());
+
+    let replace = tokio::spawn({
+        let session = session.clone();
+        async move { session.set_tools(Vec::new()).await }
+    });
+    let request = timeout(TIMEOUT, server.read_request()).await.unwrap();
+    assert_eq!(request["method"], "session.tools.set");
+    assert_eq!(request["params"]["tools"], serde_json::json!([]));
+    server.respond(&request, serde_json::json!({})).await;
+    timeout(TIMEOUT, replace).await.unwrap().unwrap().unwrap();
+
+    request_external_tool(&mut server, "req-old", "old").await;
+    assert_no_request(&mut server).await;
+}
+
+#[tokio::test]
 async fn permission_broadcast_with_resolved_by_hook_is_not_responded_to() {
     // Phase H: when the runtime marks a permission request as already
     // resolved by a hook, the client must not respond again.
     let (_session, mut server) = create_session_pair_with_config(|cfg| {
-        cfg.with_permissions(|group| group.with_on_request(Arc::new(ApproveAllHandler)))
+        cfg.with_permission_handler(Arc::new(ApproveAllHandler))
     })
     .await;
     server
@@ -8280,253 +7017,7 @@ async fn permission_broadcast_with_resolved_by_hook_is_not_responded_to() {
     );
 }
 
-/// A connection can receive a session's events before this client registers
-/// it, for example after a raw `sessions.connect`. A request another client
-/// answered in that window reaches observers when the session registers, but
-/// never this client's handler: answering it would raise an obsolete prompt.
 #[tokio::test]
-async fn request_answered_before_its_session_registers_is_observed_not_handled() {
-    struct RecordingHandler(tokio::sync::mpsc::UnboundedSender<String>);
-    #[async_trait]
-    impl PermissionHandler for RecordingHandler {
-        async fn handle(
-            &self,
-            _session_id: SessionId,
-            request_id: RequestId,
-            _data: copilot_sdk::PermissionRequestData,
-        ) -> PermissionResult {
-            let _ = self.0.send(request_id.to_string());
-            PermissionResult::approve_once()
-        }
-    }
-
-    let (client, server_read, server_write) = make_client();
-    let mut server = FakeServer {
-        read: server_read,
-        write: server_write,
-        session_id: "joined".to_string(),
-    };
-    let mut lifecycle = client.subscribe_lifecycle();
-    let requested = |request_id: &str| serde_json::json!({ "requestId": request_id, "permissionRequest": { "kind": "shell" } });
-    server
-        .send_event("permission.requested", requested("settled-elsewhere"))
-        .await;
-    server
-        .send_event(
-            "permission.completed",
-            serde_json::json!({ "requestId": "settled-elsewhere", "result": { "kind": "approved" } }),
-        )
-        .await;
-    // The client delivers notifications in order, so once this arrives both
-    // events above are held for the unregistered session.
-    server
-        .send_notification(
-            "session.lifecycle",
-            serde_json::json!({ "type": "session.updated", "sessionId": "fence" }),
-        )
-        .await;
-    let fence = timeout(TIMEOUT, lifecycle.recv()).await.unwrap().unwrap();
-    assert_eq!(fence.session_id, SessionId::new("fence"));
-
-    let (handled_tx, mut handled) = tokio::sync::mpsc::unbounded_channel();
-    let prepared = client
-        .prepare_session(
-            CreateSessionOptions::default()
-                .with_session_id("joined")
-                .with_permissions(|group| {
-                    group.with_on_request(Arc::new(RecordingHandler(handled_tx)))
-                }),
-        )
-        .unwrap();
-    let mut events = prepared.subscribe();
-    let start = tokio::spawn(prepared.start());
-    let create = timeout(TIMEOUT, server.read_request()).await.unwrap();
-    assert_eq!(create["method"], "session.create");
-    server
-        .respond(
-            &create,
-            serde_json::json!({ "sessionId": "joined", "workspacePath": "/tmp/workspace" }),
-        )
-        .await;
-    let _session = timeout(TIMEOUT, start).await.unwrap().unwrap().unwrap();
-
-    server
-        .send_event("permission.requested", requested("live"))
-        .await;
-    let answer = timeout(TIMEOUT, server.read_request()).await.unwrap();
-    assert_eq!(
-        answer["method"],
-        "session.permissions.handlePendingPermissionRequest"
-    );
-    assert_eq!(answer["params"]["requestId"], "live");
-    server.respond(&answer, serde_json::json!({})).await;
-    assert_eq!(handled.try_recv().as_deref(), Ok("live"));
-    assert!(handled.try_recv().is_err());
-
-    let mut observed = Vec::new();
-    while observed.len() < 3 {
-        let event = timeout(TIMEOUT, events.recv()).await.unwrap().unwrap();
-        observed.push((
-            event.event_type,
-            event.data["requestId"].as_str().unwrap().to_string(),
-        ));
-    }
-    assert_eq!(
-        observed,
-        [
-            ("permission.requested".into(), "settled-elsewhere".into()),
-            ("permission.completed".into(), "settled-elsewhere".into()),
-            ("permission.requested".into(), "live".into()),
-        ]
-    );
-}
-
-/// The read loop can read a request, its completion and the response that
-/// registers their session before the dispatcher routes any of them. The
-/// request must still be treated as answered elsewhere.
-#[tokio::test]
-async fn request_answered_before_registration_but_not_yet_routed_is_not_handled() {
-    struct RecordingHandler(tokio::sync::mpsc::UnboundedSender<String>);
-    #[async_trait]
-    impl PermissionHandler for RecordingHandler {
-        async fn handle(
-            &self,
-            _session_id: SessionId,
-            request_id: RequestId,
-            _data: copilot_sdk::PermissionRequestData,
-        ) -> PermissionResult {
-            let _ = self.0.send(request_id.to_string());
-            PermissionResult::approve_once()
-        }
-    }
-
-    let (client, server_read, server_write) = make_client();
-    let mut server = FakeServer {
-        read: server_read,
-        write: server_write,
-        session_id: "cloud-assigned".to_string(),
-    };
-    let (handled_tx, mut handled) = tokio::sync::mpsc::unbounded_channel();
-    let create = tokio::spawn({
-        let client = client.clone();
-        async move {
-            client
-                .create_session(
-                    CreateSessionOptions::default()
-                        .with_permissions(|group| {
-                            group.with_on_request(Arc::new(RecordingHandler(handled_tx)))
-                        })
-                        .with_cloud(CloudSessionOptions::with_repository(
-                            CloudSessionRepository::new("github", "copilot-sdk"),
-                        )),
-                )
-                .await
-                .unwrap()
-        }
-    });
-    let request = timeout(TIMEOUT, server.read_request()).await.unwrap();
-    assert_eq!(request["method"], "session.create");
-
-    // One write, so the read loop finds all three frames at once and this
-    // single-threaded runtime cannot run the dispatcher between them.
-    let event = |event_type: &str, data: Value| {
-        serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "session.event",
-            "params": {
-                "sessionId": "cloud-assigned",
-                "event": {
-                    "id": format!("evt-{}", rand_id()),
-                    "timestamp": "2025-01-01T00:00:00Z",
-                    "type": event_type,
-                    "data": data,
-                },
-            },
-        })
-    };
-    let mut frames = Vec::new();
-    for message in [
-        event(
-            "permission.requested",
-            serde_json::json!({ "requestId": "settled-elsewhere", "permissionRequest": { "kind": "shell" } }),
-        ),
-        event(
-            "permission.completed",
-            serde_json::json!({ "requestId": "settled-elsewhere", "result": { "kind": "approved" } }),
-        ),
-        serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": request["id"],
-            "result": { "sessionId": "cloud-assigned", "workspacePath": "/tmp/workspace" },
-        }),
-    ] {
-        let body = serde_json::to_vec(&message).unwrap();
-        frames.extend_from_slice(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes());
-        frames.extend_from_slice(&body);
-    }
-    server.write.write_all(&frames).await.unwrap();
-    let _session = timeout(TIMEOUT, create).await.unwrap().unwrap();
-
-    server
-        .send_event(
-            "permission.requested",
-            serde_json::json!({ "requestId": "live", "permissionRequest": { "kind": "shell" } }),
-        )
-        .await;
-    let answer = timeout(TIMEOUT, server.read_request()).await.unwrap();
-    assert_eq!(
-        answer["method"],
-        "session.permissions.handlePendingPermissionRequest"
-    );
-    assert_eq!(answer["params"]["requestId"], "live");
-    server.respond(&answer, serde_json::json!({})).await;
-    assert_eq!(handled.try_recv().as_deref(), Ok("live"));
-    assert!(handled.try_recv().is_err());
-}
-
-/// Events read just before the connection closes still reach subscribers:
-/// the session's event loop drains what the dispatcher routes after the
-/// close instead of exiting at the close.
-#[tokio::test]
-async fn events_read_before_the_connection_closes_reach_subscribers() {
-    const EVENTS: usize = 20;
-    let (session, mut server) = create_session_pair().await;
-    let mut events = session.subscribe();
-
-    // One write followed by EOF: the read loop reads every frame and closes
-    // the connection before this single-threaded runtime routes any of them.
-    let mut frames = Vec::new();
-    for n in 0..EVENTS {
-        let body = serde_json::to_vec(&serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "session.event",
-            "params": {
-                "sessionId": server.session_id,
-                "event": {
-                    "id": format!("final-{n}"),
-                    "timestamp": "2025-01-01T00:00:00Z",
-                    "type": "assistant.message_delta",
-                    "data": { "messageId": "m", "deltaContent": "x" },
-                },
-            },
-        }))
-        .unwrap();
-        frames.extend_from_slice(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes());
-        frames.extend_from_slice(&body);
-    }
-    server.write.write_all(&frames).await.unwrap();
-    server.write.shutdown().await.unwrap();
-
-    for n in 0..EVENTS {
-        let event = timeout(TIMEOUT, events.recv())
-            .await
-            .unwrap_or_else(|_| panic!("event {n} read before the close was lost"))
-            .unwrap_or_else(|error| panic!("event {n} read before the close was lost: {error}"));
-        assert_eq!(event.id, format!("final-{n}"));
-    }
-}
-
-#[tokio::test(start_paused = true)]
 async fn permission_broadcast_with_no_claiming_handler_is_not_responded_to() {
     // Phase H: a handler that doesn't claim permission dispatch must not
     // respond — the SDK lets other connected clients handle the request.
@@ -8550,12 +7041,12 @@ async fn permission_broadcast_with_no_claiming_handler_is_not_responded_to() {
     );
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn elicitation_broadcast_with_no_claiming_handler_is_not_responded_to() {
     // Phase H: same gating for elicitation. The default handler doesn't
     // claim elicitation, so broadcasts are silently dropped.
     let (_session, mut server) = create_session_pair_with_config(|cfg| {
-        cfg.with_permissions(|group| group.with_on_request(Arc::new(ApproveAllHandler)))
+        cfg.with_permission_handler(Arc::new(ApproveAllHandler))
     })
     .await;
     server
@@ -8620,36 +7111,26 @@ async fn capabilities_changed_event_keeps_capabilities_it_does_not_name() {
 async fn request_elicitation_sent_in_create_params() {
     let (client, mut server_read, mut server_write) = make_client();
 
-    let create_handle =
-        tokio::spawn({
-            let client = client.clone();
-            async move {
-                client
-                    .create_session(CreateSessionOptions::default().with_permissions(|group| {
-                        group.with_on_request(Arc::new(ApproveAllHandler))
-                    }))
-                    .await
-                    .unwrap()
-            }
-        });
+    let create_handle = tokio::spawn({
+        let client = client.clone();
+        async move {
+            client
+                .create_session(
+                    SessionConfig::default().with_permission_handler(Arc::new(ApproveAllHandler)),
+                )
+                .await
+                .unwrap()
+        }
+    });
 
     let request = read_framed(&mut server_read).await;
     assert_eq!(request["method"], "session.create");
     // ApproveAllHandler claims permission dispatch only; no other handlers
     // are installed, so the wire flags reflect that exact responsibility.
-    assert_eq!(request["params"]["permissions"]["request"], true);
-    assert_eq!(
-        request["params"]["interaction"]["requestElicitation"],
-        false
-    );
-    assert_eq!(
-        request["params"]["interaction"]["requestExitPlanMode"],
-        false
-    );
-    assert_eq!(
-        request["params"]["interaction"]["requestAutoModeSwitch"],
-        false
-    );
+    assert_eq!(request["params"]["requestPermission"], true);
+    assert_eq!(request["params"]["requestElicitation"], false);
+    assert_eq!(request["params"]["requestExitPlanMode"], false);
+    assert_eq!(request["params"]["requestAutoModeSwitch"], false);
 
     let id = request["id"].as_u64().unwrap();
     let session_id = requested_session_id(&request);
@@ -8673,18 +7154,15 @@ async fn noop_handler_sends_request_permission_false() {
         let client = client.clone();
         async move {
             client
-                .create_session(CreateSessionOptions::default())
+                .create_session(SessionConfig::default())
                 .await
                 .unwrap()
         }
     });
 
     let request = read_framed(&mut server_read).await;
-    assert_eq!(request["params"]["permissions"]["request"], false);
-    assert_eq!(
-        request["params"]["interaction"]["requestElicitation"],
-        false
-    );
+    assert_eq!(request["params"]["requestPermission"], false);
+    assert_eq!(request["params"]["requestElicitation"], false);
 
     let id = request["id"].as_u64().unwrap();
     let session_id = requested_session_id(&request);
@@ -8699,67 +7177,53 @@ async fn noop_handler_sends_request_permission_false() {
 
 #[tokio::test]
 async fn resume_session_sends_canvas_fields_and_captures_open_canvases() {
-    use copilot_sdk::types::ResumeSessionOptions;
+    use github_copilot_sdk::types::ResumeSessionConfig;
 
     let (client, mut server_read, mut server_write) = make_client();
     let resume_handle = tokio::spawn({
         let client = client.clone();
         async move {
-            let cfg = ResumeSessionOptions::new(SessionId::from("canvas-resume"))
-                .with_canvases(|group| group.with_definitions([test_canvas("counter")]))
-                .with_canvases(|group| group.with_request_renderer(true))
-                .with_extensions(|group| group.with_enabled(true))
-                .with_extensions(|group| {
-                    group.with_identity(ExtensionInfo::new("github-app", "counter-provider"))
-                })
-                .with_canvases(|group| {
-                    group.with_provider(CanvasProviderIdentity::new("app:builtin:window-1"))
-                })
-                .with_canvases(|group| {
-                    group.with_open([OpenCanvasInstance {
-                        instance_id: "counter-1".to_string(),
-                        extension_id: "github-app:counter-provider".to_string(),
-                        extension_name: Some("Counter Provider".to_string()),
-                        canvas_id: "counter".to_string(),
-                        icon: None,
-                        title: Some("Counter".to_string()),
-                        status: Some("ready".to_string()),
-                        url: Some("https://example.test/counter".to_string()),
-                        input: Some(serde_json::json!({ "seed": 1 })),
-                    }])
-                });
+            let cfg = ResumeSessionConfig::new(SessionId::from("canvas-resume"))
+                .with_canvases([test_canvas("counter")])
+                .with_request_canvas_renderer(true)
+                .with_request_extensions(true)
+                .with_extension_info(ExtensionInfo::new("github-app", "counter-provider"))
+                .with_canvas_provider(CanvasProviderIdentity::new("app:builtin:window-1"))
+                .with_open_canvases([OpenCanvasInstance {
+                    instance_id: "counter-1".to_string(),
+                    extension_id: "github-app:counter-provider".to_string(),
+                    extension_name: Some("Counter Provider".to_string()),
+                    canvas_id: "counter".to_string(),
+                    icon: None,
+                    title: Some("Counter".to_string()),
+                    status: Some("ready".to_string()),
+                    url: Some("https://example.test/counter".to_string()),
+                    input: Some(serde_json::json!({ "seed": 1 })),
+                }]);
             client.resume_session(cfg).await.unwrap()
         }
     });
 
     let request = read_framed(&mut server_read).await;
     assert_eq!(request["method"], "session.resume");
+    assert_eq!(request["params"]["canvases"][0]["id"], "counter");
+    assert_eq!(request["params"]["requestCanvasRenderer"], true);
+    assert_eq!(request["params"]["requestExtensions"], true);
+    assert_eq!(request["params"]["extensionInfo"]["source"], "github-app");
     assert_eq!(
-        request["params"]["canvases"]["definitions"][0]["id"],
-        "counter"
-    );
-    assert_eq!(request["params"]["canvases"]["requestRenderer"], true);
-    assert_eq!(request["params"]["extensions"]["enabled"], true);
-    assert_eq!(
-        request["params"]["extensions"]["identity"]["source"],
-        "github-app"
-    );
-    assert_eq!(
-        request["params"]["extensions"]["identity"]["name"],
+        request["params"]["extensionInfo"]["name"],
         "counter-provider"
     );
     assert_eq!(
-        request["params"]["canvases"]["provider"]["id"],
+        request["params"]["canvasProvider"]["id"],
         "app:builtin:window-1"
     );
     assert!(
-        request["params"]["canvases"]["provider"]
-            .get("name")
-            .is_none(),
+        request["params"]["canvasProvider"].get("name").is_none(),
         "name should be omitted from the wire when None, not serialized as null"
     );
     assert_eq!(
-        request["params"]["canvases"]["open"][0]["instanceId"],
+        request["params"]["openCanvases"][0]["instanceId"],
         "counter-1"
     );
 
@@ -8969,13 +7433,16 @@ async fn session_canvas_closed_removes_open_canvas_snapshot() {
         )
         .await;
 
-    // Snapshot updates precede event publication, including no-op closes.
+    // Give the event loop time to process; the snapshot must stay unchanged.
     timeout(Duration::from_secs(1), events.recv())
         .await
         .expect("idempotent close processed")
         .expect("idempotent canvas closed event");
-    open = session.open_canvases();
-    assert_eq!(open.len(), 1);
+    for _ in 0..10 {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        open = session.open_canvases();
+        assert_eq!(open.len(), 1);
+    }
     assert_eq!(open[0].instance_id, "logs-1");
 
     // A closed event with an empty instance_id is ignored and leaves the snapshot intact.
@@ -8993,8 +7460,11 @@ async fn session_canvas_closed_removes_open_canvas_snapshot() {
         .await
         .expect("invalid close processed")
         .expect("invalid canvas closed event");
-    open = session.open_canvases();
-    assert_eq!(open.len(), 1);
+    for _ in 0..10 {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        open = session.open_canvases();
+        assert_eq!(open.len(), 1);
+    }
     assert_eq!(open[0].instance_id, "logs-1");
 }
 
@@ -9010,19 +7480,23 @@ async fn elicitation_methods_fail_without_capability() {
         .unwrap_err();
     assert!(matches!(
         err.kind(),
-        copilot_sdk::ErrorKind::Session(copilot_sdk::SessionErrorKind::ElicitationNotSupported)
+        github_copilot_sdk::ErrorKind::Session(
+            github_copilot_sdk::SessionErrorKind::ElicitationNotSupported
+        )
     ));
 
     let err = session.ui().confirm("ok?").await.unwrap_err();
     assert!(matches!(
         err.kind(),
-        copilot_sdk::ErrorKind::Session(copilot_sdk::SessionErrorKind::ElicitationNotSupported)
+        github_copilot_sdk::ErrorKind::Session(
+            github_copilot_sdk::SessionErrorKind::ElicitationNotSupported
+        )
     ));
 }
 
 async fn create_session_pair_with_hooks(
-    hooks: Arc<dyn copilot_sdk::hooks::SessionHooks>,
-) -> (copilot_sdk::session::Session, FakeServer) {
+    hooks: Arc<dyn github_copilot_sdk::hooks::SessionHooks>,
+) -> (github_copilot_sdk::session::Session, FakeServer) {
     let (client, server_read, server_write) = make_client();
 
     let mut server = FakeServer {
@@ -9035,9 +7509,7 @@ async fn create_session_pair_with_hooks(
         let client = client.clone();
         async move {
             client
-                .create_session(
-                    CreateSessionOptions::default().with_hooks(|group| group.with_handlers(hooks)),
-                )
+                .create_session(SessionConfig::default().with_hooks(hooks))
                 .await
                 .unwrap()
         }
@@ -9046,7 +7518,7 @@ async fn create_session_pair_with_hooks(
     let create_req = server.read_request().await;
     assert_eq!(create_req["method"], "session.create");
     // Verify hooks: true is auto-set in the config
-    assert_eq!(create_req["params"]["hooks"]["hasHandlers"], true);
+    assert_eq!(create_req["params"]["hooks"], true);
     server.session_id = requested_session_id(&create_req).to_string();
     server
         .respond(
@@ -9064,7 +7536,7 @@ async fn create_session_pair_with_hooks(
 
 #[tokio::test]
 async fn hooks_invoke_dispatches_to_session_hooks() {
-    use copilot_sdk::hooks::{HookEvent, HookOutput, PreToolUseOutput, SessionHooks};
+    use github_copilot_sdk::hooks::{HookEvent, HookOutput, PreToolUseOutput, SessionHooks};
 
     struct PolicyHooks;
     #[async_trait]
@@ -9122,7 +7594,7 @@ async fn hooks_invoke_dispatches_to_session_hooks() {
 /// instead of waiting on a frame it refused, and the connection stays open.
 #[tokio::test]
 async fn hooks_invoke_answers_an_unreadably_deep_output_with_an_error_for_its_request() {
-    use copilot_sdk::hooks::{HookEvent, HookOutput, PreToolUseOutput, SessionHooks};
+    use github_copilot_sdk::hooks::{HookEvent, HookOutput, PreToolUseOutput, SessionHooks};
 
     struct DeepHooks;
     #[async_trait]
@@ -9178,12 +7650,96 @@ async fn hooks_invoke_answers_an_unreadably_deep_output_with_an_error_for_its_re
     assert_eq!(response["result"]["output"], serde_json::json!({}));
 }
 
+#[tokio::test]
+async fn hooks_invoke_subagent_lifecycle_does_not_warn_as_unknown() {
+    use github_copilot_sdk::hooks::SessionHooks;
+
+    struct EmptyHooks;
+    #[async_trait]
+    impl SessionHooks for EmptyHooks {}
+
+    let (capture, _guard) = capture_traces();
+    let (_session, mut server) = create_session_pair_with_hooks(Arc::new(EmptyHooks)).await;
+
+    for (request_id, hook_type, input) in [
+        (
+            302,
+            "subagentStart",
+            serde_json::json!({
+                "sessionId": server.session_id,
+                "timestamp": 1234567890,
+                "cwd": "/tmp",
+                "transcriptPath": "/tmp/transcript.jsonl",
+                "agentName": "task"
+            }),
+        ),
+        (
+            303,
+            "subagentStop",
+            serde_json::json!({
+                "sessionId": server.session_id,
+                "timestamp": 1234567890,
+                "cwd": "/tmp",
+                "transcriptPath": "/tmp/transcript.jsonl",
+                "agentName": "task",
+                "agentType": "task",
+                "stopReason": "end_turn",
+                "response": "done"
+            }),
+        ),
+    ] {
+        server
+            .send_request(
+                request_id,
+                "hooks.invoke",
+                serde_json::json!({
+                    "sessionId": server.session_id,
+                    "hookType": hook_type,
+                    "input": input
+                }),
+            )
+            .await;
+        let response = timeout(TIMEOUT, server.read_response()).await.unwrap();
+        assert_eq!(response["id"], request_id);
+        assert_eq!(response["result"], serde_json::json!({ "output": {} }));
+    }
+
+    server
+        .send_request(
+            304,
+            "hooks.invoke",
+            serde_json::json!({
+                "sessionId": server.session_id,
+                "hookType": "unrecognizedHook",
+                "input": {}
+            }),
+        )
+        .await;
+    let response = timeout(TIMEOUT, server.read_response()).await.unwrap();
+    assert_eq!(response["result"], serde_json::json!({ "output": {} }));
+
+    let warnings: Vec<_> = capture
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|event| event.message_contains("unknown hook type"))
+        .cloned()
+        .collect();
+    assert_eq!(warnings.len(), 1, "unknown hook warnings: {warnings:?}");
+    assert!(
+        warnings[0].field_is("hook_type", "unrecognizedHook"),
+        "unexpected hook warning: {:?}",
+        warnings[0]
+    );
+}
+
 /// The CLI sends the `error` of the `errorOccurred` and `sessionEnd` hook
 /// inputs as an error object. Both inputs reach their hooks with the object's
 /// `message`, and no hook dispatch fails.
 #[tokio::test]
 async fn hooks_invoke_decodes_the_clis_error_objects() {
-    use copilot_sdk::hooks::{
+    use github_copilot_sdk::hooks::{
         ErrorOccurredInput, ErrorOccurredOutput, HookContext, SessionEndInput, SessionEndOutput,
         SessionHooks,
     };
@@ -9277,8 +7833,8 @@ async fn hooks_invoke_decodes_the_clis_error_objects() {
 }
 
 async fn create_session_pair_with_system_message_transforms(
-    transforms: Arc<dyn copilot_sdk::transforms::SystemMessageTransform>,
-) -> (copilot_sdk::session::Session, FakeServer) {
+    transforms: Arc<dyn github_copilot_sdk::transforms::SystemMessageTransform>,
+) -> (github_copilot_sdk::session::Session, FakeServer) {
     let (client, server_read, server_write) = make_client();
 
     let mut server = FakeServer {
@@ -9291,9 +7847,7 @@ async fn create_session_pair_with_system_message_transforms(
         let client = client.clone();
         async move {
             client
-                .create_session(
-                    CreateSessionOptions::default().with_system_message_transform(transforms),
-                )
+                .create_session(SessionConfig::default().with_system_message_transform(transforms))
                 .await
                 .unwrap()
         }
@@ -9320,7 +7874,7 @@ async fn create_session_pair_with_system_message_transforms(
 
 #[tokio::test]
 async fn system_message_transform_dispatches_to_transform() {
-    use copilot_sdk::transforms::{SystemMessageTransform, TransformContext};
+    use github_copilot_sdk::transforms::{SystemMessageTransform, TransformContext};
 
     struct AppendTransform;
     #[async_trait]
@@ -9365,7 +7919,7 @@ async fn system_message_transform_dispatches_to_transform() {
 
 #[tokio::test]
 async fn system_message_transform_returns_error_for_missing_sections() {
-    use copilot_sdk::transforms::{SystemMessageTransform, TransformContext};
+    use github_copilot_sdk::transforms::{SystemMessageTransform, TransformContext};
 
     struct DummyTransform;
     #[async_trait]
@@ -9420,7 +7974,7 @@ async fn client_stop_sends_session_destroy_for_each_active_session() {
         let client = client.clone();
         async move {
             client
-                .create_session(CreateSessionOptions::default())
+                .create_session(SessionConfig::default())
                 .await
                 .unwrap()
         }
@@ -9440,7 +7994,7 @@ async fn client_stop_sends_session_destroy_for_each_active_session() {
         let client = client.clone();
         async move {
             client
-                .create_session(CreateSessionOptions::default())
+                .create_session(SessionConfig::default())
                 .await
                 .unwrap()
         }
@@ -9506,83 +8060,22 @@ async fn client_stop_aggregates_session_detach_errors() {
     assert!(msg.contains("session gone"), "unexpected message: {msg}");
 }
 
-#[tokio::test(start_paused = true)]
-async fn client_stop_bounds_session_detach_when_runtime_never_answers() {
-    // A hung runtime never answers session.detach. Client::stop must give up
-    // on every detach after one shared deadline instead of waiting forever.
-    let (client, server_read, server_write) = make_client();
-    let mut server = FakeServer {
-        read: server_read,
-        write: server_write,
-        session_id: String::new(),
-    };
-    let mut sessions = Vec::new();
-    for workspace in ["/tmp/ws-a", "/tmp/ws-b"] {
-        let create = tokio::spawn({
-            let client = client.clone();
-            async move {
-                client
-                    .create_session(CreateSessionOptions::default())
-                    .await
-                    .unwrap()
-            }
-        });
-        let request = server.read_request().await;
-        assert_eq!(request["method"], "session.create");
-        let session_id = requested_session_id(&request).to_string();
-        server
-            .respond(
-                &request,
-                serde_json::json!({ "sessionId": session_id, "workspacePath": workspace }),
-            )
-            .await;
-        sessions.push(timeout(TIMEOUT, create).await.unwrap().unwrap());
-    }
-
-    let started = tokio::time::Instant::now();
-    let stop_handle = tokio::spawn({
-        let client = client.clone();
-        async move { client.stop().await }
-    });
-    let request = server.read_request().await;
-    assert_eq!(request["method"], "session.detach");
-
-    // Leave the detach unanswered. The guard is longer than the 10s stop
-    // deadline, so it only fires if stop() never gives up on it.
-    let stop_result = timeout(Duration::from_secs(60), stop_handle)
-        .await
-        .expect("stop() never moved past an unanswered session.detach")
-        .unwrap();
-    let errors = stop_result.expect_err("expected detach timeouts");
-    assert_eq!(errors.errors().len(), 2);
-    let msg = errors.to_string();
-    assert!(
-        msg.contains("session.detach timed out during Client::stop"),
-        "unexpected message: {msg}"
-    );
-    // One deadline covers every session, not one timeout per session.
-    assert!(
-        started.elapsed() < Duration::from_secs(11),
-        "stop took {:?}",
-        started.elapsed()
-    );
-}
-
 #[test]
 fn session_config_serializes_bucket_b_fields() {
     use std::path::PathBuf;
 
-    use copilot_sdk::{
-        CloudSessionOptions, CloudSessionRepository, CreateSessionOptions, SessionId,
+    use github_copilot_sdk::{
+        CloudSessionOptions, CloudSessionRepository, SessionConfig, SessionId,
     };
 
-    let mut cfg = CreateSessionOptions::default();
+    let mut cfg = SessionConfig::default();
     cfg.session_id = Some(SessionId::from("custom-id"));
     cfg.config_directory = Some(PathBuf::from("/tmp/cfg"));
     cfg.working_directory = Some(PathBuf::from("/tmp/work"));
-    cfg.github.token = Some("ghs_secret".to_string());
-    cfg.events.include_sub_agent_streaming_events = Some(false);
-    cfg.github.telemetry_enabled = Some(false);
+    cfg.github_token = Some("ghs_secret".to_string());
+    cfg.include_sub_agent_streaming_events = Some(false);
+    cfg.enable_session_telemetry = Some(false);
+    cfg.remote_session = Some(github_copilot_sdk::rpc::RemoteSessionMode::Export);
     cfg.cloud = Some(CloudSessionOptions::with_repository(
         CloudSessionRepository::new("github", "copilot-sdk").with_branch("main"),
     ));
@@ -9590,28 +8083,30 @@ fn session_config_serializes_bucket_b_fields() {
     // Debug never leaks the token.
     let debug = format!("{cfg:?}");
     assert!(!debug.contains("ghs_secret"), "leaked token: {debug}");
+    assert!(debug.contains("<redacted>"), "missing redaction: {debug}");
 }
 
 #[test]
 fn resume_session_config_serializes_bucket_b_fields() {
     use std::path::PathBuf;
 
-    use copilot_sdk::{ResumeSessionOptions, SessionId};
+    use github_copilot_sdk::{ResumeSessionConfig, SessionId};
 
-    let mut cfg = ResumeSessionOptions::new(SessionId::from("sess-1"));
+    let mut cfg = ResumeSessionConfig::new(SessionId::from("sess-1"));
     cfg.working_directory = Some(PathBuf::from("/tmp/work"));
     cfg.config_directory = Some(PathBuf::from("/tmp/cfg"));
-    cfg.github.token = Some("ghs_secret".to_string());
-    cfg.events.include_sub_agent_streaming_events = Some(true);
-    cfg.github.telemetry_enabled = Some(false);
+    cfg.github_token = Some("ghs_secret".to_string());
+    cfg.include_sub_agent_streaming_events = Some(true);
+    cfg.enable_session_telemetry = Some(false);
+    cfg.remote_session = Some(github_copilot_sdk::rpc::RemoteSessionMode::On);
 
     let debug = format!("{cfg:?}");
     assert!(!debug.contains("ghs_secret"), "leaked token: {debug}");
 }
 
 // Wire-format coverage for `enable_on_demand_instruction_discovery` lives in
-// the in-crate unit tests alongside `CreateSessionOptions::into_wire` /
-// `ResumeSessionOptions::into_wire` (the wire conversion is crate-private and
+// the in-crate unit tests alongside `SessionConfig::into_wire` /
+// `ResumeSessionConfig::into_wire` (the wire conversion is crate-private and
 // the public config types are intentionally not `Serialize`).
 
 // =====================================================================
@@ -9625,11 +8120,13 @@ struct CountingCommandHandler {
 
 #[async_trait]
 impl CommandHandler for CountingCommandHandler {
-    async fn on_command(&self, ctx: CommandContext) -> Result<(), copilot_sdk::Error> {
+    async fn on_command(&self, ctx: CommandContext) -> Result<(), github_copilot_sdk::Error> {
         *self.last_ctx.lock() = Some(ctx);
         if let Some(message) = &self.error_to_return {
-            Err(copilot_sdk::Error::with_message(
-                copilot_sdk::ErrorKind::Session(copilot_sdk::SessionErrorKind::AgentError),
+            Err(github_copilot_sdk::Error::with_message(
+                github_copilot_sdk::ErrorKind::Session(
+                    github_copilot_sdk::SessionErrorKind::AgentError,
+                ),
                 message.clone(),
             ))
         } else {
@@ -9640,7 +8137,7 @@ impl CommandHandler for CountingCommandHandler {
 
 async fn create_session_pair_with_commands(
     commands: Vec<CommandDefinition>,
-) -> (copilot_sdk::session::Session, FakeServer, Value) {
+) -> (github_copilot_sdk::session::Session, FakeServer, Value) {
     let (client, server_read, server_write) = make_client();
 
     let mut server = FakeServer {
@@ -9653,10 +8150,7 @@ async fn create_session_pair_with_commands(
         let client = client.clone();
         async move {
             client
-                .create_session(
-                    CreateSessionOptions::default()
-                        .with_interaction(|group| group.with_commands(commands)),
-                )
+                .create_session(SessionConfig::default().with_commands(commands))
                 .await
                 .unwrap()
         }
@@ -9677,6 +8171,106 @@ async fn create_session_pair_with_commands(
 
     let session = timeout(TIMEOUT, create_handle).await.unwrap().unwrap();
     (session, server, create_req)
+}
+
+#[tokio::test]
+async fn create_serializes_commands_strips_handler() {
+    let last_ctx = Arc::new(parking_lot::Mutex::new(None));
+    let commands = vec![
+        CommandDefinition::new(
+            "deploy",
+            Arc::new(CountingCommandHandler {
+                last_ctx: last_ctx.clone(),
+                error_to_return: None,
+            }),
+        )
+        .with_description("Deploy to production"),
+        CommandDefinition::new(
+            "rollback",
+            Arc::new(CountingCommandHandler {
+                last_ctx: last_ctx.clone(),
+                error_to_return: None,
+            }),
+        ),
+    ];
+
+    let (_session, _server, create_req) = create_session_pair_with_commands(commands).await;
+
+    let wire = create_req["params"]["commands"]
+        .as_array()
+        .expect("commands should be an array");
+    assert_eq!(wire.len(), 2);
+
+    let deploy = &wire[0];
+    assert_eq!(deploy["name"], "deploy");
+    assert_eq!(deploy["description"], "Deploy to production");
+    assert!(
+        deploy.get("handler").is_none(),
+        "wire payload must not include handler, got: {deploy}"
+    );
+    let deploy_keys: Vec<&String> = deploy.as_object().unwrap().keys().collect();
+    assert_eq!(deploy_keys.len(), 2, "got keys: {deploy_keys:?}");
+
+    let rollback = &wire[1];
+    assert_eq!(rollback["name"], "rollback");
+    assert_eq!(rollback["description"], "");
+    assert!(rollback.get("handler").is_none());
+    let rollback_keys: Vec<&String> = rollback.as_object().unwrap().keys().collect();
+    assert_eq!(rollback_keys.len(), 2, "got keys: {rollback_keys:?}");
+}
+
+#[tokio::test]
+async fn command_execute_dispatches_to_registered_handler_and_acks_success() {
+    let last_ctx = Arc::new(parking_lot::Mutex::new(None));
+    let commands = vec![CommandDefinition::new(
+        "deploy",
+        Arc::new(CountingCommandHandler {
+            last_ctx: last_ctx.clone(),
+            error_to_return: None,
+        }),
+    )];
+
+    let (session, mut server, _) = create_session_pair_with_commands(commands).await;
+
+    server
+        .send_event(
+            "command.execute",
+            serde_json::json!({
+                "requestId": "req-deploy-1",
+                "command": "/deploy production",
+                "commandName": "deploy",
+                "args": "production",
+            }),
+        )
+        .await;
+
+    let ack = timeout(TIMEOUT, server.read_request()).await.unwrap();
+    assert_eq!(
+        ack["method"], "session.commands.handlePendingCommand",
+        "expected handlePendingCommand RPC, got: {ack}"
+    );
+    assert_eq!(
+        ack["params"]["sessionId"].as_str(),
+        Some(session.id().as_ref())
+    );
+    assert_eq!(ack["params"]["requestId"], "req-deploy-1");
+    assert!(
+        ack["params"].get("error").is_none(),
+        "success ack should omit error, got: {ack}"
+    );
+
+    server
+        .respond(&ack, serde_json::json!({ "success": true }))
+        .await;
+
+    let ctx = last_ctx
+        .lock()
+        .clone()
+        .expect("handler should have been invoked");
+    assert_eq!(ctx.command, "/deploy production");
+    assert_eq!(ctx.command_name, "deploy");
+    assert_eq!(ctx.args, "production");
+    assert_eq!(ctx.session_id.as_ref(), session.id().as_ref());
 }
 
 #[tokio::test]
@@ -9763,7 +8357,11 @@ impl CommandHandler for PanickingCommandHandler {
         &'life0 self,
         _ctx: CommandContext,
     ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<(), copilot_sdk::Error>> + Send + 'async_trait>,
+        Box<
+            dyn std::future::Future<Output = Result<(), github_copilot_sdk::Error>>
+                + Send
+                + 'async_trait,
+        >,
     >
     where
         'life0: 'async_trait,
@@ -9779,7 +8377,7 @@ impl CommandHandler for PanickingCommandHandler {
 struct PanickingCommandFuture(CommandPanicPhase);
 
 impl std::future::Future for PanickingCommandFuture {
-    type Output = Result<(), copilot_sdk::Error>;
+    type Output = Result<(), github_copilot_sdk::Error>;
 
     fn poll(
         self: std::pin::Pin<&mut Self>,
@@ -9851,13 +8449,13 @@ async fn command_execute_handler_drop_panic_acks_with_error() {
 
 // SessionFsProvider tests --------------------------------------------------
 
-use copilot_sdk::session_fs::{
+use github_copilot_sdk::session_fs::{
     DirEntry, DirEntryKind, FileInfo, FsError, FsErrorKind, SessionFsCapabilities, SessionFsConfig,
     SessionFsConventions, SessionFsProvider, SessionFsSqliteProvider, SessionFsSqliteQueryResult,
     SessionFsSqliteQueryType, SessionFsSqliteTransactionError, SessionFsSqliteTransactionStatement,
 };
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn binary_capability_rejects_text_only_provider_on_create_and_resume() {
     for resume in [false, true] {
         let (client_write, mut server_read) = duplex(8192);
@@ -9876,18 +8474,15 @@ async fn binary_capability_rejects_text_only_provider_on_create_and_resume() {
             if resume {
                 client
                     .resume_session(
-                        copilot_sdk::ResumeSessionOptions::new(SessionId::new(
+                        github_copilot_sdk::ResumeSessionConfig::new(SessionId::new(
                             "text-only-provider",
                         ))
-                        .with_state(|group| group.with_session_fs_provider(provider)),
+                        .with_session_fs_provider(provider),
                     )
                     .await
             } else {
                 client
-                    .create_session(
-                        CreateSessionOptions::default()
-                            .with_state(|group| group.with_session_fs_provider(provider)),
-                    )
+                    .create_session(SessionConfig::default().with_session_fs_provider(provider))
                     .await
             }
         })
@@ -10067,7 +8662,7 @@ impl SessionFsSqliteProvider for RecordingFsProvider {
 
 async fn create_session_pair_with_fs_provider(
     provider: Arc<dyn SessionFsProvider>,
-) -> (copilot_sdk::session::Session, FakeServer) {
+) -> (github_copilot_sdk::session::Session, FakeServer) {
     let (client, server_read, server_write) = make_client();
 
     let mut server = FakeServer {
@@ -10080,10 +8675,7 @@ async fn create_session_pair_with_fs_provider(
         let client = client.clone();
         async move {
             client
-                .create_session(
-                    CreateSessionOptions::default()
-                        .with_state(|group| group.with_session_fs_provider(provider)),
-                )
+                .create_session(SessionConfig::default().with_session_fs_provider(provider))
                 .await
                 .unwrap()
         }
@@ -10119,10 +8711,7 @@ async fn session_fs_request_during_create_is_served_before_create_response() {
         let client = client.clone();
         async move {
             client
-                .create_session(
-                    CreateSessionOptions::default()
-                        .with_state(|group| group.with_session_fs_provider(provider)),
-                )
+                .create_session(SessionConfig::default().with_session_fs_provider(provider))
                 .await
         }
     });
@@ -10176,10 +8765,7 @@ async fn failed_create_cancels_pre_response_permission_handler() {
     };
     let create_handle = tokio::spawn(async move {
         client
-            .create_session(
-                CreateSessionOptions::default()
-                    .with_permissions(|group| group.with_on_request(handler)),
-            )
+            .create_session(SessionConfig::default().with_permission_handler(handler))
             .await
     });
 
@@ -10225,10 +8811,7 @@ async fn cancelled_create_cancels_pre_response_permission_handler() {
     };
     let create_handle = tokio::spawn(async move {
         client
-            .create_session(
-                CreateSessionOptions::default()
-                    .with_permissions(|group| group.with_on_request(handler)),
-            )
+            .create_session(SessionConfig::default().with_permission_handler(handler))
             .await
     });
 
@@ -10267,10 +8850,7 @@ async fn failed_create_cancels_pre_response_session_fs_request() {
     };
     let create_handle = tokio::spawn(async move {
         client
-            .create_session(
-                CreateSessionOptions::default()
-                    .with_state(|group| group.with_session_fs_provider(provider)),
-            )
+            .create_session(SessionConfig::default().with_session_fs_provider(provider))
             .await
     });
 
@@ -10320,7 +8900,7 @@ impl PermissionHandler for StartupCallbackGate {
         &self,
         _session_id: SessionId,
         _request_id: RequestId,
-        _request: copilot_sdk::PermissionRequestData,
+        _request: github_copilot_sdk::PermissionRequestData,
     ) -> PermissionResult {
         self.wait().await;
         PermissionResult::approve_once()
@@ -10398,23 +8978,21 @@ async fn check_startup_callback_ownership(
     let prepared = if route == StartupRoute::Resume {
         client
             .prepare_resume_session(
-                copilot_sdk::ResumeSessionOptions::new(SessionId::new(&server.session_id))
-                    .with_permissions(|group| group.with_on_request(permission.clone()))
-                    .with_state(|group| group.with_session_fs_provider(fs.clone()))
-                    .with_interaction(|group| {
-                        group.with_on_elicitation_request(elicitation.clone())
-                    })
-                    .with_mcp(|group| group.with_on_auth_request(mcp_auth.clone()))
-                    .with_git(|group| group.with_coauthor_enabled(false)),
+                github_copilot_sdk::ResumeSessionConfig::new(SessionId::new(&server.session_id))
+                    .with_permission_handler(permission.clone())
+                    .with_session_fs_provider(fs.clone())
+                    .with_elicitation_handler(elicitation.clone())
+                    .with_mcp_auth_handler(mcp_auth.clone())
+                    .with_coauthor_enabled(false),
             )
             .unwrap()
     } else {
-        let mut config = CreateSessionOptions::default()
-            .with_permissions(|group| group.with_on_request(permission.clone()))
-            .with_state(|group| group.with_session_fs_provider(fs.clone()))
-            .with_interaction(|group| group.with_on_elicitation_request(elicitation.clone()))
-            .with_mcp(|group| group.with_on_auth_request(mcp_auth.clone()))
-            .with_git(|group| group.with_coauthor_enabled(false));
+        let mut config = SessionConfig::default()
+            .with_permission_handler(permission.clone())
+            .with_session_fs_provider(fs.clone())
+            .with_elicitation_handler(elicitation.clone())
+            .with_mcp_auth_handler(mcp_auth.clone())
+            .with_coauthor_enabled(false);
         if route == StartupRoute::Deferred {
             config.cloud = Some(CloudSessionOptions::with_repository(
                 CloudSessionRepository::new("octocat", "hello-world"),
@@ -10715,22 +9293,24 @@ async fn mode_patch_cleanup_retires_github_token_provider() {
             });
             let prepared = if resume {
                 client.prepare_resume_session(
-                    copilot_sdk::ResumeSessionOptions::new(SessionId::new(&server.session_id))
-                        .with_github(|group| group.with_token_provider(provider))
-                        .with_git(|group| group.with_coauthor_enabled(false)),
+                    github_copilot_sdk::ResumeSessionConfig::new(SessionId::new(
+                        &server.session_id,
+                    ))
+                    .with_github_token_provider(provider)
+                    .with_coauthor_enabled(false),
                 )
             } else {
                 client.prepare_session(
-                    CreateSessionOptions::default()
+                    SessionConfig::default()
                         .with_session_id(server.session_id.as_str())
-                        .with_github(|group| group.with_token_provider(provider))
-                        .with_git(|group| group.with_coauthor_enabled(false)),
+                        .with_github_token_provider(provider)
+                        .with_coauthor_enabled(false),
                 )
             }
             .unwrap();
             let start = tokio::spawn(prepared.start());
             let request = timeout(TIMEOUT, server.read_request()).await.unwrap();
-            let registration_id = request["params"]["github"]["tokenProviderRegistrationId"]
+            let registration_id = request["params"]["gitHubTokenProviderRegistrationId"]
                 .as_str()
                 .unwrap()
                 .to_string();
@@ -10782,6 +9362,79 @@ async fn mode_patch_cleanup_retires_github_token_provider() {
             assert_eq!(client.registered_session_count_for_test(), 0);
         }
     }
+}
+
+#[tokio::test]
+async fn session_fs_dispatches_read_file_to_provider() {
+    let provider = Arc::new(RecordingFsProvider::new().with_file("/foo.txt", "hello world"));
+    let (_session, mut server) = create_session_pair_with_fs_provider(provider).await;
+
+    server
+        .send_request(
+            42,
+            "sessionFs.readFile",
+            serde_json::json!({ "sessionId": server.session_id, "path": "/foo.txt" }),
+        )
+        .await;
+
+    let response = timeout(TIMEOUT, server.read_response()).await.unwrap();
+    assert_eq!(response["id"], 42);
+    assert_eq!(response["result"]["content"], "hello world");
+    assert!(response["result"].get("error").is_none() || response["result"]["error"].is_null());
+}
+
+#[tokio::test]
+async fn session_fs_maps_not_found_to_enoent() {
+    let provider = Arc::new(RecordingFsProvider::new());
+    let (_session, mut server) = create_session_pair_with_fs_provider(provider).await;
+
+    server
+        .send_request(
+            7,
+            "sessionFs.readFile",
+            serde_json::json!({ "sessionId": server.session_id, "path": "/missing.txt" }),
+        )
+        .await;
+
+    let response = timeout(TIMEOUT, server.read_response()).await.unwrap();
+    assert_eq!(response["id"], 7);
+    let error = &response["result"]["error"];
+    assert_eq!(error["code"], "ENOENT");
+    assert!(error["message"].as_str().unwrap().contains("missing.txt"));
+}
+
+#[tokio::test]
+async fn session_fs_maps_other_to_unknown() {
+    struct AlwaysFails;
+    #[async_trait]
+    impl SessionFsProvider for AlwaysFails {
+        async fn stat(&self, _path: &str) -> Result<FileInfo, FsError> {
+            Err(FsError::with_message(
+                FsErrorKind::Other,
+                "backing store unavailable",
+            ))
+        }
+    }
+
+    let (_session, mut server) = create_session_pair_with_fs_provider(Arc::new(AlwaysFails)).await;
+
+    server
+        .send_request(
+            8,
+            "sessionFs.stat",
+            serde_json::json!({ "sessionId": server.session_id, "path": "/x" }),
+        )
+        .await;
+
+    let response = timeout(TIMEOUT, server.read_response()).await.unwrap();
+    let error = &response["result"]["error"];
+    assert_eq!(error["code"], "UNKNOWN");
+    assert!(
+        error["message"]
+            .as_str()
+            .unwrap()
+            .contains("backing store unavailable")
+    );
 }
 
 #[tokio::test]
@@ -10917,11 +9570,17 @@ async fn session_fs_dispatches_write_file_with_mode() {
 
 #[tokio::test]
 async fn validate_session_fs_config_rejects_empty_initial_cwd() {
-    let cfg =
-        copilot_sdk::session_fs::SessionFsConfig::new("", "/state", SessionFsConventions::Posix);
-    let opts =
-        copilot_sdk::ClientOptions::new(copilot_sdk::ClientMode::CodingAgent).with_session_fs(cfg);
-    let err = copilot_sdk::Client::start(opts).await.err();
+    let cfg = github_copilot_sdk::session_fs::SessionFsConfig::new(
+        "",
+        "/state",
+        SessionFsConventions::Posix,
+    );
+    let opts = {
+        let mut opts = github_copilot_sdk::ClientOptions::default();
+        opts.session_fs = Some(cfg);
+        opts
+    };
+    let err = github_copilot_sdk::Client::start(opts).await.err();
     let err_string = format!("{err:?}");
     assert!(
         err_string.contains("initial_cwd") || err_string.contains("InvalidSessionFsConfig"),
@@ -10929,7 +9588,7 @@ async fn validate_session_fs_config_rejects_empty_initial_cwd() {
     );
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn create_session_errors_when_provider_required_but_missing() {
     for resume in [false, true] {
         let (client_write, mut server_read) = duplex(8192);
@@ -10944,12 +9603,12 @@ async fn create_session_errors_when_provider_required_but_missing() {
         let result = timeout(TIMEOUT, async {
             if resume {
                 client
-                    .resume_session(copilot_sdk::ResumeSessionOptions::new(SessionId::new(
-                        "missing-provider",
-                    )))
+                    .resume_session(github_copilot_sdk::ResumeSessionConfig::new(
+                        SessionId::new("missing-provider"),
+                    ))
                     .await
             } else {
-                client.create_session(CreateSessionOptions::default()).await
+                client.create_session(SessionConfig::default()).await
             }
         })
         .await
@@ -10958,7 +9617,7 @@ async fn create_session_errors_when_provider_required_but_missing() {
         assert!(
             matches!(
                 error.kind(),
-                ErrorKind::Session(copilot_sdk::SessionErrorKind::SessionFsProviderRequired)
+                ErrorKind::Session(github_copilot_sdk::SessionErrorKind::SessionFsProviderRequired)
             ),
             "resume={resume}: {error}"
         );
@@ -10976,20 +9635,20 @@ async fn create_session_errors_when_provider_required_but_missing() {
 // ---------- 4.3 trace context tests ----------
 
 struct StaticTraceProvider {
-    ctx: copilot_sdk::types::TraceContext,
+    ctx: github_copilot_sdk::types::TraceContext,
     calls: Arc<AtomicUsize>,
 }
 
 #[async_trait]
-impl copilot_sdk::types::TraceContextProvider for StaticTraceProvider {
-    async fn get_trace_context(&self) -> copilot_sdk::types::TraceContext {
+impl github_copilot_sdk::types::TraceContextProvider for StaticTraceProvider {
+    async fn get_trace_context(&self) -> github_copilot_sdk::types::TraceContext {
         self.calls.fetch_add(1, Ordering::Relaxed);
         self.ctx.clone()
     }
 }
 
 fn make_client_with_trace_provider(
-    provider: Arc<dyn copilot_sdk::types::TraceContextProvider>,
+    provider: Arc<dyn github_copilot_sdk::types::TraceContextProvider>,
 ) -> (Client, tokio::io::DuplexStream, tokio::io::DuplexStream) {
     let (client_write, server_read) = duplex(8192);
     let (server_write, client_read) = duplex(8192);
@@ -11007,7 +9666,7 @@ fn make_client_with_trace_provider(
 async fn on_get_trace_context_called_on_session_create() {
     let calls = Arc::new(AtomicUsize::new(0));
     let provider = Arc::new(StaticTraceProvider {
-        ctx: copilot_sdk::types::TraceContext::from_traceparent("00-aaaa-bbbb-01")
+        ctx: github_copilot_sdk::types::TraceContext::from_traceparent("00-aaaa-bbbb-01")
             .with_tracestate("vendor=value"),
         calls: calls.clone(),
     });
@@ -11022,7 +9681,7 @@ async fn on_get_trace_context_called_on_session_create() {
         let client = client.clone();
         async move {
             client
-                .create_session(CreateSessionOptions::default())
+                .create_session(SessionConfig::default())
                 .await
                 .unwrap()
         }
@@ -11045,10 +9704,10 @@ async fn on_get_trace_context_called_on_session_create() {
 
 #[tokio::test]
 async fn on_get_trace_context_called_on_session_resume() {
-    use copilot_sdk::types::ResumeSessionOptions;
+    use github_copilot_sdk::types::ResumeSessionConfig;
     let calls = Arc::new(AtomicUsize::new(0));
     let provider = Arc::new(StaticTraceProvider {
-        ctx: copilot_sdk::types::TraceContext::from_traceparent("00-resume-trace-01"),
+        ctx: github_copilot_sdk::types::TraceContext::from_traceparent("00-resume-trace-01"),
         calls: calls.clone(),
     });
     let (client, server_read, server_write) = make_client_with_trace_provider(provider);
@@ -11061,7 +9720,7 @@ async fn on_get_trace_context_called_on_session_resume() {
     let resume_handle = tokio::spawn({
         let client = client.clone();
         async move {
-            let cfg = ResumeSessionOptions::new(SessionId::from("trace-resume"));
+            let cfg = ResumeSessionConfig::new(SessionId::from("trace-resume"));
             client.resume_session(cfg).await.unwrap()
         }
     });
@@ -11092,7 +9751,7 @@ async fn on_get_trace_context_called_on_session_resume() {
 async fn on_get_trace_context_called_on_session_send() {
     let calls = Arc::new(AtomicUsize::new(0));
     let provider = Arc::new(StaticTraceProvider {
-        ctx: copilot_sdk::types::TraceContext::from_traceparent("00-send-trace-01"),
+        ctx: github_copilot_sdk::types::TraceContext::from_traceparent("00-send-trace-01"),
         calls: calls.clone(),
     });
     let (client, server_read, server_write) = make_client_with_trace_provider(provider);
@@ -11106,7 +9765,7 @@ async fn on_get_trace_context_called_on_session_send() {
         let client = client.clone();
         async move {
             client
-                .create_session(CreateSessionOptions::default())
+                .create_session(SessionConfig::default())
                 .await
                 .unwrap()
         }
@@ -11151,7 +9810,7 @@ async fn on_get_trace_context_called_on_session_send() {
 async fn message_options_trace_context_overrides_callback() {
     let calls = Arc::new(AtomicUsize::new(0));
     let provider = Arc::new(StaticTraceProvider {
-        ctx: copilot_sdk::types::TraceContext::from_traceparent("00-callback-01"),
+        ctx: github_copilot_sdk::types::TraceContext::from_traceparent("00-callback-01"),
         calls: calls.clone(),
     });
     let (client, server_read, server_write) = make_client_with_trace_provider(provider);
@@ -11165,7 +9824,7 @@ async fn message_options_trace_context_overrides_callback() {
         let client = client.clone();
         async move {
             client
-                .create_session(CreateSessionOptions::default())
+                .create_session(SessionConfig::default())
                 .await
                 .unwrap()
         }
@@ -11213,6 +9872,34 @@ async fn message_options_trace_context_overrides_callback() {
 }
 
 #[tokio::test]
+async fn message_options_trace_context_used_without_callback() {
+    let (session, mut server) = create_session_pair().await;
+    let session = Arc::new(session);
+
+    let send_handle = tokio::spawn({
+        let session = session.clone();
+        async move {
+            session
+                .send(MessageOptions::new("hi").with_traceparent("00-direct-01"))
+                .await
+        }
+    });
+    let req = server.read_request().await;
+    assert_eq!(req["method"], "session.send");
+    assert_eq!(req["params"]["traceparent"], "00-direct-01");
+    assert!(
+        req["params"].get("tracestate").is_none(),
+        "tracestate should be omitted when only traceparent is set"
+    );
+    server.respond(&req, serde_json::json!({})).await;
+    timeout(TIMEOUT, send_handle)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test]
 async fn tool_invocation_carries_trace_context_from_event() {
     type CapturedTrace = Arc<parking_lot::Mutex<Option<(Option<String>, Option<String>)>>>;
     struct CapturingTool {
@@ -11222,7 +9909,10 @@ async fn tool_invocation_carries_trace_context_from_event() {
 
     #[async_trait]
     impl tool::ToolHandler for CapturingTool {
-        async fn call(&self, invocation: ToolInvocation) -> Result<ToolResult, copilot_sdk::Error> {
+        async fn call(
+            &self,
+            invocation: ToolInvocation,
+        ) -> Result<ToolResult, github_copilot_sdk::Error> {
             *self.captured.lock() = Some((
                 invocation.traceparent.clone(),
                 invocation.tracestate.clone(),
@@ -11239,14 +9929,12 @@ async fn tool_invocation_carries_trace_context_from_event() {
         signal: signal.clone(),
     });
     let (_session, mut server) = create_session_pair_with_config(move |cfg| {
-        cfg.with_tools(|group| {
-            group.with_definitions(vec![
-                Tool::new("calc")
-                    .with_description("calc")
-                    .with_parameters(serde_json::json!({"type":"object"}))
-                    .with_handler(handler.clone()),
-            ])
-        })
+        cfg.with_tools(vec![
+            Tool::new("calc")
+                .with_description("calc")
+                .with_parameters(serde_json::json!({"type":"object"}))
+                .with_handler(handler.clone()),
+        ])
     })
     .await;
 
@@ -11285,7 +9973,10 @@ async fn tool_invocation_names_the_sub_agent_and_request_behind_the_call() {
 
     #[async_trait]
     impl tool::ToolHandler for CapturingTool {
-        async fn call(&self, invocation: ToolInvocation) -> Result<ToolResult, copilot_sdk::Error> {
+        async fn call(
+            &self,
+            invocation: ToolInvocation,
+        ) -> Result<ToolResult, github_copilot_sdk::Error> {
             self.captured
                 .send(serde_json::to_value(&invocation).unwrap())
                 .unwrap();
@@ -11296,14 +9987,12 @@ async fn tool_invocation_names_the_sub_agent_and_request_behind_the_call() {
     let (captured, mut invocations) = tokio::sync::mpsc::unbounded_channel();
     let handler = Arc::new(CapturingTool { captured });
     let (_session, mut server) = create_session_pair_with_config(move |cfg| {
-        cfg.with_tools(|group| {
-            group.with_definitions(vec![
-                Tool::new("calc")
-                    .with_description("calc")
-                    .with_parameters(serde_json::json!({"type":"object"}))
-                    .with_handler(handler.clone()),
-            ])
-        })
+        cfg.with_tools(vec![
+            Tool::new("calc")
+                .with_description("calc")
+                .with_parameters(serde_json::json!({"type":"object"}))
+                .with_handler(handler.clone()),
+        ])
     })
     .await;
 

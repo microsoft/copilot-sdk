@@ -2,13 +2,13 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
-using Microsoft.Copilot.Rpc;
-using Microsoft.Copilot.Test.Harness;
+using GitHub.Copilot.Rpc;
+using GitHub.Copilot.Test.Harness;
 using System.Text.Json;
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Microsoft.Copilot.Test.E2E;
+namespace GitHub.Copilot.Test.E2E;
 
 public class RpcTasksAndHandlersE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
     : E2ETestBase(fixture, "rpc_tasks_and_handlers", output)
@@ -17,16 +17,21 @@ public class RpcTasksAndHandlersE2ETests(E2ETestFixture fixture, ITestOutputHelp
     public async Task Should_Round_Trip_Rpc_Elicitation_Through_Config_Handler()
     {
         var handlerContext = new TaskCompletionSource<ElicitationContext>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var session = await CreateSessionAsync(new CreateSessionOptions
+        var session = await CreateSessionAsync(new SessionConfig
         {
-            Interaction = new SessionInteractionOptions
+            OnElicitationRequest = context =>
             {
-                OnElicitationRequest = context =>
-        {
-            handlerContext.TrySetResult(context);
-            return Task.FromResult(new ElicitationResult { Action = UIElicitationResponseAction.Accept, Content = new Dictionary<string, object> { ["answer"] = "from handler", ["confirmed"] = true, }, });
-        }
-            }
+                handlerContext.TrySetResult(context);
+                return Task.FromResult(new ElicitationResult
+                {
+                    Action = UIElicitationResponseAction.Accept,
+                    Content = new Dictionary<string, object>
+                    {
+                        ["answer"] = "from handler",
+                        ["confirmed"] = true,
+                    },
+                });
+            },
         });
 
         var schema = new UIElicitationSchema

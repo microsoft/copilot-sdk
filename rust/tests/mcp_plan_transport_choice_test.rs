@@ -2,7 +2,7 @@
 
 #![allow(clippy::unwrap_used)]
 
-use copilot_sdk::rpc::{
+use github_copilot_sdk::rpc::{
     McpPlanTransportChoice, McpPlanTransportChoicePackage, McpPlanTransportChoiceRemote,
 };
 use serde_json::{Value, json};

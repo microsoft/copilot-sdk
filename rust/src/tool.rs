@@ -2,10 +2,10 @@
 //!
 //! Provides the [`ToolHandler`](crate::tool::ToolHandler) trait for
 //! implementing tools as named types. Attach a handler to a
-//! [tool definition](crate::types::Tool) via
+//! [`Tool`](crate::types::Tool) via
 //! [`Tool::with_handler`](crate::types::Tool::with_handler), then install
 //! the resulting tools on a session via
-//! [`SessionToolOptions::with_definitions`](crate::types::SessionToolOptions::with_definitions).
+//! [`SessionConfig::with_tools`](crate::types::SessionConfig::with_tools).
 //! The SDK builds an internal name-keyed registry from the handlers and
 //! dispatches to the matching handler when the CLI broadcasts
 //! `external_tool.requested`.
@@ -32,7 +32,7 @@ use crate::types::{ToolBinaryResult, ToolInvocation, ToolResult, ToolResultExpan
 /// # Example
 ///
 /// ```rust
-/// use copilot_sdk::tool::{schema_for, JsonSchema};
+/// use github_copilot_sdk::tool::{schema_for, JsonSchema};
 ///
 /// #[derive(JsonSchema)]
 /// struct Params {
@@ -73,8 +73,8 @@ pub fn schema_for<T: schemars::JsonSchema>() -> serde_json::Value {
 /// # Example
 ///
 /// ```rust
-/// use copilot_sdk::tool::tool_parameters;
-/// use copilot_sdk::Tool;
+/// use github_copilot_sdk::tool::tool_parameters;
+/// use github_copilot_sdk::Tool;
 ///
 /// let mut tool = Tool::default();
 /// tool.name = "ping".to_string();
@@ -208,22 +208,22 @@ pub fn convert_mcp_call_tool_result(value: &serde_json::Value) -> Option<ToolRes
 ///
 /// Implement this trait when you want to bind a Rust function to a tool
 /// name and have the SDK dispatch matching `external_tool.requested`
-/// broadcasts to it. Attach the impl to a [tool definition](crate::types::Tool)
+/// broadcasts to it. Attach the impl to a [`Tool`](crate::types::Tool)
 /// via [`Tool::with_handler`](crate::types::Tool::with_handler).
 ///
 /// Named handler types (e.g. `struct MyTool;`) are visible in stack
 /// traces and navigable via "go to definition", which is preferable to
 /// closure-based alternatives for non-trivial tools. For trivial tools,
 /// the `define_tool` helper function (available with the `derive`
-/// feature) wraps a free `async fn` or closure into a [tool definition](crate::types::Tool) with
+/// feature) wraps a free `async fn` or closure into a [`Tool`](crate::types::Tool) with
 /// the handler already attached.
 ///
 /// # Example
 ///
 /// ```rust,ignore
-/// use copilot_sdk::tool::{schema_for, JsonSchema, ToolHandler};
-/// use copilot_sdk::types::{Tool, ToolInvocation};
-/// use copilot_sdk::{Error, ToolResult};
+/// use github_copilot_sdk::tool::{schema_for, JsonSchema, ToolHandler};
+/// use github_copilot_sdk::types::{Tool, ToolInvocation};
+/// use github_copilot_sdk::{Error, ToolResult};
 /// use serde::Deserialize;
 /// use async_trait::async_trait;
 /// use std::sync::Arc;
@@ -257,10 +257,7 @@ pub trait ToolHandler: Send + Sync + 'static {
     /// Returning `Err` fails the tool call without showing the error text to
     /// the model, which sees a generic failure message instead. To give the
     /// model specific failure text, return `Ok` with a failure result built by
-    /// [`ToolResultExpanded::new`] with `result_type` `"failure"`. When panic
-    /// unwinding is enabled, a panic fails the tool call like an `Err`, with the
-    /// error `tool handler panicked`. With `panic = "abort"`, a panic terminates
-    /// the process instead.
+    /// [`ToolResultExpanded::new`] with `result_type` `"failure"`.
     async fn call(&self, invocation: ToolInvocation) -> Result<ToolResult, Error>;
 }
 
@@ -268,7 +265,7 @@ pub trait ToolHandler: Send + Sync + 'static {
 /// `JsonSchema`-derived parameter struct.
 ///
 /// The returned [`Tool`] carries an attached handler ready to install on a
-/// session via [`SessionToolOptions::with_definitions`](crate::types::SessionToolOptions::with_definitions).
+/// session via [`SessionConfig::with_tools`](crate::types::SessionConfig::with_tools).
 /// JSON Schema for the parameter type is generated via [`schema_for`] at
 /// construction time.
 ///
@@ -286,9 +283,9 @@ pub trait ToolHandler: Send + Sync + 'static {
 /// # Example
 ///
 /// ```rust,no_run
-/// use copilot_sdk::tool::{define_tool, JsonSchema};
-/// use copilot_sdk::types::ToolInvocation;
-/// use copilot_sdk::{Error, ToolResult};
+/// use github_copilot_sdk::tool::{define_tool, JsonSchema};
+/// use github_copilot_sdk::types::ToolInvocation;
+/// use github_copilot_sdk::{Error, ToolResult};
 /// use serde::Deserialize;
 ///
 /// #[derive(Deserialize, JsonSchema)]
@@ -372,7 +369,7 @@ where
 /// # Example
 ///
 /// ```rust,no_run
-/// use copilot_sdk::tool::{define_tool_declaration, JsonSchema};
+/// use github_copilot_sdk::tool::{define_tool_declaration, JsonSchema};
 /// use serde::Deserialize;
 ///
 /// #[derive(Deserialize, JsonSchema)]

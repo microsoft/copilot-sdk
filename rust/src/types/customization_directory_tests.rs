@@ -6,26 +6,28 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
-use super::{CreateSessionOptions, ResumeSessionOptions, SessionId};
+use super::{ResumeSessionConfig, SessionConfig, SessionId};
 
 fn assert_roots(wire: &Value, roots: Option<&[PathBuf]>) {
-    for kind in ["skills", "agents", "instructions", "hooks"] {
+    for (key, kind) in [
+        ("skillDirectories", "skills"),
+        ("agentDirectories", "agents"),
+        ("instructionDirectories", "instructions"),
+        ("hookDirectories", "hooks"),
+    ] {
         match roots {
             Some(paths) => assert_eq!(
-                wire[kind]["directories"],
+                wire[key],
                 serde_json::to_value(paths.iter().map(|path| path.join(kind)).collect::<Vec<_>>())
                     .unwrap()
             ),
-            None => assert!(
-                wire[kind].get("directories").is_none(),
-                "unexpected {kind}: {wire}"
-            ),
+            None => assert!(wire.get(key).is_none(), "unexpected {key}: {wire}"),
         }
     }
-    assert!(wire["filesystem"].get("additionalDirectories").is_none());
-    assert!(wire["agents"].get("definitions").is_none());
-    assert_eq!(wire["hooks"]["hasHandlers"], false);
-    assert_eq!(wire["hooks"]["enableRepositoryHooks"], false);
+    assert!(wire.get("additionalDirectories").is_none());
+    assert!(wire.get("customAgents").is_none());
+    assert_eq!(wire["hooks"], false);
+    assert_eq!(wire["enableFileHooks"], false);
     assert_eq!(wire["enableConfigDiscovery"], false);
 }
 
@@ -39,41 +41,25 @@ fn create_and_resume_preserve_discovery_roots_without_client_rebasing() {
             PathBuf::from("other-root"),
         ]),
     ] {
-        let mut create = CreateSessionOptions::default()
+        let mut create = SessionConfig::default()
             .with_working_directory("request-cwd")
             .with_enable_config_discovery(false)
-            .with_hooks(|group| group.with_enable_repository_hooks(false));
-        let mut resume = ResumeSessionOptions::new(SessionId::from("resumed"))
+            .with_enable_file_hooks(false);
+        let mut resume = ResumeSessionConfig::new(SessionId::from("resumed"))
             .with_working_directory("resume-cwd")
             .with_enable_config_discovery(false)
-            .with_hooks(|group| group.with_enable_repository_hooks(false));
+            .with_enable_file_hooks(false);
         if let Some(paths) = &roots {
             create = create
-                .with_skills(|group| {
-                    group.with_directories(paths.iter().map(|path| path.join("skills")))
-                })
-                .with_agents(|group| {
-                    group.with_directories(paths.iter().map(|path| path.join("agents")))
-                })
-                .with_instructions(|group| {
-                    group.with_directories(paths.iter().map(|path| path.join("instructions")))
-                })
-                .with_hooks(|group| {
-                    group.with_directories(paths.iter().map(|path| path.join("hooks")))
-                });
+                .with_skill_directories(paths.iter().map(|path| path.join("skills")))
+                .with_agent_directories(paths.iter().map(|path| path.join("agents")))
+                .with_instruction_directories(paths.iter().map(|path| path.join("instructions")))
+                .with_hook_directories(paths.iter().map(|path| path.join("hooks")));
             resume = resume
-                .with_skills(|group| {
-                    group.with_directories(paths.iter().map(|path| path.join("skills")))
-                })
-                .with_agents(|group| {
-                    group.with_directories(paths.iter().map(|path| path.join("agents")))
-                })
-                .with_instructions(|group| {
-                    group.with_directories(paths.iter().map(|path| path.join("instructions")))
-                })
-                .with_hooks(|group| {
-                    group.with_directories(paths.iter().map(|path| path.join("hooks")))
-                });
+                .with_skill_directories(paths.iter().map(|path| path.join("skills")))
+                .with_agent_directories(paths.iter().map(|path| path.join("agents")))
+                .with_instruction_directories(paths.iter().map(|path| path.join("instructions")))
+                .with_hook_directories(paths.iter().map(|path| path.join("hooks")));
         }
         let (wire, _) = create.into_wire(None).unwrap();
         assert_roots(&serde_json::to_value(wire).unwrap(), roots.as_deref());

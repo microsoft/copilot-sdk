@@ -2,8 +2,8 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
-using Microsoft.Copilot.Rpc;
-using Microsoft.Copilot.Test.Harness;
+using GitHub.Copilot.Rpc;
+using GitHub.Copilot.Test.Harness;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http;
@@ -13,7 +13,7 @@ using System.Text.RegularExpressions;
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Microsoft.Copilot.Test.E2E;
+namespace GitHub.Copilot.Test.E2E;
 
 /// <summary>
 /// Representative scenario coverage for provider and model selection.
@@ -78,20 +78,38 @@ public class ScenarioTestingProvidersE2ETests(E2ETestFixture fixture, ITestOutpu
         ProviderTokenArgs? observedArgs = null;
         var handler = new ScenarioProviderRequestHandler();
         await using var client = CreateProviderClient(handler);
-        await using var session = await Ctx.CreateSessionAsync(client, new CreateSessionOptions
+        await using var session = await Ctx.CreateSessionAsync(client, new SessionConfig
         {
             ClientName = "scenario-client",
             Model = "managed/default",
-            Inference = new SessionInferenceOptions
-            {
-                Providers = [new NamedProviderConfig { Name = "managed", Type = "openai", WireApi = "completions", BaseUrl = "https://managed.scenario.invalid/v1", ApiKey = "must-not-win", BearerToken = "must-not-win-either", BearerTokenProvider = args =>
-{
-    observedArgs = args;
-    return Task.FromResult(token);
-}, }, ],
-                Models = [new ProviderModelConfig { Id = "default", Provider = "managed", ModelId = "claude-sonnet-5", WireModel = "managed-wire-model", },]
-            },
-            Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll }
+            Providers =
+            [
+                new NamedProviderConfig
+                {
+                    Name = "managed",
+                    Type = "openai",
+                    WireApi = "completions",
+                    BaseUrl = "https://managed.scenario.invalid/v1",
+                    ApiKey = "must-not-win",
+                    BearerToken = "must-not-win-either",
+                    BearerTokenProvider = args =>
+                    {
+                        observedArgs = args;
+                        return Task.FromResult(token);
+                    },
+                },
+            ],
+            Models =
+            [
+                new ProviderModelConfig
+                {
+                    Id = "default",
+                    Provider = "managed",
+                    ModelId = "claude-sonnet-5",
+                    WireModel = "managed-wire-model",
+                },
+            ],
+            OnPermissionRequest = PermissionHandler.ApproveAll,
         });
 
         await session.SendAndWaitAsync(new MessageOptions
@@ -110,10 +128,10 @@ public class ScenarioTestingProvidersE2ETests(E2ETestFixture fixture, ITestOutpu
     [Fact]
     public async Task Should_Apply_Reasoning_Context_And_Auto_Atomically_Without_Implicit_Reset()
     {
-        await using var session = await CreateSessionAsync(new CreateSessionOptions
+        await using var session = await CreateSessionAsync(new SessionConfig
         {
             ClientName = "scenario-client",
-            Model = "claude-sonnet-5"
+            Model = "claude-sonnet-5",
         });
 
         await session.SetModelAsync("claude-sonnet-5", new SetModelOptions
@@ -162,8 +180,21 @@ public class ScenarioTestingProvidersE2ETests(E2ETestFixture fixture, ITestOutpu
     {
         var initialHandler = new ScenarioProviderRequestHandler();
         var initialClient = CreateProviderClient(initialHandler);
-        var initialSession = await Ctx.CreateSessionAsync(initialClient, new CreateSessionOptions
-        { GitHub = new SessionGitHubOptions { Capi = new CapiSessionOptions { Enabled = false } }, ClientName = "scenario-client", Model = "legacy-scenario-model", Inference = ByokTestOptions.Inference(new ProviderConfig { Type = "openai", WireApi = "completions", BaseUrl = "https://legacy.scenario.invalid/v1", ApiKey = "legacy-key", ModelId = "legacy-scenario-model", WireModel = "legacy-wire-model", }, new SessionInferenceOptions { }), Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
+        var initialSession = await Ctx.CreateSessionAsync(initialClient, new SessionConfig
+        {
+            ClientName = "scenario-client",
+            Model = "legacy-scenario-model",
+            Provider = new ProviderConfig
+            {
+                Type = "openai",
+                WireApi = "completions",
+                BaseUrl = "https://legacy.scenario.invalid/v1",
+                ApiKey = "legacy-key",
+                ModelId = "legacy-scenario-model",
+                WireModel = "legacy-wire-model",
+            },
+            OnPermissionRequest = PermissionHandler.ApproveAll,
+        });
         var sessionId = initialSession.SessionId;
         await initialSession.SendAndWaitAsync(new MessageOptions
         {
@@ -175,38 +206,41 @@ public class ScenarioTestingProvidersE2ETests(E2ETestFixture fixture, ITestOutpu
 
         var resumedHandler = new ScenarioProviderRequestHandler();
         await using var resumedClient = CreateProviderClient(resumedHandler);
-        var error = await Assert.ThrowsAnyAsync<Exception>(() =>
-            Ctx.ResumeSessionAsync(resumedClient, sessionId, new ResumeSessionOptions
-            {
-                ClientName = "scenario-client",
-                Inference = new SessionInferenceOptions
+        await using var resumed = await Ctx.ResumeSessionAsync(resumedClient, sessionId, new ResumeSessionConfig
+        {
+            ClientName = "scenario-client",
+            Providers =
+            [
+                new NamedProviderConfig
                 {
-                    DefaultProvider = null,
-                    Providers =
-                    [
-                        new NamedProviderConfig
-                        {
-                            Name = "scenario-provider",
-                            Type = "openai",
-                            WireApi = "completions",
-                            BaseUrl = "https://legacy.scenario.invalid/v1",
-                            ApiKey = "resumed-key",
-                        },
-                    ],
-                    Models =
-                    [
-                        new ProviderModelConfig
-                        {
-                            Id = "legacy-scenario-model",
-                            Provider = "scenario-provider",
-                            ModelId = "legacy-scenario-model",
-                            WireModel = "legacy-wire-model",
-                        },
-                    ],
+                    Name = "scenario-provider",
+                    Type = "openai",
+                    WireApi = "completions",
+                    BaseUrl = "https://legacy.scenario.invalid/v1",
+                    ApiKey = "resumed-key",
                 },
-                Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll },
+            ],
+            Models =
+            [
+                new ProviderModelConfig
+                {
+                    Id = "legacy-scenario-model",
+                    Provider = "scenario-provider",
+                    ModelId = "legacy-scenario-model",
+                    WireModel = "legacy-wire-model",
+                },
+            ],
+            OnPermissionRequest = PermissionHandler.ApproveAll,
+        });
+
+        Assert.Equal("legacy-scenario-model", (await resumed.Rpc.Model.GetCurrentAsync()).ModelId);
+        var error = await Assert.ThrowsAnyAsync<Exception>(() =>
+            resumed.SendAndWaitAsync(new MessageOptions
+            {
+                Prompt = "Continue the legacy scenario session.",
             }));
-        Assert.Contains("Previously registered provider model 'byok/legacy-scenario-model' is no longer registered", error.ToString(), StringComparison.Ordinal);
+        Assert.Contains("Model \"legacy-scenario-model\" is not available.", error.ToString(), StringComparison.Ordinal);
+        Assert.Equal("legacy-scenario-model", (await resumed.Rpc.Model.GetCurrentAsync()).ModelId);
         Assert.Empty(resumedHandler.InferenceRequests);
     }
 
@@ -216,7 +250,7 @@ public class ScenarioTestingProvidersE2ETests(E2ETestFixture fixture, ITestOutpu
         var handler = new ScenarioProviderRequestHandler(failingHost: "offline.scenario.invalid");
         await using var client = CreateProviderClient(handler);
         var config = CreateScenarioProviderConfig("alpha/large");
-        config.Inference.Providers!.Add(new NamedProviderConfig
+        config.Providers!.Add(new NamedProviderConfig
         {
             Name = "offline",
             Type = "openai",
@@ -224,7 +258,7 @@ public class ScenarioTestingProvidersE2ETests(E2ETestFixture fixture, ITestOutpu
             BaseUrl = "https://offline.scenario.invalid/v1",
             ApiKey = "offline-key",
         });
-        config.Inference.Models!.Add(new ProviderModelConfig
+        config.Models!.Add(new ProviderModelConfig
         {
             Id = "broken",
             Provider = "offline",
@@ -253,76 +287,72 @@ public class ScenarioTestingProvidersE2ETests(E2ETestFixture fixture, ITestOutpu
     private CopilotClient CreateProviderClient(ScenarioProviderRequestHandler handler) =>
         Ctx.CreateClient(options: new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForSpawnedStdio(),
-            Models = new ClientModelOptions { RequestHandler = handler }
+            Connection = RuntimeConnection.ForStdio(),
+            RequestHandler = handler,
         });
 
-    private static CreateSessionOptions CreateScenarioProviderConfig(string model) => new()
+    private static SessionConfig CreateScenarioProviderConfig(string model) => new()
     {
         ClientName = "scenario-client",
         Model = model,
-        Inference = new SessionInferenceOptions
-        {
-            Providers = [new NamedProviderConfig
-        {
-            Name = "alpha",
-            Type = "openai",
-            WireApi = "completions",
-            BaseUrl = "https://alpha.scenario.invalid/v1",
-            ApiKey = "alpha-static-key",
-            Headers = new Dictionary<string, string>
+        Providers =
+        [
+            new NamedProviderConfig
             {
-                ["X-Scenario-Provider"] = "alpha-scenario"
+                Name = "alpha",
+                Type = "openai",
+                WireApi = "completions",
+                BaseUrl = "https://alpha.scenario.invalid/v1",
+                ApiKey = "alpha-static-key",
+                Headers = new Dictionary<string, string> { ["X-Scenario-Provider"] = "alpha-scenario" },
             },
-        }, new NamedProviderConfig
-        {
-            Name = "beta",
-            Type = "openai",
-            WireApi = "responses",
-            BaseUrl = "https://beta.scenario.invalid/v1",
-            BearerToken = "beta-static-token",
-            Headers = new Dictionary<string, string>
+            new NamedProviderConfig
             {
-                ["X-Scenario-Provider"] = "beta-scenario"
+                Name = "beta",
+                Type = "openai",
+                WireApi = "responses",
+                BaseUrl = "https://beta.scenario.invalid/v1",
+                BearerToken = "beta-static-token",
+                Headers = new Dictionary<string, string> { ["X-Scenario-Provider"] = "beta-scenario" },
             },
-        }, ],
-            Models = [new ProviderModelConfig
-        {
-            Id = "large",
-            Provider = "alpha",
-            Name = "Scenario Large",
-            ModelId = "claude-sonnet-5",
-            WireModel = "alpha-wire-large",
-            MaxContextWindowTokens = 120_000,
-            MaxPromptTokens = 100_000,
-            MaxOutputTokens = 8_000,
-            Capabilities = new ModelCapabilitiesOverride
+        ],
+        Models =
+        [
+            new ProviderModelConfig
             {
-                Supports = new ModelCapabilitiesOverrideSupports
+                Id = "large",
+                Provider = "alpha",
+                Name = "Scenario Large",
+                ModelId = "claude-sonnet-5",
+                WireModel = "alpha-wire-large",
+                MaxContextWindowTokens = 120_000,
+                MaxPromptTokens = 100_000,
+                MaxOutputTokens = 8_000,
+                Capabilities = new ModelCapabilitiesOverride
                 {
-                    ReasoningEffort = true,
-                    Vision = false,
+                    Supports = new ModelCapabilitiesOverrideSupports
+                    {
+                        ReasoningEffort = true,
+                        Vision = false,
+                    },
                 },
             },
-        }, new ProviderModelConfig
-        {
-            Id = "small",
-            Provider = "alpha",
-            ModelId = "claude-sonnet-5",
-            WireModel = "alpha-wire-small",
-        }, new ProviderModelConfig
-        {
-            Id = "fast",
-            Provider = "beta",
-            ModelId = "claude-sonnet-5",
-            WireModel = "beta-wire-fast",
-        }, ]
-        },
-        Permissions = new SessionPermissionOptions
-        {
-            OnRequest = PermissionHandler.ApproveAll
-        }
+            new ProviderModelConfig
+            {
+                Id = "small",
+                Provider = "alpha",
+                ModelId = "claude-sonnet-5",
+                WireModel = "alpha-wire-small",
+            },
+            new ProviderModelConfig
+            {
+                Id = "fast",
+                Provider = "beta",
+                ModelId = "claude-sonnet-5",
+                WireModel = "beta-wire-fast",
+            },
+        ],
+        OnPermissionRequest = PermissionHandler.ApproveAll,
     };
 }
 

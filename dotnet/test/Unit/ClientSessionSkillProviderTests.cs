@@ -14,7 +14,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Xunit;
 
-namespace Microsoft.Copilot.Test.Unit;
+namespace GitHub.Copilot.Test.Unit;
 
 public sealed partial class ClientSessionLifetimeTests
 {
@@ -22,21 +22,26 @@ public sealed partial class ClientSessionLifetimeTests
     public async Task SkillProvider_Create_And_Resume_Set_Flag_Only_When_Provided()
     {
         await using var server = await FakeCopilotServer.StartAsync();
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
+        await using var client = new CopilotClient(new CopilotClientOptions { Connection = RuntimeConnection.ForUri(server.Url) });
         var provider = new TestSkillProvider
         {
             ReadHandler = (name, _) => Task.FromResult<string?>($"# {name}")
         };
 
-        await using var created = await client.CreateSessionAsync(new CreateSessionOptions
-        { SessionId = "skill-create", Skills = new SessionSkillOptions { Provider = provider } });
-        await using var resumed = await client.ResumeSessionAsync("skill-resume", new ResumeSessionOptions
-        { Skills = new SessionSkillOptions { Provider = provider } });
+        await using var created = await client.CreateSessionAsync(new SessionConfig
+        {
+            SessionId = "skill-create",
+            SkillProvider = provider
+        });
+        await using var resumed = await client.ResumeSessionAsync("skill-resume", new ResumeSessionConfig
+        {
+            SkillProvider = provider
+        });
 
         Assert.True(Assert.Single(server.Requests, request => request.Method == "session.create")
-            .Params.GetProperty("skills").GetProperty("hasProvider").GetBoolean());
+            .Params.GetProperty("hasSkillProvider").GetBoolean());
         Assert.True(Assert.Single(server.Requests, request => request.Method == "session.resume")
-            .Params.GetProperty("skills").GetProperty("hasProvider").GetBoolean());
+            .Params.GetProperty("hasSkillProvider").GetBoolean());
 
         var read = await server.SendRequestAsync("skillProvider.read", SkillReadRequest(resumed.SessionId, "resumed-skill"));
         Assert.Equal("# resumed-skill", read.GetProperty("markdown").GetString());
@@ -45,23 +50,23 @@ public sealed partial class ClientSessionLifetimeTests
         await resumed.DisposeAsync();
         server.ClearRequests();
 
-        await using var createWithoutProvider = await client.CreateSessionAsync(new CreateSessionOptions
+        await using var createWithoutProvider = await client.CreateSessionAsync(new SessionConfig
         {
             SessionId = "skill-create-no-provider"
         });
-        await using var resumeWithoutProvider = await client.ResumeSessionAsync("skill-resume-no-provider", new ResumeSessionOptions());
+        await using var resumeWithoutProvider = await client.ResumeSessionAsync("skill-resume-no-provider", new ResumeSessionConfig());
 
         Assert.False(Assert.Single(server.Requests, request => request.Method == "session.create")
-            .Params.GetProperty("skills").TryGetProperty("hasProvider", out _));
+            .Params.TryGetProperty("hasSkillProvider", out _));
         Assert.False(Assert.Single(server.Requests, request => request.Method == "session.resume")
-            .Params.GetProperty("skills").TryGetProperty("hasProvider", out _));
+            .Params.TryGetProperty("hasSkillProvider", out _));
     }
 
     [Fact]
     public async Task SkillProvider_Callbacks_Work_Before_Create_And_Resume_Response()
     {
         await using var server = await FakeCopilotServer.StartAsync();
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
+        await using var client = new CopilotClient(new CopilotClientOptions { Connection = RuntimeConnection.ForUri(server.Url) });
         var provider = new TestSkillProvider();
         var callbackResults = new List<Task<JsonElement>>();
         server.BeforeResponseAsync = async (request, _) =>
@@ -75,10 +80,15 @@ public sealed partial class ClientSessionLifetimeTests
             }
         };
 
-        await using var created = await client.CreateSessionAsync(new CreateSessionOptions
-        { SessionId = "pre-response-create", Skills = new SessionSkillOptions { Provider = provider } });
-        await using var resumed = await client.ResumeSessionAsync("pre-response-resume", new ResumeSessionOptions
-        { Skills = new SessionSkillOptions { Provider = provider } });
+        await using var created = await client.CreateSessionAsync(new SessionConfig
+        {
+            SessionId = "pre-response-create",
+            SkillProvider = provider
+        });
+        await using var resumed = await client.ResumeSessionAsync("pre-response-resume", new ResumeSessionConfig
+        {
+            SkillProvider = provider
+        });
 
         Assert.Equal(2, callbackResults.Count);
         foreach (var callback in callbackResults)
@@ -92,7 +102,7 @@ public sealed partial class ClientSessionLifetimeTests
     public async Task SkillProvider_List_Returns_CamelCase_Descriptors_And_Omits_Null_Optionals()
     {
         await using var server = await FakeCopilotServer.StartAsync();
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
+        await using var client = new CopilotClient(new CopilotClientOptions { Connection = RuntimeConnection.ForUri(server.Url) });
         var provider = new TestSkillProvider
         {
             ListHandler = _ => Task.FromResult<IReadOnlyList<SkillProviderDescriptor>>(
@@ -113,7 +123,7 @@ public sealed partial class ClientSessionLifetimeTests
                 }
             ])
         };
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions { Skills = new SessionSkillOptions { Provider = provider } });
+        await using var session = await client.CreateSessionAsync(new SessionConfig { SkillProvider = provider });
 
         var result = await server.SendRequestAsync("skillProvider.list", SkillListRequest(session.SessionId));
         var skills = result.GetProperty("skills").EnumerateArray().ToArray();
@@ -139,12 +149,12 @@ public sealed partial class ClientSessionLifetimeTests
     public async Task SkillProvider_Null_List_Result_Is_Empty()
     {
         await using var server = await FakeCopilotServer.StartAsync();
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
+        await using var client = new CopilotClient(new CopilotClientOptions { Connection = RuntimeConnection.ForUri(server.Url) });
         var provider = new TestSkillProvider
         {
             ListHandler = _ => Task.FromResult<IReadOnlyList<SkillProviderDescriptor>>(null!)
         };
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions { Skills = new SessionSkillOptions { Provider = provider } });
+        await using var session = await client.CreateSessionAsync(new SessionConfig { SkillProvider = provider });
 
         var result = await server.SendRequestAsync("skillProvider.list", SkillListRequest(session.SessionId));
 
@@ -155,12 +165,12 @@ public sealed partial class ClientSessionLifetimeTests
     public async Task SkillProvider_Read_Returns_Markdown_And_Null_For_Missing_Skill()
     {
         await using var server = await FakeCopilotServer.StartAsync();
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
+        await using var client = new CopilotClient(new CopilotClientOptions { Connection = RuntimeConnection.ForUri(server.Url) });
         var provider = new TestSkillProvider
         {
             ReadHandler = (name, _) => Task.FromResult(name == "known" ? "# Known" : null)
         };
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions { Skills = new SessionSkillOptions { Provider = provider } });
+        await using var session = await client.CreateSessionAsync(new SessionConfig { SkillProvider = provider });
 
         var read = await server.SendRequestAsync("skillProvider.read", SkillReadRequest(session.SessionId, "known"));
 
@@ -175,7 +185,7 @@ public sealed partial class ClientSessionLifetimeTests
     {
         await using var server = await FakeCopilotServer.StartAsync();
         var logger = new SkillProviderLogger();
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port), Observability = new ClientObservabilityOptions { Logger = logger } });
+        await using var client = new CopilotClient(new CopilotClientOptions { Connection = RuntimeConnection.ForUri(server.Url), Logger = logger });
         var listFailure = new InvalidOperationException("secret list failure");
         var readFailure = new InvalidOperationException("secret read failure");
         var provider = new TestSkillProvider
@@ -183,7 +193,7 @@ public sealed partial class ClientSessionLifetimeTests
             ListHandler = _ => throw listFailure,
             ReadHandler = (_, _) => throw readFailure
         };
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions { Skills = new SessionSkillOptions { Provider = provider } });
+        await using var session = await client.CreateSessionAsync(new SessionConfig { SkillProvider = provider });
 
         var listError = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             server.SendRequestAsync("skillProvider.list", SkillListRequest(session.SessionId)));
@@ -205,13 +215,13 @@ public sealed partial class ClientSessionLifetimeTests
     public async Task SkillProvider_Provider_Cancellation_Without_Request_Cancellation_Is_Provider_Failure()
     {
         await using var server = await FakeCopilotServer.StartAsync();
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
+        await using var client = new CopilotClient(new CopilotClientOptions { Connection = RuntimeConnection.ForUri(server.Url) });
         var provider = new TestSkillProvider
         {
             ListHandler = _ => throw new TaskCanceledException("secret list timeout"),
             ReadHandler = (_, _) => throw new TaskCanceledException("secret read timeout")
         };
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions { Skills = new SessionSkillOptions { Provider = provider } });
+        await using var session = await client.CreateSessionAsync(new SessionConfig { SkillProvider = provider });
 
         var listError = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             server.SendRequestAsync("skillProvider.list", SkillListRequest(session.SessionId)).WaitAsync(TimeSpan.FromSeconds(10)));
@@ -226,20 +236,23 @@ public sealed partial class ClientSessionLifetimeTests
     public async Task SkillProvider_Rejects_Unknown_NoProvider_And_Disposed_Sessions()
     {
         await using var server = await FakeCopilotServer.StartAsync();
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
+        await using var client = new CopilotClient(new CopilotClientOptions { Connection = RuntimeConnection.ForUri(server.Url) });
         await client.StartAsync();
 
         var unknown = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             server.SendRequestAsync("skillProvider.list", SkillListRequest("unknown-session")));
         AssertRpcError(unknown, "No skill provider for session: unknown-session");
 
-        await using var noProvider = await client.CreateSessionAsync(new CreateSessionOptions { SessionId = "no-provider" });
+        await using var noProvider = await client.CreateSessionAsync(new SessionConfig { SessionId = "no-provider" });
         var noProviderError = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             server.SendRequestAsync("skillProvider.list", SkillListRequest(noProvider.SessionId)));
         AssertRpcError(noProviderError, "No skill provider for session: no-provider");
 
-        var providerSession = await client.CreateSessionAsync(new CreateSessionOptions
-        { SessionId = "disposed-provider", Skills = new SessionSkillOptions { Provider = new TestSkillProvider() } });
+        var providerSession = await client.CreateSessionAsync(new SessionConfig
+        {
+            SessionId = "disposed-provider",
+            SkillProvider = new TestSkillProvider()
+        });
         await providerSession.DisposeAsync();
         var disposed = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             server.SendRequestAsync("skillProvider.list", SkillListRequest("disposed-provider")));
@@ -251,13 +264,23 @@ public sealed partial class ClientSessionLifetimeTests
     {
         await using var client = new CopilotClient(new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForTcp("127.0.0.1", 1)
+            Connection = RuntimeConnection.ForUri("http://127.0.0.1:1")
         });
         var provider = new TestSkillProvider();
 
-        var error = await Assert.ThrowsAsync<ArgumentException>(() => client.CreateSessionAsync(new CreateSessionOptions
-        { Cloud = new CloudSessionOptions { Repository = new CloudSessionRepository { Owner = "github", Name = "copilot-sdk", Branch = "main" } }, Skills = new SessionSkillOptions { Provider = provider } }));
+        var error = await Assert.ThrowsAsync<ArgumentException>(() => client.CreateSessionAsync(new SessionConfig
+        {
+            Cloud = new CloudSessionOptions
+            {
+                Repository = new CloudSessionRepository
+                {
+                    Owner = "github",
+                    Name = "copilot-sdk",
+                    Branch = "main"
+                }
+            },
+            SkillProvider = provider
+        }));
 
         Assert.Equal("Skill providers are not supported for cloud sessions.", error.Message);
         Assert.Equal(0, provider.ListCalls);
@@ -270,16 +293,20 @@ public sealed partial class ClientSessionLifetimeTests
         await using var server = await FakeCopilotServer.StartAsync();
         await using var client = new CopilotClient(new CopilotClientOptions
         {
+            Connection = RuntimeConnection.ForUri(server.Url),
             Mode = CopilotClientMode.Empty,
-            Runtime = RuntimeConnection.ForTcp(server.Host, server.Port)
+            BaseDirectory = Path.GetTempPath(),
         });
 
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions
-        { Tools = new SessionToolOptions { AvailableTools = [] }, Skills = new SessionSkillOptions { Provider = new TestSkillProvider() } });
+        await using var session = await client.CreateSessionAsync(new SessionConfig
+        {
+            AvailableTools = [],
+            SkillProvider = new TestSkillProvider()
+        });
 
         var request = Assert.Single(server.Requests, request => request.Method == "session.create");
-        Assert.True(request.Params.GetProperty("skills").GetProperty("hasProvider").GetBoolean());
-        Assert.False(request.Params.GetProperty("skills").GetProperty("enabled").GetBoolean());
+        Assert.True(request.Params.GetProperty("hasSkillProvider").GetBoolean());
+        Assert.False(request.Params.GetProperty("enableSkills").GetBoolean());
     }
 
     private static Dictionary<string, object?> SkillListRequest(string sessionId) => new()

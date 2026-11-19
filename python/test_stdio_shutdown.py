@@ -94,8 +94,7 @@ def _client(directory: Path, mode: str, *, windows_launcher: bool = False) -> Co
         path = str(launcher)
         args = []
     return CopilotClient(
-        mode="coding-agent",
-        runtime=RuntimeConnection.for_spawned_stdio(
+        connection=RuntimeConnection.for_stdio(
             path=path,
             args=args
             + [
@@ -103,7 +102,7 @@ def _client(directory: Path, mode: str, *, windows_launcher: bool = False) -> Co
                 mode,
                 str(directory / "pid"),
             ],
-        ),
+        )
     )
 
 

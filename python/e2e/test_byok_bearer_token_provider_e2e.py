@@ -115,9 +115,10 @@ async def bearer_fixture(ctx: E2ETestContext):
 async def _run_turn(client, providers, models, selection_id: str, prompt: str) -> None:
     """Drive one BYOK turn; the synthetic 404 errors the turn, which is expected."""
     session = await client.create_session(
+        on_permission_request=PermissionHandler.approve_all,
         model=selection_id,
-        permissions={"on_request": PermissionHandler.approve_all},
-        inference={"providers": providers, "models": models},
+        providers=providers,
+        models=models,
     )
     try:
         # The interceptor always 404s, so the turn errors after the runtime has

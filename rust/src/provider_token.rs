@@ -27,7 +27,8 @@ use async_trait::async_trait;
 pub struct ProviderTokenArgs {
     /// Name of the BYOK provider needing a token.
     ///
-    /// This is the named connection's configured `name`.
+    /// This is `"default"` for the singular whole-session provider, otherwise
+    /// the named provider's `name`.
     pub provider_name: String,
 
     /// Id of the session that triggered this token request.

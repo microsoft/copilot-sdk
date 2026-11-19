@@ -7,12 +7,11 @@ import (
 	"testing"
 	"time"
 
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
-	"github.com/microsoft/copilot-sdk/go/v2/internal/e2e/testharness"
+	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/internal/e2e/testharness"
 )
 
 func TestCompactionE2E(t *testing.T) {
-	t.Parallel()
 	ctx := testharness.NewTestContext(t)
 	client := ctx.NewClient()
 	t.Cleanup(func() { client.ForceStop() })
@@ -25,11 +24,13 @@ func TestCompactionE2E(t *testing.T) {
 		backgroundThreshold := 0.005 // 0.5%
 		bufferThreshold := 0.01      // 1%
 
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, State: copilot.SessionStateOptions{InfiniteSessions: &copilot.InfiniteSessionConfig{
-			Enabled:                       &enabled,
-			BackgroundCompactionThreshold: &backgroundThreshold,
-			BufferExhaustionThreshold:     &bufferThreshold,
-		}},
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			InfiniteSessions: &copilot.InfiniteSessionConfig{
+				Enabled:                       &enabled,
+				BackgroundCompactionThreshold: &backgroundThreshold,
+				BufferExhaustionThreshold:     &bufferThreshold,
+			},
 		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
@@ -208,9 +209,11 @@ func TestCompactionE2E(t *testing.T) {
 		ctx.ConfigureForTest(t)
 
 		enabled := false
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, State: copilot.SessionStateOptions{InfiniteSessions: &copilot.InfiniteSessionConfig{
-			Enabled: &enabled,
-		}},
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			InfiniteSessions: &copilot.InfiniteSessionConfig{
+				Enabled: &enabled,
+			},
 		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)

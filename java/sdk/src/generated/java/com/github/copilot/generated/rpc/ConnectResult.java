@@ -1,0 +1,38 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *--------------------------------------------------------------------------------------------*/
+
+// AUTO-GENERATED FILE - DO NOT EDIT
+// Generated from: api.schema.json
+
+package com.github.copilot.generated.rpc;
+
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.github.copilot.CopilotExperimental;
+import java.util.List;
+import javax.annotation.processing.Generated;
+
+/**
+ * Handshake result reporting the server's protocol version and package version on success.
+ *
+ * @since 1.0.0
+ */
+@javax.annotation.processing.Generated("copilot-sdk-codegen")
+@JsonInclude(JsonInclude.Include.NON_NULL)
+@JsonIgnoreProperties(ignoreUnknown = true)
+record ConnectResult(
+    /** Always true on success */
+    @JsonProperty("ok") Boolean ok,
+    /** Server protocol version number */
+    @JsonProperty("protocolVersion") Long protocolVersion,
+    /** Server package version */
+    @JsonProperty("version") String version,
+    /** Acknowledges that this connection's host-owned Entra token provider is enabled. Clients requesting it must reject a missing or false acknowledgement. */
+    @CopilotExperimental
+    @JsonProperty("entraTokenProvider") Boolean entraTokenProvider,
+    /** Task kinds the server may return to this connection. */
+    @JsonProperty("taskKinds") List<TaskKind> taskKinds
+) {
+}

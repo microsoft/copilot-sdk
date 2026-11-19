@@ -3,10 +3,6 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
-#[cfg(feature = "in-process")]
-#[doc(hidden)]
-pub use ffi::{InProcessPermissionUpdate, InProcessSessionHost};
-
 /// Experimental runtime-owned Agent Host Protocol listeners.
 pub mod ahp_host;
 pub use ahp_host::{
@@ -16,7 +12,15 @@ pub use ahp_host::{
     AhpSessionResumeFactory, AhpSessionResumeRequest,
 };
 
-#[cfg(any(test, has_bundled_cli, has_extracted_cli))]
+// Outside tests, `cache_paths`'s only caller is `resolve::extracted_program`, which
+// needs the build script to have extracted a CLI (`has_extracted_cli`). Without it the
+// module is compiled only for its own unit tests.
+#[cfg(all(
+    feature = "runtime",
+    not(feature = "bundled-cli"),
+    not(feature = "local-runtime"),
+    any(test, has_extracted_cli)
+))]
 mod cache_paths;
 /// Canvas declarations, provider callbacks, and host-side canvas RPC types.
 pub mod canvas;
@@ -33,9 +37,6 @@ pub mod extension_launch_provider;
 /// In-process FFI transport hosting the runtime cdylib (`Transport::InProcess`).
 #[cfg(feature = "in-process")]
 pub(crate) mod ffi;
-#[cfg(all(copilot_cli_host, feature = "in-process"))]
-#[doc(hidden)]
-pub mod native_cli;
 pub use errors::*;
 /// Connection-level Copilot request handler — intercept and replace the
 /// model-layer HTTP and WebSocket traffic the runtime issues for both CAPI and
@@ -58,10 +59,8 @@ pub mod hooks;
 /// Connection-global human confirmation for experimental installation operations.
 pub mod installation_confirmation;
 mod jsonrpc;
-/// Host-owned storage for the runtime memory feature.
-pub mod memory_store;
-/// Network callbacks supplied by the SDK host (experimental).
-pub mod network;
+/// Kerberos credentials supplied by the SDK host.
+pub mod kerberos_auth;
 /// Permission-policy helpers that produce a [`handler::PermissionHandler`].
 pub mod permission;
 #[allow(dead_code)]
@@ -80,7 +79,6 @@ pub mod session;
 /// Custom session filesystem provider (virtualizable filesystem layer).
 pub mod session_fs;
 mod session_fs_dispatch;
-mod shell_authentication;
 /// Session-scoped skill provider callbacks.
 pub mod skill_provider;
 /// Per-phase timing breakdown for [`Client::start`].
@@ -110,12 +108,6 @@ struct SessionDetachResponse {
     error: Option<String>,
 }
 
-#[derive(serde::Deserialize)]
-struct SessionDeleteResponse {
-    success: Option<bool>,
-    error: Option<String>,
-}
-
 // Auto-generated protocol-type modules. Crate-private so the only public
 // access path is via the `session_events` and `rpc` facade modules above —
 // callers can never depend on the implementation-detail layout under
@@ -142,14 +134,13 @@ pub use github_token::{
 };
 /// Re-export of [`indexmap::IndexMap`], used for order-preserving maps in the
 /// public API (e.g. [`Tool::parameters`](types::Tool::parameters) and
-/// `CreateSessionOptions::mcp_servers`) so serialized key order stays deterministic.
+/// `SessionConfig::mcp_servers`) so serialized key order stays deterministic.
 pub use indexmap::IndexMap;
 // JSON-RPC wire types are internal transport details.
 // External callers interact via Client/Session methods, not raw RPC.
 pub(crate) use jsonrpc::{
-    JsonRpcClient, JsonRpcError, JsonRpcRequest, JsonRpcResponse, error_codes,
+    JsonRpcClient, JsonRpcError, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, error_codes,
 };
-pub use memory_store::{MemoryStore, StoredMemory};
 pub use mode::{BUILTIN_TOOLS_ISOLATED, ClientMode, ToolSet};
 pub use provider_token::{BearerTokenError, BearerTokenProvider, ProviderTokenArgs};
 pub use skill_provider::{SkillProvider, SkillProviderDescriptor};
@@ -167,7 +158,7 @@ pub mod test_support {
 pub use generated::api_types::EntraAuthConfig;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "runtime")]
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::io::{AsyncRead, AsyncWrite};
 #[cfg(feature = "runtime")]
 use tokio::net::TcpStream;
@@ -182,16 +173,13 @@ use tracing::Instrument;
 use tracing::{debug, error, info, warn};
 pub use types::*;
 
-mod client_options;
-pub use client_options::*;
-
 mod sdk_protocol_version;
 pub use sdk_protocol_version::{SDK_PROTOCOL_VERSION, get_sdk_protocol_version};
 pub use startup_timings::StartupTimings;
 pub use subscription::{EventSubscription, LifecycleSubscription};
 
 /// Minimum protocol version this SDK can communicate with.
-const MIN_PROTOCOL_VERSION: u32 = 4;
+const MIN_PROTOCOL_VERSION: u32 = 3;
 const RUNTIME_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[cfg(feature = "runtime")]
@@ -206,32 +194,32 @@ fn record_optional_millis(span: &tracing::Span, field: &'static str, value: Opti
     }
 }
 
-/// How the SDK connects to the Copilot runtime.
-#[cfg(any(feature = "runtime", test))]
+/// How the SDK communicates with the CLI server.
 #[derive(Debug, Default)]
-enum Transport {
+#[non_exhaustive]
+pub enum Transport {
     /// Resolve the transport from `COPILOT_SDK_DEFAULT_CONNECTION`, falling
-    /// back to [`Transport::InProcess`] when the variable is unset.
+    /// back to [`Transport::Stdio`] when the variable is unset.
     #[default]
     Default,
-    /// Spawn the runtime and communicate over stdin/stdout pipes.
-    SpawnedStdio(SpawnedProcessOptions),
+    /// Communicate over stdin/stdout pipes (default).
+    Stdio,
     /// Host the runtime in-process over FFI (no child process).
     ///
     /// Loads the native runtime library and speaks JSON-RPC over its C ABI.
-    /// This is the default transport. Process options belong only to spawned
-    /// transports because native runtime code shares the host process.
-    /// Typed runtime options such as
-    /// authentication, telemetry, log level, and [`OwnedRuntimeOptions::base_directory`] remain
+    /// This is **experimental**. Per-client [`ClientOptions::program`],
+    /// [`ClientOptions::extra_args`], [`ClientOptions::working_directory`],
+    /// [`ClientOptions::env`]/[`ClientOptions::env_remove`],
+    /// and [`ClientOptions::telemetry`] are not supported because native
+    /// runtime code shares the host process. Typed runtime options such as
+    /// authentication, log level, and [`ClientOptions::base_directory`] remain
     /// supported.
     ///
     /// Requires the `in-process` Cargo feature, enabled by either
-    /// the default `bundled-in-process` feature or `local-runtime`.
+    /// `bundled-in-process` or `local-runtime`.
     InProcess,
     /// Spawn the CLI with `--port` and connect via TCP.
-    SpawnedTcp {
-        /// Configuration of the child process owned by this connection.
-        process: SpawnedProcessOptions,
+    Tcp {
         /// Port to listen on (0 for OS-assigned).
         port: u16,
         /// Optional connection token. When `None` and the SDK is spawning
@@ -239,8 +227,8 @@ enum Transport {
         /// loopback listener is safe by default.
         connection_token: Option<String>,
     },
-    /// Connect over plaintext TCP without spawning or owning the runtime.
-    Tcp {
+    /// Connect to an already-running CLI server (no process spawning).
+    External {
         /// Hostname or IP of the running server.
         host: String,
         /// Port of the running server.
@@ -249,17 +237,6 @@ enum Transport {
         /// was started with a token, ignored otherwise.
         connection_token: Option<String>,
     },
-}
-
-#[cfg(any(feature = "runtime", test))]
-impl Transport {
-    #[cfg(any(feature = "runtime", feature = "in-process", test))]
-    fn spawned_process(&self) -> Option<&SpawnedProcessOptions> {
-        match self {
-            Self::SpawnedStdio(process) | Self::SpawnedTcp { process, .. } => Some(process),
-            _ => None,
-        }
-    }
 }
 
 /// How the SDK locates the GitHub Copilot CLI binary.
@@ -278,133 +255,6 @@ pub enum CliProgram {
 impl From<PathBuf> for CliProgram {
     fn from(path: PathBuf) -> Self {
         Self::Path(path)
-    }
-}
-
-/// Process configuration for [`RuntimeConnection::SpawnedStdio`] and [`RuntimeConnection::SpawnedTcp`].
-///
-/// Omitting [`Self::env`] inherits the host environment; supplying it replaces
-/// that environment, including when empty. [`Self::env_remove`] applies to that
-/// base environment before typed startup options and SDK-required settings.
-/// These settings never change the host process or an attached runtime.
-/// A live in-process auth owner cannot be assigned to a child process.
-///
-/// ```compile_fail
-/// use copilot_sdk::SpawnedProcessOptions;
-/// let mut process = SpawnedProcessOptions::new();
-/// process.auth_owner = None;
-/// ```
-#[derive(Clone, Default)]
-pub struct SpawnedProcessOptions {
-    /// Settings for this client-owned runtime.
-    pub owned: OwnedRuntimeOptions,
-    /// How to locate the child-process runtime.
-    ///
-    /// [`CliProgram::Resolve`] uses `COPILOT_CLI_PATH`, then the bundled
-    /// `copilot-runtime` wrapper or the build-time extraction cache.
-    pub program: CliProgram,
-    /// Arguments placed before SDK-managed server, transport, and runtime flags.
-    ///
-    /// Include an interpreter's script path here when [`Self::program`] selects
-    /// an interpreter. SDK-managed flags follow these arguments.
-    pub args: Vec<OsString>,
-    /// Working directory for the child process. An empty path uses the host's
-    /// current directory at startup.
-    pub working_directory: PathBuf,
-    /// Replacement child environment. `None` inherits; `Some(vec![])` does not.
-    /// Explicit typed startup options override equivalent environment entries.
-    pub env: Option<Vec<(OsString, OsString)>>,
-    /// Names to remove from the base environment, before SDK-managed settings.
-    pub env_remove: Vec<OsString>,
-}
-
-impl std::fmt::Debug for SpawnedProcessOptions {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("SpawnedProcessOptions")
-            .finish_non_exhaustive()
-    }
-}
-
-impl SpawnedProcessOptions {
-    /// Construct process options with runtime resolution and inherited cwd/environment.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Update shared owned-runtime settings.
-    pub fn with_owned(
-        mut self,
-        configure: impl FnOnce(OwnedRuntimeOptions) -> OwnedRuntimeOptions,
-    ) -> Self {
-        self.owned = configure(self.owned);
-        self
-    }
-
-    /// Select the child-process runtime. See [`CliProgram`].
-    pub fn with_program(mut self, program: impl Into<CliProgram>) -> Self {
-        self.program = program.into();
-        self
-    }
-
-    /// Set arguments placed before the SDK-managed flags.
-    pub fn with_args<I, S>(mut self, args: I) -> Self
-    where
-        I: IntoIterator<Item = S>,
-        S: Into<OsString>,
-    {
-        self.args = args.into_iter().map(Into::into).collect();
-        self
-    }
-
-    /// Set the child process's working directory.
-    pub fn with_working_directory(mut self, working_directory: impl Into<PathBuf>) -> Self {
-        self.working_directory = working_directory.into();
-        self
-    }
-
-    /// Replace the child environment. An empty iterator clears inherited variables.
-    /// To extend inheritance explicitly, pass `std::env::vars_os().chain(overrides)`.
-    pub fn with_env<I, K, V>(mut self, env: I) -> Self
-    where
-        I: IntoIterator<Item = (K, V)>,
-        K: Into<OsString>,
-        V: Into<OsString>,
-    {
-        self.env = Some(env.into_iter().map(|(k, v)| (k.into(), v.into())).collect());
-        self
-    }
-
-    /// Remove variables from the base environment, before SDK-managed settings.
-    pub fn with_env_remove<I, S>(mut self, names: I) -> Self
-    where
-        I: IntoIterator<Item = S>,
-        S: Into<OsString>,
-    {
-        self.env_remove = names.into_iter().map(Into::into).collect();
-        self
-    }
-
-    #[cfg(feature = "runtime")]
-    fn environment_variable(&self, name: &str) -> Option<OsString> {
-        let matches = |key: &OsString| {
-            if cfg!(windows) {
-                key.as_encoded_bytes().eq_ignore_ascii_case(name.as_bytes())
-            } else {
-                key == name
-            }
-        };
-        if self.env_remove.iter().any(matches) {
-            return None;
-        }
-        match &self.env {
-            Some(env) => env
-                .iter()
-                .rev()
-                .find(|(key, _)| matches(key))
-                .map(|(_, value)| value.clone()),
-            None => std::env::var_os(name),
-        }
     }
 }
 
@@ -439,10 +289,7 @@ pub const HAS_BUNDLED_CLI: bool = cfg!(has_bundled_cli);
 pub fn install_bundled_cli() -> Option<PathBuf> {
     #[cfg(feature = "bundled-cli")]
     {
-        embeddedcli::path().unwrap_or_else(|error| {
-            tracing::warn!(%error, "embedded CLI installation failed");
-            None
-        })
+        embeddedcli::path()
     }
     #[cfg(not(feature = "bundled-cli"))]
     {
@@ -463,10 +310,7 @@ pub fn install_bundled_cli() -> Option<PathBuf> {
 pub fn install_bundled_runtime() -> Option<PathBuf> {
     #[cfg(feature = "bundled-cli")]
     {
-        embeddedcli::runtime_path().unwrap_or_else(|error| {
-            tracing::warn!(%error, "embedded runtime installation failed");
-            None
-        })
+        embeddedcli::runtime_path()
     }
     #[cfg(not(feature = "bundled-cli"))]
     {
@@ -474,76 +318,33 @@ pub fn install_bundled_runtime() -> Option<PathBuf> {
     }
 }
 
-/// A capability to borrow an existing native session without replacing its owner.
-///
-/// The registration token comes from the embedding's original session registration.
-/// The runtime validates the native resource and closes the borrowed connection
-/// when that registration or its authenticated parent connection ends.
-#[derive(Clone)]
-pub struct InProcessSessionBinding {
-    /// The authenticated in-process connection that supplies the credential resolver.
-    pub parent_connection_id: u32,
-    /// The native resource ID, which may differ from the public session ID.
-    pub native_session_id: String,
-    /// The original session host registration token.
-    pub registration_token: String,
-}
-
-/// Unsupported SDK test infrastructure configuration.
-/// Unset values inherit startup configuration; empty strings clear overrides.
-#[derive(Clone, Default)]
-#[doc(hidden)]
-pub struct InternalTestOptions {
-    /// Replay endpoint for Copilot API requests.
-    pub copilot_api_url: Option<String>,
-    /// Replay endpoint for GitHub API requests, including startup authentication.
-    pub github_api_url: Option<String>,
-    /// HTTP/HTTPS interception proxy for the runtime and its subprocesses.
-    pub proxy_url: Option<String>,
-    /// Comma-separated destinations that bypass the interception proxy.
-    pub no_proxy: Option<String>,
-    /// PEM CA-bundle path trusted by the runtime and its subprocesses.
-    pub ca_certificate_path: Option<String>,
-}
-
-#[cfg(feature = "runtime")]
-impl InternalTestOptions {
-    fn environment(&self) -> impl Iterator<Item = (&'static str, &str)> {
-        [
-            ("COPILOT_API_URL", self.copilot_api_url.as_deref()),
-            (
-                "COPILOT_DEBUG_GITHUB_API_URL",
-                self.github_api_url.as_deref(),
-            ),
-            ("HTTP_PROXY", self.proxy_url.as_deref()),
-            ("HTTPS_PROXY", self.proxy_url.as_deref()),
-            ("http_proxy", self.proxy_url.as_deref()),
-            ("https_proxy", self.proxy_url.as_deref()),
-            ("NO_PROXY", self.no_proxy.as_deref()),
-            ("no_proxy", self.no_proxy.as_deref()),
-            ("NODE_EXTRA_CA_CERTS", self.ca_certificate_path.as_deref()),
-            ("SSL_CERT_FILE", self.ca_certificate_path.as_deref()),
-            ("REQUESTS_CA_BUNDLE", self.ca_certificate_path.as_deref()),
-            ("CURL_CA_BUNDLE", self.ca_certificate_path.as_deref()),
-            ("GIT_SSL_CAINFO", self.ca_certificate_path.as_deref()),
-        ]
-        .into_iter()
-        .filter_map(|(key, value)| value.map(|value| (key, value)))
-    }
-}
-
 /// Options for starting a [`Client`].
 ///
-/// Process configuration belongs to [`SpawnedProcessOptions`] on spawned
-/// transports. In-process transport loads the resolved runtime's adjacent native
-/// library; attached TCP transport does not resolve or start a runtime.
+/// When `program` is [`CliProgram::Resolve`] (the default), [`Client::start`]
+/// uses `COPILOT_CLI_PATH` when set to a real file. Managed child-process
+/// transports next use the bundled `copilot-runtime` wrapper. In-process
+/// transport loads the wrapper's adjacent runtime library. With `bundled-cli`
+/// disabled, the corresponding artifact is resolved from the build-time
+/// extraction cache.
+///
+/// Set `program` to [`CliProgram::Path`] to use an explicit binary instead.
+/// This skips auto-resolution entirely.
 #[non_exhaustive]
-#[cfg(any(feature = "runtime", test))]
-struct StartupOptions {
-    /// Unsupported SDK test infrastructure configuration for an owned runtime.
-    /// Supplied values override startup configuration without changing the host environment.
-    #[doc(hidden)]
-    pub internal_test_options: Option<InternalTestOptions>,
+pub struct ClientOptions {
+    /// How to locate the child-process runtime.
+    pub program: CliProgram,
+    /// Arguments prepended before `--server` (e.g. the script path for node).
+    pub prefix_args: Vec<OsString>,
+    /// Working directory for the CLI process.
+    ///
+    /// Setting this option is not supported with [`Transport::InProcess`].
+    pub working_directory: PathBuf,
+    /// Environment variables set on the child process.
+    pub env: Vec<(OsString, OsString)>,
+    /// Environment variable names to remove from the child process.
+    pub env_remove: Vec<OsString>,
+    /// Extra flags for child-process transports.
+    pub extra_args: Vec<String>,
     /// Absolute paths to trusted plugin directories bundled by the host.
     ///
     /// When non-empty, [`Client::start`] replaces the runtime's complete
@@ -589,7 +390,7 @@ struct StartupOptions {
     /// without making a `models.list` RPC. This is the BYOK escape hatch
     /// for environments where the model catalog is provisioned separately
     /// from the GitHub Copilot CLI (e.g. external inference servers selected via
-    /// [`Transport::Tcp`]).
+    /// [`Transport::External`]).
     pub on_list_models: Option<Arc<dyn ListModelsHandler>>,
     /// Custom session filesystem provider configuration.
     ///
@@ -597,7 +398,7 @@ struct StartupOptions {
     /// [`Client::start`] to register a virtualizable filesystem layer with
     /// the CLI. Each session created on this client must supply its own
     /// [`SessionFsProvider`] via
-    /// [`CreateSessionOptions::with_session_fs_provider`](crate::CreateSessionOptions::with_session_fs_provider).
+    /// [`SessionConfig::with_session_fs_provider`](crate::SessionConfig::with_session_fs_provider).
     pub session_fs: Option<SessionFsConfig>,
     /// Connection-level Copilot request handler configuration.
     ///
@@ -616,17 +417,12 @@ struct StartupOptions {
     /// of sessions.
     pub extension_launch_provider:
         Option<Arc<dyn crate::extension_launch_provider::ExtensionLaunchProvider>>,
-    /// Network callbacks through which the SDK host decides the runtime's
-    /// proxies and supplies its Kerberos tokens and Basic proxy credentials.
+    /// Kerberos credentials supplied by the SDK host.
     ///
-    /// When set with at least one callback, the SDK handles the configured
-    /// `network.resolveProxy`, `network.authenticateNegotiate` and
-    /// `network.authenticateBasic` requests and registers with the runtime via
-    /// `network.setProvider` during [`Client::start`], before any session can
-    /// be created.
-    ///
-    /// **Experimental.** May change or be removed in future releases.
-    pub network: Option<crate::network::NetworkConfig>,
+    /// When set, the SDK handles `kerberosAuth.acquire` requests and registers
+    /// with the runtime via `kerberosAuth.setProvider` during [`Client::start`],
+    /// before any session can be created.
+    pub kerberos_auth: Option<crate::kerberos_auth::KerberosAuthConfig>,
     /// Connection-global human review handler for `installations.confirm` (experimental).
     ///
     /// This receives requests without session routing or inferred operation authority.
@@ -652,9 +448,9 @@ struct StartupOptions {
     ///
     /// [`MessageOptions`]: crate::types::MessageOptions
     pub on_get_trace_context: Option<Arc<dyn TraceContextProvider>>,
-    /// OpenTelemetry startup config for the owned runtime, including in-process hosts. See
+    /// OpenTelemetry config forwarded to the spawned CLI process. See
     /// [`TelemetryConfig`] for the env-var mapping. The SDK takes no
-    /// OpenTelemetry dependency — this configures the runtime's exporter.
+    /// OpenTelemetry dependency — this is pure spawn-time env injection.
     pub telemetry: Option<TelemetryConfig>,
     /// Disable Copilot-owned GitHub and Entra authentication telemetry at startup.
     ///
@@ -666,7 +462,6 @@ struct StartupOptions {
     /// auth, telemetry buffers). When set, exported as `COPILOT_HOME` to
     /// the spawned CLI process. Useful for sandboxing test runs or
     /// running multiple isolated SDK instances side-by-side.
-    /// In-process hosts also keep their runtime cache in its `cache` subdirectory.
     pub base_directory: Option<PathBuf>,
     /// Existing in-process runtime server to attach to without taking ownership.
     ///
@@ -674,24 +469,19 @@ struct StartupOptions {
     /// Only used with [`Transport::InProcess`].
     #[doc(hidden)]
     pub in_process_server_id: Option<u32>,
-    /// Bind an existing native session to the SDK engine with its original callback authority.
-    /// Requires an attached in-process server and its already-loaded native image.
-    pub in_process_session_binding: Option<InProcessSessionBinding>,
     /// Native image the embedding host already loaded, required for an attached server.
     /// Otherwise defaults to the SDK's ordinary runtime resolver.
     #[doc(hidden)]
     pub in_process_runtime_library_path: Option<PathBuf>,
-    /// Original live process auth owner for SDK-owned in-process startup.
-    ///
-    /// The owner binds a one-use startup reservation through its existing
-    /// native binder. The SDK retains it until its host closes. This cannot
-    /// be combined with an attached server, a borrowed session, or [`Self::github_token`].
-    pub in_process_auth_owner: Option<Arc<dyn InProcessAuthOwner>>,
+    /// Deprecated legacy v1 remote-control compatibility option. This enables
+    /// export and polling-based steering for SDK-managed runtimes; it is
+    /// ignored when connecting to an external server via [`Transport::External`].
+    pub enable_remote_sessions: bool,
     /// Override the directory where the bundled CLI binary is extracted on
     /// first use.
     ///
     /// When `None` (the default), the SDK extracts the embedded CLI to
-    /// `<platform cache dir>/copilot-sdk/cli/<version>/copilot[.exe]`,
+    /// `<platform cache dir>/github-copilot-sdk/cli/<version>/copilot[.exe]`,
     /// where the cache dir is the OS's LocalAppData known folder on
     /// Windows, `~/Library/Caches/` on macOS,
     /// `$XDG_CACHE_HOME` (or `~/.cache/`) on Linux. Use this knob to
@@ -705,9 +495,9 @@ struct StartupOptions {
     /// extraction, set `COPILOT_CLI_EXTRACT_DIR` (honored symmetrically
     /// at build and runtime); to point the runtime at a different
     /// binary altogether, use [`CliProgram::Path`] or `COPILOT_CLI_PATH`.
-    pub bundled_cli_extract_directory: Option<PathBuf>,
-    /// Required SDK-level mode controlling whether sessions get CLI-style defaults
-    /// or are stripped to a minimal/safe baseline. See
+    pub bundled_cli_extract_dir: Option<PathBuf>,
+    /// SDK-level mode controlling whether sessions get CLI-style defaults
+    /// (the default) or are stripped to a minimal/safe baseline. See
     /// [`ClientMode`] for the contract and trade-offs.
     pub mode: ClientMode,
     /// Declares the integrating application's identity, forwarded to the runtime on
@@ -813,11 +603,16 @@ impl ClientInfo {
     }
 }
 
-#[cfg(any(feature = "runtime", test))]
-impl std::fmt::Debug for StartupOptions {
+impl std::fmt::Debug for ClientOptions {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("StartupOptions")
+        f.debug_struct("ClientOptions")
+            .field("program", &self.program)
+            .field("prefix_args", &self.prefix_args)
+            .field("working_directory", &self.working_directory)
+            .field("env", &self.env)
+            .field("env_remove", &self.env_remove)
             .field("disable_client_telemetry", &self.disable_client_telemetry)
+            .field("extra_args", &self.extra_args)
             .field(
                 "builtin_plugin_directories",
                 &self.builtin_plugin_directories,
@@ -850,7 +645,7 @@ impl std::fmt::Debug for StartupOptions {
                 "extension_launch_provider",
                 &self.extension_launch_provider.as_ref().map(|_| "<set>"),
             )
-            .field("network", &self.network)
+            .field("kerberos_auth", &self.kerberos_auth)
             .field(
                 "installation_confirmation_handler",
                 &self
@@ -873,10 +668,8 @@ impl std::fmt::Debug for StartupOptions {
                 "in_process_runtime_library_path",
                 &self.in_process_runtime_library_path,
             )
-            .field(
-                "bundled_cli_extract_directory",
-                &self.bundled_cli_extract_directory,
-            )
+            .field("enable_remote_sessions", &self.enable_remote_sessions)
+            .field("bundled_cli_extract_dir", &self.bundled_cli_extract_dir)
             .field("client_info", &self.client_info)
             .field("entra", &self.entra)
             .finish()
@@ -886,7 +679,7 @@ impl std::fmt::Debug for StartupOptions {
 /// Custom handler for [`Client::list_models`].
 ///
 /// Implementations override the default `models.list` RPC, returning a
-/// caller-supplied catalog of models. Set via [`ClientModelOptions::on_list_models`].
+/// caller-supplied catalog of models. Set via [`ClientOptions::on_list_models`].
 ///
 /// Implementations must be `Send + Sync` because [`Client`] is shared across
 /// tasks. Errors returned by [`list_models`](Self::list_models) are propagated
@@ -910,26 +703,6 @@ pub type UiThreadAction = Box<dyn FnOnce() -> Result<()> + Send + 'static>;
 pub trait UiThreadHandler: Send + Sync + 'static {
     /// Schedule `action` exactly once, and complete only after it returns.
     async fn run_on_ui_thread(&self, action: UiThreadAction) -> Result<()>;
-}
-
-/// Admission of an existing native auth owner into an SDK-owned host.
-///
-/// The reservation is valid only during this call. Implementations invoke the
-/// original owner's native process-auth binder, without copying credentials or
-/// passing a runtime object across the ABI. The SDK calls this on its startup
-/// blocking thread before constructing the runtime host or issuing requests.
-pub trait InProcessAuthOwner: Send + Sync + 'static {
-    /// Bind this startup reservation through the original native auth owner.
-    fn bind_startup(&self, server: u32, connection: u32) -> Result<()>;
-}
-
-impl<F> InProcessAuthOwner for F
-where
-    F: Fn(u32, u32) -> Result<()> + Send + Sync + 'static,
-{
-    fn bind_startup(&self, server: u32, connection: u32) -> Result<()> {
-        self(server, connection)
-    }
 }
 
 #[async_trait]
@@ -1033,14 +806,14 @@ impl OtlpHttpProtocol {
     }
 }
 
-/// OpenTelemetry startup configuration for the owned Copilot runtime.
+/// OpenTelemetry configuration forwarded to the spawned GitHub Copilot CLI
+/// process.
 ///
-/// When [`ClientObservabilityOptions::telemetry`] is `Some(...)`, the SDK sets
+/// When [`ClientOptions::telemetry`] is `Some(...)`, the SDK sets
 /// `COPILOT_OTEL_ENABLED=true` plus any populated fields below as the
 /// corresponding `OTEL_*` / `COPILOT_OTEL_*` environment variables. The
 /// CLI's built-in OpenTelemetry exporter consumes these at startup. The
-/// SDK itself takes no OpenTelemetry dependency. In-process hosts receive
-/// independent configuration snapshots without changing the process environment.
+/// SDK itself takes no OpenTelemetry dependency.
 ///
 /// Environment-variable mapping:
 ///
@@ -1054,9 +827,9 @@ impl OtlpHttpProtocol {
 /// | [`source_name`]      | `COPILOT_OTEL_SOURCE_NAME`                            |
 /// | [`capture_content`]  | `OTEL_INSTRUMENTATION_GENAI_CAPTURE_CONTENT` (and legacy boolean alias) |
 ///
-/// For subprocesses, these typed settings override equivalent entries and
-/// removals in [`SpawnedProcessOptions`]. Leave a field unset to configure
-/// its variable through the environment instead.
+/// Caller-supplied entries in [`ClientOptions::env`] override these, so a
+/// developer can pin any individual variable to a different value while
+/// keeping the rest of the config managed by [`TelemetryConfig`].
 ///
 /// Marked `#[non_exhaustive]` so future CLI-side telemetry knobs can be
 /// added without breaking callers.
@@ -1148,11 +921,15 @@ impl TelemetryConfig {
     }
 }
 
-#[cfg(any(feature = "runtime", test))]
-impl Default for StartupOptions {
+impl Default for ClientOptions {
     fn default() -> Self {
         Self {
-            internal_test_options: None,
+            program: CliProgram::Resolve,
+            prefix_args: Vec::new(),
+            working_directory: PathBuf::new(),
+            env: Vec::new(),
+            env_remove: Vec::new(),
+            extra_args: Vec::new(),
             builtin_plugin_directories: Vec::new(),
             transport: Transport::default(),
             run_on_ui_thread: None,
@@ -1164,7 +941,7 @@ impl Default for StartupOptions {
             session_fs: None,
             request_handler: None,
             extension_launch_provider: None,
-            network: None,
+            kerberos_auth: None,
             installation_confirmation_handler: None,
             on_github_telemetry: None,
             on_get_trace_context: None,
@@ -1172,14 +949,303 @@ impl Default for StartupOptions {
             disable_client_telemetry: false,
             base_directory: None,
             in_process_server_id: None,
-            in_process_session_binding: None,
             in_process_runtime_library_path: None,
-            in_process_auth_owner: None,
-            bundled_cli_extract_directory: None,
-            mode: ClientMode::CodingAgent,
+            enable_remote_sessions: false,
+            bundled_cli_extract_dir: None,
+            mode: ClientMode::default(),
             client_info: None,
             entra: None,
         }
+    }
+}
+
+impl ClientOptions {
+    /// Construct a new [`ClientOptions`] with default values.
+    ///
+    /// Equivalent to [`ClientOptions::default`]; provided as a documented
+    /// construction entry point for the builder chain. The struct is
+    /// `#[non_exhaustive]`, so external callers cannot use struct-literal
+    /// syntax — use this builder or [`Default::default`] plus mut-let.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use github_copilot_sdk::{ClientOptions, LogLevel};
+    /// let opts = ClientOptions::new()
+    ///     .with_log_level(LogLevel::Debug)
+    ///     .with_github_token("ghp_…");
+    /// ```
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// How to locate the child-process runtime. See [`CliProgram`].
+    pub fn with_program(mut self, program: impl Into<CliProgram>) -> Self {
+        self.program = program.into();
+        self
+    }
+
+    /// Arguments prepended before `--server` (e.g. the script path for node).
+    pub fn with_prefix_args<I, S>(mut self, args: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<OsString>,
+    {
+        self.prefix_args = args.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Working directory for the CLI process.
+    pub fn with_cwd(mut self, cwd: impl Into<PathBuf>) -> Self {
+        self.working_directory = cwd.into();
+        self
+    }
+
+    /// Environment variables to set on the child process.
+    pub fn with_env<I, K, V>(mut self, env: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<OsString>,
+        V: Into<OsString>,
+    {
+        self.env = env.into_iter().map(|(k, v)| (k.into(), v.into())).collect();
+        self
+    }
+
+    /// Environment variable names to remove from the child process.
+    pub fn with_env_remove<I, S>(mut self, names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<OsString>,
+    {
+        self.env_remove = names.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Extra CLI flags appended after the transport-specific arguments.
+    pub fn with_extra_args<I, S>(mut self, args: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.extra_args = args.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Set trusted plugin directories bundled by the host.
+    ///
+    /// Every path must be absolute; invalid paths are rejected by
+    /// [`Client::start`].
+    pub fn with_builtin_plugin_directories<I, P>(mut self, paths: I) -> Self
+    where
+        I: IntoIterator<Item = P>,
+        P: Into<PathBuf>,
+    {
+        self.builtin_plugin_directories = paths.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Transport mode used to communicate with the CLI server. See [`Transport`].
+    pub fn with_transport(mut self, transport: Transport) -> Self {
+        self.transport = transport;
+        self
+    }
+
+    /// GitHub token for authentication. The SDK passes the token to the
+    /// CLI via `--auth-token-env COPILOT_SDK_AUTH_TOKEN`.
+    pub fn with_github_token(mut self, token: impl Into<String>) -> Self {
+        self.github_token = Some(token.into());
+        self
+    }
+
+    /// Whether the CLI should fall back to the logged-in `gh` user when
+    /// no token is provided. See the field docs for default semantics.
+    pub fn with_use_logged_in_user(mut self, use_logged_in: bool) -> Self {
+        self.use_logged_in_user = Some(use_logged_in);
+        self
+    }
+
+    /// Disable Copilot-owned uploads without affecting independently configured OpenTelemetry.
+    pub fn with_disable_client_telemetry(mut self, disabled: bool) -> Self {
+        self.disable_client_telemetry = disabled;
+        self
+    }
+
+    /// Log level passed to the CLI server via `--log-level`.
+    pub fn with_log_level(mut self, level: LogLevel) -> Self {
+        self.log_level = Some(level);
+        self
+    }
+
+    /// Server-wide idle timeout for sessions (seconds). Pass `0` to leave
+    /// sessions running indefinitely (the CLI default).
+    pub fn with_session_idle_timeout_seconds(mut self, seconds: u64) -> Self {
+        self.session_idle_timeout_seconds = Some(seconds);
+        self
+    }
+
+    /// Override [`Client::list_models`] with a caller-supplied handler.
+    /// The handler is wrapped in `Arc` internally.
+    pub fn with_list_models_handler<H>(mut self, handler: H) -> Self
+    where
+        H: ListModelsHandler + 'static,
+    {
+        self.on_list_models = Some(Arc::new(handler));
+        self
+    }
+
+    /// Custom session filesystem provider configuration.
+    pub fn with_session_fs(mut self, config: SessionFsConfig) -> Self {
+        self.session_fs = Some(config);
+        self
+    }
+
+    /// Register a connection-level Copilot request handler. The runtime will
+    /// route its model-layer HTTP and WebSocket traffic through the handler
+    /// configured here instead of issuing the calls itself. The handler is
+    /// wrapped in `Arc` internally.
+    pub fn with_request_handler<H>(mut self, handler: H) -> Self
+    where
+        H: crate::copilot_request_handler::CopilotRequestHandler,
+    {
+        self.request_handler = Some(Arc::new(handler));
+        self
+    }
+
+    /// Register a connection-level extension launch profile provider.
+    ///
+    /// The provider is wrapped in [`Arc`] internally and registered with the
+    /// runtime before [`Client::start`] returns.
+    pub fn with_extension_launch_provider<P>(mut self, provider: P) -> Self
+    where
+        P: crate::extension_launch_provider::ExtensionLaunchProvider,
+    {
+        self.extension_launch_provider = Some(Arc::new(provider));
+        self
+    }
+
+    /// Supply Kerberos credentials from the SDK host.
+    ///
+    /// [`KerberosAuthMode::Fallback`](crate::kerberos_auth::KerberosAuthMode::Fallback)
+    /// uses the provider only when the runtime's native lookup fails;
+    /// [`KerberosAuthMode::Always`](crate::kerberos_auth::KerberosAuthMode::Always)
+    /// never attempts native lookup. The provider is registered with the runtime
+    /// before [`Client::start`] returns.
+    ///
+    /// The provider authenticates only requests made for sessions this client
+    /// creates or resumes. To also authenticate the runtime's shared background
+    /// traffic, set [`ClientOptions::kerberos_auth`] to a
+    /// [`KerberosAuthConfig`](crate::kerberos_auth::KerberosAuthConfig) with
+    /// [`KerberosAuthScope::Runtime`](crate::kerberos_auth::KerberosAuthScope::Runtime).
+    pub fn with_kerberos_auth<P>(
+        mut self,
+        mode: crate::kerberos_auth::KerberosAuthMode,
+        provider: P,
+    ) -> Self
+    where
+        P: crate::kerberos_auth::KerberosAuthProvider,
+    {
+        self.kerberos_auth = Some(crate::kerberos_auth::KerberosAuthConfig::new(
+            mode, provider,
+        ));
+        self
+    }
+
+    /// Install a connection-global human confirmation handler (experimental).
+    pub fn with_installation_confirmation_handler<H>(mut self, handler: H) -> Self
+    where
+        H: crate::installation_confirmation::InstallationConfirmationHandler,
+    {
+        self.installation_confirmation_handler = Some(Arc::new(handler));
+        self
+    }
+
+    /// Register a connection-level GitHub telemetry forwarding callback
+    /// (internal/experimental). Registering a callback auto-enables telemetry
+    /// forwarding on every session created or resumed on this client; the
+    /// callback fires for each forwarded `gitHubTelemetry.event` notification.
+    /// The callback is wrapped in `Arc` internally.
+    #[doc(hidden)]
+    pub fn with_on_github_telemetry<F>(mut self, callback: F) -> Self
+    where
+        F: Fn(crate::github_telemetry::GitHubTelemetryNotification) + Send + Sync + 'static,
+    {
+        self.on_github_telemetry = Some(Arc::new(callback));
+        self
+    }
+
+    /// Set the [`TraceContextProvider`] used to inject W3C Trace Context
+    /// headers on outbound `session.create` / `session.resume` /
+    /// `session.send` requests. The provider is wrapped in `Arc` internally.
+    pub fn with_trace_context_provider<P>(mut self, provider: P) -> Self
+    where
+        P: TraceContextProvider + 'static,
+    {
+        self.on_get_trace_context = Some(Arc::new(provider));
+        self
+    }
+
+    /// OpenTelemetry config forwarded to the spawned CLI process.
+    pub fn with_telemetry(mut self, config: TelemetryConfig) -> Self {
+        self.telemetry = Some(config);
+        self
+    }
+
+    /// Override the directory where the CLI persists its state. Set as
+    /// `COPILOT_HOME` on the spawned CLI process.
+    pub fn with_base_directory(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.base_directory = Some(dir.into());
+        self
+    }
+
+    /// Enable the deprecated legacy v1 remote-control compatibility mode.
+    ///
+    /// This option is temporary and may be removed in a future release.
+    #[deprecated(
+        note = "Legacy v1 remote-control compatibility is temporary and may be removed in a future release"
+    )]
+    pub fn with_enable_remote_sessions(mut self, enabled: bool) -> Self {
+        self.enable_remote_sessions = enabled;
+        self
+    }
+
+    /// Override the directory where bundled CLI and runtime artifacts are
+    /// extracted on first use. See [`Self::bundled_cli_extract_dir`].
+    ///
+    /// Only applies when the `bundled-cli` cargo feature is on. With
+    /// `bundled-cli` disabled (`default-features = false`), set
+    /// `COPILOT_CLI_EXTRACT_DIR` to relocate the build-time extraction
+    /// (honored symmetrically at build and runtime), or use
+    /// [`CliProgram::Path`] / `COPILOT_CLI_PATH` to point at a different
+    /// binary at runtime.
+    pub fn with_bundled_cli_extract_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.bundled_cli_extract_dir = Some(dir.into());
+        self
+    }
+
+    /// Set the SDK [`ClientMode`]. Use [`ClientMode::Empty`] for any
+    /// scenario where CLI-like ambient behavior is unsafe (e.g. multi-user
+    /// servers). Empty mode additionally requires [`Self::base_directory`]
+    /// or [`Self::session_fs`] to be set, validated at [`Client::start`].
+    pub fn with_mode(mut self, mode: ClientMode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    /// Declare the integrating application's identity, forwarded to the runtime on
+    /// the `server.connect` handshake so its telemetry is attributed to a
+    /// consistent surface. See [`Self::client_info`].
+    pub fn with_client_info(mut self, client_info: ClientInfo) -> Self {
+        self.client_info = Some(client_info);
+        self
+    }
+
+    /// Configure the host's Microsoft Entra application for its sessions.
+    ///
+    /// **Experimental.** May change or be removed in future releases.
+    pub fn with_entra(mut self, entra: impl Into<types::EntraAuthOptions>) -> Self {
+        self.entra = Some(entra.into());
+        self
     }
 }
 
@@ -1221,13 +1287,45 @@ fn generate_connection_token() -> String {
 }
 
 /// Environment variable that overrides the transport used when the caller
-/// calls [`RuntimeConnection::for_default`].
+/// leaves [`ClientOptions::transport`] at [`Transport::Default`].
 /// Accepts `"inprocess"` or `"stdio"` (case-insensitive); unset preserves
-/// in-process hosting. Any other value is an error.
+/// stdio. Any other value is an error.
+#[cfg(feature = "runtime")]
 const DEFAULT_CONNECTION_ENV_VAR: &str = "COPILOT_SDK_DEFAULT_CONNECTION";
 
+/// Resolve a transport override from [`DEFAULT_CONNECTION_ENV_VAR`].
+#[cfg(feature = "runtime")]
+fn resolve_default_transport(options: &ClientOptions) -> Result<Transport> {
+    let configured = options
+        .env
+        .iter()
+        .find(|(key, _)| {
+            key.to_string_lossy()
+                .eq_ignore_ascii_case(DEFAULT_CONNECTION_ENV_VAR)
+        })
+        .map(|(_, value)| value.to_string_lossy().into_owned());
+    let process = std::env::var(DEFAULT_CONNECTION_ENV_VAR).ok();
+    resolve_default_transport_value(configured.as_deref().or(process.as_deref()))
+}
+
+#[cfg(feature = "runtime")]
+fn resolve_default_transport_value(value: Option<&str>) -> Result<Transport> {
+    match value {
+        None => Ok(Transport::Stdio),
+        Some(v) if v.is_empty() || v.eq_ignore_ascii_case("stdio") => Ok(Transport::Stdio),
+        Some(v) if v.eq_ignore_ascii_case("inprocess") => Ok(Transport::InProcess),
+        Some(v) => Err(Error::with_message(
+            ErrorKind::InvalidConfig,
+            format!(
+                "invalid {DEFAULT_CONNECTION_ENV_VAR} value '{v}'. \
+                 Expected 'inprocess', 'stdio', or unset."
+            ),
+        )),
+    }
+}
+
 #[cfg(any(feature = "in-process", test))]
-fn inprocess_environment(options: &StartupOptions) -> Result<Vec<(String, String)>> {
+fn inprocess_environment(options: &ClientOptions) -> Result<Vec<(String, String)>> {
     let mut environment = Vec::new();
     if let Some(base_directory) = &options.base_directory {
         let value = base_directory.to_str().ok_or_else(|| {
@@ -1237,10 +1335,6 @@ fn inprocess_environment(options: &StartupOptions) -> Result<Vec<(String, String
             )
         })?;
         environment.push(("COPILOT_HOME".to_owned(), value.to_owned()));
-        environment.push((
-            "COPILOT_CACHE_HOME".to_owned(),
-            base_directory.join("cache").to_string_lossy().into_owned(),
-        ));
     }
     if options.mode == ClientMode::Empty {
         environment.push(("COPILOT_DISABLE_KEYTAR".to_owned(), "1".to_owned()));
@@ -1251,109 +1345,52 @@ fn inprocess_environment(options: &StartupOptions) -> Result<Vec<(String, String
     if options.disable_client_telemetry {
         environment.push(("COPILOT_TELEMETRY_DISABLED".to_owned(), "true".to_owned()));
     }
-    if let Some(test_options) = &options.internal_test_options {
-        environment.extend(
-            test_options
-                .environment()
-                .map(|(key, value)| (key.to_owned(), value.to_owned())),
-        );
-    }
-    for (key, value) in telemetry_environment(options) {
-        let value = value.into_string().map_err(|_| {
-            Error::with_message(
-                ErrorKind::InvalidConfig,
-                format!("{key} must be valid UTF-8 for Transport::InProcess"),
-            )
-        })?;
-        environment.push((key.to_owned(), value));
-    }
     // The embedded host captures inheritance and normalizes platform-specific environment names.
     Ok(environment)
 }
 
-#[cfg(any(feature = "runtime", test))]
-fn validate_runtime_startup_options(options: &StartupOptions) -> Result<()> {
-    let connection = match &options.transport {
-        Transport::Tcp { .. } => "an attached Transport::Tcp server",
-        Transport::InProcess if options.in_process_server_id.is_some() => {
-            "an existing in_process_server_id"
-        }
-        _ => return Ok(()),
+#[cfg(any(feature = "in-process", test))]
+fn validate_inprocess_options(options: &ClientOptions) -> Result<()> {
+    if !matches!(&options.program, CliProgram::Resolve) {
+        return Err(Error::with_message(
+            ErrorKind::InvalidConfig,
+            "ClientOptions::program is not supported with Transport::InProcess; \
+             set COPILOT_CLI_PATH only when using an externally provisioned runtime package",
+        ));
+    }
+    if !options.extra_args.is_empty() {
+        return Err(Error::with_message(
+            ErrorKind::InvalidConfig,
+            "ClientOptions::extra_args is not supported with Transport::InProcess; \
+             use typed client options instead",
+        ));
+    }
+
+    let unsupported = if !options.working_directory.as_os_str().is_empty() {
+        Some("working_directory")
+    } else if !options.env.is_empty() {
+        Some("env")
+    } else if !options.env_remove.is_empty() {
+        Some("env_remove")
+    } else if options.telemetry.is_some() {
+        Some("telemetry")
+    } else if !options.prefix_args.is_empty() {
+        Some("prefix_args")
+    } else {
+        None
     };
-    let incompatible = [
-        ("github.token", options.github_token.is_some()),
-        (
-            "github.use_logged_in_user",
-            options.use_logged_in_user.is_some(),
-        ),
-        ("observability.log_level", options.log_level.is_some()),
-        (
-            "runtime.owned.session_idle_timeout_seconds",
-            options.session_idle_timeout_seconds.is_some(),
-        ),
-        ("observability.telemetry", options.telemetry.is_some()),
-        (
-            "observability.disable_client_telemetry",
-            options.disable_client_telemetry,
-        ),
-        (
-            "runtime.owned.base_directory",
-            options.base_directory.is_some(),
-        ),
-        (
-            "internal_test_options",
-            options.internal_test_options.is_some(),
-        ),
-    ]
-    .into_iter()
-    .filter_map(|(name, configured)| configured.then_some(name))
-    .collect::<Vec<_>>();
-    if !incompatible.is_empty() {
+
+    if let Some(option) = unsupported {
         return Err(Error::with_message(
             ErrorKind::InvalidConfig,
             format!(
-                "ClientOptions configuration requires an owned runtime: {}; \
-                 remove these options when connecting to {connection} \
-                 and configure the existing runtime instead",
-                incompatible.join(", "),
+                "ClientOptions::{option} is not supported with Transport::InProcess; \
+                 configure process-global settings on the host process instead"
             ),
         ));
     }
-    Ok(())
-}
 
-#[cfg(any(feature = "runtime", feature = "in-process", test))]
-fn telemetry_environment(options: &StartupOptions) -> Vec<(&'static str, OsString)> {
-    let mut environment = Vec::new();
-    if let Some(telemetry) = &options.telemetry {
-        environment.push(("COPILOT_OTEL_ENABLED", "true".into()));
-        if let Some(endpoint) = &telemetry.otlp_endpoint {
-            environment.push(("OTEL_EXPORTER_OTLP_ENDPOINT", endpoint.into()));
-        }
-        if let Some(protocol) = telemetry.otlp_protocol {
-            environment.push(("OTEL_EXPORTER_OTLP_PROTOCOL", protocol.as_str().into()));
-        }
-        if let Some(path) = &telemetry.file_path {
-            environment.push(("COPILOT_OTEL_FILE_EXPORTER_PATH", path.as_os_str().into()));
-        }
-        if let Some(exporter) = telemetry.exporter_type {
-            environment.push(("COPILOT_OTEL_EXPORTER_TYPE", exporter.as_str().into()));
-        }
-        if let Some(source) = &telemetry.source_name {
-            environment.push(("COPILOT_OTEL_SOURCE_NAME", source.into()));
-        }
-        if let Some(capture) = telemetry.capture_content {
-            environment.push((
-                "OTEL_INSTRUMENTATION_GENAI_CAPTURE_CONTENT",
-                if capture { "SPAN_ONLY" } else { "NO_CONTENT" }.into(),
-            ));
-            environment.push((
-                "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT",
-                if capture { "true" } else { "false" }.into(),
-            ));
-        }
-    }
-    environment
+    Ok(())
 }
 
 /// Connection to a GitHub Copilot CLI server (stdio, TCP, or external).
@@ -1376,30 +1413,6 @@ impl std::fmt::Debug for Client {
     }
 }
 
-/// A spawn failure with the context that names what was being started. The
-/// original `io::Error` is its source, so callers can still inspect the OS
-/// error code and any nested source.
-#[cfg(feature = "runtime")]
-#[derive(Debug)]
-struct SpawnError {
-    context: String,
-    source: std::io::Error,
-}
-
-#[cfg(feature = "runtime")]
-impl std::fmt::Display for SpawnError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}: {}", self.context, self.source)
-    }
-}
-
-#[cfg(feature = "runtime")]
-impl std::error::Error for SpawnError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.source)
-    }
-}
-
 struct ClientInner {
     ahp_host_callbacks: Arc<ahp_host::ExitCallbacks>,
     ahp_host_sessions: std::sync::Weak<ahp_host::HostSessions>,
@@ -1414,6 +1427,7 @@ struct ClientInner {
     rpc: JsonRpcClient,
     cwd: PathBuf,
     request_rx: parking_lot::Mutex<Option<mpsc::UnboundedReceiver<JsonRpcRequest>>>,
+    notification_tx: broadcast::Sender<Arc<JsonRpcNotification>>,
     router: router::SessionRouter,
     github_token_registry: Arc<github_token::GitHubTokenRegistry>,
     negotiated_protocol_version: OnceLock<u32>,
@@ -1426,15 +1440,13 @@ struct ClientInner {
     session_fs_binary_declared: bool,
     session_fs_read_file_range_declared: bool,
     /// Inbound `llmInference.*` dispatcher, installed when
-    /// [`StartupOptions::request_handler`] is set.
+    /// [`ClientOptions::request_handler`] is set.
     llm_inference: OnceLock<Arc<copilot_request_handler::CopilotRequestDispatcher>>,
     extension_launch_provider: Arc<extension_launch_provider::ExtensionLaunchProviderDispatcher>,
     installation_confirmation: Arc<installation_confirmation::InstallationConfirmationDispatcher>,
-    /// Open shell password prompts, keyed by session and request.
-    shell_authentication_requests: shell_authentication::PendingShellAuthenticationRequests,
     entra_token: Arc<entra::EntraTokenDispatcher>,
     /// Connection-level GitHub telemetry forwarding callback, set from
-    /// [`StartupOptions::on_github_telemetry`]. Drives the
+    /// [`ClientOptions::on_github_telemetry`]. Drives the
     /// `enableGitHubTelemetryForwarding` wire flag and the
     /// `gitHubTelemetry.event` notification dispatch.
     on_github_telemetry: Option<crate::github_telemetry::GitHubTelemetryCallback>,
@@ -1445,7 +1457,7 @@ struct ClientInner {
     /// explicit token.
     effective_connection_token: Option<String>,
     /// Application identity forwarded on the `connect` handshake, set from
-    /// [`StartupOptions::client_info`]. `None` keeps the runtime's default
+    /// [`ClientOptions::client_info`]. `None` keeps the runtime's default
     /// telemetry attribution.
     client_info: Option<ClientInfo>,
     entra: Option<types::EntraAuthOptions>,
@@ -1472,19 +1484,6 @@ impl Drop for StdioShutdownGuard<'_> {
 }
 
 impl Client {
-    #[doc(hidden)]
-    /// The live server ID selected by the in-process transport.
-    pub fn in_process_server_id(&self) -> Option<u32> {
-        #[cfg(feature = "in-process")]
-        {
-            self.inner.ffi_host.lock().as_ref()?.server_id()
-        }
-        #[cfg(not(feature = "in-process"))]
-        {
-            None
-        }
-    }
-
     #[doc(hidden)]
     /// Library path selected by the in-process transport, if this client uses it.
     pub fn in_process_library_path(&self) -> Option<PathBuf> {
@@ -1516,142 +1515,27 @@ impl Client {
         }
     }
 
-    /// Create a native session from an embedding host's resolved construction options.
+    /// Start a CLI server process with the given options.
     ///
-    /// The runtime creates and owns the resource. The host attaches its existing
-    /// facade using the returned construction plan, then completes host initialization.
-    #[doc(hidden)]
-    #[cfg(feature = "in-process")]
-    pub async fn create_host_session(&self, payload: &str) -> Result<serde_json::Value> {
-        let library = self.in_process_library_path().ok_or_else(|| {
-            Error::with_message(
-                ErrorKind::InvalidConfig,
-                "host construction requires in-process transport",
-            )
-        })?;
-        let connection_id = self.in_process_connection_id().ok_or_else(|| {
-            Error::with_message(
-                ErrorKind::InvalidConfig,
-                "the in-process connection is not active",
-            )
-        })?;
-        let construction =
-            ffi::prepare_host_session_construction(&library, connection_id, payload)?;
-        self.call(
-            "sessions.open",
-            Some(serde_json::json!({
-                "kind": "create",
-                "emitStart": false,
-                "hostConstructionToken": construction.token,
-            })),
-        )
-        .await
-    }
-
-    /// Prepare callback authority for an existing resource owned by this SDK connection.
-    #[doc(hidden)]
-    #[cfg(feature = "in-process")]
-    pub async fn prepare_session_host(&self, payload: String) -> Result<InProcessSessionHost> {
-        let library = self.in_process_library_path().ok_or_else(|| {
-            Error::with_message(
-                ErrorKind::InvalidConfig,
-                "The SDK runtime is no longer available",
-            )
-        })?;
-        let connection_id = self.in_process_connection_id().ok_or_else(|| {
-            Error::with_message(
-                ErrorKind::InvalidConfig,
-                "The SDK connection is no longer active",
-            )
-        })?;
-        tokio::task::spawn_blocking(move || {
-            ffi::prepare_session_host(&library, connection_id, &payload)
-        })
-        .await
-        .map_err(|error| Error::with_message(ErrorKind::InvalidConfig, error.to_string()))?
-    }
-
-    /// Replay an embedding host's prepared history into its SDK-owned native resource.
-    ///
-    /// The original facade must install its filesystem and callbacks before replay.
-    /// Construction and replay use the same in-process connection and credential owner.
-    #[doc(hidden)]
-    #[cfg(feature = "in-process")]
-    pub async fn complete_host_session_resume(
-        &self,
-        native_session_id: &str,
-        replay_plan_token: u32,
-        clear_external_tool_definitions: bool,
-    ) -> Result<()> {
-        let library = self.in_process_library_path().ok_or_else(|| {
-            Error::with_message(
-                ErrorKind::InvalidConfig,
-                "host resume requires in-process transport",
-            )
-        })?;
-        let connection_id = self.in_process_connection_id().ok_or_else(|| {
-            Error::with_message(
-                ErrorKind::InvalidConfig,
-                "the in-process connection is not active",
-            )
-        })?;
-        let payload = serde_json::json!({
-            "nativeSessionId": native_session_id,
-            "replayPlanToken": replay_plan_token,
-            "clearExternalToolDefinitions": clear_external_tool_definitions,
-        })
-        .to_string();
-        let construction =
-            ffi::prepare_host_session_construction(&library, connection_id, &payload)?;
-        self.call(
-            "sessions.open",
-            Some(serde_json::json!({
-                "kind": "resume",
-                "sessionId": native_session_id,
-                "resume": false,
-                "hostConstructionToken": construction.token,
-            })),
-        )
-        .await?;
-        Ok(())
-    }
-
-    /// Start a runtime host or connect to an external server with the given options.
-    ///
-    /// By default, loads the native runtime in-process over its C ABI.
-    /// For [`RuntimeConnection::SpawnedStdio`], spawns the CLI with `--stdio` and communicates
-    /// over stdin/stdout pipes. For [`RuntimeConnection::SpawnedTcp`], spawns with `--port`
+    /// For [`Transport::Stdio`], spawns the CLI with `--stdio` and communicates
+    /// over stdin/stdout pipes. For [`Transport::Tcp`], spawns with `--port`
     /// and connects via TCP once the server reports it is listening. For
-    /// [`RuntimeConnection::Tcp`], connects to an already-running server.
+    /// [`Transport::External`], connects to an already-running server.
     ///
     /// After establishing the connection, calls [`verify_protocol_version`](Self::verify_protocol_version)
     /// to ensure the CLI server speaks a compatible protocol version.
-    /// When [`ClientOptions::network`] configures a callback, next registers
-    /// the configured network callbacks via `network.setProvider`.
+    /// When [`ClientOptions::kerberos_auth`] is set, next registers the SDK as
+    /// the Kerberos credential provider via `kerberosAuth.setProvider`.
     /// When [`ClientOptions::session_fs`] is set, also calls
     /// `sessionFs.setProvider` to register the SDK as the filesystem
     /// backend.
     #[cfg(feature = "runtime")]
     pub async fn start(options: ClientOptions) -> Result<Self> {
-        let options = options.into_startup()?;
         let start_time = Instant::now();
         let mut timings = StartupTimings::default();
         let mut options = options;
-        if options.in_process_auth_owner.is_some()
-            && (!matches!(options.transport, Transport::InProcess)
-                || options.in_process_server_id.is_some()
-                || options.in_process_session_binding.is_some())
-        {
-            return Err(Error::with_message(
-                ErrorKind::InvalidConfig,
-                "a live auth owner requires SDK-owned in-process startup",
-            ));
-        }
-        if options.in_process_auth_owner.is_some() && options.github_token.is_some() {
-            return Err(Error::with_message(
-                ErrorKind::InvalidConfig,
-                "a live auth owner cannot be combined with github_token",
-            ));
+        if matches!(options.transport, Transport::Default) {
+            options.transport = resolve_default_transport(&options)?;
         }
         if options.run_on_ui_thread.is_some() && !matches!(options.transport, Transport::InProcess)
         {
@@ -1660,18 +1544,18 @@ impl Client {
                 "run_on_ui_thread is supported only with Transport::InProcess",
             ));
         }
-        #[cfg(not(feature = "in-process"))]
         if matches!(options.transport, Transport::InProcess) {
-            return Err(Error::with_message(
-                ErrorKind::InvalidConfig,
-                "Transport::InProcess requires the `in-process` Cargo feature",
-            ));
+            #[cfg(not(feature = "in-process"))]
+            {
+                return Err(Error::with_message(
+                    ErrorKind::InvalidConfig,
+                    "Transport::InProcess requires the `in-process` Cargo feature",
+                ));
+            }
+            #[cfg(feature = "in-process")]
+            validate_inprocess_options(&options)?;
         }
-        validate_runtime_startup_options(&options)?;
         if options.mode == ClientMode::Empty
-            && !matches!(options.transport, Transport::Tcp { .. })
-            && !(matches!(options.transport, Transport::InProcess)
-                && options.in_process_server_id.is_some())
             && options.base_directory.is_none()
             && options.session_fs.is_none()
         {
@@ -1708,34 +1592,33 @@ impl Client {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
-        if let Transport::Tcp { host, port, .. } = &options.transport
-            && (host.is_empty()
-                || host
-                    .chars()
-                    .any(|c| c.is_whitespace() || "/\\?#@[]".contains(c))
-                || (host.contains(':')
-                    && host
-                        .split_once('%')
-                        .map_or(host.as_str(), |(address, _)| address)
-                        .parse::<std::net::Ipv6Addr>()
-                        .is_err())
-                || *port == 0)
-        {
-            return Err(Error::with_message(
-                ErrorKind::InvalidConfig,
-                "TCP connection requires a hostname or IP address without a scheme, port, or path, \
-                 and a nonzero port",
-            ));
+        // Auth options only make sense when the SDK spawns the CLI; with an
+        // external server, the server manages its own auth.
+        if matches!(options.transport, Transport::External { .. }) {
+            if options.github_token.is_some() {
+                return Err(Error::with_message(
+                    ErrorKind::InvalidConfig,
+                    "invalid client configuration: github_token cannot be used with \
+                     Transport::External (external server manages its own auth)",
+                ));
+            }
+            if options.use_logged_in_user == Some(true) {
+                return Err(Error::with_message(
+                    ErrorKind::InvalidConfig,
+                    "invalid client configuration: use_logged_in_user cannot be used with \
+                     Transport::External (external server manages its own auth)",
+                ));
+            }
         }
         // Validate token shape. Stdio variants no longer carry a token
-        // (enforced by the type). For SpawnedTcp/Tcp, empty-string is
+        // (enforced by the type). For Tcp/External, empty-string is
         // rejected eagerly.
         match &options.transport {
-            Transport::SpawnedTcp {
+            Transport::Tcp {
                 connection_token: Some(t),
                 ..
             }
-            | Transport::Tcp {
+            | Transport::External {
                 connection_token: Some(t),
                 ..
             } if t.is_empty() => {
@@ -1747,27 +1630,27 @@ impl Client {
             _ => {}
         }
         // Capture (and where needed, auto-generate) the token actually sent
-        // to the server. For SpawnedTcp, the SDK auto-generates one when the
+        // to the server. For Tcp, the SDK auto-generates one when the
         // caller leaves it unset so the loopback listener is safe by
         // default.
         let effective_connection_token: Option<String> = match &mut options.transport {
             Transport::Default => unreachable!("default transport resolved above"),
-            Transport::SpawnedStdio(_) | Transport::InProcess => None,
-            Transport::SpawnedTcp {
+            Transport::Stdio | Transport::InProcess => None,
+            Transport::Tcp {
                 connection_token, ..
             } => Some(
                 connection_token
                     .get_or_insert_with(generate_connection_token)
                     .clone(),
             ),
-            Transport::Tcp {
+            Transport::External {
                 connection_token, ..
             } => connection_token.clone(),
         };
         let session_fs_config = options.session_fs.clone();
         let request_handler = options.request_handler.clone();
         let extension_launch_provider = options.extension_launch_provider.clone();
-        let network_config = options.network.clone();
+        let kerberos_auth_config = options.kerberos_auth.clone();
         let installation_confirmation_handler = options.installation_confirmation_handler.clone();
         let session_fs_sqlite_declared = session_fs_config
             .as_ref()
@@ -1781,67 +1664,42 @@ impl Client {
             .as_ref()
             .and_then(|c| c.capabilities.as_ref())
             .is_some_and(|caps| caps.read_file_range);
-        let program = if matches!(options.transport, Transport::Tcp { .. })
-            || (matches!(options.transport, Transport::InProcess)
-                && options.in_process_runtime_library_path.is_some())
-        {
-            None
-        } else {
-            Some(
-                match options
-                    .transport
-                    .spawned_process()
-                    .map(|process| &process.program)
+        let program = match &options.program {
+            CliProgram::Path(path) => {
+                info!(path = %path.display(), "using explicit copilot CLI path");
+                path.clone()
+            }
+            CliProgram::Resolve => {
+                let resolve_start = Instant::now();
+                let resolved = resolve::copilot_binary_with_extract_dir(
+                    options.bundled_cli_extract_dir.as_deref(),
+                    true,
+                )?;
+                let resolve_elapsed = resolve_start.elapsed();
+                timings.program_resolve_ms = Some(StartupTimings::millis(resolve_elapsed));
+                debug!(
+                    elapsed_ms = resolve_elapsed.as_millis(),
+                    "Client::start CLI program resolution complete"
+                );
+                info!(path = %resolved.display(), "resolved copilot runtime");
+                #[cfg(windows)]
                 {
-                    Some(CliProgram::Path(path)) => {
-                        info!(path = %path.display(), "using explicit copilot CLI path");
-                        path.clone()
-                    }
-                    Some(CliProgram::Resolve) | None => {
-                        let resolve_start = Instant::now();
-                        let env_cli_path = match options.transport.spawned_process() {
-                            Some(process) => process.environment_variable("COPILOT_CLI_PATH"),
-                            None => std::env::var_os("COPILOT_CLI_PATH"),
-                        };
-                        let resolved = resolve::copilot_binary_with_extract_dir(
-                            &options,
-                            true,
-                            env_cli_path.as_deref(),
-                        )?;
-                        let resolve_elapsed = resolve_start.elapsed();
-                        timings.program_resolve_ms = Some(StartupTimings::millis(resolve_elapsed));
-                        debug!(
-                            elapsed_ms = resolve_elapsed.as_millis(),
-                            "Client::start CLI program resolution complete"
+                    if let Some(ext) = resolved.extension().and_then(|e| e.to_str()).filter(|ext| {
+                        ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat")
+                    }) {
+                        warn!(
+                            path = %resolved.display(),
+                            ext = %ext,
+                            "resolved copilot CLI is a .cmd/.bat wrapper; \
+                             this may cause console window flashes on Windows"
                         );
-                        info!(path = %resolved.display(), "resolved copilot runtime");
-                        #[cfg(windows)]
-                        {
-                            if let Some(ext) =
-                                resolved.extension().and_then(|e| e.to_str()).filter(|ext| {
-                                    ext.eq_ignore_ascii_case("cmd")
-                                        || ext.eq_ignore_ascii_case("bat")
-                                })
-                            {
-                                warn!(
-                                    path = %resolved.display(),
-                                    ext = %ext,
-                                    "resolved copilot CLI is a .cmd/.bat wrapper; \
-                                     this may cause console window flashes on Windows"
-                                );
-                            }
-                        }
-                        resolved
                     }
-                },
-            )
+                }
+                resolved
+            }
         };
         let working_directory = {
-            let cwd = options
-                .transport
-                .spawned_process()
-                .map(|process| process.working_directory.clone())
-                .unwrap_or_default();
+            let cwd = options.working_directory.clone();
             if cwd.as_os_str().is_empty() {
                 std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
             } else {
@@ -1852,7 +1710,7 @@ impl Client {
         let transport_setup_start = Instant::now();
         let client = match options.transport {
             Transport::Default => unreachable!("default transport resolved above"),
-            Transport::Tcp {
+            Transport::External {
                 ref host,
                 port,
                 connection_token: _,
@@ -1888,21 +1746,12 @@ impl Client {
                     false,
                 )?
             }
-            Transport::SpawnedTcp {
-                ref process,
+            Transport::Tcp {
                 port,
                 connection_token: _,
             } => {
-                let (child, tree, actual_port, spawn_elapsed, port_wait_elapsed) = Self::spawn_tcp(
-                    program
-                        .as_deref()
-                        .expect("spawned transports resolve a CLI program"),
-                    &options,
-                    process,
-                    &working_directory,
-                    port,
-                )
-                .await?;
+                let (mut child, tree, actual_port, spawn_elapsed, port_wait_elapsed) =
+                    Self::spawn_tcp(&program, &options, &working_directory, port).await?;
                 timings.process_spawn_ms = Some(StartupTimings::millis(spawn_elapsed));
                 timings.port_wait_ms = Some(StartupTimings::millis(port_wait_elapsed));
                 let connect_start = Instant::now();
@@ -1913,6 +1762,7 @@ impl Client {
                     "Client::start TCP connect complete"
                 );
                 let (reader, writer) = tokio::io::split(stream);
+                Self::drain_stderr(&mut child);
                 Self::from_transport(
                     reader,
                     jsonrpc::MessageWriter::stream(writer),
@@ -1934,15 +1784,9 @@ impl Client {
                     false,
                 )?
             }
-            Transport::SpawnedStdio(ref process) => {
-                let (mut child, tree, spawn_elapsed) = Self::spawn_stdio(
-                    program
-                        .as_deref()
-                        .expect("spawned transports resolve a CLI program"),
-                    &options,
-                    process,
-                    &working_directory,
-                )?;
+            Transport::Stdio => {
+                let (mut child, tree, spawn_elapsed) =
+                    Self::spawn_stdio(&program, &options, &working_directory)?;
                 timings.process_spawn_ms = Some(StartupTimings::millis(spawn_elapsed));
                 let stdin = child.stdin.take().expect("stdin is piped");
                 let stdout = child.stdout.take().expect("stdout is piped");
@@ -1971,11 +1815,7 @@ impl Client {
             Transport::InProcess => {
                 #[cfg(feature = "in-process")]
                 {
-                    if let Some(program) = &program {
-                        info!(runtime_path = %program.display(), "hosting copilot runtime in-process (FFI)");
-                    } else {
-                        info!("hosting copilot runtime in-process (FFI)");
-                    }
+                    info!(runtime_path = %program.display(), "hosting copilot runtime in-process (FFI)");
                     let environment = inprocess_environment(&options)?;
                     let mut args = Vec::new();
                     args.extend(
@@ -1984,6 +1824,7 @@ impl Client {
                             .map(str::to_string),
                     );
                     args.extend(Self::session_idle_timeout_args(&options));
+                    args.extend(Self::remote_args(&options));
                     if options.github_token.is_some() {
                         args.extend([
                             "--auth-token-env".to_string(),
@@ -2004,17 +1845,13 @@ impl Client {
                         .map(PathBuf::from)
                         .filter(|path| path.is_file());
                     let host = crate::ffi::FfiHost::create(
-                        program.as_deref(),
+                        &program,
                         explicit_cli.as_deref(),
                         integration_id.as_deref(),
                         environment,
                         args,
-                        crate::ffi::FfiHostTarget {
-                            server_id: options.in_process_server_id,
-                            library_path: options.in_process_runtime_library_path.as_deref(),
-                            session_binding: options.in_process_session_binding,
-                            auth_owner: options.in_process_auth_owner,
-                        },
+                        options.in_process_server_id,
+                        options.in_process_runtime_library_path.as_deref(),
                     )?;
                     let (reader, shared) = host.start().await?;
                     let sender = shared.clone();
@@ -2102,8 +1939,8 @@ impl Client {
             dispatcher
         });
         client.inner.router.ensure_started(&client.inner);
-        if let Some(config) = network_config {
-            client.register_network(config).await?;
+        if let Some(config) = kerberos_auth_config {
+            kerberos_auth::register(&client, config).await?;
         }
         if client.inner.extension_launch_provider.is_configured() {
             client.rpc().register_extension_launch_provider().await?;
@@ -2228,31 +2065,15 @@ impl Client {
         )
     }
 
-    /// Register `config`'s network callbacks with the runtime, for a client created with
-    /// [`Self::from_streams`], which takes no [`ClientOptions`]; [`Self::start`] does this for
-    /// [`ClientOptions::with_network`]. Call it once, after [`Self::verify_protocol_version`] and
-    /// before creating sessions, so their requests use the callbacks. A rejected registration,
-    /// for example while another client holds the runtime scope, can be retried. If this future is
-    /// dropped, the registration still completes in the background, and is rolled back if the
-    /// runtime rejects it.
-    ///
-    /// **Experimental.** May change or be removed in future releases.
-    pub async fn register_network(&self, config: network::NetworkConfig) -> Result<()> {
-        self.inner.router.ensure_started(&self.inner);
-        network::register(self, config).await
-    }
-
     /// Create a Client from raw async streams (no child process).
     ///
     /// Useful for testing or connecting to a server over a custom transport.
-    /// Register network callbacks for it with [`Self::register_network`].
     pub fn from_streams(
-        mode: ClientMode,
         reader: impl AsyncRead + Unpin + Send + 'static,
         writer: impl AsyncWrite + Unpin + Send + 'static,
         cwd: PathBuf,
     ) -> Result<Self> {
-        Self::from_streams_with_entra(mode, reader, writer, cwd, None)
+        Self::from_streams_with_entra(reader, writer, cwd, None)
     }
 
     /// Create a client from a custom transport with optional host Entra configuration.
@@ -2264,13 +2085,12 @@ impl Client {
     ///
     /// **Experimental.** May change or be removed in future releases.
     pub fn from_streams_with_entra(
-        mode: ClientMode,
         reader: impl AsyncRead + Unpin + Send + 'static,
         writer: impl AsyncWrite + Unpin + Send + 'static,
         cwd: PathBuf,
         entra: Option<EntraAuthConfig>,
     ) -> Result<Self> {
-        Self::from_streams_with_entra_options(mode, reader, writer, cwd, entra.map(Into::into))
+        Self::from_streams_with_entra_options(reader, writer, cwd, entra.map(Into::into))
     }
 
     /// Create a custom-transport client with optional host-owned Entra acquisition.
@@ -2279,7 +2099,6 @@ impl Client {
     ///
     /// **Experimental.** May change or be removed in future releases.
     pub fn from_streams_with_entra_options(
-        mode: ClientMode,
         reader: impl AsyncRead + Unpin + Send + 'static,
         writer: impl AsyncWrite + Unpin + Send + 'static,
         cwd: PathBuf,
@@ -2300,7 +2119,7 @@ impl Client {
             None,
             None,
             None,
-            mode,
+            ClientMode::default(),
             None,
             entra,
             false,
@@ -2338,7 +2157,7 @@ impl Client {
             None,
             None,
             None,
-            ClientMode::CodingAgent,
+            ClientMode::default(),
             None,
             None,
             false,
@@ -2370,7 +2189,7 @@ impl Client {
             None,
             None,
             None,
-            ClientMode::CodingAgent,
+            ClientMode::default(),
             None,
             None,
             false,
@@ -2386,7 +2205,7 @@ impl Client {
         cwd: PathBuf,
         handler: Arc<dyn crate::installation_confirmation::InstallationConfirmationHandler>,
     ) -> Result<Self> {
-        let client = Self::from_streams(ClientMode::CodingAgent, reader, writer, cwd)?;
+        let client = Self::from_streams(reader, writer, cwd)?;
         client
             .inner
             .installation_confirmation
@@ -2423,7 +2242,7 @@ impl Client {
             Some(provider),
             None,
             None,
-            ClientMode::CodingAgent,
+            ClientMode::default(),
             None,
             None,
             false,
@@ -2455,7 +2274,7 @@ impl Client {
             None,
             None,
             token,
-            ClientMode::CodingAgent,
+            ClientMode::default(),
             None,
             None,
             false,
@@ -2487,7 +2306,7 @@ impl Client {
             None,
             Some(on_github_telemetry),
             None,
-            ClientMode::CodingAgent,
+            ClientMode::default(),
             None,
             None,
             false,
@@ -2530,7 +2349,7 @@ impl Client {
             None,
             None,
             None,
-            ClientMode::CodingAgent,
+            ClientMode::default(),
             client_info,
             None,
             false,
@@ -2594,16 +2413,12 @@ impl Client {
     ) -> Result<Self> {
         let setup_start = Instant::now();
         let (request_tx, request_rx) = mpsc::unbounded_channel::<JsonRpcRequest>();
-        let (notification_tx, notification_rx) = mpsc::unbounded_channel();
+        let (notification_broadcast_tx, _) = broadcast::channel::<Arc<JsonRpcNotification>>(1024);
         let (host_notification_tx, host_notification_rx) = mpsc::unbounded_channel();
-        let router = router::SessionRouter::new();
-        router.connect_dispatcher(&notification_tx);
         let rpc = JsonRpcClient::new_with_host_notifications(
             writer,
             reader,
-            Box::new(move |notification| {
-                let _ = notification_tx.send(router::DispatcherInput::Notification(notification));
-            }),
+            notification_broadcast_tx.clone(),
             request_tx,
             Some(host_notification_tx),
         );
@@ -2639,7 +2454,8 @@ impl Client {
                 rpc,
                 cwd,
                 request_rx: parking_lot::Mutex::new(Some(request_rx)),
-                router,
+                notification_tx: notification_broadcast_tx,
+                router: router::SessionRouter::new(),
                 github_token_registry: github_token_registry.clone(),
                 negotiated_protocol_version: OnceLock::new(),
                 state: parking_lot::Mutex::new(ConnectionState::Connected),
@@ -2653,8 +2469,6 @@ impl Client {
                 llm_inference: OnceLock::new(),
                 extension_launch_provider: extension_launch_provider.clone(),
                 installation_confirmation: installation_confirmation.clone(),
-                shell_authentication_requests:
-                    shell_authentication::PendingShellAuthenticationRequests::default(),
                 entra_token: entra_token.clone(),
                 on_github_telemetry,
                 on_get_trace_context,
@@ -2670,7 +2484,7 @@ impl Client {
         extension_launch_provider.set_client(Arc::downgrade(&client.inner));
         installation_confirmation.set_client(Arc::downgrade(&client.inner));
         entra_token.set_client(Arc::downgrade(&client.inner));
-        client.spawn_notification_dispatcher(notification_rx);
+        client.spawn_lifecycle_dispatcher();
         client.spawn_ahp_host_dispatcher(host_notification_rx);
         client.register_ahp_session_factory()?;
         if client
@@ -2689,89 +2503,109 @@ impl Client {
         Ok(client)
     }
 
-    /// Spawn the task that delivers every notification the read loop hands
-    /// over: `session.event` to its session, `session.lifecycle` to
-    /// [`Self::subscribe_lifecycle`] subscribers, and `gitHubTelemetry.event`
-    /// to the registered callback's own task.
-    ///
-    /// The read loop's channel to this task is unbounded and this task never
-    /// waits on a consumer or runs host code, so no notification is lost to
-    /// a backlog and no response waits behind one. Handing session events to
-    /// per-session channels in arrival order keeps each session's events in
-    /// order while a slow session holds up only itself.
-    fn spawn_notification_dispatcher(
-        &self,
-        mut notifications: mpsc::UnboundedReceiver<router::DispatcherInput>,
-    ) {
-        let sessions = self.inner.router.event_sink();
+    /// Spawn the background task that re-broadcasts `session.lifecycle`
+    /// notifications via [`ClientInner::lifecycle_tx`] to subscribers
+    /// returned by [`Self::subscribe_lifecycle`].
+    fn spawn_lifecycle_dispatcher(&self) {
+        let mut notif_rx = self.inner.notification_tx.subscribe();
         let lifecycle_tx = self.inner.lifecycle_tx.clone();
-        let telemetry = self
-            .inner
-            .on_github_telemetry
-            .clone()
-            .map(spawn_github_telemetry_dispatcher);
         tokio::spawn(async move {
-            while let Some(input) = notifications.recv().await {
-                let notification = match input {
-                    router::DispatcherInput::Notification(notification) => notification,
-                    router::DispatcherInput::Claim(session_id, token) => {
-                        sessions.claim(&session_id, token);
-                        continue;
+            loop {
+                match notif_rx.recv().await {
+                    Ok(notification) => {
+                        if notification.method != "session.lifecycle" {
+                            continue;
+                        }
+                        let Some(params) = notification.params.as_ref() else {
+                            continue;
+                        };
+                        let event: SessionLifecycleEvent =
+                            match SessionLifecycleEvent::deserialize(params) {
+                                Ok(e) => e,
+                                Err(e) => {
+                                    warn!(
+                                        error = %e,
+                                        "failed to deserialize session.lifecycle notification"
+                                    );
+                                    continue;
+                                }
+                            };
+                        // `send` only errors when there are no subscribers — that's
+                        // the normal case before any consumer calls subscribe_lifecycle.
+                        let _ = lifecycle_tx.send(event);
                     }
-                };
-                let Some(params) = notification.params else {
-                    continue;
-                };
-                match notification.method.as_str() {
-                    "session.event" => sessions.route(params),
-                    "session.lifecycle" => match SessionLifecycleEvent::deserialize(&params) {
-                        // `send` only errors when there are no subscribers.
-                        Ok(event) => {
-                            let _ = lifecycle_tx.send(event);
-                        }
-                        Err(e) => {
-                            warn!(error = %e, "failed to deserialize session.lifecycle notification");
-                        }
-                    },
-                    "gitHubTelemetry.event" => {
-                        if let Some(telemetry) = &telemetry {
-                            let _ = telemetry.send(params);
-                        }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        warn!(missed = n, "lifecycle dispatcher lagged");
                     }
-                    _ => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
             }
-            sessions.close();
         });
     }
 
     #[cfg(feature = "runtime")]
-    fn build_command(
-        program: &Path,
-        options: &StartupOptions,
-        process: &SpawnedProcessOptions,
-        working_directory: &Path,
-    ) -> Command {
+    fn build_command(program: &Path, options: &ClientOptions, working_directory: &Path) -> Command {
         let mut command = Command::new(program);
         command.kill_on_drop(true);
-        command.args(&process.args);
-        if let Some(environment) = &process.env {
-            command.env_clear();
-            for (key, value) in environment {
-                command.env(key, value);
-            }
+        for arg in &options.prefix_args {
+            command.arg(arg);
         }
-        for key in &process.env_remove {
-            command.env_remove(key);
-        }
-        if let Some(test_options) = &options.internal_test_options {
-            command.envs(test_options.environment());
-        }
-        // Explicit typed options and required settings win over the base environment.
+        // Inject the SDK auth token first so explicit `env` / `env_remove`
+        // entries can override or strip it.
         if let Some(token) = &options.github_token {
             command.env("COPILOT_SDK_AUTH_TOKEN", token);
         }
-        command.envs(telemetry_environment(options));
+        // Inject telemetry env vars before user env so callers can still
+        // override individual variables via `options.env`.
+        if let Some(telemetry) = &options.telemetry {
+            command.env("COPILOT_OTEL_ENABLED", "true");
+            if let Some(endpoint) = &telemetry.otlp_endpoint {
+                command.env("OTEL_EXPORTER_OTLP_ENDPOINT", endpoint);
+            }
+            if let Some(protocol) = telemetry.otlp_protocol {
+                command.env("OTEL_EXPORTER_OTLP_PROTOCOL", protocol.as_str());
+            }
+            if let Some(path) = &telemetry.file_path {
+                command.env("COPILOT_OTEL_FILE_EXPORTER_PATH", path);
+            }
+            if let Some(exporter) = telemetry.exporter_type {
+                command.env("COPILOT_OTEL_EXPORTER_TYPE", exporter.as_str());
+            }
+            if let Some(source) = &telemetry.source_name {
+                command.env("COPILOT_OTEL_SOURCE_NAME", source);
+            }
+            if let Some(capture) = telemetry.capture_content {
+                // A synthesized standard mode must not defeat an existing legacy env override.
+                let legacy_key = "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT";
+                let is_legacy_key = |key: &OsString| {
+                    if cfg!(windows) {
+                        key.as_encoded_bytes()
+                            .eq_ignore_ascii_case(legacy_key.as_bytes())
+                    } else {
+                        key == legacy_key
+                    }
+                };
+                let capture = !options.env_remove.iter().any(is_legacy_key)
+                    && options
+                        .env
+                        .iter()
+                        .rev()
+                        .find(|(key, _)| is_legacy_key(key))
+                        .map_or(capture, |(_, value)| {
+                            value
+                                .to_str()
+                                .is_some_and(|value| value.eq_ignore_ascii_case("true"))
+                        });
+                command.env(
+                    "OTEL_INSTRUMENTATION_GENAI_CAPTURE_CONTENT",
+                    if capture { "SPAN_ONLY" } else { "NO_CONTENT" },
+                );
+                command.env(
+                    "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT",
+                    if capture { "true" } else { "false" },
+                );
+            }
+        }
         if let Some(dir) = &options.base_directory {
             command.env("COPILOT_HOME", dir);
         }
@@ -2780,12 +2614,18 @@ impl Client {
         if options.mode == ClientMode::Empty {
             command.env("COPILOT_DISABLE_KEYTAR", "1");
         }
-        if let Transport::SpawnedTcp {
+        if let Transport::Tcp {
             connection_token: Some(token),
             ..
         } = &options.transport
         {
             command.env("COPILOT_CONNECTION_TOKEN", token);
+        }
+        for (key, value) in &options.env {
+            command.env(key, value);
+        }
+        for key in &options.env_remove {
+            command.env_remove(key);
         }
         if options.disable_client_telemetry {
             command.env("COPILOT_TELEMETRY_DISABLED", "true");
@@ -2801,15 +2641,15 @@ impl Client {
         command
     }
 
-    /// Returns the CLI auth flags derived from [`StartupOptions::github_token`]
-    /// and [`StartupOptions::use_logged_in_user`].
+    /// Returns the CLI auth flags derived from [`ClientOptions::github_token`]
+    /// and [`ClientOptions::use_logged_in_user`].
     ///
     /// When a token is set, adds `--auth-token-env COPILOT_SDK_AUTH_TOKEN`.
     /// When the effective `use_logged_in_user` is `false` (either explicitly
     /// or because a token was provided without an override), adds
     /// `--no-auto-login`.
     #[cfg(feature = "runtime")]
-    fn auth_args(options: &StartupOptions) -> Vec<&'static str> {
+    fn auth_args(options: &ClientOptions) -> Vec<&'static str> {
         let mut args: Vec<&'static str> = Vec::new();
         if options.github_token.is_some() {
             args.push("--auth-token-env");
@@ -2825,10 +2665,10 @@ impl Client {
     }
 
     /// Returns `--session-idle-timeout <secs>` when
-    /// [`StartupOptions::session_idle_timeout_seconds`] is `Some(n)` with
+    /// [`ClientOptions::session_idle_timeout_seconds`] is `Some(n)` with
     /// `n > 0`. Otherwise returns an empty vector.
     #[cfg(feature = "runtime")]
-    fn session_idle_timeout_args(options: &StartupOptions) -> Vec<String> {
+    fn session_idle_timeout_args(options: &ClientOptions) -> Vec<String> {
         match options.session_idle_timeout_seconds {
             Some(secs) if secs > 0 => {
                 vec!["--session-idle-timeout".to_string(), secs.to_string()]
@@ -2838,66 +2678,40 @@ impl Client {
     }
 
     #[cfg(feature = "runtime")]
-    fn log_level_args(options: &StartupOptions) -> Vec<&'static str> {
+    fn remote_args(options: &ClientOptions) -> Vec<String> {
+        if options.enable_remote_sessions {
+            vec!["--remote".to_string()]
+        } else {
+            Vec::new()
+        }
+    }
+
+    #[cfg(feature = "runtime")]
+    fn log_level_args(options: &ClientOptions) -> Vec<&'static str> {
         match options.log_level {
             Some(level) => vec!["--log-level", level.as_str()],
             None => Vec::new(),
         }
     }
 
-    /// Spawns the CLI. On Unix a missing working directory fails the spawn
-    /// with the same error as a missing program, so the error names the one
-    /// at fault. The original `io::Error` stays in the source chain.
-    #[cfg(feature = "runtime")]
-    fn spawn_cli(
-        command: &mut Command,
-        program: &Path,
-        working_directory: &Path,
-    ) -> Result<(Child, Option<process_tree::ProcessTree>)> {
-        process_tree::spawn(command).map_err(|source| {
-            // Only claim the directory is at fault when it is known to be
-            // missing or not a directory; any other failure to inspect it
-            // (for example `PermissionDenied`) says nothing about the spawn.
-            let working_directory_unusable = match std::fs::metadata(working_directory) {
-                Ok(metadata) => !metadata.is_dir(),
-                Err(error) => matches!(
-                    error.kind(),
-                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
-                ),
-            };
-            let context = if working_directory_unusable {
-                format!(
-                    "working directory {} does not exist or is not a directory",
-                    working_directory.display()
-                )
-            } else {
-                format!(
-                    "failed to start {} in {}",
-                    program.display(),
-                    working_directory.display()
-                )
-            };
-            Error::new(ErrorKind::Io, SpawnError { context, source })
-        })
-    }
-
     #[cfg(feature = "runtime")]
     fn spawn_stdio(
         program: &Path,
-        options: &StartupOptions,
-        process: &SpawnedProcessOptions,
+        options: &ClientOptions,
         working_directory: &Path,
     ) -> Result<(Child, Option<process_tree::ProcessTree>, Duration)> {
         info!(cwd = ?working_directory, program = %program.display(), "spawning copilot CLI (stdio)");
-        let mut command = Self::build_command(program, options, process, working_directory);
+        let mut command = Self::build_command(program, options, working_directory);
         command
             .args(["--server", "--stdio", "--no-auto-update"])
             .args(Self::log_level_args(options))
             .args(Self::auth_args(options))
             .args(Self::session_idle_timeout_args(options))
+            .args(Self::remote_args(options))
+            .args(&options.extra_args)
             .stdin(Stdio::piped());
         let spawn_start = Instant::now();
-        let (child, tree) = Self::spawn_cli(&mut command, program, working_directory)?;
+        let (child, tree) = process_tree::spawn(&mut command)?;
         let spawn_elapsed = spawn_start.elapsed();
         debug!(
             elapsed_ms = spawn_elapsed.as_millis(),
@@ -2909,8 +2723,7 @@ impl Client {
     #[cfg(feature = "runtime")]
     async fn spawn_tcp(
         program: &Path,
-        options: &StartupOptions,
-        process: &SpawnedProcessOptions,
+        options: &ClientOptions,
         working_directory: &Path,
         port: u16,
     ) -> Result<(
@@ -2921,21 +2734,22 @@ impl Client {
         Duration,
     )> {
         info!(cwd = ?working_directory, program = %program.display(), port = %port, "spawning copilot CLI (tcp)");
-        let mut command = Self::build_command(program, options, process, working_directory);
+        let mut command = Self::build_command(program, options, working_directory);
         command
             .args(["--server", "--port", &port.to_string(), "--no-auto-update"])
             .args(Self::log_level_args(options))
             .args(Self::auth_args(options))
             .args(Self::session_idle_timeout_args(options))
+            .args(Self::remote_args(options))
+            .args(&options.extra_args)
             .stdin(Stdio::null());
         let spawn_start = Instant::now();
-        let (mut child, tree) = Self::spawn_cli(&mut command, program, working_directory)?;
+        let (mut child, tree) = process_tree::spawn(&mut command)?;
         let spawn_elapsed = spawn_start.elapsed();
         debug!(
             elapsed_ms = spawn_elapsed.as_millis(),
             "Client::spawn_tcp subprocess spawned"
         );
-        Self::drain_stderr(&mut child);
         let stdout = child.stdout.take().expect("stdout is piped");
 
         let (port_tx, port_rx) = oneshot::channel::<u16>();
@@ -2986,56 +2800,13 @@ impl Client {
             let span = tracing::error_span!("copilot_cli");
             tokio::spawn(
                 async move {
-                    if let Err(error) =
-                        Self::drain_stderr_stream(stderr, |line| warn!(line = %line, "CLI stderr"))
-                            .await
-                    {
-                        warn!(%error, "Error reading CLI stderr");
+                    let mut reader = BufReader::new(stderr).lines();
+                    while let Ok(Some(line)) = reader.next_line().await {
+                        warn!(line = %line, "CLI stderr");
                     }
                 }
                 .instrument(span),
             );
-        }
-    }
-
-    #[cfg(feature = "runtime")]
-    async fn drain_stderr_stream(
-        mut stderr: impl AsyncRead + Unpin,
-        mut log: impl FnMut(&str),
-    ) -> std::io::Result<()> {
-        const CHUNK_SIZE: usize = 4096;
-        let mut chunk = [0; CHUNK_SIZE];
-        let mut pending = Vec::with_capacity(2 * CHUNK_SIZE);
-        loop {
-            let count = stderr.read(&mut chunk).await?;
-            if count == 0 {
-                if !pending.is_empty() {
-                    log(&String::from_utf8_lossy(&pending));
-                }
-                return Ok(());
-            }
-            pending.extend_from_slice(&chunk[..count]);
-            loop {
-                if let Some(newline) = pending.iter().position(|&byte| byte == b'\n')
-                    && newline < CHUNK_SIZE
-                {
-                    let line = pending[..newline]
-                        .strip_suffix(b"\r")
-                        .unwrap_or(&pending[..newline]);
-                    log(&String::from_utf8_lossy(line));
-                    pending.drain(..=newline);
-                } else if pending.len() >= CHUNK_SIZE {
-                    // Stream long lines without splitting a valid UTF-8 character.
-                    let end = match std::str::from_utf8(&pending[..CHUNK_SIZE]) {
-                        Err(error) if error.error_len().is_none() => error.valid_up_to(),
-                        _ => CHUNK_SIZE,
-                    };
-                    log(&String::from_utf8_lossy(&pending[..end]));
-                    pending.drain(..end);
-                } else {
-                    break;
-                }
-            }
         }
     }
 
@@ -3100,25 +2871,6 @@ impl Client {
         self.call_with_inline_callback(method, params, None).await
     }
 
-    pub(crate) async fn call_typed<T: serde::de::DeserializeOwned>(
-        &self,
-        method: &str,
-        params: Option<serde_json::Value>,
-    ) -> Result<T> {
-        let is_repo_settings_write =
-            matches!(method, "repo.settings.writeKey" | "repo.settings.writeAll");
-        let session_id = params
-            .as_ref()
-            .and_then(|params| params.get("sessionId"))
-            .and_then(serde_json::Value::as_str)
-            .map(SessionId::from);
-        let mut response = self.inner.rpc.send_raw_request(method, params).await?;
-        if let Some(error) = response.error.take() {
-            return Err(Self::call_error(error, session_id, is_repo_settings_write));
-        }
-        response.deserialize()
-    }
-
     /// Submit a JSON-RPC request now and return its asynchronous completion.
     ///
     /// In-process clients submit the complete frame through the runtime C ABI
@@ -3154,12 +2906,13 @@ impl Client {
     }
 
     pub(crate) async fn detach_session(&self, session_id: &str) -> Result<()> {
-        let response: SessionDetachResponse = self
-            .call_typed(
+        let value = self
+            .call(
                 "session.detach",
                 Some(serde_json::json!({ "sessionId": session_id })),
             )
             .await?;
+        let response: SessionDetachResponse = serde_json::from_value(value)?;
         if response.success {
             return Ok(());
         }
@@ -3217,24 +2970,16 @@ impl Client {
         is_repo_settings_write: bool,
     ) -> Result<serde_json::Value> {
         if let Some(err) = response.error {
-            return Err(Self::call_error(err, session_id, is_repo_settings_write));
+            // Repository paths can contain this text without referring to a session.
+            if !is_repo_settings_write && err.message.contains("Session not found") {
+                return Err(ErrorKind::Session(SessionErrorKind::NotFound(
+                    session_id.unwrap_or_else(|| "unknown".into()),
+                ))
+                .into());
+            }
+            return Err(Error::from_rpc(err.code, err.message, err.data));
         }
         Ok(response.result.unwrap_or(serde_json::Value::Null))
-    }
-
-    fn call_error(
-        error: JsonRpcError,
-        session_id: Option<SessionId>,
-        is_repo_settings_write: bool,
-    ) -> Error {
-        // Repository paths can contain this text without referring to a session.
-        if !is_repo_settings_write && error.message.contains("Session not found") {
-            return ErrorKind::Session(SessionErrorKind::NotFound(
-                session_id.unwrap_or_else(|| "unknown".into()),
-            ))
-            .into();
-        }
-        Error::from_rpc(error.code, error.message, error.data)
     }
 
     /// Send a JSON-RPC response back to the CLI (e.g. for permission or tool call requests).
@@ -3381,7 +3126,7 @@ impl Client {
     /// # Handshake sequence
     ///
     /// 1. Sends the `connect` JSON-RPC method, forwarding the
-    ///    [`RuntimeConnection`]'s `connection_token` (or the auto-generated
+    ///    [`Transport`]'s `connection_token` (or the auto-generated
     ///    token for SDK-spawned TCP servers) as the `token` param. This
     ///    is the canonical handshake used by all SDK languages and is
     ///    what the CLI uses to enforce loopback authentication when
@@ -3492,12 +3237,13 @@ impl Client {
                 .as_ref()
                 .and_then(ClientInfo::to_wire),
         };
-        let result: crate::generated::api_types::ConnectResult = self
-            .call_typed(
+        let value = self
+            .call(
                 crate::generated::api_types::rpc_methods::CONNECT,
                 Some(serde_json::to_value(params)?),
             )
             .await?;
+        let result: crate::generated::api_types::ConnectResult = serde_json::from_value(value)?;
         if self
             .inner
             .entra
@@ -3529,8 +3275,10 @@ impl Client {
             Some(m) => serde_json::json!({ "message": m }),
             None => serde_json::json!({}),
         };
-        self.call_typed(generated::api_types::rpc_methods::PING, Some(params))
-            .await
+        let value = self
+            .call(generated::api_types::rpc_methods::PING, Some(params))
+            .await?;
+        Ok(serde_json::from_value(value)?)
     }
 
     /// List persisted sessions, optionally filtered by working directory,
@@ -3543,7 +3291,8 @@ impl Client {
             Some(f) => serde_json::json!({ "filter": f }),
             None => serde_json::json!({}),
         };
-        let response: ListSessionsResponse = self.call_typed("session.list", Some(params)).await?;
+        let result = self.call("session.list", Some(params)).await?;
+        let response: ListSessionsResponse = serde_json::from_value(result)?;
         Ok(response.sessions)
     }
 
@@ -3556,8 +3305,8 @@ impl Client {
     /// # Example
     ///
     /// ```no_run
-    /// # async fn example(client: &copilot_sdk::Client) -> Result<(), copilot_sdk::Error> {
-    /// use copilot_sdk::types::SessionId;
+    /// # async fn example(client: &github_copilot_sdk::Client) -> Result<(), github_copilot_sdk::Error> {
+    /// use github_copilot_sdk::types::SessionId;
     /// if let Some(metadata) = client.get_session_metadata(&SessionId::new("session-123")).await? {
     ///     println!("Session started at: {}", metadata.start_time);
     /// }
@@ -3568,12 +3317,13 @@ impl Client {
         &self,
         session_id: &SessionId,
     ) -> Result<Option<SessionMetadata>> {
-        let response: GetSessionMetadataResponse = self
-            .call_typed(
+        let result = self
+            .call(
                 "session.getMetadata",
                 Some(serde_json::json!({ "sessionId": session_id })),
             )
             .await?;
+        let response: GetSessionMetadataResponse = serde_json::from_value(result)?;
         Ok(response.session)
     }
 
@@ -3584,25 +3334,6 @@ impl Client {
             Some(serde_json::json!({ "sessionId": session_id })),
         )
         .await?;
-        self.retire_github_token_provider(session_id);
-        Ok(())
-    }
-
-    pub(crate) async fn delete_session_checked(&self, session_id: &SessionId) -> Result<()> {
-        let response: SessionDeleteResponse = self
-            .call_typed(
-                "session.delete",
-                Some(serde_json::json!({ "sessionId": session_id })),
-            )
-            .await?;
-        if response.success == Some(false) {
-            return Err(Error::with_message(
-                ErrorKind::Session(SessionErrorKind::DeleteFailed),
-                response
-                    .error
-                    .unwrap_or_else(|| "unknown error".to_string()),
-            ));
-        }
         self.retire_github_token_provider(session_id);
         Ok(())
     }
@@ -3678,7 +3409,7 @@ impl Client {
     /// # Example
     ///
     /// ```no_run
-    /// # async fn example(client: &copilot_sdk::Client) -> Result<(), copilot_sdk::Error> {
+    /// # async fn example(client: &github_copilot_sdk::Client) -> Result<(), github_copilot_sdk::Error> {
     /// if let Some(last_id) = client.get_last_session_id().await? {
     ///     println!("Last session: {last_id}");
     /// }
@@ -3686,9 +3417,10 @@ impl Client {
     /// # }
     /// ```
     pub async fn get_last_session_id(&self) -> Result<Option<SessionId>> {
-        let response: GetLastSessionIdResponse = self
-            .call_typed("session.getLastId", Some(serde_json::json!({})))
+        let result = self
+            .call("session.getLastId", Some(serde_json::json!({})))
             .await?;
+        let response: GetLastSessionIdResponse = serde_json::from_value(result)?;
         Ok(response.session_id)
     }
 
@@ -3697,9 +3429,10 @@ impl Client {
     /// Only meaningful when connected to a server running in TUI+server mode
     /// (`--ui-server`). Returns `Ok(None)` if no foreground session is set.
     pub async fn get_foreground_session_id(&self) -> Result<Option<SessionId>> {
-        let response: GetForegroundSessionResponse = self
-            .call_typed("session.getForeground", Some(serde_json::json!({})))
+        let result = self
+            .call("session.getForeground", Some(serde_json::json!({})))
             .await?;
+        let response: GetForegroundSessionResponse = serde_json::from_value(result)?;
         Ok(response.session_id)
     }
 
@@ -3718,38 +3451,40 @@ impl Client {
 
     /// Get the CLI server status.
     pub async fn get_status(&self) -> Result<GetStatusResponse> {
-        self.call_typed("status.get", Some(serde_json::json!({})))
-            .await
+        let result = self.call("status.get", Some(serde_json::json!({}))).await?;
+        Ok(serde_json::from_value(result)?)
     }
 
     /// Get authentication status.
     pub async fn get_auth_status(&self) -> Result<GetAuthStatusResponse> {
-        self.call_typed("auth.getStatus", Some(serde_json::json!({})))
-            .await
+        let result = self
+            .call("auth.getStatus", Some(serde_json::json!({})))
+            .await?;
+        Ok(serde_json::from_value(result)?)
     }
 
     /// List available models.
     ///
-    /// When [`ClientModelOptions::on_list_models`] is set, returns the handler's
+    /// When [`ClientOptions::on_list_models`] is set, returns the handler's
     /// result without making a `models.list` RPC. Otherwise asks the CLI for
     /// the models available to its current account. In either case, the first
     /// successful result is cached for the lifetime of this client, so the
     /// handler must not return a different catalog for each user.
     ///
-    /// Without [`ClientModelOptions::on_list_models`] the CLI needs an account to
+    /// Without [`ClientOptions::on_list_models`] the CLI needs an account to
     /// answer. For an SDK-owned runtime, a client with no
-    /// [`ClientGitHubOptions::token`] and with
-    /// [`ClientGitHubOptions::use_logged_in_user`] set to `false` has none, so this
-    /// call fails with `Not authenticated`. With [`RuntimeConnection::Tcp`], the
+    /// [`ClientOptions::github_token`] and with
+    /// [`ClientOptions::use_logged_in_user`] set to `false` has none, so this
+    /// call fails with `Not authenticated`. With [`Transport::External`], the
     /// server manages its own authentication; these client options do not
     /// control the account used for model listing.
     ///
     /// Tokens given to sessions (for example through
-    /// [`SessionGitHubOptions::with_token_provider`](crate::SessionGitHubOptions::with_token_provider))
+    /// [`SessionConfig::with_github_token_provider`](crate::SessionConfig::with_github_token_provider))
     /// are only used by those sessions and do not help here. Such a client
     /// can instead:
     ///
-    /// - supply its own catalog through [`ClientModelOptions::on_list_models`], or
+    /// - supply its own catalog through [`ClientOptions::on_list_models`], or
     /// - list the models available to one user by passing that user's token to
     ///   [`ClientRpcModels::list_with_params`](crate::rpc::ClientRpcModels::list_with_params).
     ///   That call is experimental, bypasses the cache, and resolves only the
@@ -3757,10 +3492,10 @@ impl Client {
     ///
     /// ```no_run
     /// # async fn example(
-    /// #     client: &copilot_sdk::Client,
+    /// #     client: &github_copilot_sdk::Client,
     /// #     user_token: String,
-    /// # ) -> Result<(), copilot_sdk::Error> {
-    /// use copilot_sdk::rpc::ModelsListRequest;
+    /// # ) -> Result<(), github_copilot_sdk::Error> {
+    /// use github_copilot_sdk::rpc::ModelsListRequest;
     ///
     /// let models = client
     ///     .rpc()
@@ -3789,7 +3524,7 @@ impl Client {
         Ok(models.clone())
     }
 
-    /// Invoke [`StartupOptions::on_get_trace_context`] when configured,
+    /// Invoke [`ClientOptions::on_get_trace_context`] when configured,
     /// otherwise return [`TraceContext::default()`].
     pub(crate) async fn resolve_trace_context(&self) -> TraceContext {
         if let Some(provider) = &self.inner.on_get_trace_context {
@@ -3807,10 +3542,8 @@ impl Client {
     /// Cooperatively shut down the client and the CLI child process.
     ///
     /// Walks every still-registered session and sends `session.detach`
-    /// for each one, all detaches sharing one 10-second timeout so an
-    /// unresponsive runtime cannot hold the rest of teardown back, and asks
-    /// SDK-owned runtimes to shut down. For an owned stdio child, closes
-    /// stdin and waits up to 10 seconds for host cleanup and exit
+    /// for each one and asks SDK-owned runtimes to shut down. For an owned stdio
+    /// child, closes stdin and waits up to 10 seconds for host cleanup and exit
     /// before falling back to termination. Terminates the Windows-owned CLI
     /// Job Object when present and bounds the final root-process reap to 10 seconds.
     /// Errors from per-session detaches, runtime shutdown, and final process
@@ -3843,25 +3576,11 @@ impl Client {
         let mut errors: Vec<Error> = Vec::new();
         self.inner.extension_launch_provider.clear();
         self.inner.installation_confirmation.clear();
-        self.inner.shell_authentication_requests.cancel_all();
 
         // Snapshot the registered session IDs without holding the router
-        // lock across the detach RPCs. A hung runtime never answers
-        // session.detach, so every detach shares one deadline; past it, stop()
-        // moves on to runtime shutdown and termination.
-        let detach_deadline = tokio::time::Instant::now() + RUNTIME_SHUTDOWN_TIMEOUT;
+        // lock across the detach RPCs.
         for session_id in self.inner.router.session_ids() {
-            let detached =
-                tokio::time::timeout_at(detach_deadline, self.detach_session(&session_id))
-                    .await
-                    .unwrap_or_else(|_| {
-                        Err(std::io::Error::new(
-                            std::io::ErrorKind::TimedOut,
-                            "session.detach timed out during Client::stop",
-                        )
-                        .into())
-                    });
-            match detached {
+            match self.detach_session(&session_id).await {
                 Ok(_) => {}
                 Err(e) => {
                     warn!(
@@ -4020,7 +3739,7 @@ impl Client {
     /// # Example
     ///
     /// ```no_run
-    /// # async fn example(client: copilot_sdk::Client) {
+    /// # async fn example(client: github_copilot_sdk::Client) {
     /// // Try graceful shutdown first; fall back to force_stop if hung.
     /// match tokio::time::timeout(
     ///     std::time::Duration::from_secs(5),
@@ -4036,7 +3755,6 @@ impl Client {
         info!(pid = ?pid, "force-stopping CLI process");
         self.inner.extension_launch_provider.clear();
         self.inner.installation_confirmation.clear();
-        self.inner.shell_authentication_requests.cancel_all();
         if let Some(process_tree) = self.inner.process_tree.lock().take()
             && let Err(error) = process_tree.terminate()
         {
@@ -4088,7 +3806,7 @@ impl Client {
     /// # Example
     ///
     /// ```no_run
-    /// # async fn example(client: copilot_sdk::Client) {
+    /// # async fn example(client: github_copilot_sdk::Client) {
     /// let mut events = client.subscribe_lifecycle();
     /// tokio::spawn(async move {
     ///     while let Ok(event) = events.recv().await {
@@ -4100,39 +3818,6 @@ impl Client {
     pub fn subscribe_lifecycle(&self) -> LifecycleSubscription {
         LifecycleSubscription::new(self.inner.lifecycle_tx.subscribe())
     }
-}
-
-/// Run the host's telemetry callback on its own task, so a slow callback
-/// delays only later telemetry, never session or lifecycle delivery. Ends
-/// when the notification dispatcher drops the returned sender.
-fn spawn_github_telemetry_dispatcher(
-    callback: crate::github_telemetry::GitHubTelemetryCallback,
-) -> mpsc::UnboundedSender<serde_json::Value> {
-    let (tx, mut rx) = mpsc::unbounded_channel::<serde_json::Value>();
-    tokio::spawn(async move {
-        while let Some(params) = rx.recv().await {
-            // Client-global telemetry carries no routable session.
-            match serde_json::from_value::<crate::github_telemetry::GitHubTelemetryNotification>(
-                params,
-            ) {
-                Ok(telemetry) => {
-                    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        callback(telemetry)
-                    }))
-                    .is_err()
-                    {
-                        warn!(
-                            "gitHubTelemetry.event callback panicked; continuing telemetry delivery"
-                        );
-                    }
-                }
-                Err(e) => {
-                    warn!(error = %e, "failed to deserialize gitHubTelemetry.event notification");
-                }
-            }
-        }
-    });
-    tx
 }
 
 impl Drop for ClientInner {
@@ -4162,6 +3847,3 @@ impl Drop for ClientInner {
 
 #[cfg(all(test, feature = "runtime"))]
 mod tests;
-
-#[cfg(all(test, feature = "local-runtime"))]
-mod auth_owner_transport_tests;
