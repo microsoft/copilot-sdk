@@ -1,19 +1,18 @@
 #![allow(clippy::unwrap_used)]
 
-use copilot_sdk::{RuntimeConnection, TcpRuntimeOptions};
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use base64::Engine;
 use bytes::Bytes;
-use copilot_sdk::{
+use futures_util::{SinkExt, StreamExt, stream};
+use github_copilot_sdk::{
     Client, ClientOptions, CopilotHttpRequest, CopilotHttpResponse, CopilotHttpResponseBody,
     CopilotRequestContext, CopilotRequestError, CopilotRequestHandler, CopilotWebSocketForwarder,
     CopilotWebSocketHandler, CopilotWebSocketMessage, CopilotWebSocketResponse,
-    SDK_PROTOCOL_VERSION,
+    SDK_PROTOCOL_VERSION, Transport,
 };
-use futures_util::{SinkExt, StreamExt, stream};
 use http::HeaderMap;
 use parking_lot::Mutex;
 use serde_json::{Value, json};
@@ -63,13 +62,15 @@ impl Peer {
     async fn start(handler: impl CopilotRequestHandler) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let work = tempfile::tempdir().unwrap();
-        let options = ClientOptions::new(copilot_sdk::ClientMode::CodingAgent)
-            .with_runtime(RuntimeConnection::Tcp(TcpRuntimeOptions {
-                host: "127.0.0.1".to_string(),
+        let options = ClientOptions::new()
+            .with_program(std::env::current_exe().unwrap())
+            .with_cwd(work.path())
+            .with_transport(Transport::External {
+                host: "127.0.0.1".into(),
                 port: listener.local_addr().unwrap().port(),
                 connection_token: None,
-            }))
-            .with_models(|group| group.with_request_handler(handler));
+            })
+            .with_request_handler(handler);
         let (client, (read, write)) = timeout(DEADLINE, async {
             tokio::join!(Client::start(options), async {
                 let (socket, _) = listener.accept().await.unwrap();
@@ -962,28 +963,10 @@ async fn cancellation_while_head_ack_is_withheld_drops_source() {
     peer.stop().await;
 }
 
-struct ForwardingHandler(tokio::sync::watch::Sender<usize>);
+struct ForwardingHandler;
 
 #[async_trait]
-impl CopilotRequestHandler for ForwardingHandler {
-    async fn send_request(
-        &self,
-        request: CopilotHttpRequest,
-        _context: &CopilotRequestContext,
-    ) -> Result<CopilotHttpResponse, CopilotRequestError> {
-        let mut response = copilot_sdk::copilot_request_handler::forward_http(request).await?;
-        let observed = self.0.clone();
-        let mut received = 0;
-        response.body = Box::pin(response.body.map(move |chunk| {
-            if let Ok(bytes) = &chunk {
-                received += bytes.len();
-                observed.send_replace(received);
-            }
-            chunk
-        }));
-        Ok(response)
-    }
-}
+impl CopilotRequestHandler for ForwardingHandler {}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn real_http_burst_preserves_headers_status_and_every_byte() {
@@ -1011,8 +994,7 @@ async fn real_http_burst_preserves_headers_status_and_every_byte() {
         socket.write_all(&response).await.unwrap();
         socket.shutdown().await.unwrap();
     });
-    let (observed, mut read_ahead) = tokio::sync::watch::channel(0);
-    let mut peer = Peer::start(ForwardingHandler(observed)).await;
+    let mut peer = Peer::start(ForwardingHandler).await;
     let head = peer.request(&url).await;
     assert_eq!(head["params"]["status"], 201);
     assert_eq!(head["params"]["statusText"], "Created");
@@ -1028,12 +1010,8 @@ async fn real_http_burst_preserves_headers_status_and_every_byte() {
         }
         received.extend(data(&message));
         writes += 1;
-        // Acknowledge actual upstream consumption, not how long its workers ran.
-        let target = (received.len() + CHUNK_SIZE).min(expected.len());
-        timeout(DEADLINE, read_ahead.wait_for(|bytes| *bytes >= target))
-            .await
-            .expect("HTTP read-ahead did not fill while ACK was withheld")
-            .expect("HTTP source ended before read-ahead filled");
+        // Give the real HTTP transport turns to populate read-ahead under an ACK.
+        tokio::time::sleep(Duration::from_millis(2)).await;
         peer.ack(&message).await;
     }
     assert_eq!(received, expected);

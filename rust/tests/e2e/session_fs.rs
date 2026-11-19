@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use base64::Engine;
-use copilot_sdk::session_fs::{FsError, SessionFsBinaryProvider};
-use copilot_sdk::{
+use github_copilot_sdk::session_fs::{FsError, SessionFsBinaryProvider};
+use github_copilot_sdk::{
     Client, DirEntry, DirEntryKind, FileInfo, SessionFsCapabilities, SessionFsConfig,
     SessionFsConventions, SessionFsProvider,
 };
@@ -207,8 +207,7 @@ async fn should_route_file_operations_through_the_session_fs_provider() {
                 let session = client
                     .create_session(
                         ctx.approve_all_session_config()
-                            .with_working_directory("/")
-                            .with_state(|group| group.with_session_fs_provider(provider.clone())),
+                            .with_session_fs_provider(provider.clone()),
                     )
                     .await
                     .expect("create session");
@@ -277,8 +276,7 @@ async fn should_view_an_image_that_exists_only_in_the_binary_session_fs_provider
                 let session = client
                     .create_session(
                         ctx.approve_all_session_config()
-                            .with_working_directory("/")
-                            .with_state(|group| group.with_session_fs_provider(provider.clone())),
+                            .with_session_fs_provider(provider.clone()),
                     )
                     .await
                     .expect("create binary session");

@@ -9,12 +9,12 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/microsoft/copilot-sdk/go/v2/rpc"
+	"github.com/github/copilot-sdk/go/rpc"
 )
 
 // validateNewClientForMode checks the cross-cutting requirements that
-// [ModeEmpty] places on [clientOptions]. Called from [NewClient].
-func validateNewClientForMode(opts *clientOptions) {
+// [ModeEmpty] places on [ClientOptions]. Called from [NewClient].
+func validateNewClientForMode(opts *ClientOptions) {
 	if opts == nil || opts.Mode != ModeEmpty {
 		return
 	}
@@ -22,19 +22,19 @@ func validateNewClientForMode(opts *clientOptions) {
 	//   - the app supplied a BaseDirectory the runtime can write to,
 	//   - the app supplied a SessionFS implementation,
 	//   - or the app is connecting to an externally-managed runtime via
-	//     TCPConnection (in which case the host owns storage).
+	//     URIConnection (in which case the host owns storage).
 	if opts.BaseDirectory != "" {
 		return
 	}
 	if opts.SessionFS != nil {
 		return
 	}
-	if _, ok := opts.Connection.(TCPConnection); ok {
+	if _, ok := opts.Connection.(URIConnection); ok {
 		return
 	}
-	panic("Client is in Mode=ModeEmpty but neither BaseDirectory, SessionFS, nor a TCPConnection was supplied. " +
-		"Empty mode requires explicit, per-tenant storage; set clientOptions.BaseDirectory or .SessionFS, " +
-		"or connect to an externally-managed runtime via TCPConnection.")
+	panic("Client is in Mode=ModeEmpty but neither BaseDirectory, SessionFS, nor a URIConnection was supplied. " +
+		"Empty mode requires explicit, per-tenant storage; set ClientOptions.BaseDirectory or .SessionFS, " +
+		"or connect to an externally-managed runtime via URIConnection.")
 }
 
 // validateToolFilterList rejects bare "*" entries with an actionable error
@@ -56,21 +56,22 @@ func validateToolFilterList(field string, list []string) error {
 // resolveToolFilterOptions validates the configured tool filters and applies
 // empty-mode invariants. Returns the (possibly-mutated) request fields to set.
 func (c *Client) resolveToolFilterOptions(availableTools, excludedTools []string) (
-	[]string, []string, error,
+	[]string, []string, *rpc.OptionsUpdateToolFilterPrecedence, error,
 ) {
 	if err := validateToolFilterList("availableTools", availableTools); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if err := validateToolFilterList("excludedTools", excludedTools); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if c.options.Mode == ModeEmpty && availableTools == nil {
-		return nil, nil, errors.New(
+		return nil, nil, nil, errors.New(
 			"Client is in Mode=ModeEmpty but the session config did not specify AvailableTools. " +
 				"Empty mode requires every session to explicitly opt into the tools it wants — " +
 				"e.g. NewToolSet().AddBuiltIn(BuiltInToolsIsolated...).ToSlice()")
 	}
-	return availableTools, excludedTools, nil
+	precedence := rpc.OptionsUpdateToolFilterPrecedenceExcluded
+	return availableTools, excludedTools, &precedence, nil
 }
 
 // systemMessageForMode applies empty-mode environment_context stripping to
@@ -117,7 +118,7 @@ func (c *Client) systemMessageForMode(supplied *SystemMessageConfig) *SystemMess
 
 // applyConfigDefaultsForMode fills in empty-mode defaults on the session
 // config in place. App-supplied values win.
-func (c *Client) applyConfigDefaultsForMode(config *sessionOptions) {
+func (c *Client) applyConfigDefaultsForMode(config *SessionConfig) {
 	if c.options.Mode != ModeEmpty {
 		return
 	}
@@ -169,7 +170,7 @@ func (c *Client) applyConfigDefaultsForMode(config *sessionOptions) {
 	}
 }
 
-func (c *Client) applyResumeDefaultsForMode(config *resumeOptions) {
+func (c *Client) applyResumeDefaultsForMode(config *ResumeSessionConfig) {
 	if c.options.Mode != ModeEmpty {
 		return
 	}
@@ -224,62 +225,69 @@ func (c *Client) applyResumeDefaultsForMode(config *resumeOptions) {
 // updateSessionOptionsForMode applies the per-mode safe-defaults patch via
 // session.options.update after create/resume succeeds. In empty mode the
 // four overridable feature flags default to safe values; caller values win.
-// plugins.installed=[] is unconditional in empty mode. skills.includedBuiltinSkills
+// installedPlugins=[] is unconditional in empty mode. IncludedBuiltinSkills
 // defaults to [] but callers can explicitly allow selected runtime-bundled skills.
-func (c *Client) updateSessionOptionsForMode(ctx context.Context, session *Session, base optBackInFields, deleteOnFailure bool) error {
+func (c *Client) updateSessionOptionsForMode(ctx context.Context, session *Session, base optBackInFields) error {
 	patch := &rpc.SessionUpdateOptionsParams{}
 	hasAny := false
 	if c.options.Mode == ModeEmpty {
-		if base.SkipCustomInstructions == nil {
+		if base.SkipCustomInstructions != nil {
+			patch.SkipCustomInstructions = base.SkipCustomInstructions
+		} else {
 			t := true
-			base.SkipCustomInstructions = &t
+			patch.SkipCustomInstructions = &t
 		}
-		if base.CustomAgentsLocalOnly == nil {
+		if base.CustomAgentsLocalOnly != nil {
+			patch.CustomAgentsLocalOnly = base.CustomAgentsLocalOnly
+		} else {
 			t := true
-			base.CustomAgentsLocalOnly = &t
+			patch.CustomAgentsLocalOnly = &t
 		}
-		if base.CoauthorEnabled == nil {
+		if base.CoauthorEnabled != nil {
+			patch.CoauthorEnabled = base.CoauthorEnabled
+		} else {
 			f := false
-			base.CoauthorEnabled = &f
+			patch.CoauthorEnabled = &f
 		}
-		if base.ManageScheduleEnabled == nil {
+		if base.ManageScheduleEnabled != nil {
+			patch.ManageScheduleEnabled = base.ManageScheduleEnabled
+		} else {
 			f := false
-			base.ManageScheduleEnabled = &f
+			patch.ManageScheduleEnabled = &f
 		}
-		patch.Plugins = &rpc.SessionUpdatePluginOptions{Installed: []rpc.SessionInstalledPlugin{}}
-		if base.IncludedBuiltinSkills == nil {
-			base.IncludedBuiltinSkills = []string{}
+		patch.InstalledPlugins = []rpc.SessionInstalledPlugin{}
+		if base.IncludedBuiltinSkills != nil {
+			patch.IncludedBuiltinSkills = base.IncludedBuiltinSkills
+		} else {
+			patch.IncludedBuiltinSkills = []string{}
 		}
 		hasAny = true
-	}
-	if base.SkipCustomInstructions != nil {
-		patch.Instructions = &rpc.SessionUpdateInstructionOptions{SkipCustomInstructions: base.SkipCustomInstructions}
-		hasAny = true
-	}
-	if base.CustomAgentsLocalOnly != nil {
-		patch.Agents = &rpc.SessionUpdateAgentOptions{LocalDiscoveryOnly: base.CustomAgentsLocalOnly}
-		hasAny = true
-	}
-	if base.CoauthorEnabled != nil {
-		patch.Git = &rpc.SessionUpdateGitOptions{CoauthorEnabled: base.CoauthorEnabled}
-		hasAny = true
-	}
-	if base.ManageScheduleEnabled != nil {
-		patch.Tools = &rpc.SessionUpdateToolOptions{ManageScheduleEnabled: base.ManageScheduleEnabled}
-		hasAny = true
-	}
-	if base.IncludedBuiltinSkills != nil {
-		patch.Skills = &rpc.SessionUpdateSkillOptions{IncludedBuiltinSkills: base.IncludedBuiltinSkills}
-		hasAny = true
+	} else {
+		if base.SkipCustomInstructions != nil {
+			patch.SkipCustomInstructions = base.SkipCustomInstructions
+			hasAny = true
+		}
+		if base.CustomAgentsLocalOnly != nil {
+			patch.CustomAgentsLocalOnly = base.CustomAgentsLocalOnly
+			hasAny = true
+		}
+		if base.CoauthorEnabled != nil {
+			patch.CoauthorEnabled = base.CoauthorEnabled
+			hasAny = true
+		}
+		if base.ManageScheduleEnabled != nil {
+			patch.ManageScheduleEnabled = base.ManageScheduleEnabled
+			hasAny = true
+		}
+		if base.IncludedBuiltinSkills != nil {
+			patch.IncludedBuiltinSkills = base.IncludedBuiltinSkills
+			hasAny = true
+		}
 	}
 	if !hasAny {
 		return nil
 	}
 	if _, err := session.RPC.Options.Update(ctx, patch); err != nil {
-		if deleteOnFailure {
-			return c.cleanupFailedSession(ctx, session,
-				fmt.Errorf("failed to apply mode-specific session options: %w", err), true, true)
-		}
 		// The runtime session exists but the post-create options patch
 		// failed — best-effort disconnect so we don't leak it (in empty
 		// mode it would otherwise keep running with permissive defaults).
@@ -292,7 +300,7 @@ func (c *Client) updateSessionOptionsForMode(ctx context.Context, session *Sessi
 	return nil
 }
 
-// optBackInFields is the subset of sessionOptions / resumeOptions shared
+// optBackInFields is the subset of SessionConfig / ResumeSessionConfig shared
 // by [Client.updateSessionOptionsForMode].
 type optBackInFields struct {
 	SkipCustomInstructions *bool

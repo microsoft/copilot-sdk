@@ -7,11 +7,16 @@ import (
 	"runtime"
 	"sync"
 
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
+	copilot "github.com/github/copilot-sdk/go"
 )
 
 // RepoPath resolves a path relative to the repository root, anchored to this
-// source file's directory rather than the test runner's working directory.
+// source file's directory rather than the process working directory. The
+// in-process (FFI) transport os.Chdir's the whole test process into a per-test
+// temp workdir (the shared runtime host inherits the process cwd), so any
+// cwd-relative resolution (e.g. filepath.Abs("../../../test/...")) would break
+// for every test after the first in-process one. This helper stays correct
+// regardless of the current working directory.
 func RepoPath(elem ...string) string {
 	_, callerFile, _, ok := runtime.Caller(0)
 	if !ok {

@@ -32,8 +32,8 @@ class TestScenarioSessionSetup:
         try:
             session = await client.create_session(
                 session_id="scenario-session",
-                events={"on_event": on_event},
-                permissions={"on_request": PermissionHandler.approve_all},
+                on_event=on_event,
+                on_permission_request=PermissionHandler.approve_all,
             )
             try:
                 await asyncio.wait_for(session_start_received.wait(), timeout=5)
@@ -54,7 +54,7 @@ class TestScenarioSessionSetup:
         try:
             session = await client.create_session(
                 session_id="scenario-session",
-                permissions={"on_request": PermissionHandler.approve_all},
+                on_permission_request=PermissionHandler.approve_all,
             )
             try:
                 await session.rpc.mcp.reload()

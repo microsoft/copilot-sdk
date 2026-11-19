@@ -3,15 +3,27 @@
  *--------------------------------------------------------------------------------------------*/
 
 #if NET8_0_OR_GREATER
-using Microsoft.Copilot.Rpc;
+using GitHub.Copilot.Rpc;
 using Xunit;
 
-namespace Microsoft.Copilot.Test.Unit;
+namespace GitHub.Copilot.Test.Unit;
 
 public sealed partial class ClientSessionLifetimeTests
 {
     [Fact]
-    public async Task Models_List_Sends_Account_And_Streamer_Mode_And_Honors_Cancellation()
+    public void Models_List_Preserves_Exact_Legacy_Method_Signature()
+    {
+        var method = typeof(ServerModelsApi).GetMethod(
+            nameof(ServerModelsApi.ListAsync),
+            [typeof(string), typeof(string), typeof(CancellationToken)]);
+
+        Assert.NotNull(method);
+        Assert.Equal(typeof(Task<ModelList>), method.ReturnType);
+        Assert.All(method.GetParameters(), parameter => Assert.False(parameter.IsOptional));
+    }
+
+    [Fact]
+    public async Task Models_List_Preserves_Positional_Cancellation_And_Sends_Streamer_Mode()
     {
         await using var server = await FakeCopilotServer.StartAsync();
         server.ResponseFactory = request => request.Method == "models.list"
@@ -19,17 +31,17 @@ public sealed partial class ClientSessionLifetimeTests
             : throw new InvalidOperationException($"Unexpected models request '{request.Method}'.");
         await using var client = new CopilotClient(new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForTcp(server.Host, server.Port)
+            Connection = RuntimeConnection.ForUri(server.Url)
         });
         await client.StartAsync();
         server.ClearRequests();
         using var cancellation = new CancellationTokenSource();
 
-        await client.Rpc.Models.ListAsync(cancellation.Token);
-        await client.Rpc.Models.ListAsync(new ModelsListRequest { SelectionId = "account", GitHubToken = "token" }, cancellation.Token);
-        await client.Rpc.Models.ListAsync(new ModelsListRequest { StreamerMode = true });
-        await client.Rpc.Models.ListAsync(new ModelsListRequest { StreamerMode = false }, cancellation.Token);
+        Func<string?, string?, CancellationToken, Task<ModelList>> legacyList = client.Rpc.Models.ListAsync;
+        await legacyList(null, null, cancellation.Token);
+        await client.Rpc.Models.ListAsync("account", "token", cancellation.Token);
+        await client.Rpc.Models.ListAsync(streamerMode: true);
+        await client.Rpc.Models.ListAsync(null, null, cancellation.Token, false);
         await client.Rpc.Models.ListAsync();
 
         var requests = server.Requests.ToArray();
@@ -45,7 +57,7 @@ public sealed partial class ClientSessionLifetimeTests
 
         cancellation.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => client.Rpc.Models.ListAsync(cancellation.Token));
+            () => client.Rpc.Models.ListAsync(null, null, cancellation.Token));
     }
 }
 #endif

@@ -2,7 +2,7 @@
 
 import pytest
 
-from copilot import Model
+from copilot import ModelInfo
 
 
 @pytest.mark.parametrize(
@@ -22,7 +22,7 @@ def test_model_info_round_trips_optional_native_provider(provider):
     if provider is not None:
         wire["provider"] = provider
 
-    model = Model.from_dict(wire)
+    model = ModelInfo.from_dict(wire)
     assert (model.provider.to_dict() if model.provider else None) == provider
     assert {key: value for key, value in model.to_dict().items() if key == "provider"} == {
         key: value for key, value in wire.items() if key == "provider"

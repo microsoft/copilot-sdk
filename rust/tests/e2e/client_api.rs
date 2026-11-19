@@ -1,4 +1,4 @@
-use copilot_sdk::SessionId;
+use github_copilot_sdk::SessionId;
 
 use super::support::wait_for_condition;
 
@@ -49,15 +49,10 @@ async fn should_report_error_when_deleting_unknown_session_id() {
                 let client = ctx.start_client().await;
                 let unknown = SessionId::new("00000000-0000-0000-0000-000000000000");
 
-                let error = client
+                client
                     .delete_session(&unknown)
                     .await
-                    .expect_err("delete unknown session must fail");
-                assert_eq!(error.rpc_code(), Some(-32603), "{error}");
-                assert!(
-                    error.to_string().contains("Session file not found"),
-                    "{error}"
-                );
+                    .expect("delete unknown session is idempotent");
                 let metadata = client
                     .get_session_metadata(&unknown)
                     .await
@@ -133,6 +128,29 @@ async fn should_track_last_session_id_after_session_created() {
 }
 
 #[tokio::test]
+async fn should_get_null_foreground_session_id_in_headless_mode() {
+    super::support::with_shared_e2e_context(
+        &E2E,
+        "client_api",
+        "should_get_null_foreground_session_id_in_headless_mode",
+        |ctx| {
+            Box::pin(async move {
+                let client = ctx.start_client().await;
+
+                let foreground = client
+                    .get_foreground_session_id()
+                    .await
+                    .expect("get foreground");
+
+                assert!(foreground.is_none());
+                client.stop().await.expect("stop client");
+            })
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
 async fn should_report_error_when_setting_foreground_session_in_headless_mode() {
     super::support::with_shared_e2e_context(
         &E2E,
@@ -147,15 +165,10 @@ async fn should_report_error_when_setting_foreground_session_in_headless_mode() 
                     .await
                     .expect("create session");
 
-                let error = client
+                client
                     .set_foreground_session_id(session.id())
                     .await
-                    .expect_err("set foreground must fail in headless mode");
-                assert_eq!(error.rpc_code(), Some(-32603), "{error}");
-                assert!(
-                    error.to_string().contains("Not running in TUI+server mode"),
-                    "{error}"
-                );
+                    .expect("set foreground is ignored in headless mode");
                 assert!(
                     client
                         .get_foreground_session_id()
@@ -172,4 +185,4 @@ async fn should_report_error_when_setting_foreground_session_in_headless_mode() 
     .await;
 }
 static E2E: super::support::SharedE2eGroup =
-    super::support::SharedE2eGroup::standard("client_api", 4);
+    super::support::SharedE2eGroup::standard("client_api", 5);

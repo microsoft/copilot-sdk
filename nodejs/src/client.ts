@@ -11,28 +11,18 @@
  * @module client
  */
 
-import { AsyncLocalStorage } from "node:async_hooks";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import {
-    accessSync,
-    constants,
-    existsSync,
-    lstatSync,
-    readlinkSync,
-    realpathSync,
-    statSync,
-} from "node:fs";
+import { existsSync } from "node:fs";
 import { isIPv6, Socket } from "node:net";
-import { basename, dirname, isAbsolute, join, resolve, sep, win32 } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import {
     type CancellationToken,
-    CancellationTokenSource,
     type ContentTypeEncoder,
     createMessageConnection as createRpcMessageConnection,
     type DataCallback,
     ErrorCodes,
-    Message,
+    type Message,
     MessageConnection,
     ResponseError,
     StreamMessageReader,
@@ -50,20 +40,12 @@ import type {
     GitHubTokenAcquireRequest,
     GitHubTokenAcquireResult,
     InstallationConfirmationRequest,
-    NetworkAuthenticateBasicRequest,
-    NetworkAuthenticateBasicResult,
-    NetworkAuthenticateNegotiateRequest,
-    NetworkAuthenticateNegotiateResult,
-    NetworkResolveProxyRequest,
-    NetworkResolveProxyResult,
+    KerberosAuthAcquireRequest,
+    KerberosAuthAcquireResult,
     OpenCanvasInstance,
-    PermissionsSetModeResult,
-    SessionsFindByPrefixResult,
     SessionUpdateOptionsParams,
     TaskKind,
 } from "./generated/rpc.js";
-import { CopilotDecisions } from "./decisions.js";
-import { normalizeClientOptions, normalizeSessionOptions } from "./optionsCompatibility.js";
 import { getSdkProtocolVersion } from "./sdkProtocolVersion.js";
 import { CopilotSession } from "./session.js";
 import {
@@ -74,9 +56,8 @@ import {
 } from "./host.js";
 import type { FfiRuntimeHost } from "./ffiRuntimeHost.js";
 import { ensureRuntimeBundle } from "./runtimeArtifacts.js";
-import { createLocalModelJsonCodec } from "./localModelJson.js";
 import { COPILOT_CLI_VERSION } from "./cliVersion.js";
-import { createSessionFsAdapter } from "./sessionFsProvider.js";
+import { createSessionFsAdapter, type SessionFsProvider } from "./sessionFsProvider.js";
 import { createCopilotRequestAdapter } from "./copilotRequestHandler.js";
 import {
     createInstallationConfirmationAdapter,
@@ -90,8 +71,6 @@ import { ToolSet } from "./toolSet.js";
 import type {
     AutoModeSwitchRequest,
     AutoModeSwitchResponse,
-    MemoryConfiguration,
-    StoredMemory,
     CopilotClientInfo,
     CopilotClientMode,
     CopilotClientOptions,
@@ -106,17 +85,17 @@ import type {
     GitHubTokenProvider,
     GetStatusResponse,
     InternalRuntimeConnection,
+    KerberosAuthConfig,
+    RuntimeConnection,
     LargeToolOutputConfig,
     MCPServerConfig,
-    Model,
+    ModelInfo,
     NamedProviderConfig,
-    NetworkConfig,
-    ResumeSessionOptions,
+    ProviderConfig,
+    ResumeSessionConfig,
     SectionTransformFn,
-    ShellAuthenticationRequest,
-    ShellAuthenticationResponse,
-    CreateSessionOptions,
-    SessionOptionsBase,
+    SessionConfig,
+    SessionConfigBase,
     SystemMessageConfig,
     SessionCapabilities,
     SessionEvent,
@@ -131,10 +110,9 @@ import type {
     TraceContextProvider,
     TranscriptRecovery,
     TypedSessionLifecycleHandler,
-    UserInputResponse,
 } from "./types.js";
-import { defaultJoinSessionPermissionHandler, RuntimeConnection } from "./types.js";
-import { getWorkflowRegistration, type WorkflowHandle } from "./workflow.js";
+import { defaultJoinSessionPermissionHandler } from "./types.js";
+import type { WorkflowHandle } from "./workflow.js";
 
 interface ExtensionOrchestrationContributions {
     workflows?: WorkflowHandle[];
@@ -144,134 +122,40 @@ interface ExtensionOrchestrationContributions {
  * Minimum protocol version this SDK can communicate with.
  * Servers reporting a version below this are rejected.
  */
-const MIN_PROTOCOL_VERSION = 4;
+const MIN_PROTOCOL_VERSION = 3;
 const RUNTIME_SHUTDOWN_TIMEOUT_MS = 10_000;
 const CLOUD_SESSION_CLEANUP_TIMEOUT_MS = 10_000;
-const AUTO_MODE_RECOVERY_CLEANUP_TIMEOUT_MS = 10_000;
-
-// host.createSession carries internal host settings, not public session RPC options.
-function groupHostSessionSettings(
-    settings: Record<string, unknown> & { sessionId?: string }
-): AhpSessionCreateRequest["config"] &
-    Pick<
-        ResumeSessionOptions,
-        "continuePendingWork" | "suppressResumeEvent" | "allowTranscriptRecovery"
-    > {
-    const paths: Record<string, readonly [string, string]> = {
-        enableExperimentalMode: ["experiments", "enableExperimentalMode"],
-        infiniteSessions: ["state", "infiniteSessions"],
-        additionalDirectories: ["filesystem", "additionalDirectories"],
-        streaming: ["events", "streaming"],
-        gitHubToken: ["github", "token"],
-        mcpOAuthTokenStorage: ["mcp", "oauthTokenStorage"],
-        featureFlags: ["experiments", "flags"],
-        enableManagedSettings: ["github", "fetchManagedSettings"],
-        excludedManagedSettings: ["policy", "excludedManagedSettings"],
-        enableSessionStore: ["state", "enableCrossSessionStore"],
-        availableTools: ["tools", "availableTools"],
-        excludedTools: ["tools", "excludedTools"],
-        allowedModels: ["policy", "allowedModels"],
-        skipCustomInstructions: ["instructions", "skipCustomInstructions"],
-        refreshCustomInstructions: ["instructions", "refreshCustomInstructions"],
-        customAgentsLocalOnly: ["agents", "localDiscoveryOnly"],
-        coauthorEnabled: ["git", "coauthorEnabled"],
-        manageScheduleEnabled: ["tools", "manageScheduleEnabled"],
-        memory: ["state", "memory"],
-        pluginDirectories: ["plugins", "directories"],
-        skillDirectories: ["skills", "directories"],
-        agentDirectories: ["agents", "directories"],
-        hookDirectories: ["hooks", "directories"],
-        instructionDirectories: ["instructions", "directories"],
-        enableMcpApps: ["mcp", "enableApps"],
-        reasoningEffort: ["inference", "reasoningEffort"],
-        allowMultipleToolCalls: ["inference", "allowMultipleToolCalls"],
-        contextTier: ["inference", "contextTier"],
-        providers: ["inference", "providers"],
-        models: ["inference", "models"],
-        defaultProvider: ["inference", "defaultProvider"],
-        capi: ["github", "capi"],
-        autopilot: ["execution", "autopilot"],
-        sessionLimits: ["execution", "limits"],
-        permissionMode: ["permissions", "mode"],
-    };
-    const root: Record<string, unknown> = {};
-    const groups: Record<string, Record<string, unknown>> = {};
-    for (const [name, value] of Object.entries(settings)) {
-        const path = Object.hasOwn(paths, name) ? paths[name] : undefined;
-        if (path) {
-            const [group, field] = path;
-            (groups[group] ??= {})[field] = value;
-        } else {
-            root[name === "configDir" ? "configDirectory" : name] = value;
-        }
-    }
-    for (const group of Object.keys(groups)) {
-        if (Object.hasOwn(root, group)) {
-            throw new Error("AHP host settings must not mix flat and grouped options");
-        }
-    }
-    return { ...root, ...groups };
-}
-
-function sessionIdsOverlap(left: string, right: string): boolean {
-    if (left === right) return true;
-    if (!isUuidSessionId(left) || !isUuidSessionId(right)) return false;
-    const normalizedLeft = left.toLowerCase();
-    const normalizedRight = right.toLowerCase();
-    return normalizedLeft.startsWith(normalizedRight) || normalizedRight.startsWith(normalizedLeft);
-}
-
-function isAbbreviatedUuidPrefix(sessionId: string): boolean {
-    return /^[0-9a-f]{7}[0-9a-f-]{0,28}$/i.test(sessionId);
-}
-
-function isUuidSessionId(sessionId: string): boolean {
-    return (
-        isAbbreviatedUuidPrefix(sessionId) ||
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)
-    );
-}
 
 type DrainingMessageConnection = MessageConnection & { drain: () => Promise<void> };
-
-interface SessionInitializationContext {
-    sessionId: string;
-    active: boolean;
-}
 
 /** Errors from serializing one outgoing message; see {@link TeardownResilientStreamMessageWriter}. */
 const messageEncodeErrors = new WeakSet<Error>();
 
 /**
- * Encodes RPC messages and records serialization failures in {@link messageEncodeErrors}.
+ * Encodes messages the same way as vscode-jsonrpc's default JSON encoder, and records
+ * serialization failures in {@link messageEncodeErrors}.
  */
-function jsonMessageEncoder(
-    codec: ReturnType<typeof createLocalModelJsonCodec>
-): ContentTypeEncoder {
-    return {
-        name: "application/json",
-        encode: async (msg, options) => {
-            try {
-                return Buffer.from(await codec.encode(msg), options.charset);
-            } catch (thrown) {
-                const error = thrown instanceof Error ? thrown : new Error(String(thrown));
-                messageEncodeErrors.add(error);
-                throw error;
-            }
-        },
-    };
-}
+const jsonMessageEncoder: ContentTypeEncoder = {
+    name: "application/json",
+    encode: (msg, options) => {
+        try {
+            return Promise.resolve(Buffer.from(JSON.stringify(msg), options.charset));
+        } catch (thrown) {
+            const error = thrown instanceof Error ? thrown : new Error(String(thrown));
+            messageEncodeErrors.add(error);
+            return Promise.reject(error);
+        }
+    },
+};
 
 function createMessageConnection(
     reader: StreamMessageReader,
-    writer: StreamMessageWriter,
-    sessionInitializationContext: AsyncLocalStorage<SessionInitializationContext | undefined>
+    writer: StreamMessageWriter
 ): DrainingMessageConnection {
     let dispatch: DataCallback | undefined;
     let finishDrain: (() => void) | undefined;
     let drained: Promise<void> | undefined;
     let disposed = false;
-    const callbacks = new Map<string | number | null, SessionInitializationContext>();
     const barrier = { jsonrpc: "2.0", method: "$/sdkDrain" };
     const connection = createRpcMessageConnection(
         {
@@ -284,22 +168,7 @@ function createMessageConnection(
             },
             dispose: () => reader.dispose(),
         },
-        {
-            onError: writer.onError,
-            onClose: writer.onClose,
-            write: (message) => {
-                if (Message.isResponse(message)) {
-                    const context = callbacks.get(message.id);
-                    if (context) {
-                        context.active = false;
-                        callbacks.delete(message.id);
-                    }
-                }
-                return writer.write(message);
-            },
-            end: () => writer.end(),
-            dispose: () => writer.dispose(),
-        },
+        writer,
         undefined,
         {
             messageStrategy: {
@@ -307,22 +176,7 @@ function createMessageConnection(
                     if (message === barrier) {
                         finishDrain?.();
                     } else {
-                        const request = Message.isRequest(message) ? message : undefined;
-                        const params = request?.params;
-                        const sessionId =
-                            params &&
-                            typeof params === "object" &&
-                            "sessionId" in params &&
-                            typeof params.sessionId === "string"
-                                ? params.sessionId
-                                : undefined;
-                        const context =
-                            sessionId === undefined ? undefined : { sessionId, active: true };
-                        if (request && context) {
-                            callbacks.set(request.id, context);
-                        }
-                        // Response writes end the callback lifetime, including inherited async work.
-                        sessionInitializationContext.run(context, next, message);
+                        next(message);
                     }
                 },
             },
@@ -330,10 +184,6 @@ function createMessageConnection(
     );
     connection.onDispose(() => {
         disposed = true;
-        for (const context of callbacks.values()) {
-            context.active = false;
-        }
-        callbacks.clear();
         finishDrain?.();
     });
     return Object.assign(connection, {
@@ -403,20 +253,20 @@ async function waitForChildExit(child: ChildProcess, timeoutMs: number): Promise
 }
 
 /**
- * Runs a client callback the runtime requested with a signal that aborts when the runtime
- * cancels the request (`$/cancelRequest`) or the connection ends. Cancellation stops awaiting the
- * callback and answers with the standard request-cancelled error; any later result is ignored.
+ * Runs the Kerberos callback with a signal that aborts when the runtime cancels the request
+ * (`$/cancelRequest`) or the connection ends. Cancellation stops awaiting the callback and
+ * answers with the standard request-cancelled error; any later result is ignored.
  */
-async function runCancellableCallback<T>(
+async function acquireKerberosToken(
     connection: MessageConnection,
-    label: string,
-    token: CancellationToken,
-    invoke: (signal: AbortSignal) => Promise<T>
-): Promise<T> {
+    callback: KerberosAuthConfig["callback"],
+    request: KerberosAuthAcquireRequest,
+    token: CancellationToken
+): Promise<KerberosAuthAcquireResult> {
     const ended = () =>
         token.isCancellationRequested
-            ? new ResponseError(-32800, `${label} request cancelled`)
-            : new Error(`${label} connection closed`);
+            ? new ResponseError(-32800, "Kerberos auth request cancelled")
+            : new Error("Kerberos auth connection closed");
     if (token.isCancellationRequested) {
         throw ended();
     }
@@ -432,15 +282,9 @@ async function runCancellableCallback<T>(
     ];
     try {
         // Invoke the callback from a microtask so the race handles `abandoned` even when the
-        // callback aborts and then throws synchronously. Like the other SDKs, never start a
-        // callback the runtime stopped waiting for before the microtask ran.
-        const lookup = Promise.resolve().then(() => {
-            if (controller.signal.aborted) {
-                throw ended();
-            }
-            return invoke(controller.signal);
-        });
-        return await Promise.race([lookup, abandoned]);
+        // callback aborts and then throws synchronously.
+        const lookup = Promise.resolve().then(() => callback(request, controller.signal));
+        return { token: await Promise.race([lookup, abandoned]) };
     } finally {
         for (const subscription of subscriptions) {
             subscription.dispose();
@@ -448,70 +292,13 @@ async function runCancellableCallback<T>(
     }
 }
 
-/**
- * A copy of the caller's network configuration, so later changes to the caller's object cannot make
- * the registration and the request handlers disagree. Reads each field, so callbacks a class
- * inherits are kept, and calls them on the caller's object.
- */
-function snapshotNetworkConfig(network: NetworkConfig): NetworkConfig {
-    const { scope, resolveProxy, authenticateNegotiate, authenticateBasic } = network;
-    return {
-        scope,
-        resolveProxy:
-            resolveProxy && ((request, signal) => resolveProxy.call(network, request, signal)),
-        authenticateNegotiate:
-            authenticateNegotiate &&
-            ((request, signal) => authenticateNegotiate.call(network, request, signal)),
-        authenticateBasic:
-            authenticateBasic &&
-            ((request, signal) => authenticateBasic.call(network, request, signal)),
-    };
-}
+/** Implicit provider name for the singular, whole-session {@link ProviderConfig}. */
+const DEFAULT_PROVIDER_NAME = "default";
 
-async function resolveClientProxy(
-    connection: MessageConnection,
-    callback: NonNullable<NetworkConfig["resolveProxy"]>,
-    request: NetworkResolveProxyRequest,
-    token: CancellationToken
-): Promise<NetworkResolveProxyResult> {
-    return {
-        proxy: await runCancellableCallback(connection, "Proxy resolution", token, (signal) =>
-            callback(request, signal)
-        ),
-    };
-}
-
-async function authenticateClientNegotiate(
-    connection: MessageConnection,
-    callback: NonNullable<NetworkConfig["authenticateNegotiate"]>,
-    request: NetworkAuthenticateNegotiateRequest,
-    token: CancellationToken
-): Promise<NetworkAuthenticateNegotiateResult> {
-    return {
-        token: await runCancellableCallback(
-            connection,
-            "Negotiate authentication",
-            token,
-            (signal) => callback(request, signal)
-        ),
-    };
-}
-
-async function authenticateClientBasic(
-    connection: MessageConnection,
-    callback: NonNullable<NetworkConfig["authenticateBasic"]>,
-    request: NetworkAuthenticateBasicRequest,
-    token: CancellationToken
-): Promise<NetworkAuthenticateBasicResult> {
-    const credentials = await runCancellableCallback(
-        connection,
-        "Basic authentication",
-        token,
-        (signal) => callback(request, signal)
-    );
-    // Send only the credential fields, never other properties of the caller's object.
-    return credentials ? { username: credentials.username, password: credentials.password } : {};
-}
+/** Wire-safe singular provider config carrying the `hasBearerTokenProvider` flag. */
+type WireProviderConfig = Omit<ProviderConfig, "bearerTokenProvider"> & {
+    hasBearerTokenProvider?: boolean;
+};
 
 /** Wire-safe named provider config carrying the `hasBearerTokenProvider` flag. */
 type WireNamedProviderConfig = Omit<NamedProviderConfig, "bearerTokenProvider"> & {
@@ -519,21 +306,35 @@ type WireNamedProviderConfig = Omit<NamedProviderConfig, "bearerTokenProvider"> 
 };
 
 /**
- * Strips the non-serializable {@link BearerTokenProvider} callbacks from named
- * provider configs before they cross the RPC boundary, replacing each
+ * Strips the non-serializable {@link BearerTokenProvider} callbacks from the singular
+ * and named provider configs before they cross the RPC boundary, replacing each
  * with a `hasBearerTokenProvider: true` wire flag. The callback closes over its
  * own token scope/audience, so nothing scope-related crosses the wire — the
  * runtime only forwards the provider name back when it needs a token.
  * Returns wire-safe provider configs alongside a map of provider name → callback
  * for session-side registration.
  */
-function extractBearerTokenProviders(providers: readonly NamedProviderConfig[] | undefined): {
+function extractBearerTokenProviders(
+    provider: ProviderConfig | undefined,
+    providers: NamedProviderConfig[] | undefined
+): {
+    wireProvider: WireProviderConfig | undefined;
     wireProviders: WireNamedProviderConfig[] | undefined;
     callbacks: Map<string, BearerTokenProvider>;
 } {
     const callbacks = new Map<string, BearerTokenProvider>();
 
-    let wireProviders: WireNamedProviderConfig[] | undefined = providers && [...providers];
+    let wireProvider: WireProviderConfig | undefined = provider;
+    if (provider?.bearerTokenProvider) {
+        const { bearerTokenProvider, ...rest } = provider;
+        callbacks.set(DEFAULT_PROVIDER_NAME, bearerTokenProvider);
+        wireProvider = {
+            ...rest,
+            hasBearerTokenProvider: true,
+        };
+    }
+
+    let wireProviders: WireNamedProviderConfig[] | undefined = providers;
     if (providers?.some((p) => p.bearerTokenProvider)) {
         wireProviders = providers.map((p) => {
             if (!p.bearerTokenProvider) return p;
@@ -546,7 +347,7 @@ function extractBearerTokenProviders(providers: readonly NamedProviderConfig[] |
         });
     }
 
-    return { wireProviders, callbacks };
+    return { wireProvider, wireProviders, callbacks };
 }
 
 /**
@@ -568,31 +369,11 @@ function toWireMcpServers(
     );
 }
 
-function requestedMemoryStore(
-    memory: MemoryConfiguration | undefined
-): MemoryConfiguration["storeMemory"] {
-    if (!memory?.storeMemory) return undefined;
-    if (memory.enabled !== true) {
-        throw new Error("memory.storeMemory requires memory.enabled to be true.");
-    }
-    return memory.storeMemory;
-}
-
-function toWireMemoryConfiguration(
-    memory: MemoryConfiguration | undefined
-): Omit<MemoryConfiguration, "storeMemory"> | undefined {
-    if (!memory) return memory;
-    const { storeMemory: _storeMemory, ...wire } = memory;
-    return wire;
-}
-
 /**
  * Convert custom agent configs, transforming nested mcpServers from
  * public API format (workingDirectory) to wire format (cwd).
  */
-function toWireCustomAgents(
-    agents: readonly CustomAgentConfig[] | undefined
-): unknown[] | undefined {
+function toWireCustomAgents(agents: CustomAgentConfig[] | undefined): unknown[] | undefined {
     if (!agents) return undefined;
     return agents.map((agent) => {
         if (!agent.mcpServers) return agent;
@@ -607,17 +388,6 @@ function toWireCustomAgents(
  * non-empty value so the caller omits `clientInfo` from the handshake and keeps
  * the runtime's default attribution.
  */
-async function sendPing(
-    connection: MessageConnection,
-    message?: string
-): Promise<{ message: string; timestamp: string; protocolVersion?: number }> {
-    return (await connection.sendRequest("ping", { message })) as {
-        message: string;
-        timestamp: string;
-        protocolVersion?: number;
-    };
-}
-
 function clientInfoToWire(info: CopilotClientInfo | undefined): ConnectClientInfo | undefined {
     if (info == null) return undefined;
     const wire: ConnectClientInfo = {};
@@ -644,17 +414,15 @@ function toWireLargeOutput(
     return wire;
 }
 
-function toolFilterListToArray(
-    value: readonly string[] | ToolSet | undefined
-): string[] | undefined {
+function toolFilterListToArray(value: string[] | ToolSet | undefined): string[] | undefined {
     if (value === undefined) {
         return undefined;
     }
-    return value instanceof ToolSet ? value.toArray() : [...value];
+    return value instanceof ToolSet ? value.toArray() : value;
 }
 
 /**
- * Catches misuse of `tools.availableTools`/`tools.excludedTools` at the SDK boundary so
+ * Catches misuse of `availableTools`/`excludedTools` at the SDK boundary so
  * users get an actionable error rather than a silently-empty filter.
  *
  * The runtime treats a bare `"*"` as a literal name match for a tool whose
@@ -683,8 +451,8 @@ function validateToolFilterList(field: string, list: string[] | undefined): void
  * Function-valued actions are replaced with `{ action: "transform" }` for serialization,
  * and the original callbacks are returned in a separate map.
  */
-function extractTransformCallbacks(systemMessage: CreateSessionOptions["systemMessage"]): {
-    wirePayload: CreateSessionOptions["systemMessage"];
+function extractTransformCallbacks(systemMessage: SessionConfig["systemMessage"]): {
+    wirePayload: SessionConfig["systemMessage"];
     transformCallbacks: Map<string, SectionTransformFn> | undefined;
 } {
     if (!systemMessage || systemMessage.mode !== "customize" || !systemMessage.sections) {
@@ -729,42 +497,25 @@ function getBundledRuntimePath(): Promise<string> {
 }
 
 /**
- * The bundled runtime's path in a form `spawn` can start. Windows cannot start an
- * executable named by an ordinary path of MAX_PATH or more characters, which a nested
- * `node_modules` tree reaches easily, while the extended-length (`\\?\`) spelling of
- * the same file has no such limit.
- */
-async function getSpawnableBundledRuntimePath(): Promise<string> {
-    const runtimePath = await getBundledRuntimePath();
-    return process.platform === "win32" ? win32.toNamespacedPath(runtimePath) : runtimePath;
-}
-
-/**
  * Main client for interacting with the Copilot CLI.
  *
  * The CopilotClient manages the connection to the Copilot CLI server and provides
- * methods to create and manage conversation sessions. It hosts the native runtime
- * in-process by default, or can spawn a CLI
+ * methods to create and manage conversation sessions. It can either spawn a CLI
  * server process or connect to an existing server.
  *
  * @example
  * ```typescript
- * import { CopilotClient, RuntimeConnection } from "@microsoft/copilot-sdk";
+ * import { CopilotClient } from "@github/copilot-sdk";
  *
- * // Create a client with default transport (hosts the runtime in-process)
- * const client = new CopilotClient({ mode: "coding-agent" });
+ * // Create a client with default options (spawns CLI server)
+ * const client = new CopilotClient();
  *
  * // Or connect to an existing server
- * const client = new CopilotClient({ mode: "coding-agent", runtime: RuntimeConnection.forTcp("localhost", 3000) });
+ * const client = new CopilotClient({ connection: RuntimeConnection.forUri("localhost:3000") });
  *
  * // Create a session
- * const session = await client.createSession({
- * permissions: {
- * onRequest: approveAll
- * },
- * model: "gpt-5.4"
- * });
- *  *
+ * const session = await client.createSession({ onPermissionRequest: approveAll, model: "gpt-4" });
+ *
  * // Send messages and handle responses
  * session.on((event) => {
  *   if (event.type === "assistant.message") {
@@ -772,7 +523,7 @@ async function getSpawnableBundledRuntimePath(): Promise<string> {
  *   }
  * });
  * await session.send({ prompt: "Hello!" });
- *  *
+ *
  * // Clean up
  * await session.disconnect();
  * await client.stop();
@@ -793,7 +544,7 @@ async function getSpawnableBundledRuntimePath(): Promise<string> {
  * teardown loses no signal. Outside teardown the flag stays `false`, so write
  * failures propagate normally and in-flight requests still fail fast.
  *
- * A message that cannot be serialized (an unsupported `BigInt` or a circular reference in
+ * A message that cannot be serialized (a `BigInt` or a circular reference in
  * its params) fails only the request that carried it, but vscode-jsonrpc also
  * reports the encode error through the writer's `error` event. The writer's
  * encoder records those errors so the connection's error handler can tell them
@@ -802,11 +553,8 @@ async function getSpawnableBundledRuntimePath(): Promise<string> {
 class TeardownResilientStreamMessageWriter extends StreamMessageWriter {
     public suppressWriteErrors = false;
 
-    constructor(
-        writable: NodeJS.WritableStream,
-        codec: ReturnType<typeof createLocalModelJsonCodec>
-    ) {
-        super(writable, { contentTypeEncoder: jsonMessageEncoder(codec) });
+    constructor(writable: NodeJS.WritableStream) {
+        super(writable, { contentTypeEncoder: jsonMessageEncoder });
     }
 
     public override async write(msg: Message): Promise<void> {
@@ -820,96 +568,22 @@ class TeardownResilientStreamMessageWriter extends StreamMessageWriter {
     }
 }
 
-/**
- * The physical path of an existing directory, as a POSIX child that enters it sees
- * it. Native realpath needs procfs on some musl versions, so without it the path is
- * walked one component at a time the way the kernel does: a symlink target is read
- * before any `..` that follows it is applied. Node's portable `realpathSync` is not
- * a substitute, because it collapses `alias/..` in a target without reading `alias`.
- */
-function physicalDirectory(directory: string): string {
-    try {
-        return realpathSync.native(directory);
-    } catch {
-        return walkPhysicalPath(resolve(directory));
-    }
-}
-
-const MAX_SYMLINKS = 40;
-
-function walkPhysicalPath(absolutePath: string): string {
-    let resolved = "/";
-    const pending = absolutePath.split("/");
-    let links = 0;
-    while (pending.length > 0) {
-        const part = pending.shift()!;
-        if (part === "" || part === ".") {
-            continue;
-        }
-        if (part === "..") {
-            resolved = dirname(resolved);
-            continue;
-        }
-        const next = join(resolved, part);
-        if (!lstatSync(next).isSymbolicLink()) {
-            resolved = next;
-            continue;
-        }
-        if (++links > MAX_SYMLINKS) {
-            throw new Error(`Too many levels of symbolic links in ${absolutePath}`);
-        }
-        const target = readlinkSync(next);
-        if (target.startsWith("/")) {
-            resolved = "/";
-        }
-        pending.unshift(...target.split("/"));
-    }
-    return resolved;
-}
-
 export class CopilotClient {
     private cliStartTimeout: ReturnType<typeof setTimeout> | null = null;
     private cliProcess: ChildProcess | null = null;
     private ffiHost: FfiRuntimeHost | null = null;
     private connection: DrainingMessageConnection | null = null;
     private requestAdapter: ReturnType<typeof createCopilotRequestAdapter> | null = null;
-    private pendingMemoryStores = new Set<AbortController>();
     private messageWriter: TeardownResilientStreamMessageWriter | null = null;
     private connectionClosed: boolean = false;
-    // Disconnects the current connection without waiting for its reader to reach EOF.
-    private retireClosedConnection: (() => Promise<void>) | null = null;
     private connectionEpoch = 0;
     private socket: Socket | null = null;
     private runtimePort: number | null = null;
     private actualHost: string = "localhost";
     private state: "disconnected" | "connecting" | "connected" | "error" = "disconnected";
-    /** Shared in-flight start; concurrent callers await the same runtime startup. */
+    /** Shared in-flight start; concurrent callers await it instead of spawning another CLI. */
     private startPromise: Promise<void> | null = null;
-    private shutdownCanceledStartup: Promise<void> | null = null;
-    private stopPromise: Promise<Error[]> | null = null;
-    private forceStopPromise: Promise<void> | null = null;
     private sessions: Map<string, CopilotSession> = new Map();
-    /**
-     * Open secret prompts by session ID, then request ID. Tracked here rather
-     * than on a session object, which a resume can replace while a prompt is open.
-     */
-    private pendingShellAuthenticationRequests = new Map<string, Map<string, AbortController>>();
-    private pendingSessionResumes = new Map<
-        string,
-        {
-            session: CopilotSession;
-            connection: MessageConnection;
-            gitHubTokenProviderRegistrationId?: string;
-            resolveAliases: boolean;
-        }
-    >();
-    private sessionInitializations = new Map<string, Promise<void>>();
-    private failedAutoModeRecoveryCleanups = new WeakMap<MessageConnection, Map<string, Error>>();
-    private sessionInitializationContext = new AsyncLocalStorage<
-        SessionInitializationContext | undefined
-    >();
-    private sessionInitializationLifetime = new AbortController();
-    private sessionInitializationGeneration = 0;
     private hostExitCallbacks = new Map<string, (exit: AhpHostExit) => void>();
     private hostSessionFactories = new Map<
         string,
@@ -931,7 +605,7 @@ export class CopilotClient {
             hostId: string;
             requestedSessionId?: string;
             controller: AbortController;
-            configs: Map<CopilotSession, CreateSessionOptions>;
+            configs: Map<CopilotSession, SessionConfig>;
             session?: CopilotSession;
             released: boolean;
             onReleased?: AhpHostOptions["onSessionReleased"];
@@ -945,7 +619,6 @@ export class CopilotClient {
     /** Resolved environment passed to the spawned runtime. */
     private resolvedEnv: Record<string, string | undefined>;
     private options: {
-        internalTestOptions?: CopilotClientOptions["internalTestOptions"];
         entra?: CopilotClientOptions["entra"];
         workingDirectory: string;
         logLevel?: string;
@@ -961,9 +634,9 @@ export class CopilotClient {
     private forceStopping: boolean = false;
     /** Token sent in `connect`; auto-generated when the SDK spawns its own CLI in TCP mode. */
     private effectiveConnectionToken?: string;
-    private onListModels?: () => Promise<Model[]> | Model[];
+    private onListModels?: () => Promise<ModelInfo[]> | ModelInfo[];
     private onGetTraceContext?: TraceContextProvider;
-    private modelsCache: { models: Model[] | null; lock: Promise<void> } = {
+    private modelsCache: { models: ModelInfo[] | null; lock: Promise<void> } = {
         models: null,
         lock: Promise.resolve(),
     };
@@ -974,7 +647,6 @@ export class CopilotClient {
     > = new Map();
     private _rpc: ReturnType<typeof createServerRpc> | null = null;
     private _internalRpc: ReturnType<typeof createInternalServerRpc> | null = null;
-    private _decisions: CopilotDecisions | undefined;
     private processExitPromise: Promise<never> | null = null; // Rejects when CLI process exits
     private processTransportError: Error | null = null;
     private negotiatedProtocolVersion: number | null = null;
@@ -982,7 +654,7 @@ export class CopilotClient {
     private sessionFsConfig: SessionFsConfig | null = null;
     private requestHandler: CopilotRequestHandler | null = null;
     private extensionLaunchProvider?: ExtensionLaunchProvider;
-    private readonly network?: CopilotClientOptions["network"];
+    private readonly kerberosAuth?: CopilotClientOptions["kerberosAuth"];
     private installationConfirmationHandler?: InstallationConfirmationHandler;
     private builtinPluginDirectories: string[] = [];
     private onGitHubTelemetry?: (notification: GitHubTelemetryNotification) => void | Promise<void>;
@@ -1004,17 +676,6 @@ export class CopilotClient {
             this._rpc = createServerRpc(this.connection);
         }
         return this._rpc;
-    }
-
-    /**
-     * One-off yes/no, pick-one and rating questions answered by Copilot decision
-     * models. Requires the runtime's `DECISIONS_API` feature flag.
-     *
-     * @experimental
-     */
-    get decisions(): CopilotDecisions {
-        this._decisions ??= new CopilotDecisions(() => this.rpc);
-        return this._decisions;
     }
 
     /**
@@ -1046,91 +707,110 @@ export class CopilotClient {
     }
 
     /**
+     * Environment variable that overrides the transport when the caller does not set
+     * {@link CopilotClientOptions.connection}. Accepts `"inprocess"` or `"stdio"`
+     * (case-insensitive); unset preserves the default stdio transport. Any other value
+     * is an error.
+     */
+    private static readonly DEFAULT_CONNECTION_ENV_VAR = "COPILOT_SDK_DEFAULT_CONNECTION";
+
+    /**
+     * Resolves the default {@link RuntimeConnection} for the no-connection case,
+     * honoring {@link CopilotClient.DEFAULT_CONNECTION_ENV_VAR}.
+     */
+    private static resolveDefaultConnection(): RuntimeConnection {
+        const value = process.env[CopilotClient.DEFAULT_CONNECTION_ENV_VAR];
+        if (!value || value.toLowerCase() === "stdio") {
+            return { kind: "stdio" };
+        }
+        if (value.toLowerCase() === "inprocess") {
+            return { kind: "inprocess" };
+        }
+        throw new Error(
+            `Invalid ${CopilotClient.DEFAULT_CONNECTION_ENV_VAR} value '${value}'. ` +
+                `Expected 'inprocess', 'stdio', or unset.`
+        );
+    }
+
+    /**
      * Creates a new CopilotClient instance.
      *
      * @param options - Configuration options for the client
      *
      * @example
      * ```typescript
-     * // Default: loads the native runtime in this process
-     * const client = new CopilotClient({ mode: "coding-agent" });
+     * // Default: spawns the bundled runtime over stdio
+     * const client = new CopilotClient();
      *
      * // Connect to an existing runtime
      * const client = new CopilotClient({
-     *   mode: "coding-agent",
-     *   runtime: RuntimeConnection.forTcp("localhost", 3000),
+     *   connection: RuntimeConnection.forUri("localhost:3000"),
      * });
-     *      *
+     *
      * // Spawn the runtime over TCP on a chosen port
      * const client = new CopilotClient({
-     *   mode: "coding-agent",
-     *   runtime: RuntimeConnection.forSpawnedTcp({ port: 9001 }),
+     *   connection: RuntimeConnection.forTcp({ port: 9001 }),
      * });
-     *      *
+     *
      * // Use a custom runtime binary
      * const client = new CopilotClient({
-     *   mode: "coding-agent",
-     *   runtime: RuntimeConnection.forSpawnedStdio({ path: "/usr/local/bin/copilot" }),
-     *   observability: { logLevel: "debug" },
+     *   connection: RuntimeConnection.forStdio({ path: "/usr/local/bin/copilot" }),
+     *   logLevel: "debug",
      * });
      * ```
      */
-    constructor(options: CopilotClientOptions) {
-        options = normalizeClientOptions(options);
-        if (options?.mode !== "coding-agent" && options?.mode !== "empty") {
-            throw new Error("mode is required and must be 'coding-agent' or 'empty'");
-        }
+    constructor(options: CopilotClientOptions = {}) {
         // Resolve the connection mode. `_internalConnection` is set by
         // `joinSession()` to opt into the parent-process stdio path; consumers
-        // should always go through the public `runtime` field.
+        // should always go through the public `connection` field.
         const conn: InternalRuntimeConnection =
-            options._internalConnection ?? options.runtime ?? RuntimeConnection.forDefault();
+            options._internalConnection ??
+            options.connection ??
+            CopilotClient.resolveDefaultConnection();
 
-        if (conn.kind === "tcp" || conn.kind === "parent-process") {
-            const runtimeOnlyOptions = {
-                "runtime.baseDirectory": "baseDirectory" in conn ? conn.baseDirectory : undefined,
-                "github.token": options.github?.token,
-                "github.useLoggedInUser": options.github?.useLoggedInUser,
-                "observability.telemetry": options.observability?.telemetry,
-                "runtime.sessionIdleTimeoutSeconds":
-                    "sessionIdleTimeoutSeconds" in conn
-                        ? conn.sessionIdleTimeoutSeconds
-                        : undefined,
-                internalTestOptions: options.internalTestOptions,
-            };
-            const unsupported = Object.entries(runtimeOnlyOptions)
-                .filter(([, value]) => value !== undefined)
-                .map(([name]) => name);
-            if (unsupported.length > 0) {
-                throw new Error(
-                    `Cannot configure runtime startup options for an attached runtime: ${unsupported.join(", ")}`
-                );
-            }
-        }
-        if ("env" in options || "workingDirectory" in options) {
-            throw new Error(
-                "Configure env and workingDirectory on RuntimeConnection.forSpawnedStdio/forSpawnedTcp, " +
-                    "not on CopilotClientOptions. Set session working directories on individual sessions."
-            );
-        }
-        if (conn.kind === "inprocess" && "env" in conn && conn.env !== undefined) {
-            throw new Error(
-                "env is not supported with RuntimeConnection.forInProcess(): environment variables " +
-                    "belong to the shared host process. Use typed client/session options or a child-process transport."
-            );
-        }
         if (
-            conn.kind === "inprocess" &&
-            "workingDirectory" in conn &&
-            conn.workingDirectory !== undefined
+            conn.kind === "uri" &&
+            (options.gitHubToken !== undefined || options.useLoggedInUser !== undefined)
         ) {
+            throw new Error(
+                "gitHubToken and useLoggedInUser cannot be used with RuntimeConnection.forUri (external server manages its own auth)"
+            );
+        }
+        if (conn.kind === "inprocess" && options.workingDirectory !== undefined) {
             throw new Error(
                 "workingDirectory is not supported with RuntimeConnection.forInProcess(): the in-process " +
                     "transport hosts the runtime in this process, so honoring it would require mutating the " +
-                    "shared process-global cwd. Set CreateSessionOptions.workingDirectory instead."
+                    "shared process-global cwd. Change the host process's working directory before " +
+                    "constructing the client instead."
             );
         }
-        if (conn.kind === "spawned-tcp" && conn.connectionToken !== undefined) {
+        if (conn.kind === "inprocess" && options.env !== undefined) {
+            throw new Error(
+                "env is not supported with RuntimeConnection.forInProcess(): the in-process transport loads " +
+                    "the native runtime into the shared host process, whose single environment block cannot " +
+                    "carry per-client values. Set the variables on the host process environment instead."
+            );
+        }
+        if (conn.kind === "inprocess" && options.telemetry !== undefined) {
+            throw new Error(
+                "telemetry is not supported with RuntimeConnection.forInProcess(): telemetry configuration " +
+                    "is lowered to environment variables read by native runtime code running in the shared " +
+                    "host process, so per-client telemetry cannot be honored in-process. Configure telemetry " +
+                    "via the host process environment, or use a child-process transport."
+            );
+        }
+        if (
+            (conn.kind === "stdio" || conn.kind === "tcp") &&
+            conn.env !== undefined &&
+            options.env !== undefined
+        ) {
+            throw new Error(
+                "Set environment variables via either the client-level env option or the connection's env " +
+                    "(RuntimeConnection.forStdio/forTcp), not both. Prefer the connection-level env for " +
+                    "child-process transports."
+            );
+        }
+        if (conn.kind === "tcp" && conn.connectionToken !== undefined) {
             if (typeof conn.connectionToken !== "string" || conn.connectionToken.length === 0) {
                 throw new Error("connectionToken must be a non-empty string");
             }
@@ -1141,33 +821,22 @@ export class CopilotClient {
         if (options.sessionFs) {
             this.validateSessionFsConfig(options.sessionFs);
         }
-        if (options.plugins?.builtinDirectories) {
-            for (const path of options.plugins?.builtinDirectories) {
+        if (options.builtinPluginDirectories) {
+            for (const path of options.builtinPluginDirectories) {
                 if (!isAbsolute(path)) {
                     throw new Error(
                         `builtinPluginDirectories must contain only absolute paths: ${path}`
                     );
                 }
             }
-            this.builtinPluginDirectories = [...options.plugins?.builtinDirectories];
+            this.builtinPluginDirectories = [...options.builtinPluginDirectories];
         }
 
-        if (conn.kind === "tcp") {
-            if (
-                typeof conn.host !== "string" ||
-                !conn.host ||
-                /[\s/\\?#@[\]]/.test(conn.host) ||
-                (conn.host.includes(":") && !isIPv6(conn.host))
-            ) {
-                throw new Error(
-                    "host must be a hostname or IP address without a scheme, port, or path"
-                );
-            }
-            if (!Number.isInteger(conn.port) || conn.port < 1 || conn.port > 65535) {
-                throw new Error("port must be an integer from 1 through 65535");
-            }
-            this.actualHost = conn.host;
-            this.runtimePort = conn.port;
+        // Pre-parse the URI host/port and mark as external if applicable.
+        if (conn.kind === "uri") {
+            const { host, port } = this.parseCliUrl(conn.url);
+            this.actualHost = host;
+            this.runtimePort = port;
             this.isExternalServer = true;
         } else if (conn.kind === "parent-process") {
             this.isExternalServer = true;
@@ -1175,29 +844,32 @@ export class CopilotClient {
 
         // Effective TCP connection token: explicit, else auto-generated when we
         // spawn our own runtime over TCP, else undefined.
-        if (conn.kind === "spawned-tcp") {
+        if (conn.kind === "tcp") {
             this.effectiveConnectionToken = conn.connectionToken ?? randomUUID();
-        } else if (conn.kind === "tcp") {
+        } else if (conn.kind === "uri") {
             this.effectiveConnectionToken = conn.connectionToken;
         }
 
-        this.onListModels = options.models?.onListModels;
-        this.onGetTraceContext = options.observability?.onGetTraceContext;
+        this.onListModels = options.onListModels;
+        this.onGetTraceContext = options.onGetTraceContext;
         this.sessionFsConfig = options.sessionFs ?? null;
-        this.requestHandler = options.models?.requestHandler ?? null;
-        this.extensionLaunchProvider = options.extensions?.launchProvider;
-        this.network = options.network ? snapshotNetworkConfig(options.network) : undefined;
-        this.installationConfirmationHandler = options.installations?.confirmationHandler;
-        this.onGitHubTelemetry = options.github?.onTelemetry;
+        this.requestHandler = options.requestHandler ?? null;
+        this.extensionLaunchProvider = options.extensionLaunchProvider;
+        this.kerberosAuth = options.kerberosAuth;
+        this.installationConfirmationHandler = options.installationConfirmationHandler;
+        this.onGitHubTelemetry = options.onGitHubTelemetry;
         this.setupClientGlobalHandlers();
 
-        const spawnedConnection =
-            conn.kind === "spawned-stdio" || conn.kind === "spawned-tcp" ? conn : undefined;
-        const effectiveEnv = spawnedConnection?.env ?? process.env;
+        // Connection-level env (child-process transports only) takes precedence
+        // over the client-level env, which falls back to the ambient process env.
+        // The constructor guard above rejects setting both, so at most one of the
+        // first two is defined. Mirrors .NET/Python precedence.
+        const connEnv: Record<string, string> | undefined =
+            conn.kind === "stdio" || conn.kind === "tcp" ? conn.env : undefined;
+        const effectiveEnv = connEnv ?? options.env ?? process.env;
         this.resolvedEnv = effectiveEnv;
-        if (conn.kind === "spawned-stdio" || conn.kind === "spawned-tcp") {
-            const explicitCliPath =
-                conn.path ?? CopilotClient.normalizeEnvironment(effectiveEnv).COPILOT_CLI_PATH;
+        if (conn.kind === "stdio" || conn.kind === "tcp") {
+            const explicitCliPath = conn.path ?? effectiveEnv.COPILOT_CLI_PATH;
             if (explicitCliPath) {
                 this.resolvedCliPath = explicitCliPath;
             }
@@ -1205,27 +877,22 @@ export class CopilotClient {
 
         // Collect extra CLI args from the connection variant (if any).
         const connArgs: readonly string[] =
-            conn.kind === "spawned-stdio" || conn.kind === "spawned-tcp" ? (conn.args ?? []) : [];
+            conn.kind === "stdio" || conn.kind === "tcp" ? (conn.args ?? []) : [];
         this.connectionExtraArgs = [...connArgs];
 
         this.options = {
-            internalTestOptions: options.internalTestOptions,
             entra: options.entra
                 ? { ...options.entra, tokenProvider: options.entra.tokenProvider }
                 : undefined,
-            workingDirectory: spawnedConnection?.workingDirectory ?? process.cwd(),
-            logLevel: options.observability?.logLevel,
-            gitHubToken: options.github?.token,
+            workingDirectory: options.workingDirectory ?? process.cwd(),
+            logLevel: options.logLevel,
+            gitHubToken: options.gitHubToken,
             // Default useLoggedInUser to false when gitHubToken is provided, otherwise true.
-            useLoggedInUser:
-                options.github?.useLoggedInUser ?? (options.github?.token ? false : true),
-            telemetry: options.observability?.telemetry,
-            baseDirectory: "baseDirectory" in conn ? conn.baseDirectory : undefined,
-            sessionIdleTimeoutSeconds:
-                ("sessionIdleTimeoutSeconds" in conn
-                    ? conn.sessionIdleTimeoutSeconds
-                    : undefined) ?? 0,
-            mode: options.mode,
+            useLoggedInUser: options.useLoggedInUser ?? (options.gitHubToken ? false : true),
+            telemetry: options.telemetry,
+            baseDirectory: options.baseDirectory,
+            sessionIdleTimeoutSeconds: options.sessionIdleTimeoutSeconds ?? 0,
+            mode: options.mode ?? "copilot-cli",
             clientInfo: options.clientInfo,
         };
 
@@ -1239,7 +906,7 @@ export class CopilotClient {
                 this.sessionFsConfig !== null ||
                 // External runtimes manage their own persistence layer; the SDK
                 // can't enforce it from here.
-                conn.kind === "tcp" ||
+                conn.kind === "uri" ||
                 conn.kind === "parent-process";
             if (!hasPersistence) {
                 throw new Error(
@@ -1252,6 +919,53 @@ export class CopilotClient {
     }
 
     private connectionExtraArgs: string[] = [];
+
+    /**
+     * Parse CLI URL into host and port
+     * Supports formats: "host:port", "[ipv6]:port", "http://host:port", "https://host:port", or just "port"
+     */
+    private parseCliUrl(url: string): { host: string; port: number } {
+        // Remove protocol if present
+        const cleanUrl = url.replace(/^https?:\/\//, "");
+
+        // Check if it's just a port number
+        if (/^\d+$/.test(cleanUrl)) {
+            return { host: "localhost", port: parseInt(cleanUrl, 10) };
+        }
+
+        // Handle the canonical bracketed IPv6 host:port form without changing
+        // the existing parser behavior for other inputs.
+        const ipv6Match = cleanUrl.match(/^\[([^\]]+)\]:(\d+)$/);
+        if (ipv6Match) {
+            const host = ipv6Match[1];
+            if (!isIPv6(host)) {
+                throw new Error(`Invalid cliUrl format: ${url}`);
+            }
+
+            const port = parseInt(ipv6Match[2], 10);
+            if (isNaN(port) || port <= 0 || port > 65535) {
+                throw new Error(`Invalid port in cliUrl: ${url}`);
+            }
+            return { host, port };
+        }
+
+        // Parse host:port format
+        const parts = cleanUrl.split(":");
+        if (parts.length !== 2) {
+            throw new Error(
+                `Invalid cliUrl format: ${url}. Expected "host:port", "[ipv6]:port", "http://host:port", or "port"`
+            );
+        }
+
+        const host = parts[0] || "localhost";
+        const port = parseInt(parts[1], 10);
+
+        if (isNaN(port) || port <= 0 || port > 65535) {
+            throw new Error(`Invalid port in cliUrl: ${url}`);
+        }
+
+        return { host, port };
+    }
 
     private validateSessionFsConfig(config: SessionFsConfig): void {
         if (!config.initialCwd) {
@@ -1267,16 +981,19 @@ export class CopilotClient {
         }
     }
 
-    private setupSessionFs(session: CopilotSession, config: SessionOptionsBase): void {
+    private setupSessionFs(
+        session: CopilotSession,
+        config: { createSessionFsProvider?: (session: CopilotSession) => SessionFsProvider }
+    ): void {
         if (!this.sessionFsConfig) {
             return;
         }
-        if (!config.state?.createSessionFsProvider) {
+        if (!config.createSessionFsProvider) {
             throw new Error(
                 "createSessionFsProvider is required in session config when sessionFs is enabled in client options."
             );
         }
-        const provider = config.state.createSessionFsProvider(session);
+        const provider = config.createSessionFsProvider(session);
         if (this.sessionFsConfig.capabilities?.sqlite && !provider.sqlite) {
             throw new Error(
                 "SessionFsConfig declares capabilities.sqlite but the provider does not implement sqlite."
@@ -1398,11 +1115,10 @@ export class CopilotClient {
     }
 
     /**
-     * Starts the runtime host and establishes a connection.
+     * Starts the CLI server and establishes a connection.
      *
-     * An explicit {@link RuntimeConnection.forTcp} only establishes the connection.
-     * Otherwise, starts an in-process host or the explicitly selected subprocess.
-     * If its subprocess survives a lost connection, it is terminated before restarting.
+     * If connecting to an external server (via cliUrl), only establishes the connection.
+     * Otherwise, spawns the CLI server process and then connects.
      *
      * This method is called automatically the first time you create or resume a session.
      *
@@ -1411,56 +1127,19 @@ export class CopilotClient {
      *
      * @example
      * ```typescript
-     * const client = new CopilotClient({ mode: "coding-agent" });
+     * const client = new CopilotClient();
      * await client.start();
      * // Now ready to create sessions
      * ```
      */
     async start(): Promise<void> {
-        if (this.forceStopPromise || (this.stopPromise && !this.forceStopping)) {
-            throw new Error("Client disconnected during session initialization");
-        }
-        const startup = this.startPromise;
-        if (startup && startup === this.shutdownCanceledStartup) {
-            const generation = this.sessionInitializationGeneration;
-            // Forced shutdown must return without native startup; reuse still waits for its cleanup.
-            await Promise.allSettled([startup, this.stopPromise]);
-            if (generation !== this.sessionInitializationGeneration) {
-                throw new Error("Client disconnected during session initialization");
-            }
-            return this.start();
-        }
-        // Outside teardown, concurrent callers share startup failures, including failure cleanup.
-        if (startup && !this.stopPromise) {
-            return startup;
-        }
-        const retireClosedConnection = this.retireClosedConnection;
-        if (
-            this.state === "connected" &&
-            this.connectionClosed &&
-            !this.stopPromise &&
-            retireClosedConnection
-        ) {
-            // The runtime exited or the transport closed, but the connection has not finished
-            // disconnecting: an exited runtime's descendants can hold its output open, which
-            // defers that until the shutdown timeout. Disconnect it now, then start anew.
-            const retirement = retireClosedConnection();
-            // Retirement invalidates the old lifetime; only a subsequent shutdown cancels restart.
-            const generation = this.sessionInitializationGeneration;
-            await retirement;
-            if (generation !== this.sessionInitializationGeneration) {
-                throw new Error("Client disconnected during session initialization");
-            }
-            return this.start();
-        }
-        if (
-            this.stopPromise ||
-            (this.connection && this.sessionInitializationLifetime.signal.aborted)
-        ) {
-            throw new Error("Client disconnected during session initialization");
-        }
         if (this.state === "connected") {
             return;
+        }
+
+        // Concurrent callers share one in-progress start instead of each spawning a CLI.
+        if (this.startPromise) {
+            return this.startPromise;
         }
 
         this.startPromise = this.doStart();
@@ -1468,13 +1147,10 @@ export class CopilotClient {
             await this.startPromise;
         } finally {
             this.startPromise = null;
-            this.shutdownCanceledStartup = null;
         }
     }
 
     private async doStart(): Promise<void> {
-        this.sessionInitializationLifetime = new AbortController();
-        const signal = this.sessionInitializationLifetime.signal;
         this.forceStopping = false;
         this.connectionEpoch++;
         this.connectionClosed = false;
@@ -1482,43 +1158,22 @@ export class CopilotClient {
         this.state = "connecting";
 
         try {
-            // A lost connection (such as a dropped TCP socket) can leave the previous
-            // runtime running; replacing its reference below would orphan it. Without
-            // one, startup still reaches the spawn without yielding.
-            if (this.cliProcess) {
-                await this.killCliProcess();
-                // forceStop() can run while the old process is being retired and finds no child.
-                signal.throwIfAborted();
-            }
-
             // Only start CLI server process if not connecting to external server
             if (this.connectionConfig.kind === "inprocess") {
                 await this.startInProcessFfi();
             } else if (!this.isExternalServer) {
                 await this.startCLIServer();
             }
-            signal.throwIfAborted();
 
             // Connect to the server
             await this.connectToServer();
-            signal.throwIfAborted();
 
             // Verify protocol version compatibility
             await this.verifyProtocolVersion();
 
-            if (
-                this.network?.resolveProxy ||
-                this.network?.authenticateNegotiate ||
-                this.network?.authenticateBasic
-            ) {
-                const { scope, resolveProxy, authenticateNegotiate, authenticateBasic } =
-                    this.network;
-                await this.rpc.network.setProvider({
-                    ...(scope ? { scope } : {}),
-                    ...(resolveProxy ? { resolveProxy: {} } : {}),
-                    ...(authenticateNegotiate ? { authenticateNegotiate: {} } : {}),
-                    ...(authenticateBasic ? { authenticateBasic: {} } : {}),
-                });
+            if (this.kerberosAuth) {
+                const { mode, scope } = this.kerberosAuth;
+                await this.rpc.kerberosAuth.setProvider(scope ? { mode, scope } : { mode });
             }
 
             if (this.extensionLaunchProvider) {
@@ -1526,9 +1181,14 @@ export class CopilotClient {
             }
 
             if (this.builtinPluginDirectories.length > 0) {
-                await this.connection!.sendRequest("plugins.builtin.set", {
-                    paths: this.builtinPluginDirectories,
-                });
+                try {
+                    await this.connection!.sendRequest("plugins.builtin.set", {
+                        paths: this.builtinPluginDirectories,
+                    });
+                } catch (error) {
+                    await this.forceStop();
+                    throw error;
+                }
             }
 
             // If a session filesystem provider was configured, register it
@@ -1551,15 +1211,10 @@ export class CopilotClient {
             if (this.connectionClosed) {
                 throw new Error("CLI server connection closed during startup");
             }
-            signal.throwIfAborted();
             this.state = "connected";
         } catch (error) {
             const startupError = this.processTransportError ?? error;
-            if (!signal.aborted) {
-                this.invalidateSessionInitializations();
-            }
-            // Startup retains cleanup ownership even after forceStop has returned.
-            await this.doForceStop();
+            await this.forceStop();
             this.state = "error";
             throw startupError;
         }
@@ -1569,8 +1224,7 @@ export class CopilotClient {
      * Stops the CLI server and closes all active sessions.
      *
      * This method performs graceful cleanup:
-     * 1. Closes all active sessions, suspending unfinished work for resume;
-     *    detach requests share one shutdown timeout
+     * 1. Closes all active sessions (releases in-memory resources)
      * 2. Requests runtime shutdown for SDK-owned CLI processes
      * 3. Closes the JSON-RPC connection
      * 4. Signals EOF to an owned stdio process and waits for host cleanup, then
@@ -1592,37 +1246,27 @@ export class CopilotClient {
      * ```
      */
     async stop(): Promise<Error[]> {
-        if (this.stopPromise) {
-            return this.stopPromise;
-        }
-        if (!this.sessionInitializationLifetime.signal.aborted) {
-            this.shutdownCanceledStartup = this.startPromise;
-        }
-        this.invalidateSessionInitializations();
-        this.stopPromise = this.doStop(this.startPromise);
-        try {
-            return await this.stopPromise;
-        } finally {
-            this.stopPromise = null;
-        }
-    }
-
-    private async doStop(startup: Promise<void> | null): Promise<Error[]> {
         const errors: Error[] = [];
 
+        // Disconnect all active sessions with retry logic
         const activeSessions = [...this.sessions.values()];
-        // A hung runtime may never answer detach, so all sessions share one deadline.
-        let sessionCleanupDeadlineTimer: ReturnType<typeof setTimeout> | undefined;
-        const sessionCleanupDeadline = new Promise<"timeout">((resolve) => {
-            sessionCleanupDeadlineTimer = setTimeout(
-                () => resolve("timeout"),
-                RUNTIME_SHUTDOWN_TIMEOUT_MS
-            );
-        });
+        // TEMPORARY: over the in-process (FFI) transport the runtime shares this
+        // process, so a turn still running when the runtime disposes the session
+        // can leave that session's SQLite session.db handle open — it isn't
+        // reclaimed by terminating a child process, so the file stays locked
+        // (Windows) and the session-state directory can't be removed. Abort any
+        // in-flight turn first so it cancels and releases the handle. Best-effort
+        // and idempotent: a session with no active turn is a no-op. Scoped to
+        // in-process only: stdio/tcp runtimes run in a child process that we kill
+        // on shutdown (which frees the handle), and for external servers we don't
+        // own the runtime and aborting would cancel pending work other clients
+        // may still resume. Remove once the runtime cleans up fully on shutdown.
+        if (this.connectionConfig.kind === "inprocess") {
+            await Promise.allSettled(activeSessions.map((session) => session.abort()));
+        }
         for (const session of activeSessions) {
             const sessionId = session.sessionId;
             let lastError: Error | null = null;
-            let attempts = 0;
 
             // Try up to 3 times with exponential backoff
             for (let attempt = 1; attempt <= 3; attempt++) {
@@ -1632,20 +1276,8 @@ export class CopilotClient {
                     lastError = null;
                     break;
                 }
-                attempts = attempt;
                 try {
-                    const outcome = await Promise.race([
-                        session.disconnect().then(() => "disconnected" as const),
-                        sessionCleanupDeadline,
-                    ]);
-                    if (outcome === "timeout") {
-                        // The detach is still in flight, which makes another
-                        // disconnect() a no-op, so do not retry it.
-                        lastError = new Error(
-                            `session.detach did not complete within the ${RUNTIME_SHUTDOWN_TIMEOUT_MS}ms shutdown timeout`
-                        );
-                        break;
-                    }
+                    await session.disconnect();
                     lastError = null;
                     break; // Success
                 } catch (error) {
@@ -1666,20 +1298,17 @@ export class CopilotClient {
             if (lastError) {
                 errors.push(
                     new Error(
-                        `Failed to disconnect session ${sessionId} after ${attempts} ${attempts === 1 ? "attempt" : "attempts"}: ${lastError.message}`
+                        `Failed to disconnect session ${sessionId} after 3 attempts: ${lastError.message}`
                     )
                 );
             }
         }
-        clearTimeout(sessionCleanupDeadlineTimer);
-        for (const session of new Set([...activeSessions, ...this.sessions.values()])) {
+        for (const session of activeSessions) {
             session._markDisconnected();
         }
         this.sessions.clear();
-        this.abortPendingShellAuthenticationRequests();
         this.githubTokenProviders.clear();
         this.requestAdapter?.cancelPending();
-        this.abortPendingMemoryStores();
 
         // Ask SDK-owned runtimes to flush and clean up before we tear down
         // their transport/process. External runtimes may be shared, so only
@@ -1779,7 +1408,7 @@ export class CopilotClient {
         if (this.cliProcess && !this.isExternalServer) {
             const child = this.cliProcess;
             if (
-                this.connectionConfig.kind === "spawned-stdio" &&
+                this.connectionConfig.kind === "stdio" &&
                 child.stdin &&
                 child.exitCode == null &&
                 child.signalCode == null
@@ -1846,16 +1475,11 @@ export class CopilotClient {
             this.cliStartTimeout = null;
         }
 
-        // Startup owns its rejection; shutdown waits for any late startup resources to be released.
-        if (startup) {
-            await Promise.allSettled([startup]);
-        }
         this.state = "disconnected";
         this.runtimePort = null;
         this.stderrBuffer = "";
         this.processExitPromise = null;
         this.disconnectHosts();
-        this.connectionClosed = false;
 
         return errors;
     }
@@ -1866,12 +1490,8 @@ export class CopilotClient {
      *
      * @example
      * ```typescript
-     * await using client = new CopilotClient({ mode: "coding-agent" });
-     * const session = await client.createSession({
-     *     permissions: {
-     *         onRequest: approveAll,
-     *     },
-     * });
+     * await using client = new CopilotClient();
+     * const session = await client.createSession({ onPermissionRequest: approveAll });
      * await session.sendAndWait("Hello");
      * // client.stop() is called automatically when the block exits.
      * ```
@@ -1889,8 +1509,7 @@ export class CopilotClient {
      * - Sends SIGKILL to the CLI process (if spawned by this client)
      * - Waits for the spawned CLI process to exit
      *
-     * @returns Resolves after disconnection and spawned-process exit; later starts
-     * wait for pending startup cleanup.
+     * @returns A promise that resolves when the force stop is complete
      * @throws If the spawned CLI process cannot be terminated
      *
      * @example
@@ -1909,22 +1528,6 @@ export class CopilotClient {
      * ```
      */
     async forceStop(): Promise<void> {
-        if (this.forceStopPromise) {
-            return this.forceStopPromise;
-        }
-        if (!this.sessionInitializationLifetime.signal.aborted) {
-            this.shutdownCanceledStartup = this.startPromise;
-        }
-        this.invalidateSessionInitializations();
-        this.forceStopPromise = this.doForceStop();
-        try {
-            await this.forceStopPromise;
-        } finally {
-            this.forceStopPromise = null;
-        }
-    }
-
-    private async doForceStop(): Promise<void> {
         this.forceStopping = true;
         this.disconnectHosts();
 
@@ -1933,10 +1536,8 @@ export class CopilotClient {
             session._markDisconnected();
         }
         this.sessions.clear();
-        this.abortPendingShellAuthenticationRequests();
         this.githubTokenProviders.clear();
         this.requestAdapter?.cancelPending();
-        this.abortPendingMemoryStores();
 
         // Force close connection. Suppress writer failures first so teardown
         // write rejections don't surface as unhandled rejections.
@@ -1987,27 +1588,20 @@ export class CopilotClient {
         this.runtimePort = null;
         this.stderrBuffer = "";
         this.processExitPromise = null;
-        await this.killCliProcess();
-        this.connectionClosed = false;
-    }
-
-    /** Sends SIGKILL to the spawned CLI process, if it is still running, and waits for it to exit. */
-    private async killCliProcess(): Promise<void> {
-        if (!this.cliProcess || this.isExternalServer) {
-            return;
-        }
-        const child = this.cliProcess;
-        if (child.exitCode == null && child.signalCode == null) {
-            child.kill("SIGKILL");
-            // SIGKILL requests termination; Windows file mappings can outlive that request.
-            if (!(await waitForChildExit(child, RUNTIME_SHUTDOWN_TIMEOUT_MS))) {
-                throw new Error(
-                    `Timed out waiting for CLI process to exit after SIGKILL: ${RUNTIME_SHUTDOWN_TIMEOUT_MS}ms`
-                );
+        if (this.cliProcess && !this.isExternalServer) {
+            const child = this.cliProcess;
+            if (child.exitCode == null && child.signalCode == null) {
+                child.kill("SIGKILL");
+                // SIGKILL requests termination; Windows file mappings can outlive that request.
+                if (!(await waitForChildExit(child, RUNTIME_SHUTDOWN_TIMEOUT_MS))) {
+                    throw new Error(
+                        `Timed out waiting for CLI process to exit after SIGKILL: ${RUNTIME_SHUTDOWN_TIMEOUT_MS}ms`
+                    );
+                }
             }
-        }
-        if (this.cliProcess === child) {
-            this.cliProcess = null;
+            if (this.cliProcess === child) {
+                this.cliProcess = null;
+            }
         }
     }
 
@@ -2024,26 +1618,18 @@ export class CopilotClient {
      * @example
      * ```typescript
      * // Basic session
-     * const session = await client.createSession({
-     * permissions: {
-     * onRequest: approveAll
-     * }
-     * });
-     *      *
+     * const session = await client.createSession({ onPermissionRequest: approveAll });
+     *
      * // Session with model and tools
      * const session = await client.createSession({
-     * permissions: {
-     * onRequest: approveAll
-     * },
-     * model: "gpt-5.4",
-     * tools: {
-     * definitions: [{
+     *   onPermissionRequest: approveAll,
+     *   model: "gpt-4",
+     *   tools: [{
      *     name: "get_weather",
      *     description: "Get weather for a location",
      *     parameters: { type: "object", properties: { location: { type: "string" } } },
      *     handler: async (args) => ({ temperature: 72 })
      *   }]
-     * }
      * });
      * ```
      */
@@ -2052,14 +1638,24 @@ export class CopilotClient {
      * instances to plain string arrays, rejects misuse (bare `"*"`) and the
      * missing-availableTools case in `mode = "empty"`.
      *
+     * The SDK always sends `toolFilterPrecedence: "excluded"` so callers can
+     * compose include + exclude lists naturally (e.g. "everything matching X
+     * except Y") regardless of mode. Allowlist-precedence is intentionally not
+     * exposed — it's available on the runtime side as a CLI-only concession to
+     * legacy behavior, but SDK consumers always get the composable semantics.
+     *
      * @internal
      */
-    private resolveToolFilterOptions(config: SessionOptionsBase): {
+    private resolveToolFilterOptions(config: {
+        availableTools?: string[] | ToolSet;
+        excludedTools?: string[] | ToolSet;
+    }): {
         availableTools: string[] | undefined;
         excludedTools: string[] | undefined;
+        toolFilterPrecedence: "excluded";
     } {
-        const availableTools = toolFilterListToArray(config.tools?.availableTools);
-        const excludedTools = toolFilterListToArray(config.tools?.excludedTools);
+        const availableTools = toolFilterListToArray(config.availableTools);
+        const excludedTools = toolFilterListToArray(config.excludedTools);
         validateToolFilterList("availableTools", availableTools);
         validateToolFilterList("excludedTools", excludedTools);
 
@@ -2074,88 +1670,27 @@ export class CopilotClient {
             }
         }
 
-        return { availableTools, excludedTools };
+        return { availableTools, excludedTools, toolFilterPrecedence: "excluded" };
     }
 
     /** Mode-specific defaults spread under the caller's config (app values win). */
-    private configDefaultsForMode(): Partial<SessionOptionsBase> {
+    private configDefaultsForMode(): Partial<SessionConfigBase> {
         if (this.options.mode === "empty") {
             return {
-                github: {
-                    telemetryEnabled: false,
-                },
-                mcp: {
-                    oauthTokenStorage: "in-memory",
-                },
-                state: {
-                    skipEmbeddingRetrieval: true,
-                    embeddingCacheStorage: "in-memory",
-                    enableCrossSessionStore: false,
-                    memory: { enabled: false },
-                },
-                instructions: {
-                    onDemandDiscovery: false,
-                },
-                hooks: {
-                    enableRepositoryHooks: false,
-                },
-                git: {
-                    enableHostGitOperations: false,
-                },
-                skills: {
-                    enabled: false,
-                },
-                agents: {
-                    localDiscoveryOnly: true,
-                },
+                enableSessionTelemetry: false,
+                mcpOAuthTokenStorage: "in-memory",
+                skipEmbeddingRetrieval: true,
+                embeddingCacheStorage: "in-memory",
+                enableOnDemandInstructionDiscovery: false,
+                enableFileHooks: false,
+                enableHostGitOperations: false,
+                enableSessionStore: false,
+                enableSkills: false,
+                memory: { enabled: false },
+                customAgentsLocalOnly: true,
             };
         }
         return {};
-    }
-
-    private applyModeDefaults<T extends SessionOptionsBase>(config: T): T {
-        const defaults = this.configDefaultsForMode();
-        return {
-            ...config,
-            inference: { ...config.inference },
-            filesystem: { ...config.filesystem },
-            tools: { ...config.tools },
-            interaction: { ...config.interaction },
-            experiments: { ...config.experiments },
-            permissions: { ...config.permissions },
-            events: { ...config.events },
-            plugins: { ...config.plugins },
-            execution: { ...config.execution },
-            policy: { ...config.policy },
-            canvases: { ...config.canvases },
-            extensions: { ...config.extensions },
-            github: { ...defaults.github, ...config.github },
-            mcp: { ...defaults.mcp, ...config.mcp },
-            state: { ...defaults.state, ...config.state },
-            instructions: { ...defaults.instructions, ...config.instructions },
-            hooks: { ...defaults.hooks, ...config.hooks },
-            git: { ...defaults.git, ...config.git },
-            skills: { ...defaults.skills, ...config.skills },
-            agents: {
-                ...defaults.agents,
-                ...config.agents,
-                localDiscoveryOnly:
-                    config.agents?.localDiscoveryOnly ?? defaults.agents?.localDiscoveryOnly,
-            },
-            systemMessage: this.getSystemMessageConfigForMode(config.systemMessage),
-        };
-    }
-
-    private validateSessionCredentials(config: SessionOptionsBase): void {
-        const { token, tokenProvider } = config.github ?? {};
-        if (token !== undefined && tokenProvider !== undefined) {
-            throw new Error("github.token and github.tokenProvider are mutually exclusive");
-        }
-        if (config.inference && "provider" in config.inference) {
-            throw new Error(
-                "inference.provider is no longer supported; use inference.providers and inference.models"
-            );
-        }
     }
 
     /** Mode-specific default for enableExperimentalMode. */
@@ -2212,39 +1747,33 @@ export class CopilotClient {
      * Mode-specific options applied via session.options.update after create/resume.
      *
      * In empty mode, defaults the four overridable feature flags to safe values
-     * (caller values from `config` win). `plugins.installed=[]` is unconditional
-     * in empty mode. `skills.includedBuiltinSkills` defaults to `[]`, but callers can
+     * (caller values from `config` win). `installedPlugins=[]` is unconditional
+     * in empty mode. `includedBuiltinSkills` defaults to `[]`, but callers can
      * explicitly allow selected runtime-bundled skills.
      */
     private async updateSessionOptionsForMode(
         session: CopilotSession,
-        config: SessionOptionsBase
+        config: SessionConfigBase
     ): Promise<void> {
         const patch: SessionUpdateOptionsParams = {};
         if (this.options.mode === "empty") {
-            patch.instructions = {
-                skipCustomInstructions: config.instructions?.skipCustomInstructions ?? true,
-            };
-            patch.agents = { localDiscoveryOnly: config.agents?.localDiscoveryOnly ?? true };
-            patch.git = { coauthorEnabled: config.git?.coauthorEnabled ?? false };
-            patch.tools = { manageScheduleEnabled: config.tools?.manageScheduleEnabled ?? false };
-            patch.plugins = { installed: [] };
-            patch.skills = {
-                includedBuiltinSkills: [...(config.skills?.includedBuiltinSkills ?? [])],
-            };
+            patch.skipCustomInstructions = config.skipCustomInstructions ?? true;
+            patch.customAgentsLocalOnly = config.customAgentsLocalOnly ?? true;
+            patch.coauthorEnabled = config.coauthorEnabled ?? false;
+            patch.manageScheduleEnabled = config.manageScheduleEnabled ?? false;
+            patch.installedPlugins = [];
+            patch.includedBuiltinSkills = config.includedBuiltinSkills ?? [];
         } else {
-            if (config.instructions?.skipCustomInstructions !== undefined)
-                patch.instructions = {
-                    skipCustomInstructions: config.instructions.skipCustomInstructions,
-                };
-            if (config.agents?.localDiscoveryOnly !== undefined)
-                patch.agents = { localDiscoveryOnly: config.agents.localDiscoveryOnly };
-            if (config.git?.coauthorEnabled !== undefined)
-                patch.git = { coauthorEnabled: config.git.coauthorEnabled };
-            if (config.tools?.manageScheduleEnabled !== undefined)
-                patch.tools = { manageScheduleEnabled: config.tools.manageScheduleEnabled };
-            if (config.skills?.includedBuiltinSkills !== undefined)
-                patch.skills = { includedBuiltinSkills: [...config.skills.includedBuiltinSkills] };
+            if (config.skipCustomInstructions !== undefined)
+                patch.skipCustomInstructions = config.skipCustomInstructions;
+            if (config.customAgentsLocalOnly !== undefined)
+                patch.customAgentsLocalOnly = config.customAgentsLocalOnly;
+            if (config.coauthorEnabled !== undefined)
+                patch.coauthorEnabled = config.coauthorEnabled;
+            if (config.manageScheduleEnabled !== undefined)
+                patch.manageScheduleEnabled = config.manageScheduleEnabled;
+            if (config.includedBuiltinSkills !== undefined)
+                patch.includedBuiltinSkills = config.includedBuiltinSkills;
         }
         if (Object.keys(patch).length === 0) {
             return;
@@ -2265,137 +1794,22 @@ export class CopilotClient {
         }
     }
 
-    async createSession(config: CreateSessionOptions): Promise<CopilotSession> {
-        config = normalizeSessionOptions(config);
-        if (
-            config.interaction?.autoModeRecovery &&
-            typeof config.interaction?.onAutoModeSwitchRequest !== "function"
-        ) {
-            throw new Error("autoModeRecovery requires onAutoModeSwitchRequest");
+    async createSession(config: SessionConfig): Promise<CopilotSession> {
+        if (config.gitHubToken !== undefined && config.gitHubTokenProvider !== undefined) {
+            throw new Error("gitHubToken and gitHubTokenProvider are mutually exclusive");
         }
-        this.validateSessionCredentials(config);
-        if (config.cloud != null && config.skills?.provider) {
+        if (config.cloud != null && config.skillProvider) {
             throw new Error("Skill providers are not supported for cloud sessions.");
         }
-        const storeMemory = requestedMemoryStore(config.state?.memory);
-        if (config.cloud != null && storeMemory) {
-            throw new Error("Memory stores are not supported for cloud sessions.");
+        // Wait for in-progress startup too: its provider registrations must precede any session.
+        if (!this.connection || this.startPromise) {
+            await this.start();
         }
-        const signal = await this.getSessionInitializationSignal();
-        const sessionId = config.sessionId ?? (config.cloud != null ? undefined : randomUUID());
-        if (sessionId === undefined) {
-            return this.createSessionInternal(config, signal);
-        }
-        const release = await this.acquireSessionInitialization(sessionId, signal);
-        try {
-            signal.throwIfAborted();
-            return await this.createSessionInternal({ ...config, sessionId }, signal);
-        } finally {
-            release();
-        }
-    }
 
-    private invalidateSessionInitializations(): void {
-        this.sessionInitializationGeneration++;
-        this.sessionInitializationLifetime.abort(
-            new Error("Client disconnected during session initialization")
-        );
-    }
-
-    private async getSessionInitializationSignal(): Promise<AbortSignal> {
-        // Starting a new connection renews the lifetime; queued operations keep their old signal.
-        const generation = this.sessionInitializationGeneration;
-        // Provider registration can still be in flight after the connection is assigned.
-        const starting = !this.connection || this.startPromise ? this.start() : undefined;
-        await starting;
-        if (generation !== this.sessionInitializationGeneration) {
-            throw new Error("Client disconnected during session initialization");
-        }
-        const signal = this.sessionInitializationLifetime.signal;
-        signal.throwIfAborted();
-        return signal;
-    }
-
-    private async runInitializationCallback<T>(
-        sessionId: string | undefined,
-        callback: () => Promise<T>
-    ): Promise<T> {
-        const context = sessionId === undefined ? undefined : { sessionId, active: true };
-        try {
-            return await this.sessionInitializationContext.run(context, callback);
-        } finally {
-            if (context) context.active = false;
-        }
-    }
-
-    private async acquireSessionInitialization(
-        sessionId: string,
-        signal: AbortSignal
-    ): Promise<() => void> {
-        signal.throwIfAborted();
-        const predecessors = [...this.sessionInitializations]
-            .filter(([id]) => sessionIdsOverlap(id, sessionId))
-            .map(([, pending]) => pending);
-        const previous = predecessors.length ? Promise.all(predecessors).then(() => {}) : undefined;
-        const context = this.sessionInitializationContext.getStore();
-        if (previous && context?.active && sessionIdsOverlap(context.sessionId, sessionId)) {
-            throw new Error(
-                `Cannot re-enter session initialization for ${sessionId} from its callback`
-            );
-        }
-        let finish!: () => void;
-        const current = new Promise<void>((resolve) => {
-            finish = resolve;
-        });
-        // Canceling a waiter must not let its successors overtake the active owner.
-        const tail = previous ? previous.then(() => current) : current;
-        this.sessionInitializations.set(sessionId, tail);
-        void tail.then(() => {
-            if (this.sessionInitializations.get(sessionId) === tail) {
-                this.sessionInitializations.delete(sessionId);
-            }
-        });
-        try {
-            if (previous) {
-                let cancel!: () => void;
-                try {
-                    await new Promise<void>((resolve, reject) => {
-                        cancel = () => reject(signal.reason);
-                        signal.addEventListener("abort", cancel, { once: true });
-                        void previous.then(resolve);
-                    });
-                } finally {
-                    signal.removeEventListener("abort", cancel);
-                }
-            }
-            signal.throwIfAborted();
-            const cleanupError = this.connection
-                ? [...(this.failedAutoModeRecoveryCleanups.get(this.connection) ?? [])].find(
-                      ([id]) => sessionIdsOverlap(id, sessionId)
-                  )?.[1]
-                : undefined;
-            if (cleanupError) {
-                throw new Error(
-                    `Cannot initialize session ${sessionId} after failed Auto recovery cleanup; stop and restart the client before retrying`,
-                    { cause: cleanupError }
-                );
-            }
-            return finish;
-        } catch (error) {
-            finish();
-            throw error;
-        }
-    }
-
-    private async createSessionInternal(
-        config: CreateSessionOptions,
-        signal: AbortSignal
-    ): Promise<CopilotSession> {
-        signal.throwIfAborted();
-        const connection = this.connection!;
-        const storeMemory = requestedMemoryStore(config.state?.memory);
-
-        config = this.applyModeDefaults(config);
+        const modeDefaults = this.configDefaultsForMode();
+        config = { ...modeDefaults, ...config };
+        config.customAgentsLocalOnly ??= modeDefaults.customAgentsLocalOnly;
+        config.systemMessage = this.getSystemMessageConfigForMode(config.systemMessage);
 
         // For cloud sessions, let the CLI/server assign the session id and
         // register the session lazily once the response arrives. For non-cloud
@@ -2409,77 +1823,80 @@ export class CopilotClient {
         const localSessionId = useServerGeneratedId ? undefined : (callerSessionId ?? randomUUID());
         const toolFilterOptions = this.resolveToolFilterOptions(config);
         const gitHubTokenProviderRegistrationId = this.registerGitHubTokenProvider(
-            config.github?.tokenProvider,
+            config.gitHubTokenProvider,
             localSessionId
         );
 
         // Strip non-serializable bearerTokenProvider callbacks from provider configs,
         // replacing them with a wire flag; keep the callbacks for session-side
         // registration so the runtime can call back to acquire tokens.
-        const { wireProviders: bearerWireProviders, callbacks: bearerTokenCallbacks } =
-            extractBearerTokenProviders(config.inference?.providers);
+        const {
+            wireProvider: bearerWireProvider,
+            wireProviders: bearerWireProviders,
+            callbacks: bearerTokenCallbacks,
+        } = extractBearerTokenProviders(config.provider, config.providers);
 
         // Extract transform callbacks from system message config before serialization.
         const { wirePayload: wireSystemMessage, transformCallbacks } = extractTransformCallbacks(
             config.systemMessage
         );
 
-        let replacedSession: CopilotSession | undefined;
         // Creates the session object, wires up handlers, and registers it in
         // the sessions map.
         const initializeSession = (sessionId: string): CopilotSession => {
-            const s = new CopilotSession(sessionId, connection, undefined, this.onGetTraceContext, {
-                mcpAuthHandler: config.mcp?.onAuthRequest,
-                managedSettingsEnabled:
-                    config.github?.fetchManagedSettings === true ||
-                    config.policy?.managedSettings !== undefined,
-                onDisconnected:
-                    gitHubTokenProviderRegistrationId === undefined
-                        ? undefined
-                        : () => this.githubTokenProviders.delete(gitHubTokenProviderRegistrationId),
-            });
-            s.registerTools(config.tools?.definitions);
-            s.registerCanvases(config.canvases?.definitions);
-            s.registerCommands(config.interaction?.commands);
+            const s = new CopilotSession(
+                sessionId,
+                this.connection!,
+                undefined,
+                this.onGetTraceContext,
+                {
+                    mcpAuthHandler: config.onMcpAuthRequest,
+                    managedSettingsEnabled:
+                        config.enableManagedSettings === true ||
+                        config.managedSettings !== undefined,
+                    onDisconnected:
+                        gitHubTokenProviderRegistrationId === undefined
+                            ? undefined
+                            : () =>
+                                  this.githubTokenProviders.delete(
+                                      gitHubTokenProviderRegistrationId
+                                  ),
+                }
+            );
+            s.registerTools(config.tools);
+            s.registerCanvases(config.canvases);
+            s.registerCommands(config.commands);
             if (bearerTokenCallbacks.size > 0) {
                 s.registerBearerTokenProviders(bearerTokenCallbacks);
             }
-            s.registerPermissionHandler(config.permissions?.onRequest);
-            if (config.interaction?.onUserInputRequest) {
-                s.registerUserInputHandler(config.interaction?.onUserInputRequest);
+            s.registerPermissionHandler(config.onPermissionRequest);
+            if (config.onUserInputRequest) {
+                s.registerUserInputHandler(config.onUserInputRequest);
             }
-            if (config.interaction?.onShellAuthenticationRequest) {
-                s.registerShellAuthenticationHandler(
-                    config.interaction?.onShellAuthenticationRequest
-                );
+            if (config.onElicitationRequest) {
+                s.registerElicitationHandler(config.onElicitationRequest);
             }
-            if (config.interaction?.onElicitationRequest) {
-                s.registerElicitationHandler(config.interaction?.onElicitationRequest);
+            if (config.onExitPlanModeRequest) {
+                s.registerExitPlanModeHandler(config.onExitPlanModeRequest);
             }
-            if (config.interaction?.onExitPlanModeRequest) {
-                s.registerExitPlanModeHandler(config.interaction?.onExitPlanModeRequest);
+            if (config.onAutoModeSwitchRequest) {
+                s.registerAutoModeSwitchHandler(config.onAutoModeSwitchRequest);
             }
-            if (config.interaction?.onAutoModeSwitchRequest) {
-                s.registerAutoModeSwitchHandler(config.interaction?.onAutoModeSwitchRequest);
+            if (config.hooks) {
+                s.registerHooks(config.hooks);
             }
-            if (config.hooks?.handlers) {
-                s.registerHooks(config.hooks?.handlers);
+            if (config.skillProvider) {
+                s.registerSkillProvider(config.skillProvider);
             }
-            if (config.skills?.provider) {
-                s.registerSkillProvider(config.skills?.provider);
-            }
-            s._registerMemoryStore(storeMemory);
             if (transformCallbacks) {
                 s.registerTransformCallbacks(transformCallbacks);
             }
-            if (config.events?.onEvent) {
-                s.on(config.events?.onEvent);
+            if (config.onEvent) {
+                s.on(config.onEvent);
             }
             // Session-FS setup can throw, so finish it before the session
             // becomes routable; a failed open must not leave handlers behind.
             this.setupSessionFs(s, config);
-            signal.throwIfAborted();
-            replacedSession = this.sessions.get(sessionId);
             this.sessions.set(sessionId, s);
             return s;
         };
@@ -2487,7 +1904,6 @@ export class CopilotClient {
         let session: CopilotSession | undefined;
         let registeredId: string | undefined;
         let uninitializedCloudSessionId: string | undefined;
-        let releaseCloudInitialization: (() => void) | undefined;
 
         // Pre-register non-cloud sessions BEFORE issuing the RPC so any
         // session-scoped requests the CLI emits during `session.create`
@@ -2506,213 +1922,129 @@ export class CopilotClient {
         }
 
         try {
-            const traceContext = await this.runInitializationCallback(localSessionId, () =>
-                getTraceContext(this.onGetTraceContext)
-            );
-            signal.throwIfAborted();
-            const response = await connection.sendRequest("session.create", {
-                ...traceContext,
+            const response = await this.connection!.sendRequest("session.create", {
+                ...(await getTraceContext(this.onGetTraceContext)),
                 model: config.model,
-                policy: {
-                    allowedModels: config.policy?.allowedModels,
-                    excludedManagedSettings: config.policy?.excludedManagedSettings,
-                    enforceManagedModelDefaults: config.policy?.enforceManagedModelDefaults,
-                    managedSettings: config.policy?.managedSettings,
-                },
+                allowedModels: config.allowedModels,
                 sessionId: localSessionId,
                 name: config.name,
                 clientName: config.clientName,
-                inference: {
-                    reasoningEffort: config.inference?.reasoningEffort,
-                    allowMultipleToolCalls: config.inference?.allowMultipleToolCalls,
-                    reasoningSummary: config.inference?.reasoningSummary,
-                    contextTier: config.inference?.contextTier,
-                    defaultProvider: config.inference?.defaultProvider,
-                    providers: bearerWireProviders,
-                    models: config.inference?.models,
-                    enableCitations: config.inference?.enableCitations,
-                    capabilities: config.inference?.capabilities,
-                },
-                experiments: {
-                    enableExperimentalMode: this.experimentalModeForMode(
-                        config.experiments?.enableExperimentalMode
-                    ),
-                    flags: config.experiments?.flags,
-                    assignments: config.experiments?.assignments,
-                },
-                tools: {
-                    definitions: config.tools?.definitions?.map((tool) => ({
-                        name: tool.name,
-                        title: tool.title,
-                        description: tool.description,
-                        parameters: toJsonSchema(tool.parameters),
-                        overridesBuiltInTool: tool.overridesBuiltInTool,
-                        skipPermission: tool.skipPermission,
-                        hasHandler: !!tool.handler,
-                        defer: tool.defer,
-                        metadata: tool.metadata,
-                        isTerminal: tool.isTerminal,
-                        idempotent: tool.idempotent,
-                        namespace: tool.namespace,
-                    })),
-                    search: config.tools?.search,
-                    imageGeneration: config.tools?.imageGeneration,
-                    availableTools: toolFilterOptions.availableTools,
-                    excludedTools: toolFilterOptions.excludedTools,
-                    largeOutput: toWireLargeOutput(config.tools?.largeOutput),
-                },
-                canvases: {
-                    definitions: config.canvases?.definitions?.map((canvas) => canvas.declaration),
-                    requestRenderer: config.canvases?.requestRenderer,
-                    provider: config.canvases?.provider,
-                },
-                extensions: {
-                    enabled: config.extensions?.enabled,
-                    sdkPath: config.extensions?.sdkPath,
-                    identity: config.extensions?.identity,
-                },
-                interaction: {
-                    commands: config.interaction?.commands?.map((cmd) => ({
-                        name: cmd.name,
-                        description: cmd.description ?? "",
-                    })),
-                    requestUserInput: !!config.interaction?.onUserInputRequest,
-                    requestElicitation: !!config.interaction?.onElicitationRequest,
-                    askUserVariant: config.interaction?.askUserVariant,
-                    requestExitPlanMode: !!config.interaction?.onExitPlanModeRequest,
-                    requestAutoModeSwitch: !!config.interaction?.onAutoModeSwitchRequest,
-                    ...(config.interaction?.onShellAuthenticationRequest
-                        ? {
-                              requestShellAuthentication: true,
-                          }
-                        : {}),
-                    ...(config.interaction?.autoModeRecovery
-                        ? {
-                              requestAutoModeRecovery: true,
-                          }
-                        : {}),
-                },
+                reasoningEffort: config.reasoningEffort,
+                reasoningSummary: config.reasoningSummary,
+                isExperimentalMode: this.experimentalModeForMode(config.enableExperimentalMode),
+                contextTier: config.contextTier,
+                tools: config.tools?.map((tool) => ({
+                    name: tool.name,
+                    description: tool.description,
+                    parameters: toJsonSchema(tool.parameters),
+                    overridesBuiltInTool: tool.overridesBuiltInTool,
+                    skipPermission: tool.skipPermission,
+                    defer: tool.defer,
+                    metadata: tool.metadata,
+                    isTerminal: tool.isTerminal,
+                    namespace: tool.namespace,
+                })),
+                toolSearch: config.toolSearch,
+                imageGeneration: config.imageGeneration,
+                canvases: config.canvases?.map((canvas) => canvas.declaration),
+                requestCanvasRenderer: config.requestCanvasRenderer,
+                requestExtensions: config.requestExtensions,
+                extensionSdkPath: config.extensionSdkPath,
+                extensionInfo: config.extensionInfo,
+                canvasProvider: config.canvasProvider,
+                commands: config.commands?.map((cmd) => ({
+                    name: cmd.name,
+                    description: cmd.description ?? "",
+                })),
                 systemMessage: wireSystemMessage,
-                agents: {
-                    excludedBuiltinAgents: config.agents?.excludedBuiltinAgents,
-                    includedBuiltinAgents: config.agents?.includedBuiltinAgents,
-                    definitions: toWireCustomAgents(config.agents?.definitions),
-                    localDiscoveryOnly: config.agents?.localDiscoveryOnly,
-                    default: config.agents?.default,
-                    selected: config.agents?.selected,
-                    directories: config.agents?.directories,
-                },
-                github: {
-                    capi: config.github?.capi,
-                    telemetryEnabled: config.github?.telemetryEnabled,
-                    token: config.github?.token,
-                    tokenProviderRegistrationId: gitHubTokenProviderRegistrationId,
-                    fetchManagedSettings: config.github?.fetchManagedSettings,
-                    interactiveUser: config.github?.interactiveUser,
-                    ...(config.github?.mcp != null
-                        ? {
-                              mcp: config.github?.mcp,
-                          }
-                        : {}),
-                    ...(this.onGitHubTelemetry != null
-                        ? {
-                              telemetryForwarding: true,
-                          }
-                        : {}),
-                },
-                filesystem: {
-                    trackFileChanges: config.filesystem?.trackFileChanges,
-                    trustWorkingDirectory: config.filesystem?.trustWorkingDirectory,
-                    additionalDirectories: config.filesystem?.additionalDirectories,
-                },
-                execution: {
-                    limits: config.execution?.limits,
-                    autopilot: config.execution?.autopilot,
-                },
-                permissions: {
-                    request: !!config.permissions?.onRequest,
-                    sandbox: config.permissions?.sandbox,
-                    mode: config.permissions?.mode,
-                },
-                mcp: {
-                    ...(config.mcp?.enableApps
-                        ? {
-                              enableApps: true,
-                          }
-                        : {}),
-                    servers: toWireMcpServers(config.mcp?.servers),
-                    oauthTokenStorage: config.mcp?.oauthTokenStorage,
-                    authClientIdMetadataUrl: config.mcp?.authClientIdMetadataUrl,
-                    envValueMode: "direct",
-                    disabledServers: config.mcp?.disabledServers,
-                },
-                hooks: {
-                    hasHandlers: !!(
-                        config.hooks?.handlers &&
-                        Object.values(config.hooks?.handlers).some(Boolean)
-                    ),
-                    enableRepositoryHooks: config.hooks?.enableRepositoryHooks,
-                    directories: config.hooks?.directories,
-                },
+                availableTools: toolFilterOptions.availableTools,
+                excludedTools: toolFilterOptions.excludedTools,
+                toolFilterPrecedence: toolFilterOptions.toolFilterPrecedence,
+                excludedBuiltinAgents: config.excludedBuiltinAgents,
+                provider: bearerWireProvider,
+                capi: config.capi,
+                providers: bearerWireProviders,
+                models: config.models,
+                enableSessionTelemetry: config.enableSessionTelemetry,
+                enableCitations: config.enableCitations,
+                enableFileChangeTracking: config.enableFileChangeTracking,
+                sessionLimits: config.sessionLimits,
+                autopilot: config.autopilot,
+                modelCapabilities: config.modelCapabilities,
+                largeOutput: toWireLargeOutput(config.largeOutput),
+                requestPermission: !!config.onPermissionRequest,
+                requestUserInput: !!config.onUserInputRequest,
+                requestElicitation: !!config.onElicitationRequest,
+                askUserVariant: config.askUserVariant,
+                ...(config.enableMcpApps ? { requestMcpApps: true } : {}),
+                ...(config.githubMcpToolConfig != null
+                    ? { githubMcpToolConfig: config.githubMcpToolConfig }
+                    : {}),
+                requestExitPlanMode: !!config.onExitPlanModeRequest,
+                requestAutoModeSwitch: !!config.onAutoModeSwitchRequest,
+                hooks: !!(config.hooks && Object.values(config.hooks).some(Boolean)),
                 workingDirectory: config.workingDirectory,
-                events: {
-                    streaming: config.events?.streaming,
-                    includeSubAgentStreamingEvents:
-                        config.events?.includeSubAgentStreamingEvents ?? true,
-                },
+                trustWorkingDirectory: config.trustWorkingDirectory,
+                additionalDirectories: config.additionalDirectories,
+                streaming: config.streaming,
+                includeSubAgentStreamingEvents: config.includeSubAgentStreamingEvents ?? true,
+                ...(this.onGitHubTelemetry != null
+                    ? { enableGitHubTelemetryForwarding: true }
+                    : {}),
+                mcpServers: toWireMcpServers(config.mcpServers),
                 ...(config.diagnostics !== undefined ? { diagnostics: config.diagnostics } : {}),
                 ...(config.lifecycleDiagnostics !== undefined
                     ? { lifecycleDiagnostics: config.lifecycleDiagnostics }
                     : {}),
-                configDirectory: config.configDirectory,
+                mcpOAuthTokenStorage: config.mcpOAuthTokenStorage,
+                authClientIdMetadataUrl: config.authClientIdMetadataUrl,
+                envValueMode: "direct",
+                customAgents: toWireCustomAgents(config.customAgents),
+                customAgentsLocalOnly: config.customAgentsLocalOnly,
+                defaultAgent: config.defaultAgent,
+                agent: config.agent,
+                configDir: config.configDirectory,
                 enableConfigDiscovery: config.enableConfigDiscovery,
-                instructions: {
-                    refreshCustomInstructions: config.instructions?.refreshCustomInstructions,
-                    organizationText: config.instructions?.organizationText,
-                    onDemandDiscovery: config.instructions?.onDemandDiscovery,
-                    directories: config.instructions?.directories,
-                },
-                state: {
-                    skipEmbeddingRetrieval: config.state?.skipEmbeddingRetrieval,
-                    embeddingCacheStorage: config.state?.embeddingCacheStorage,
-                    enableCrossSessionStore: config.state?.enableCrossSessionStore,
-                    infiniteSessions: config.state?.infiniteSessions,
-                    memory: toWireMemoryConfiguration(config.state?.memory),
-                    ...(storeMemory
-                        ? {
-                              hasMemoryStore: true,
-                          }
-                        : {}),
-                },
-                git: {
-                    enableHostGitOperations: config.git?.enableHostGitOperations,
-                },
-                skills: {
-                    enabled: config.skills?.enabled,
-                    directories: config.skills?.directories,
-                    disabledSkills: config.skills?.disabledSkills,
-                    ...(config.skills?.provider
-                        ? {
-                              hasProvider: true,
-                          }
-                        : {}),
-                },
-                plugins: {
-                    directories: config.plugins?.directories,
-                },
+                refreshCustomInstructions: config.refreshCustomInstructions,
+                skipEmbeddingRetrieval: config.skipEmbeddingRetrieval,
+                embeddingCacheStorage: config.embeddingCacheStorage,
+                organizationCustomInstructions: config.organizationCustomInstructions,
+                enableOnDemandInstructionDiscovery: config.enableOnDemandInstructionDiscovery,
+                enableFileHooks: config.enableFileHooks,
+                enableHostGitOperations: config.enableHostGitOperations,
+                enableSessionStore: config.enableSessionStore,
+                enableSkills: config.enableSkills,
+                skillDirectories: config.skillDirectories,
+                ...(config.skillProvider ? { hasSkillProvider: true } : {}),
+                agentDirectories: config.agentDirectories,
+                hookDirectories: config.hookDirectories,
+                pluginDirectories: config.pluginDirectories,
+                instructionDirectories: config.instructionDirectories,
+                disabledSkills: config.disabledSkills,
+                disabledMcpServers: config.disabledMcpServers,
+                sandboxConfig: config.sandboxConfig,
+                infiniteSessions: config.infiniteSessions,
+                memory: config.memory,
+                gitHubToken: config.gitHubToken,
+                gitHubTokenProviderRegistrationId,
                 cloud: config.cloud,
+                featureFlags: config.featureFlags,
+                expAssignments: config.expAssignments,
+                enableManagedSettings: config.enableManagedSettings,
+                excludedManagedSettings: config.excludedManagedSettings,
+                enforceManagedModelDefaults: config.enforceManagedModelDefaults,
+                interactiveUser: config.interactiveUser,
+                managedSettings: config.managedSettings,
             });
 
             const {
                 sessionId: returnedSessionId,
                 workspacePath,
                 capabilities,
-                permissionModeResult,
             } = response as {
                 sessionId: string;
                 workspacePath?: string;
                 capabilities?: SessionCapabilities;
-                permissionModeResult?: PermissionsSetModeResult;
             };
             if (!returnedSessionId) {
                 throw new Error("session.create response did not include a sessionId");
@@ -2723,51 +2055,29 @@ export class CopilotClient {
                 );
             }
             if (session === undefined) {
-                uninitializedCloudSessionId = returnedSessionId;
-            }
-            signal.throwIfAborted();
-            if (session === undefined) {
                 // Cloud / server-assigned path: register the session now that
                 // the CLI has told us which id it chose.
-                releaseCloudInitialization = await this.acquireSessionInitialization(
-                    returnedSessionId,
-                    signal
-                );
-                signal.throwIfAborted();
+                uninitializedCloudSessionId = returnedSessionId;
                 session = initializeSession(returnedSessionId);
+                uninitializedCloudSessionId = undefined;
                 registeredId = returnedSessionId;
             }
             this.assignGitHubTokenProvider(gitHubTokenProviderRegistrationId, returnedSessionId);
-            session.setCapabilities(capabilities);
-            if (config.interaction?.autoModeRecovery) {
-                await this.requireAutoModeRecovery(session, connection);
-            }
-            if (config.mcp?.onAuthRequest) {
-                await connection.sendRequest("session.eventLog.registerInterest", {
+            if (config.onMcpAuthRequest) {
+                await this.connection!.sendRequest("session.eventLog.registerInterest", {
                     sessionId: returnedSessionId,
                     eventType: "mcp.oauth_required",
                 });
             }
             session["_workspacePath"] = workspacePath;
-            session.setPermissionModeResult(permissionModeResult);
+            session.setCapabilities(capabilities);
 
             await this.updateSessionOptionsForMode(session, config);
-            signal.throwIfAborted();
-            uninitializedCloudSessionId = undefined;
             this.commitGitHubTokenProvider(returnedSessionId, gitHubTokenProviderRegistrationId);
         } catch (e) {
             session?._markDisconnected();
-            if (registeredId !== undefined && session !== undefined) {
-                const current = this.sessions.get(registeredId);
-                if (current === session) {
-                    if (replacedSession && !replacedSession._isDisconnected()) {
-                        this.sessions.set(registeredId, replacedSession);
-                    } else {
-                        this.sessions.delete(registeredId);
-                    }
-                } else if (current === undefined) {
-                    replacedSession?._markDisconnected();
-                }
+            if (registeredId !== undefined) {
+                this.sessions.delete(registeredId);
             }
             if (gitHubTokenProviderRegistrationId !== undefined) {
                 this.githubTokenProviders.delete(gitHubTokenProviderRegistrationId);
@@ -2775,35 +2085,20 @@ export class CopilotClient {
             if (uninitializedCloudSessionId !== undefined) {
                 try {
                     await withTimeout(
-                        this.requestSessionDeletion(connection, uninitializedCloudSessionId),
+                        this.deleteSession(uninitializedCloudSessionId),
                         CLOUD_SESSION_CLEANUP_TIMEOUT_MS,
                         `session.delete timed out after ${CLOUD_SESSION_CLEANUP_TIMEOUT_MS}ms`
                     );
                 } catch (cleanupError) {
-                    const failure = new AggregateError(
+                    throw new AggregateError(
                         [e, cleanupError],
-                        `Failed to initialize and delete cloud session ${uninitializedCloudSessionId}`
+                        "Failed to initialize and delete cloud session"
                     );
-                    if (config.interaction?.autoModeRecovery) {
-                        this.recordFailedAutoModeRecoveryCleanup(
-                            connection,
-                            uninitializedCloudSessionId,
-                            failure
-                        );
-                    }
-                    throw failure;
                 }
             }
             throw e;
-        } finally {
-            releaseCloudInitialization?.();
         }
 
-        if (session._isDisconnected()) {
-            this.forgetSession(session);
-        } else {
-            session._setReleaseFromClient(this.forgetSession.bind(this, session));
-        }
         for (const entry of this.hostHandoffs.values()) {
             if (entry.requestedSessionId === session.sessionId) {
                 entry.configs.set(session, config);
@@ -2827,161 +2122,93 @@ export class CopilotClient {
      * @example
      * ```typescript
      * // Resume a previous session
-     * const session = await client.resumeSession("session-123", {
-     * permissions: {
-     * onRequest: approveAll
-     * }
-     * });
-     *      *
+     * const session = await client.resumeSession("session-123", { onPermissionRequest: approveAll });
+     *
      * // Resume with new tools
      * const session = await client.resumeSession("session-123", {
-     * permissions: {
-     * onRequest: approveAll
-     * },
-     * tools: {
-     * definitions: [myNewTool]
-     * }
+     *   onPermissionRequest: approveAll,
+     *   tools: [myNewTool]
      * });
      * ```
      */
-    async resumeSession(sessionId: string, config: ResumeSessionOptions): Promise<CopilotSession> {
+    async resumeSession(sessionId: string, config: ResumeSessionConfig): Promise<CopilotSession> {
         return this.resumeSessionInternal(sessionId, config);
     }
 
     /** @internal */
     async resumeSessionForExtension(
         sessionId: string,
-        config: ResumeSessionOptions,
+        config: ResumeSessionConfig,
         contributions: ExtensionOrchestrationContributions = {},
         extensionOptions?: ExtensionJoinOptions
     ): Promise<CopilotSession> {
-        const session = await this.resumeSessionInternal(
-            sessionId,
-            config,
-            contributions,
-            extensionOptions
-        );
-        if (process.env.COPILOT_EXTENSION_INITIALIZATION === "module") {
-            const connection = this.connection!;
-            Object.defineProperty(globalThis, Symbol.for("copilot.extension.initialized"), {
-                configurable: true,
-                value: () => connection.sendNotification("extension.initialized"),
-            });
-        }
-        return session;
+        return this.resumeSessionInternal(sessionId, config, contributions, extensionOptions);
     }
 
     private async resumeSessionInternal(
         sessionId: string,
-        config: ResumeSessionOptions,
+        config: ResumeSessionConfig,
         contributions: ExtensionOrchestrationContributions = {},
         extensionOptions?: ExtensionJoinOptions
     ): Promise<CopilotSession> {
-        config = normalizeSessionOptions(config);
-        if (
-            config.interaction?.autoModeRecovery &&
-            typeof config.interaction?.onAutoModeSwitchRequest !== "function"
-        ) {
-            throw new Error("autoModeRecovery requires onAutoModeSwitchRequest");
-        }
-        this.validateSessionCredentials(config);
-        requestedMemoryStore(config.state?.memory);
-        const signal = await this.getSessionInitializationSignal();
-        const release = await this.acquireSessionInitialization(sessionId, signal);
-        try {
-            signal.throwIfAborted();
-            return await this.resumeSessionWithInitialization(
-                sessionId,
-                config,
-                contributions,
-                signal,
-                extensionOptions
-            );
-        } finally {
-            release();
-        }
-    }
-
-    private async resumeSessionWithInitialization(
-        sessionId: string,
-        config: ResumeSessionOptions,
-        contributions: ExtensionOrchestrationContributions,
-        signal: AbortSignal,
-        extensionOptions?: ExtensionJoinOptions
-    ): Promise<CopilotSession> {
         const { workflows } = contributions;
-        const storeMemory = requestedMemoryStore(config.state?.memory);
-        signal.throwIfAborted();
-        const connection = this.connection!;
-        const resolveAliases =
-            config.interaction?.autoModeRecovery === true && !this.sessionFsConfig;
-        if (resolveAliases && isAbbreviatedUuidPrefix(sessionId)) {
-            // Resolve against persisted sessions before redirecting any resident callbacks.
-            const resolved = await connection.sendRequest<SessionsFindByPrefixResult>(
-                "sessions.findByPrefix",
-                { prefix: sessionId, configDir: config.configDirectory }
-            );
-            const canonicalId = resolved?.sessionId;
-            if (typeof canonicalId !== "string" || canonicalId.length === 0) {
-                throw new Error(`No unique session matches prefix ${sessionId}`);
-            }
-            if (!canonicalId.toLowerCase().startsWith(sessionId.toLowerCase())) {
-                throw new Error(`Runtime returned an unrelated session ID for prefix ${sessionId}`);
-            }
-            sessionId = canonicalId;
-            signal.throwIfAborted();
+        if (config.gitHubToken !== undefined && config.gitHubTokenProvider !== undefined) {
+            throw new Error("gitHubToken and gitHubTokenProvider are mutually exclusive");
+        }
+        // Wait for in-progress startup too: its provider registrations must precede any session.
+        if (!this.connection || this.startPromise) {
+            await this.start();
         }
 
         // Create and register the session before issuing the RPC so that
         // events emitted by the CLI (e.g. session.start) are not dropped.
         const session = new CopilotSession(
             sessionId,
-            connection,
+            this.connection!,
             undefined,
             this.onGetTraceContext,
             {
-                mcpAuthHandler: config.mcp?.onAuthRequest,
+                mcpAuthHandler: config.onMcpAuthRequest,
                 managedSettingsEnabled:
-                    config.github?.fetchManagedSettings === true ||
-                    config.policy?.managedSettings !== undefined,
+                    config.enableManagedSettings === true || config.managedSettings !== undefined,
             }
         );
-        session.registerTools(config.tools?.definitions);
-        session.registerCanvases(config.canvases?.definitions);
-        session.registerCommands(config.interaction?.commands);
+        session.registerTools(config.tools);
+        session.registerCanvases(config.canvases);
+        session.registerCommands(config.commands);
         session.registerWorkflows(workflows);
-        const { wireProviders: bearerWireProviders, callbacks: bearerTokenCallbacks } =
-            extractBearerTokenProviders(config.inference?.providers);
+        const {
+            wireProvider: bearerWireProvider,
+            wireProviders: bearerWireProviders,
+            callbacks: bearerTokenCallbacks,
+        } = extractBearerTokenProviders(config.provider, config.providers);
         if (bearerTokenCallbacks.size > 0) {
             session.registerBearerTokenProviders(bearerTokenCallbacks);
         }
-        session.registerPermissionHandler(config.permissions?.onRequest);
-        if (config.interaction?.onUserInputRequest) {
-            session.registerUserInputHandler(config.interaction?.onUserInputRequest);
+        session.registerPermissionHandler(config.onPermissionRequest);
+        if (config.onUserInputRequest) {
+            session.registerUserInputHandler(config.onUserInputRequest);
         }
-        if (config.interaction?.onShellAuthenticationRequest) {
-            session.registerShellAuthenticationHandler(
-                config.interaction?.onShellAuthenticationRequest
-            );
+        if (config.onElicitationRequest) {
+            session.registerElicitationHandler(config.onElicitationRequest);
         }
-        if (config.interaction?.onElicitationRequest) {
-            session.registerElicitationHandler(config.interaction?.onElicitationRequest);
+        if (config.onExitPlanModeRequest) {
+            session.registerExitPlanModeHandler(config.onExitPlanModeRequest);
         }
-        if (config.interaction?.onExitPlanModeRequest) {
-            session.registerExitPlanModeHandler(config.interaction?.onExitPlanModeRequest);
+        if (config.onAutoModeSwitchRequest) {
+            session.registerAutoModeSwitchHandler(config.onAutoModeSwitchRequest);
         }
-        if (config.interaction?.onAutoModeSwitchRequest) {
-            session.registerAutoModeSwitchHandler(config.interaction?.onAutoModeSwitchRequest);
+        if (config.hooks) {
+            session.registerHooks(config.hooks);
         }
-        if (config.hooks?.handlers) {
-            session.registerHooks(config.hooks?.handlers);
+        if (config.skillProvider) {
+            session.registerSkillProvider(config.skillProvider);
         }
-        if (config.skills?.provider) {
-            session.registerSkillProvider(config.skills?.provider);
-        }
-        session._registerMemoryStore(storeMemory);
 
-        config = this.applyModeDefaults(config);
+        const modeDefaults = this.configDefaultsForMode();
+        config = { ...modeDefaults, ...config };
+        config.customAgentsLocalOnly ??= modeDefaults.customAgentsLocalOnly;
+        config.systemMessage = this.getSystemMessageConfigForMode(config.systemMessage);
 
         const { wirePayload: wireSystemMessage, transformCallbacks } = extractTransformCallbacks(
             config.systemMessage
@@ -2990,22 +2217,18 @@ export class CopilotClient {
             session.registerTransformCallbacks(transformCallbacks);
         }
 
-        if (config.events?.onEvent) {
-            session.on(config.events?.onEvent);
+        if (config.onEvent) {
+            session.on(config.onEvent);
         }
         // Validation and session-FS setup can throw, so finish them before the
         // replacement session becomes routable over any resident one.
         const toolFilterOptions = this.resolveToolFilterOptions(config);
         this.setupSessionFs(session, config);
-        signal.throwIfAborted();
-        const requestedSessionId = sessionId;
-        let replacedRequestedSession: CopilotSession | undefined;
-        let replacedSession: CopilotSession | undefined;
-        let releaseCanonicalInitialization: (() => void) | undefined;
-        let keepResumedSessionOnRecoveryRejection = false;
+        const replacedSession = this.sessions.get(sessionId);
+        this.sessions.set(sessionId, session);
 
         const gitHubTokenProviderRegistrationId = this.registerGitHubTokenProvider(
-            config.github?.tokenProvider,
+            config.gitHubTokenProvider,
             sessionId
         );
         if (gitHubTokenProviderRegistrationId !== undefined) {
@@ -3015,211 +2238,121 @@ export class CopilotClient {
         }
 
         try {
-            const traceContext = await this.runInitializationCallback(sessionId, () =>
-                getTraceContext(this.onGetTraceContext)
-            );
-            signal.throwIfAborted();
-            replacedRequestedSession = this.sessions.get(sessionId);
-            replacedSession = replacedRequestedSession;
-            this.sessions.set(sessionId, session);
-            this.pendingSessionResumes.set(requestedSessionId, {
-                session,
-                connection,
-                gitHubTokenProviderRegistrationId,
-                resolveAliases,
-            });
-            const response = await connection.sendRequest("session.resume", {
-                policy: {
-                    allowedModels: config.policy?.allowedModels,
-                    excludedManagedSettings: config.policy?.excludedManagedSettings,
-                    enforceManagedModelDefaults: config.policy?.enforceManagedModelDefaults,
-                    managedSettings: config.policy?.managedSettings,
-                },
-                ...traceContext,
+            const response = await this.connection!.sendRequest("session.resume", {
+                allowedModels: config.allowedModels,
+                ...(await getTraceContext(this.onGetTraceContext)),
                 sessionId,
                 allowTranscriptRecovery: config.allowTranscriptRecovery,
                 clientName: config.clientName,
                 model: config.model,
-                inference: {
-                    reasoningEffort: config.inference?.reasoningEffort,
-                    allowMultipleToolCalls: config.inference?.allowMultipleToolCalls,
-                    reasoningSummary: config.inference?.reasoningSummary,
-                    contextTier: config.inference?.contextTier,
-                    enableCitations: config.inference?.enableCitations,
-                    defaultProvider: config.inference?.defaultProvider,
-                    providers: bearerWireProviders,
-                    models: config.inference?.models,
-                    capabilities: config.inference?.capabilities,
-                },
-                experiments: {
-                    enableExperimentalMode: this.experimentalModeForMode(
-                        config.experiments?.enableExperimentalMode
-                    ),
-                    flags: config.experiments?.flags,
-                    assignments: config.experiments?.assignments,
-                },
+                reasoningEffort: config.reasoningEffort,
+                reasoningSummary: config.reasoningSummary,
+                isExperimentalMode: this.experimentalModeForMode(config.enableExperimentalMode),
+                contextTier: config.contextTier,
                 systemMessage: wireSystemMessage,
-                tools: {
-                    availableTools: toolFilterOptions.availableTools,
-                    excludedTools: toolFilterOptions.excludedTools,
-                    definitions: config.tools?.definitions?.map((tool) => ({
-                        name: tool.name,
-                        title: tool.title,
-                        description: tool.description,
-                        parameters: toJsonSchema(tool.parameters),
-                        overridesBuiltInTool: tool.overridesBuiltInTool,
-                        skipPermission: tool.skipPermission,
-                        hasHandler: !!tool.handler,
-                        defer: tool.defer,
-                        metadata: tool.metadata,
-                        isTerminal: tool.isTerminal,
-                        idempotent: tool.idempotent,
-                        namespace: tool.namespace,
-                    })),
-                    search: config.tools?.search,
-                    imageGeneration: config.tools?.imageGeneration,
-                    largeOutput: toWireLargeOutput(config.tools?.largeOutput),
-                },
-                github: {
-                    telemetryEnabled: config.github?.telemetryEnabled,
-                    capi: config.github?.capi,
-                    token: config.github?.token,
-                    tokenProviderRegistrationId: gitHubTokenProviderRegistrationId,
-                    fetchManagedSettings: config.github?.fetchManagedSettings,
-                    interactiveUser: config.github?.interactiveUser,
-                    ...(config.github?.mcp != null
-                        ? {
-                              mcp: config.github?.mcp,
-                          }
-                        : {}),
-                    ...(this.onGitHubTelemetry != null
-                        ? {
-                              telemetryForwarding: true,
-                          }
-                        : {}),
-                },
-                agents: {
-                    excludedBuiltinAgents: config.agents?.excludedBuiltinAgents,
-                    includedBuiltinAgents: config.agents?.includedBuiltinAgents,
-                    definitions: toWireCustomAgents(config.agents?.definitions),
-                    localDiscoveryOnly: config.agents?.localDiscoveryOnly,
-                    default: config.agents?.default,
-                    selected: config.agents?.selected,
-                    directories: config.agents?.directories,
-                },
-                filesystem: {
-                    trackFileChanges: config.filesystem?.trackFileChanges,
-                    additionalDirectories: config.filesystem?.additionalDirectories,
-                },
-                execution: {
-                    limits: config.execution?.limits,
-                    autopilot: config.execution?.autopilot,
-                },
-                canvases: {
-                    definitions: config.canvases?.definitions?.map((canvas) => canvas.declaration),
-                    requestRenderer: config.canvases?.requestRenderer,
-                    provider: config.canvases?.provider,
-                    open: config.canvases?.open,
-                },
-                workflows: workflows?.map(getWorkflowRegistration),
-                extensions: {
-                    enabled: config.extensions?.enabled,
-                    sdkPath: config.extensions?.sdkPath,
-                    identity: config.extensions?.identity,
-                },
-                interaction: {
-                    commands: config.interaction?.commands?.map((cmd) => ({
-                        name: cmd.name,
-                        description: cmd.description ?? "",
-                    })),
-                    requestUserInput: !!config.interaction?.onUserInputRequest,
-                    requestElicitation: !!config.interaction?.onElicitationRequest,
-                    askUserVariant: config.interaction?.askUserVariant,
-                    requestExitPlanMode: !!config.interaction?.onExitPlanModeRequest,
-                    requestAutoModeSwitch: !!config.interaction?.onAutoModeSwitchRequest,
-                    ...(config.interaction?.onShellAuthenticationRequest
-                        ? {
-                              requestShellAuthentication: true,
-                          }
-                        : {}),
-                    ...(config.interaction?.autoModeRecovery
-                        ? {
-                              requestAutoModeRecovery: true,
-                          }
-                        : {}),
-                },
-                permissions: {
-                    request: config.permissions?.onRequest !== defaultJoinSessionPermissionHandler,
-                    sandbox: config.permissions?.sandbox,
-                    mode: config.permissions?.mode,
-                },
-                mcp: {
-                    ...(config.mcp?.enableApps
-                        ? {
-                              enableApps: true,
-                          }
-                        : {}),
-                    servers: toWireMcpServers(config.mcp?.servers),
-                    oauthTokenStorage: config.mcp?.oauthTokenStorage,
-                    authClientIdMetadataUrl: config.mcp?.authClientIdMetadataUrl,
-                    envValueMode: "direct",
-                    disabledServers: config.mcp?.disabledServers,
-                },
-                hooks: {
-                    hasHandlers: !!(
-                        config.hooks?.handlers &&
-                        Object.values(config.hooks?.handlers).some(Boolean)
-                    ),
-                    enableRepositoryHooks: config.hooks?.enableRepositoryHooks,
-                    directories: config.hooks?.directories,
-                },
+                availableTools: toolFilterOptions.availableTools,
+                excludedTools: toolFilterOptions.excludedTools,
+                toolFilterPrecedence: toolFilterOptions.toolFilterPrecedence,
+                enableSessionTelemetry: config.enableSessionTelemetry,
+                excludedBuiltinAgents: config.excludedBuiltinAgents,
+                enableCitations: config.enableCitations,
+                enableFileChangeTracking: config.enableFileChangeTracking,
+                sessionLimits: config.sessionLimits,
+                autopilot: config.autopilot,
+                tools: config.tools?.map((tool) => ({
+                    name: tool.name,
+                    description: tool.description,
+                    parameters: toJsonSchema(tool.parameters),
+                    overridesBuiltInTool: tool.overridesBuiltInTool,
+                    skipPermission: tool.skipPermission,
+                    defer: tool.defer,
+                    metadata: tool.metadata,
+                    isTerminal: tool.isTerminal,
+                    namespace: tool.namespace,
+                })),
+                toolSearch: config.toolSearch,
+                imageGeneration: config.imageGeneration,
+                canvases: config.canvases?.map((canvas) => canvas.declaration),
+                workflows: workflows?.map((workflow) => workflow.meta),
+                requestCanvasRenderer: config.requestCanvasRenderer,
+                requestExtensions: config.requestExtensions,
+                extensionSdkPath: config.extensionSdkPath,
+                extensionInfo: config.extensionInfo,
+                canvasProvider: config.canvasProvider,
+                commands: config.commands?.map((cmd) => ({
+                    name: cmd.name,
+                    description: cmd.description ?? "",
+                })),
+                provider: bearerWireProvider,
+                capi: config.capi,
+                providers: bearerWireProviders,
+                models: config.models,
+                modelCapabilities: config.modelCapabilities,
+                largeOutput: toWireLargeOutput(config.largeOutput),
+                requestPermission:
+                    config.onPermissionRequest !== defaultJoinSessionPermissionHandler,
+                requestUserInput: !!config.onUserInputRequest,
+                requestElicitation: !!config.onElicitationRequest,
+                askUserVariant: config.askUserVariant,
+                ...(config.enableMcpApps ? { requestMcpApps: true } : {}),
+                ...(config.githubMcpToolConfig != null
+                    ? { githubMcpToolConfig: config.githubMcpToolConfig }
+                    : {}),
+                requestExitPlanMode: !!config.onExitPlanModeRequest,
+                requestAutoModeSwitch: !!config.onAutoModeSwitchRequest,
+                hooks: !!(config.hooks && Object.values(config.hooks).some(Boolean)),
                 workingDirectory: config.workingDirectory,
-                configDirectory: config.configDirectory,
+                additionalDirectories: config.additionalDirectories,
+                configDir: config.configDirectory,
                 enableConfigDiscovery: config.enableConfigDiscovery,
-                state: {
-                    skipEmbeddingRetrieval: config.state?.skipEmbeddingRetrieval,
-                    embeddingCacheStorage: config.state?.embeddingCacheStorage,
-                    enableCrossSessionStore: config.state?.enableCrossSessionStore,
-                    infiniteSessions: config.state?.infiniteSessions,
-                    memory: toWireMemoryConfiguration(config.state?.memory),
-                    ...(storeMemory
-                        ? {
-                              hasMemoryStore: true,
-                          }
-                        : {}),
-                },
-                instructions: {
-                    organizationText: config.instructions?.organizationText,
-                    onDemandDiscovery: config.instructions?.onDemandDiscovery,
-                    directories: config.instructions?.directories,
-                },
-                git: {
-                    enableHostGitOperations: config.git?.enableHostGitOperations,
-                },
-                skills: {
-                    enabled: config.skills?.enabled,
-                    directories: config.skills?.directories,
-                    disabledSkills: config.skills?.disabledSkills,
-                    ...(config.skills?.provider
-                        ? {
-                              hasProvider: true,
-                          }
-                        : {}),
-                },
-                events: {
-                    streaming: config.events?.streaming,
-                    includeSubAgentStreamingEvents:
-                        config.events?.includeSubAgentStreamingEvents ?? true,
-                },
+                skipEmbeddingRetrieval: config.skipEmbeddingRetrieval,
+                embeddingCacheStorage: config.embeddingCacheStorage,
+                organizationCustomInstructions: config.organizationCustomInstructions,
+                enableOnDemandInstructionDiscovery: config.enableOnDemandInstructionDiscovery,
+                enableFileHooks: config.enableFileHooks,
+                enableHostGitOperations: config.enableHostGitOperations,
+                enableSessionStore: config.enableSessionStore,
+                enableSkills: config.enableSkills,
+                streaming: config.streaming,
+                includeSubAgentStreamingEvents: config.includeSubAgentStreamingEvents ?? true,
+                ...(this.onGitHubTelemetry != null
+                    ? { enableGitHubTelemetryForwarding: true }
+                    : {}),
+                mcpServers: toWireMcpServers(config.mcpServers),
                 ...(config.diagnostics !== undefined ? { diagnostics: config.diagnostics } : {}),
                 ...(config.lifecycleDiagnostics !== undefined
                     ? { lifecycleDiagnostics: config.lifecycleDiagnostics }
                     : {}),
-                plugins: {
-                    directories: config.plugins?.directories,
-                },
-                suppressResumeEvent: config.suppressResumeEvent,
+                mcpOAuthTokenStorage: config.mcpOAuthTokenStorage,
+                authClientIdMetadataUrl: config.authClientIdMetadataUrl,
+                envValueMode: "direct",
+                customAgents: toWireCustomAgents(config.customAgents),
+                customAgentsLocalOnly: config.customAgentsLocalOnly,
+                defaultAgent: config.defaultAgent,
+                agent: config.agent,
+                skillDirectories: config.skillDirectories,
+                ...(config.skillProvider ? { hasSkillProvider: true } : {}),
+                agentDirectories: config.agentDirectories,
+                hookDirectories: config.hookDirectories,
+                pluginDirectories: config.pluginDirectories,
+                instructionDirectories: config.instructionDirectories,
+                disabledSkills: config.disabledSkills,
+                disabledMcpServers: config.disabledMcpServers,
+                sandboxConfig: config.sandboxConfig,
+                infiniteSessions: config.infiniteSessions,
+                memory: config.memory,
+                disableResume: config.suppressResumeEvent,
                 continuePendingWork: config.continuePendingWork,
+                gitHubToken: config.gitHubToken,
+                gitHubTokenProviderRegistrationId,
+                openCanvases: config.openCanvases,
+                featureFlags: config.featureFlags,
+                expAssignments: config.expAssignments,
+                enableManagedSettings: config.enableManagedSettings,
+                excludedManagedSettings: config.excludedManagedSettings,
+                enforceManagedModelDefaults: config.enforceManagedModelDefaults,
+                interactiveUser: config.interactiveUser,
+                managedSettings: config.managedSettings,
                 ...(extensionOptions?.requestedEnvironmentVariables
                     ? {
                           requestedEnvironmentVariables:
@@ -3228,30 +2361,6 @@ export class CopilotClient {
                     : {}),
             });
 
-            const { sessionId: returnedSessionId } = response as { sessionId?: string };
-            if (returnedSessionId && returnedSessionId !== sessionId) {
-                // A prefix permit already excludes the returned ID. Reacquiring
-                // it could wait on a successor queued behind this operation.
-                if (!sessionIdsOverlap(requestedSessionId, returnedSessionId)) {
-                    releaseCanonicalInitialization = await this.acquireSessionInitialization(
-                        returnedSessionId,
-                        signal
-                    );
-                }
-                replacedSession = this.sessions.get(returnedSessionId);
-                if (this.sessions.get(requestedSessionId) === session) {
-                    if (replacedRequestedSession) {
-                        this.sessions.set(requestedSessionId, replacedRequestedSession);
-                    } else {
-                        this.sessions.delete(requestedSessionId);
-                    }
-                }
-                session._setSessionId(returnedSessionId);
-                sessionId = returnedSessionId;
-                this.sessions.set(sessionId, session);
-                this.assignGitHubTokenProvider(gitHubTokenProviderRegistrationId, sessionId);
-            }
-            signal.throwIfAborted();
             // The host answers an approved environment request with the resolved
             // values, and this method consumes the response, so the grant has to be
             // applied here — no caller ever sees it. Only the names the user
@@ -3269,145 +2378,49 @@ export class CopilotClient {
                 }
             }
 
-            const {
-                workspacePath,
-                capabilities,
-                openCanvases,
-                transcriptRecovery,
-                permissionModeResult,
-            } = response as {
+            const { workspacePath, capabilities, openCanvases, transcriptRecovery } = response as {
                 sessionId: string;
                 workspacePath?: string;
                 capabilities?: SessionCapabilities;
                 openCanvases?: OpenCanvasInstance[];
                 transcriptRecovery?: TranscriptRecovery;
-                permissionModeResult?: PermissionsSetModeResult;
             };
             session["_workspacePath"] = workspacePath;
             session.setCapabilities(capabilities);
-            if (config.interaction?.autoModeRecovery) {
-                keepResumedSessionOnRecoveryRejection =
-                    replacedSession !== undefined &&
-                    session.capabilities.ui?.autoModeRecovery !== true;
-                await this.requireAutoModeRecovery(
-                    session,
-                    connection,
-                    replacedSession === undefined
-                );
-            }
             session.setOpenCanvases(openCanvases ?? []);
             session.setTranscriptRecovery(transcriptRecovery);
-            session.setPermissionModeResult(permissionModeResult);
-            if (config.mcp?.onAuthRequest) {
-                await connection.sendRequest("session.eventLog.registerInterest", {
+            if (config.onMcpAuthRequest) {
+                await this.connection!.sendRequest("session.eventLog.registerInterest", {
                     sessionId,
                     eventType: "mcp.oauth_required",
                 });
             }
 
             await this.updateSessionOptionsForMode(session, config);
-            signal.throwIfAborted();
             this.commitGitHubTokenProvider(sessionId, gitHubTokenProviderRegistrationId);
         } catch (e) {
-            if (!keepResumedSessionOnRecoveryRejection) {
-                session._markDisconnected();
-            }
+            session._markDisconnected();
             // The runtime keeps the resident session's bindings when a resume
             // fails, so its callbacks must keep reaching the replaced session.
-            const current = this.sessions.get(sessionId);
-            if (current === session) {
-                if (
-                    replacedSession &&
-                    !replacedSession._isDisconnected() &&
-                    !keepResumedSessionOnRecoveryRejection
-                ) {
+            if (this.sessions.get(sessionId) === session) {
+                if (replacedSession) {
                     this.sessions.set(sessionId, replacedSession);
-                } else if (!keepResumedSessionOnRecoveryRejection) {
+                } else {
                     this.sessions.delete(sessionId);
                 }
-            } else if (current === undefined) {
-                replacedSession?._markDisconnected();
             }
             if (gitHubTokenProviderRegistrationId !== undefined) {
-                if (keepResumedSessionOnRecoveryRejection) {
-                    this.commitGitHubTokenProvider(sessionId, gitHubTokenProviderRegistrationId);
-                } else {
-                    this.githubTokenProviders.delete(gitHubTokenProviderRegistrationId);
-                }
+                this.githubTokenProviders.delete(gitHubTokenProviderRegistrationId);
             }
             throw e;
-        } finally {
-            if (this.pendingSessionResumes.get(requestedSessionId)?.session === session) {
-                this.pendingSessionResumes.delete(requestedSessionId);
-            }
-            releaseCanonicalInitialization?.();
         }
 
-        // Keep provisional cleanup routable until rollback can restore its resident.
-        if (session._isDisconnected()) {
-            this.forgetSession(session);
-        } else {
-            session._setReleaseFromClient(this.forgetSession.bind(this, session));
-        }
         for (const entry of this.hostHandoffs.values()) {
             if (entry.requestedSessionId === session.sessionId) {
                 entry.configs.set(session, { ...config, sessionId });
             }
         }
         return session;
-    }
-
-    private async requireAutoModeRecovery(
-        session: CopilotSession,
-        connection: MessageConnection,
-        detachOnFailure = true
-    ): Promise<void> {
-        if (session.capabilities.ui?.autoModeRecovery === true) {
-            return;
-        }
-        const error = new Error("The runtime does not support autoModeRecovery");
-        // A failed resume restores the resident owner of this same runtime attachment.
-        if (!detachOnFailure) {
-            throw error;
-        }
-        const cancellation = new CancellationTokenSource();
-        try {
-            const response = await withTimeout(
-                connection.sendRequest<{ success: boolean; error?: string }>(
-                    "session.detach",
-                    { sessionId: session.sessionId },
-                    cancellation.token
-                ),
-                AUTO_MODE_RECOVERY_CLEANUP_TIMEOUT_MS,
-                `session.detach timed out after ${AUTO_MODE_RECOVERY_CLEANUP_TIMEOUT_MS}ms`
-            );
-            if (!response.success) {
-                throw new Error(`Failed to detach session: ${response.error || "Unknown error"}`);
-            }
-        } catch (cleanupError) {
-            const failure = new AggregateError([error, cleanupError], error.message);
-            this.recordFailedAutoModeRecoveryCleanup(connection, session.sessionId, failure);
-            throw failure;
-        } finally {
-            cancellation.cancel();
-            cancellation.dispose();
-            session._markDisconnected();
-        }
-        throw error;
-    }
-
-    private recordFailedAutoModeRecoveryCleanup(
-        connection: MessageConnection,
-        sessionId: string,
-        failure: Error
-    ): void {
-        let failed = this.failedAutoModeRecoveryCleanups.get(connection);
-        if (!failed) {
-            failed = new Map();
-            this.failedAutoModeRecoveryCleanups.set(connection, failed);
-        }
-        // A failed wait cannot retract cleanup the runtime may still process.
-        failed.set(sessionId, failure);
     }
 
     /**
@@ -3445,7 +2458,9 @@ export class CopilotClient {
         if (!options?.localServer && !options?.githubEnvironment) {
             throw new Error("At least one of localServer or githubEnvironment is required");
         }
-        await this.getStartedConnection();
+        if (this.state !== "connected") {
+            await this.start();
+        }
         const rpc = this.rpc;
         const hostId = randomUUID();
         if (authentication.mode === "custom") {
@@ -3532,13 +2547,6 @@ export class CopilotClient {
         }
     }
 
-    private abortPendingMemoryStores(): void {
-        for (const controller of this.pendingMemoryStores) {
-            controller.abort();
-        }
-        this.pendingMemoryStores.clear();
-    }
-
     private disconnectHosts(): void {
         for (const hostId of new Set([
             ...this.hostExitCallbacks.keys(),
@@ -3599,7 +2607,7 @@ export class CopilotClient {
         handoffId: string;
         resume?: boolean;
         authentication?: AhpSessionCreateRequest["authentication"];
-        config: Record<string, unknown> & { sessionId?: string };
+        config: Omit<SessionConfig, "onPermissionRequest"> & { configDir?: string };
     }): Promise<{ sessionId: string }> {
         const authentication = params.authentication;
         if (!authentication) {
@@ -3623,12 +2631,11 @@ export class CopilotClient {
         ) {
             throw new Error("AHP trusted authentication does not match host policy");
         }
-        const config = groupHostSessionSettings(params.config);
         const entry: {
             hostId: string;
             requestedSessionId?: string;
             controller: AbortController;
-            configs: Map<CopilotSession, CreateSessionOptions>;
+            configs: Map<CopilotSession, SessionConfig>;
             session?: CopilotSession;
             released: boolean;
             onReleased?: AhpHostOptions["onSessionReleased"];
@@ -3641,6 +2648,8 @@ export class CopilotClient {
             onReleased: options!.onSessionReleased,
         };
         this.hostHandoffs.set(params.handoffId, entry);
+        const { configDir, ...config } = params.config;
+        if (configDir !== undefined) config.configDirectory = configDir;
         const expected = structuredClone(config);
         const cancelled = new Promise<never>((_resolve, reject) => {
             entry.controller.signal.addEventListener(
@@ -3721,7 +2730,7 @@ export class CopilotClient {
      *
      * @param message - Optional message to include in the ping
      * @returns A promise that resolves with the ping response containing the message and timestamp
-     * @throws Error if startup fails, the connection is unavailable, or shutdown is in progress
+     * @throws Error if the client is not connected
      *
      * @example
      * ```typescript
@@ -3732,15 +2741,27 @@ export class CopilotClient {
     async ping(
         message?: string
     ): Promise<{ message: string; timestamp: string; protocolVersion?: number }> {
-        return sendPing(await this.getStartedConnection(), message);
+        if (!this.connection) {
+            throw new Error("Client not connected");
+        }
+
+        const result = await this.connection.sendRequest("ping", { message });
+        return result as {
+            message: string;
+            timestamp: string;
+            protocolVersion?: number;
+        };
     }
 
     /**
      * Get CLI status including version and protocol information
      */
     async getStatus(): Promise<GetStatusResponse> {
-        const connection = await this.getStartedConnection();
-        const result = await connection.sendRequest("status.get", {});
+        if (!this.connection) {
+            throw new Error("Client not connected");
+        }
+
+        const result = await this.connection.sendRequest("status.get", {});
         return result as GetStatusResponse;
     }
 
@@ -3748,52 +2769,12 @@ export class CopilotClient {
      * Get current authentication status
      */
     async getAuthStatus(): Promise<GetAuthStatusResponse> {
-        const connection = await this.getStartedConnection();
-        const result = await connection.sendRequest("auth.getStatus", {});
-        return result as GetAuthStatusResponse;
-    }
-
-    /**
-     * Lazily starts the client or joins its current startup. Await the observed
-     * attempt directly so its failure cannot turn into a retry within this request.
-     */
-    private async getStartedConnection(): Promise<DrainingMessageConnection> {
-        let startup = this.startPromise;
-        if (startup && startup === this.shutdownCanceledStartup) {
-            // Reuse start's cancellation recovery, not an ordinary failure's implicit retry.
-            await this.start();
-        } else {
-            this.assertNotStopping();
-            if (startup) {
-                await startup;
-            } else if (this.connectionClosed) {
-                throw new Error("Client not connected");
-            } else if (!this.connection) {
-                await this.start();
-            }
-        }
-        // A caller that queued before this point may have observed a start that has since
-        // settled while a replacement began. Follow it, so the request never precedes that
-        // start's `connect` handshake. A failure of the start observed first was already
-        // thrown above.
-        let latest = this.startPromise;
-        while (latest && latest !== startup) {
-            startup = latest;
-            await latest;
-            latest = this.startPromise;
-        }
-        this.assertNotStopping();
-        this.sessionInitializationLifetime.signal.throwIfAborted();
         if (!this.connection) {
             throw new Error("Client not connected");
         }
-        return this.connection;
-    }
 
-    private assertNotStopping(): void {
-        if (this.stopPromise || this.forceStopPromise) {
-            throw new Error("Client disconnected during session initialization");
-        }
+        const result = await this.connection.sendRequest("auth.getStatus", {});
+        return result as GetAuthStatusResponse;
     }
 
     /**
@@ -3805,100 +2786,66 @@ export class CopilotClient {
      * Results are cached after the first successful call to avoid rate limiting.
      * The cache is cleared when the client disconnects.
      *
-     * Starts the client if needed, unless a custom handler is set.
-     *
-     * @throws Error if startup fails, the connection is retired, or shutdown is in
-     *     progress (when no custom handler is set)
+     * @throws Error if not connected (when no custom handler is set)
      */
-    async listModels(): Promise<Model[]> {
-        const connection = this.onListModels ? undefined : await this.getStartedConnection();
-        const connectionEpoch = this.connectionEpoch;
-        const assertCurrentConnection = () => {
-            if (connection) {
-                this.assertNotStopping();
-                if (
-                    connectionEpoch !== this.connectionEpoch ||
-                    connection !== this.connection ||
-                    this.sessionInitializationLifetime.signal.aborted
-                ) {
-                    throw new Error("Client disconnected while listing models");
-                }
+    async listModels(): Promise<ModelInfo[]> {
+        // Serialize concurrent calls with a promise chain. The next link must be installed
+        // before the first await, so that callers started in the same tick queue behind
+        // each other instead of all waiting on the same promise and all missing the cache.
+        const cache = this.modelsCache;
+        const previousLock = cache.lock;
+        let resolveLock: () => void;
+        cache.lock = new Promise((resolve) => {
+            resolveLock = resolve;
+        });
+        await previousLock;
+
+        try {
+            // Check cache (already inside lock)
+            if (cache.models !== null) {
+                return [...cache.models]; // Return a copy to prevent cache mutation
             }
-        };
-        let startup: Promise<void> | null = null;
-        while (true) {
-            assertCurrentConnection();
-            if (startup) {
-                await startup;
-                startup = null;
-                assertCurrentConnection();
-            }
-            // Install the next link before awaiting its predecessor, so concurrent
-            // cache misses queue behind each other instead of fetching independently.
-            const cache = this.modelsCache;
-            const previousLock = cache.lock;
-            let resolveLock: () => void;
-            cache.lock = new Promise((resolve) => {
-                resolveLock = resolve;
-            });
-            await previousLock;
 
-            try {
-                assertCurrentConnection();
-                if (connection) {
-                    if (cache !== this.modelsCache) {
-                        throw new Error("Client disconnected while listing models");
-                    }
-                    if (this.startPromise) {
-                        startup = this.startPromise;
-                        continue;
-                    }
+            let models: ModelInfo[];
+            if (this.onListModels) {
+                // Use custom handler instead of CLI RPC
+                models = await this.onListModels();
+            } else {
+                if (!this.connection) {
+                    throw new Error("Client not connected");
                 }
-                // Check cache (already inside lock)
-                if (cache.models !== null) {
-                    return [...cache.models]; // Return a copy to prevent cache mutation
-                }
+                // Cache miss - fetch from backend while holding lock
+                const result = await this.connection.sendRequest("models.list", {});
+                const response = result as { models: ModelInfo[] };
+                models = response.models;
 
-                let models: Model[];
-                if (this.onListModels) {
-                    // Use custom handler instead of CLI RPC
-                    models = await this.onListModels();
-                } else {
-                    // Cache miss - fetch from backend while holding lock
-                    const result = await connection!.sendRequest("models.list", {});
-                    const response = result as { models: Model[] };
-                    models = response.models;
-
-                    // Normalize model capabilities — some models (e.g. embedding models)
-                    // may omit 'supports' or 'limits' in their capabilities.
-                    for (const model of models) {
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        const m = model as any;
-                        if (!m.capabilities) {
-                            m.capabilities = {
-                                supports: {},
-                                limits: { max_context_window_tokens: 0 },
-                            };
-                        } else {
-                            if (!m.capabilities.supports) m.capabilities.supports = {};
-                            if (!m.capabilities.limits) {
-                                m.capabilities.limits = { max_context_window_tokens: 0 };
-                            } else if (
-                                m.capabilities.limits.max_context_window_tokens === undefined
-                            ) {
-                                m.capabilities.limits.max_context_window_tokens = 0;
-                            }
+                // Normalize model capabilities — some models (e.g. embedding models)
+                // may omit 'supports' or 'limits' in their capabilities.
+                for (const model of models) {
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const m = model as any;
+                    if (!m.capabilities) {
+                        m.capabilities = {
+                            supports: {},
+                            limits: { max_context_window_tokens: 0 },
+                        };
+                    } else {
+                        if (!m.capabilities.supports) m.capabilities.supports = {};
+                        if (!m.capabilities.limits) {
+                            m.capabilities.limits = { max_context_window_tokens: 0 };
+                        } else if (m.capabilities.limits.max_context_window_tokens === undefined) {
+                            m.capabilities.limits.max_context_window_tokens = 0;
                         }
                     }
                 }
-
-                // Update cache before releasing lock (copy to prevent external mutation)
-                cache.models = [...models];
-
-                return [...models]; // Return a copy to prevent cache mutation
-            } finally {
-                resolveLock!();
             }
+
+            // Update cache before releasing lock (copy to prevent external mutation)
+            cache.models = [...models];
+
+            return [...models]; // Return a copy to prevent cache mutation
+        } finally {
+            resolveLock!();
         }
     }
 
@@ -3908,8 +2855,7 @@ export class CopilotClient {
      * that don't implement `connect`.
      */
     private async verifyProtocolVersion(): Promise<void> {
-        const connection = this.connection;
-        if (!connection) {
+        if (!this.connection) {
             throw new Error("Client not connected");
         }
         const maxVersion = getSdkProtocolVersion();
@@ -3929,7 +2875,6 @@ export class CopilotClient {
                 entra: this.options.entra && {
                     clientId: this.options.entra.clientId,
                     matsAppName: this.options.entra.matsAppName,
-                    oneAuthApplicationId: this.options.entra.oneAuthApplicationId,
                 },
                 entraTokenProvider: this.options.entra?.tokenProvider ? true : undefined,
                 token: this.effectiveConnectionToken,
@@ -3938,7 +2883,7 @@ export class CopilotClient {
             // Opt in to GitHub telemetry forwarding at the connection level when a
             // handler is registered (mirrors the runtime, which reads this flag on the
             // `connect` handshake so the first session's un-replayable `session.start`
-            // event is forwarded). Also sent on session.create/resume for session forwarding.
+            // event is forwarded). Also sent on session.create/resume for older CLIs.
             if (this.onGitHubTelemetry != null) {
                 connectParams.enableGitHubTelemetryForwarding = true;
             }
@@ -3962,12 +2907,11 @@ export class CopilotClient {
                     err.message === "Unhandled method connect")
             ) {
                 // Legacy server without `connect`; fall back to `ping`. A token, if any,
-                // is silently dropped — the legacy server can't enforce one. ping() would
-                // wait for the start() running this, so use the connection directly.
+                // is silently dropped — the legacy server can't enforce one.
                 if (this.options.entra) {
                     throw new Error("This runtime does not support Entra client configuration.");
                 }
-                serverVersion = (await raceAgainstExit(sendPing(connection))).protocolVersion;
+                serverVersion = (await raceAgainstExit(this.ping())).protocolVersion;
             } else {
                 throw err;
             }
@@ -4003,17 +2947,16 @@ export class CopilotClient {
      * ```typescript
      * const lastId = await client.getLastSessionId();
      * if (lastId) {
-     *     const session = await client.resumeSession(lastId, {
-     *         permissions: {
-     *             onRequest: approveAll,
-     *         },
-     *     });
+     *   const session = await client.resumeSession(lastId, { onPermissionRequest: approveAll });
      * }
      * ```
      */
     async getLastSessionId(): Promise<string | undefined> {
-        const connection = await this.getStartedConnection();
-        const response = await connection.sendRequest("session.getLastId", {});
+        if (!this.connection) {
+            throw new Error("Client not connected");
+        }
+
+        const response = await this.connection.sendRequest("session.getLastId", {});
         return (response as { sessionId?: string }).sessionId;
     }
 
@@ -4035,46 +2978,22 @@ export class CopilotClient {
      * ```
      */
     async deleteSession(sessionId: string): Promise<void> {
-        this.assertNotStopping();
-        const signal = await this.getSessionInitializationSignal();
-        const release = await this.acquireSessionInitialization(sessionId, signal);
-        try {
-            signal.throwIfAborted();
-            const connection = this.connection!;
-            const session = this.sessions.get(sessionId);
-            await this.requestSessionDeletion(connection, sessionId);
-            signal.throwIfAborted();
-            if (this.sessions.get(sessionId) === session) {
-                this.sessions.delete(sessionId);
-                session?._markDisconnected();
-            }
-        } finally {
-            release();
+        if (!this.connection) {
+            throw new Error("Client not connected");
         }
-    }
 
-    private async requestSessionDeletion(
-        connection: MessageConnection,
-        sessionId: string
-    ): Promise<void> {
-        const response = await connection.sendRequest<{ success: boolean; error?: string }>(
-            "session.delete",
-            {
-                sessionId,
-            }
-        );
+        const response = await this.connection.sendRequest("session.delete", {
+            sessionId,
+        });
 
-        const { success, error } = response;
+        const { success, error } = response as { success: boolean; error?: string };
         if (!success) {
             throw new Error(`Failed to delete session ${sessionId}: ${error || "Unknown error"}`);
         }
-    }
 
-    /** Stops tracking a disconnected session unless a later create or resume replaced it. */
-    private forgetSession(session: CopilotSession): void {
-        if (this.sessions.get(session.sessionId) === session) {
-            this.sessions.delete(session.sessionId);
-        }
+        const session = this.sessions.get(sessionId);
+        this.sessions.delete(sessionId);
+        session?._runOnDisconnected();
     }
 
     /**
@@ -4091,7 +3010,9 @@ export class CopilotClient {
      * const sessions = await client.listSessions({ repository: "owner/repo" });
      */
     async listSessions(filter?: SessionListFilter): Promise<SessionMetadata[]> {
-        const connection = await this.getStartedConnection();
+        if (!this.connection) {
+            throw new Error("Client not connected");
+        }
 
         // Transform filter to wire format (workingDirectory → cwd)
         let wireFilter: Record<string, unknown> | undefined;
@@ -4100,7 +3021,7 @@ export class CopilotClient {
             wireFilter = { ...rest, cwd: workingDirectory };
         }
 
-        const response = await connection.sendRequest("session.list", {
+        const response = await this.connection.sendRequest("session.list", {
             filter: wireFilter,
         });
         const { sessions } = response as {
@@ -4138,8 +3059,11 @@ export class CopilotClient {
      * ```
      */
     async getSessionMetadata(sessionId: string): Promise<SessionMetadata | undefined> {
-        const connection = await this.getStartedConnection();
-        const response = await connection.sendRequest("session.getMetadata", { sessionId });
+        if (!this.connection) {
+            throw new Error("Client not connected");
+        }
+
+        const response = await this.connection.sendRequest("session.getMetadata", { sessionId });
         const { session } = response as {
             session?: {
                 sessionId: string;
@@ -4208,8 +3132,11 @@ export class CopilotClient {
      * ```
      */
     async getForegroundSessionId(): Promise<string | undefined> {
-        const connection = await this.getStartedConnection();
-        const response = await connection.sendRequest("session.getForeground", {});
+        if (!this.connection) {
+            throw new Error("Client not connected");
+        }
+
+        const response = await this.connection.sendRequest("session.getForeground", {});
         return (response as ForegroundSessionInfo).sessionId;
     }
 
@@ -4230,8 +3157,11 @@ export class CopilotClient {
      * ```
      */
     async setForegroundSessionId(sessionId: string): Promise<void> {
-        const connection = await this.getStartedConnection();
-        const response = await connection.sendRequest("session.setForeground", { sessionId });
+        if (!this.connection) {
+            throw new Error("Client not connected");
+        }
+
+        const response = await this.connection.sendRequest("session.setForeground", { sessionId });
         const result = response as { success: boolean; error?: string };
 
         if (!result.success) {
@@ -4318,47 +3248,16 @@ export class CopilotClient {
         };
     }
 
-    private static normalizeEnvironment(
-        environment: Record<string, string | undefined>
-    ): Record<string, string | undefined> {
-        return process.platform === "win32"
-            ? Object.fromEntries(
-                  Object.entries(environment).map(([key, value]) => [key.toUpperCase(), value])
-              )
-            : { ...environment };
-    }
-
     /**
-     * Builds runtime configuration for child processes and the per-host FFI snapshot.
-     * Typed auth, home, keychain, and telemetry options override the effective env.
+     * Builds the environment for the spawned runtime child process (stdio/TCP): applies
+     * the auth token, connection token, `COPILOT_HOME`, keychain setting, and telemetry
+     * variables on top of the effective env. Not used by the in-process (FFI) transport,
+     * whose worker inherits the host process's ambient environment
+     * (see {@link CopilotClient.startInProcessFfi}).
      */
     private buildRuntimeEnv(): Record<string, string | undefined> {
-        const env = CopilotClient.normalizeEnvironment(this.resolvedEnv);
+        const env: Record<string, string | undefined> = { ...this.resolvedEnv };
         delete env.NODE_DEBUG;
-
-        const test = this.options.internalTestOptions;
-        if (test) {
-            const overrides = {
-                COPILOT_API_URL: test.copilotApiUrl,
-                COPILOT_DEBUG_GITHUB_API_URL: test.githubApiUrl,
-                HTTP_PROXY: test.proxyUrl,
-                HTTPS_PROXY: test.proxyUrl,
-                http_proxy: test.proxyUrl,
-                https_proxy: test.proxyUrl,
-                NO_PROXY: test.noProxy,
-                no_proxy: test.noProxy,
-                NODE_EXTRA_CA_CERTS: test.caCertificatePath,
-                SSL_CERT_FILE: test.caCertificatePath,
-                REQUESTS_CA_BUNDLE: test.caCertificatePath,
-                CURL_CA_BUNDLE: test.caCertificatePath,
-                GIT_SSL_CAINFO: test.caCertificatePath,
-            };
-            for (const [key, value] of Object.entries(overrides)) {
-                if (value !== undefined) {
-                    env[process.platform === "win32" ? key.toUpperCase() : key] = value;
-                }
-            }
-        }
 
         if (this.options.gitHubToken) {
             env.COPILOT_SDK_AUTH_TOKEN = this.options.gitHubToken;
@@ -4368,9 +3267,6 @@ export class CopilotClient {
         }
         if (this.options.baseDirectory) {
             env.COPILOT_HOME = this.options.baseDirectory;
-            if (this.connectionConfig.kind === "inprocess") {
-                env.COPILOT_CACHE_HOME = join(this.options.baseDirectory, "cache");
-            }
         }
         // In empty mode, disable the system keychain. Keytar reads from a
         // process-wide store that's shared across sessions, which is unsafe
@@ -4404,9 +3300,7 @@ export class CopilotClient {
      * Start the CLI server process
      */
     private async startCLIServer(): Promise<void> {
-        // Only the SDK's own bundled path is rewritten: an explicit path keeps the
-        // meaning its caller gave it.
-        this.resolvedCliPath ??= await getSpawnableBundledRuntimePath();
+        this.resolvedCliPath ??= await getBundledRuntimePath();
         return new Promise((resolve, reject) => {
             // Clear stderr buffer for fresh capture
             this.stderrBuffer = "";
@@ -4418,9 +3312,9 @@ export class CopilotClient {
             }
 
             // Choose transport mode based on the resolved connection config.
-            if (this.connectionConfig.kind === "spawned-stdio") {
+            if (this.connectionConfig.kind === "stdio") {
                 args.push("--stdio");
-            } else if (this.connectionConfig.kind === "spawned-tcp") {
+            } else if (this.connectionConfig.kind === "tcp") {
                 const requestedPort = this.connectionConfig.port ?? 0;
                 if (requestedPort > 0) {
                     args.push("--port", requestedPort.toString());
@@ -4452,65 +3346,22 @@ export class CopilotClient {
             if (!this.resolvedCliPath) {
                 throw new Error(
                     "Path to Copilot CLI is required. Please supply it via " +
-                        "`RuntimeConnection.forSpawnedStdio({ path })` or " +
-                        "`RuntimeConnection.forSpawnedTcp({ path })`, set the COPILOT_CLI_PATH " +
-                        "environment variable, or use `RuntimeConnection.forTcp(...)` to " +
+                        "`RuntimeConnection.forStdio({ path })` or " +
+                        "`RuntimeConnection.forTcp({ path })`, set the COPILOT_CLI_PATH " +
+                        "environment variable, or use `RuntimeConnection.forUri(...)` to " +
                         "connect to an already-running runtime."
                 );
             }
 
-            // Verify CLI exists before attempting to spawn. The child starts in the
-            // working directory, and both spawn (for an executable) and node (for a
-            // script) resolve a relative path from there, so check that file. Node
-            // normalizes script paths after entering the working directory (physical on POSIX);
-            // native executable paths keep their traversal.
-            // A bare name keeps its existing lookup.
-            const cliPath = this.resolvedCliPath;
-            const workingDirectory = this.options.workingDirectory;
-            const launchedCliPath =
-                isAbsolute(cliPath) || basename(cliPath) === cliPath
-                    ? cliPath
-                    : cliPath.endsWith(".js")
-                      ? join(
-                            process.platform !== "win32" && existsSync(workingDirectory)
-                                ? physicalDirectory(workingDirectory)
-                                : workingDirectory,
-                            cliPath
-                        )
-                      : `${workingDirectory}${sep}${cliPath}`;
-            if (!existsSync(launchedCliPath)) {
+            // Verify CLI exists before attempting to spawn
+            if (!existsSync(this.resolvedCliPath)) {
                 throw new Error(
-                    `Copilot CLI not found at ${launchedCliPath}. Set COPILOT_CLI_PATH to use a custom installation.`
-                );
-            }
-
-            // Verify the working directory too: Node reports a spawn into an unusable
-            // directory as the executable failing (spawn <cli> ENOENT or EACCES), and in
-            // stdio mode only after this promise has resolved, so the caller would
-            // see an unrelated write error instead.
-            let workingDirectoryProblem: string | undefined;
-            try {
-                workingDirectoryProblem = statSync(workingDirectory).isDirectory()
-                    ? undefined
-                    : "does not exist or is not a directory";
-                if (!workingDirectoryProblem) {
-                    accessSync(workingDirectory, constants.X_OK);
-                }
-            } catch (error) {
-                const code = (error as NodeJS.ErrnoException).code;
-                workingDirectoryProblem =
-                    code === "ENOENT" || code === "ENOTDIR"
-                        ? "does not exist or is not a directory"
-                        : `cannot be entered: ${error instanceof Error ? error.message : String(error)}`;
-            }
-            if (workingDirectoryProblem) {
-                throw new Error(
-                    `Working directory ${workingDirectory} ${workingDirectoryProblem}.`
+                    `Copilot CLI not found at ${this.resolvedCliPath}. Set COPILOT_CLI_PATH to use a custom installation.`
                 );
             }
 
             const stdioConfig: ["pipe", "pipe", "pipe"] | ["ignore", "pipe", "pipe"] =
-                this.connectionConfig.kind === "spawned-stdio"
+                this.connectionConfig.kind === "stdio"
                     ? ["pipe", "pipe", "pipe"]
                     : ["ignore", "pipe", "pipe"];
 
@@ -4536,7 +3387,7 @@ export class CopilotClient {
             let resolved = false;
 
             // For stdio mode, we're ready immediately after spawn
-            if (this.connectionConfig.kind === "spawned-stdio") {
+            if (this.connectionConfig.kind === "stdio") {
                 resolved = true;
                 resolve();
             } else {
@@ -4642,17 +3493,18 @@ export class CopilotClient {
         switch (this.connectionConfig.kind) {
             case "parent-process":
                 return this.connectToParentProcessViaStdio();
-            case "spawned-stdio":
+            case "stdio":
                 return this.connectToChildProcessViaStdio();
             case "inprocess":
                 return this.connectViaFfi();
-            case "spawned-tcp":
-                return this.connectViaTcp();
             case "tcp":
-                // stop() clears runtimePort, so restore the attached endpoint on every start.
-                this.actualHost = this.connectionConfig.host;
-                this.runtimePort = this.connectionConfig.port;
                 return this.connectViaTcp();
+            case "uri": {
+                const { host, port } = this.parseCliUrl(this.connectionConfig.url);
+                this.actualHost = host;
+                this.runtimePort = port;
+                return this.connectViaTcp();
+            }
         }
     }
 
@@ -4683,7 +3535,16 @@ export class CopilotClient {
         // The transpiled output is per-file (not bundled), so this resolves the
         // sibling module at runtime in both the ESM and CJS builds.
         const { FfiRuntimeHost } = await import("./ffiRuntimeHost.js");
-        const environment = this.buildRuntimeEnv();
+        const environment: Record<string, string> = {};
+        if (this.options.gitHubToken) {
+            environment.COPILOT_SDK_AUTH_TOKEN = this.options.gitHubToken;
+        }
+        if (this.options.baseDirectory) {
+            environment.COPILOT_HOME = this.options.baseDirectory;
+        }
+        if (this.options.mode === "empty") {
+            environment.COPILOT_DISABLE_KEYTAR = "1";
+        }
 
         const args: string[] = [];
         if (this.options.logLevel) {
@@ -4715,21 +3576,10 @@ export class CopilotClient {
         if (!this.ffiHost) {
             throw new Error("In-process FFI runtime host not started");
         }
-        const codec = createLocalModelJsonCodec();
-        this.messageWriter = new TeardownResilientStreamMessageWriter(
-            this.ffiHost.sendStream,
-            codec
-        );
+        this.messageWriter = new TeardownResilientStreamMessageWriter(this.ffiHost.sendStream);
         this.connection = createMessageConnection(
-            new StreamMessageReader(this.ffiHost.receiveStream, {
-                contentTypeDecoder: {
-                    name: "application/json",
-                    decode: (buffer, options) =>
-                        codec.decode(Buffer.from(buffer).toString(options.charset)),
-                },
-            }),
-            this.messageWriter,
-            this.sessionInitializationContext
+            new StreamMessageReader(this.ffiHost.receiveStream),
+            this.messageWriter
         );
 
         this.attachConnectionHandlers();
@@ -4799,21 +3649,10 @@ export class CopilotClient {
         });
 
         // Create JSON-RPC connection over stdin/stdout
-        const codec = createLocalModelJsonCodec();
-        this.messageWriter = new TeardownResilientStreamMessageWriter(
-            this.cliProcess.stdin!,
-            codec
-        );
+        this.messageWriter = new TeardownResilientStreamMessageWriter(this.cliProcess.stdin!);
         this.connection = createMessageConnection(
-            new StreamMessageReader(this.cliProcess.stdout!, {
-                contentTypeDecoder: {
-                    name: "application/json",
-                    decode: (buffer, options) =>
-                        codec.decode(Buffer.from(buffer).toString(options.charset)),
-                },
-            }),
-            this.messageWriter,
-            this.sessionInitializationContext
+            new StreamMessageReader(this.cliProcess.stdout!),
+            this.messageWriter
         );
 
         this.attachConnectionHandlers();
@@ -4829,18 +3668,10 @@ export class CopilotClient {
         }
 
         // Create JSON-RPC connection over stdin/stdout
-        const codec = createLocalModelJsonCodec();
-        this.messageWriter = new TeardownResilientStreamMessageWriter(process.stdout, codec);
+        this.messageWriter = new TeardownResilientStreamMessageWriter(process.stdout);
         this.connection = createMessageConnection(
-            new StreamMessageReader(process.stdin, {
-                contentTypeDecoder: {
-                    name: "application/json",
-                    decode: (buffer, options) =>
-                        codec.decode(Buffer.from(buffer).toString(options.charset)),
-                },
-            }),
-            this.messageWriter,
-            this.sessionInitializationContext
+            new StreamMessageReader(process.stdin),
+            this.messageWriter
         );
 
         this.attachConnectionHandlers();
@@ -4854,46 +3685,22 @@ export class CopilotClient {
         if (!this.runtimePort) {
             throw new Error("Server port not available");
         }
-        // stop() and forceStop() abort this signal. A host that drops the connection
-        // request leaves the connect pending until the timeout below, so end it here.
-        const signal = this.sessionInitializationLifetime.signal;
-        signal.throwIfAborted();
 
         return new Promise((resolve, reject) => {
-            const socket = new Socket();
-            this.socket = socket;
+            this.socket = new Socket();
 
-            const settle = () => {
-                clearTimeout(connectionTimeout);
-                signal.removeEventListener("abort", cancel);
-            };
-            const cancel = () => {
-                settle();
-                socket.destroy();
-                reject(signal.reason);
-            };
             const connectionTimeout = setTimeout(() => {
-                settle();
-                socket.destroy();
+                this.socket?.destroy();
                 reject(new Error("Timeout connecting to CLI server"));
             }, 10000);
-            signal.addEventListener("abort", cancel, { once: true });
 
-            socket.connect(this.runtimePort!, this.actualHost, () => {
-                settle();
+            this.socket.connect(this.runtimePort!, this.actualHost, () => {
+                clearTimeout(connectionTimeout);
                 // Create JSON-RPC connection
-                const codec = createLocalModelJsonCodec();
-                this.messageWriter = new TeardownResilientStreamMessageWriter(socket, codec);
+                this.messageWriter = new TeardownResilientStreamMessageWriter(this.socket!);
                 this.connection = createMessageConnection(
-                    new StreamMessageReader(socket, {
-                        contentTypeDecoder: {
-                            name: "application/json",
-                            decode: (buffer, options) =>
-                                codec.decode(Buffer.from(buffer).toString(options.charset)),
-                        },
-                    }),
-                    this.messageWriter,
-                    this.sessionInitializationContext
+                    new StreamMessageReader(this.socket!),
+                    this.messageWriter
                 );
 
                 this.attachConnectionHandlers();
@@ -4901,8 +3708,8 @@ export class CopilotClient {
                 resolve();
             });
 
-            socket.on("error", (error) => {
-                settle();
+            this.socket.on("error", (error) => {
+                clearTimeout(connectionTimeout);
                 reject(new Error(`Failed to connect to CLI server: ${error.message}`));
             });
         });
@@ -4929,23 +3736,8 @@ export class CopilotClient {
                 choices?: string[];
                 allowFreeform?: boolean;
                 requestId?: string;
-            }): Promise<UserInputResponse> => await this.handleUserInputRequest(params)
-        );
-
-        this.connection.onRequest<ShellAuthenticationResponse, unknown>(
-            "shellAuthentication.request",
-            async (
-                params: ShellAuthenticationRequest & { sessionId: string }
-            ): Promise<ShellAuthenticationResponse> =>
-                await this.handleShellAuthenticationRequest(params)
-        );
-
-        this.connection.onRequest(
-            "shellAuthentication.cancel",
-            async (params: { sessionId: string; requestId: string }): Promise<object> => {
-                this.cancelShellAuthenticationRequest(params);
-                return {};
-            }
+            }): Promise<{ answer: string; wasFreeform: boolean }> =>
+                await this.handleUserInputRequest(params)
         );
 
         this.connection.onRequest(
@@ -4973,8 +3765,9 @@ export class CopilotClient {
         );
 
         // Register client session API handlers.
+        const sessions = this.sessions;
         registerClientSessionApiHandlers(this.connection, (sessionId) => {
-            const session = this.resolveSessionCallback(sessionId);
+            const session = sessions.get(sessionId);
             if (!session) throw new Error(`No session found for sessionId: ${sessionId}`);
             return session.clientSessionApis;
         });
@@ -4998,32 +3791,14 @@ export class CopilotClient {
                     confirmation.confirm(params, token)
             );
         }
-        // Registered directly so the callbacks receive the transport's request cancellation.
-        const resolveProxy = this.network?.resolveProxy;
-        if (resolveProxy) {
+        if (this.kerberosAuth) {
+            // Registered directly so the callback receives the transport's request cancellation.
+            const { callback } = this.kerberosAuth;
             const connection = this.connection;
             this.connection.onRequest(
-                "network.resolveProxy",
-                (params: NetworkResolveProxyRequest, token: CancellationToken) =>
-                    resolveClientProxy(connection, resolveProxy, params, token)
-            );
-        }
-        const authenticateNegotiate = this.network?.authenticateNegotiate;
-        if (authenticateNegotiate) {
-            const connection = this.connection;
-            this.connection.onRequest(
-                "network.authenticateNegotiate",
-                (params: NetworkAuthenticateNegotiateRequest, token: CancellationToken) =>
-                    authenticateClientNegotiate(connection, authenticateNegotiate, params, token)
-            );
-        }
-        const authenticateBasic = this.network?.authenticateBasic;
-        if (authenticateBasic) {
-            const connection = this.connection;
-            this.connection.onRequest(
-                "network.authenticateBasic",
-                (params: NetworkAuthenticateBasicRequest, token: CancellationToken) =>
-                    authenticateClientBasic(connection, authenticateBasic, params, token)
+                "kerberosAuth.acquire",
+                (params: KerberosAuthAcquireRequest, token: CancellationToken) =>
+                    acquireKerberosToken(connection, callback, params, token)
             );
         }
         this.connection.onRequest("host.materializeSession", (params) =>
@@ -5095,7 +3870,7 @@ export class CopilotClient {
             }
         );
 
-        // Internal experimental callbacks backing `SessionOptionsBase.skills.provider`.
+        // Internal experimental callbacks backing `SessionConfigBase.skillProvider`.
         this.connection.onRequest(
             "skillProvider.list",
             async (params: { sessionId: string }, token: CancellationToken) =>
@@ -5109,29 +3884,9 @@ export class CopilotClient {
                 },
                 token: CancellationToken
             ) => {
-                const session = this.resolveSessionCallback(params.sessionId);
+                const session = this.sessions.get(params.sessionId);
                 if (!session) throw new Error("Session creation owner is unavailable");
                 return await session._handleSessionManagementCreate(params, token);
-            }
-        );
-        // Internal experimental callback backing `MemoryConfiguration.storeMemory`.
-        this.connection.onRequest(
-            "memoryStore.store",
-            async (params: StoredMemory, token: CancellationToken) => {
-                const session = this.sessions.get(params?.sessionId);
-                if (!session) throw new Error("Memory store owner is unavailable");
-                // Tracked here so connection loss also aborts stores of sessions a resume replaced.
-                const controller = new AbortController();
-                this.pendingMemoryStores.add(controller);
-                const subscription = token.onCancellationRequested(() => controller.abort());
-                if (token.isCancellationRequested) controller.abort();
-                try {
-                    await session._handleMemoryStore(params, controller.signal);
-                } finally {
-                    this.pendingMemoryStores.delete(controller);
-                    subscription.dispose();
-                }
-                return null;
             }
         );
         this.connection.onRequest(
@@ -5153,7 +3908,7 @@ export class CopilotClient {
             connectionEpoch === this.connectionEpoch &&
             this.connection === connection &&
             (cliProcess === null || this.cliProcess === cliProcess);
-        let disconnected: Promise<void> | undefined;
+        let disconnecting = false;
         let exitFallback: ReturnType<typeof setTimeout> | undefined;
         const markDisconnected = () => {
             if (!isCurrentConnection()) {
@@ -5167,10 +3922,8 @@ export class CopilotClient {
                 session._markDisconnected();
             }
             this.sessions.clear();
-            this.abortPendingShellAuthenticationRequests();
             this.githubTokenProviders.clear();
             this.requestAdapter?.cancelPending();
-            this.abortPendingMemoryStores();
             connection.dispose();
             this.socket?.destroy();
             this.connection = null;
@@ -5179,25 +3932,23 @@ export class CopilotClient {
             this._internalRpc = null;
             this.modelsCache = { models: null, lock: Promise.resolve() };
         };
-        const disconnectAfterDrain = (): Promise<void> => {
+        const disconnectAfterDrain = () => {
             if (exitFallback !== undefined) {
                 clearTimeout(exitFallback);
                 exitFallback = undefined;
             }
             if (!isCurrentConnection()) {
                 connection.dispose();
-                return Promise.resolve();
+                return;
             }
-            if (disconnected) return disconnected;
-            this.invalidateSessionInitializations();
+            if (disconnecting) return;
+            disconnecting = true;
             this.connectionClosed = true;
             if (messageWriter) messageWriter.suppressWriteErrors = true;
             // jsonrpc dispatches parsed messages asynchronously, one per event-loop
             // turn. Drain them before clearing callbacks and rejecting unanswered RPCs.
-            disconnected = connection.drain().then(markDisconnected);
-            return disconnected;
+            void connection.drain().then(markDisconnected);
         };
-        this.retireClosedConnection = disconnectAfterDrain;
         this.connection.onClose(disconnectAfterDrain);
         // Descendants can retain inherited output pipes after the runtime exits.
         // Observe the owned process without waiting for those pipes to reach EOF.
@@ -5207,7 +3958,7 @@ export class CopilotClient {
                     connection.dispose();
                     return;
                 }
-                if (disconnected) return;
+                if (disconnecting) return;
                 if (this.socket) {
                     disconnectAfterDrain();
                     return;
@@ -5231,36 +3982,6 @@ export class CopilotClient {
         });
     }
 
-    private resolveSessionCallback(sessionId: string): CopilotSession | undefined {
-        let selected: CopilotSession | undefined;
-        let selectedPrefixLength = -1;
-        for (const [prefix, pending] of this.pendingSessionResumes) {
-            if (
-                pending.connection !== this.connection ||
-                (!pending.resolveAliases && prefix !== sessionId) ||
-                prefix.length <= selectedPrefixLength ||
-                !(sessionIdsOverlap(prefix, sessionId) && sessionId.length >= prefix.length)
-            )
-                continue;
-            const knownOwners = new Set(
-                [...this.sessions.values()].filter(
-                    (owner) =>
-                        owner !== pending.session &&
-                        sessionIdsOverlap(prefix, owner.sessionId) &&
-                        owner.sessionId.length >= prefix.length
-                )
-            );
-            if (knownOwners.size > 1) continue;
-            if (pending.session.sessionId !== sessionId) {
-                pending.session._setSessionId(sessionId);
-            }
-            this.assignGitHubTokenProvider(pending.gitHubTokenProviderRegistrationId, sessionId);
-            selected = pending.session;
-            selectedPrefixLength = prefix.length;
-        }
-        return selected ?? this.sessions.get(sessionId);
-    }
-
     private handleSessionEventNotification(notification: unknown): void {
         if (
             typeof notification !== "object" ||
@@ -5272,9 +3993,7 @@ export class CopilotClient {
             return;
         }
 
-        const session = this.resolveSessionCallback(
-            (notification as { sessionId: string }).sessionId
-        );
+        const session = this.sessions.get((notification as { sessionId: string }).sessionId);
         const event = (notification as { event: SessionEvent }).event;
         if (session) {
             session._dispatchEvent(event);
@@ -5342,7 +4061,7 @@ export class CopilotClient {
         choices?: string[];
         allowFreeform?: boolean;
         requestId?: string;
-    }): Promise<UserInputResponse> {
+    }): Promise<{ answer: string; wasFreeform: boolean }> {
         if (
             !params ||
             typeof params.sessionId !== "string" ||
@@ -5351,7 +4070,7 @@ export class CopilotClient {
             throw new Error("Invalid user input request payload");
         }
 
-        const session = this.resolveSessionCallback(params.sessionId);
+        const session = this.sessions.get(params.sessionId);
         if (!session) {
             throw new Error(`Session not found: ${params.sessionId}`);
         }
@@ -5363,76 +4082,6 @@ export class CopilotClient {
             requestId: params.requestId,
         });
         return result;
-    }
-
-    private async handleShellAuthenticationRequest(
-        params: ShellAuthenticationRequest & { sessionId: string }
-    ): Promise<ShellAuthenticationResponse> {
-        const inputKinds: readonly string[] = ["secret", "text", "confirm"];
-        if (
-            !params ||
-            typeof params.sessionId !== "string" ||
-            typeof params.requestId !== "string" ||
-            typeof params.program !== "string" ||
-            typeof params.prompt !== "string" ||
-            !inputKinds.includes(params.inputKind)
-        ) {
-            return { action: "cancel" };
-        }
-        const session = this.sessions.get(params.sessionId);
-        let pending = this.pendingShellAuthenticationRequests.get(params.sessionId);
-        if (!session || pending?.has(params.requestId)) {
-            return { action: "cancel" };
-        }
-        if (!pending) {
-            pending = new Map();
-            this.pendingShellAuthenticationRequests.set(params.sessionId, pending);
-        }
-        const controller = new AbortController();
-        pending.set(params.requestId, controller);
-        try {
-            return await session._handleShellAuthenticationRequest(
-                {
-                    requestId: params.requestId,
-                    program: params.program,
-                    prompt: params.prompt,
-                    inputKind: params.inputKind,
-                    command: typeof params.command === "string" ? params.command : "",
-                    cwd: typeof params.cwd === "string" ? params.cwd : "",
-                },
-                controller.signal
-            );
-        } finally {
-            pending.delete(params.requestId);
-            if (
-                pending.size === 0 &&
-                this.pendingShellAuthenticationRequests.get(params.sessionId) === pending
-            ) {
-                this.pendingShellAuthenticationRequests.delete(params.sessionId);
-            }
-        }
-    }
-
-    private cancelShellAuthenticationRequest(params: {
-        sessionId: string;
-        requestId: string;
-    }): void {
-        if (typeof params?.sessionId === "string" && typeof params.requestId === "string") {
-            this.pendingShellAuthenticationRequests
-                .get(params.sessionId)
-                ?.get(params.requestId)
-                ?.abort();
-        }
-    }
-
-    /** Cancels every open secret prompt once the runtime can no longer use an answer. */
-    private abortPendingShellAuthenticationRequests(): void {
-        for (const pending of this.pendingShellAuthenticationRequests.values()) {
-            for (const controller of pending.values()) {
-                controller.abort();
-            }
-        }
-        this.pendingShellAuthenticationRequests.clear();
     }
 
     private async handleExitPlanModeRequest(
@@ -5448,7 +4097,7 @@ export class CopilotClient {
             throw new Error("Invalid exit plan mode request payload");
         }
 
-        const session = this.resolveSessionCallback(params.sessionId);
+        const session = this.sessions.get(params.sessionId);
         if (!session) {
             throw new Error(`Session not found: ${params.sessionId}`);
         }
@@ -5469,7 +4118,7 @@ export class CopilotClient {
             throw new Error("Invalid auto mode switch request payload");
         }
 
-        const session = this.resolveSessionCallback(params.sessionId);
+        const session = this.sessions.get(params.sessionId);
         if (!session) {
             throw new Error(`Session not found: ${params.sessionId}`);
         }
@@ -5477,9 +4126,6 @@ export class CopilotClient {
         const response = await session._handleAutoModeSwitchRequest({
             errorCode: params.errorCode,
             retryAfterSeconds: params.retryAfterSeconds,
-            ...(params.autoModeRecovery === undefined
-                ? {}
-                : { autoModeRecovery: params.autoModeRecovery }),
         });
         return { response };
     }
@@ -5488,7 +4134,7 @@ export class CopilotClient {
         if (!params || typeof params.sessionId !== "string") {
             throw new Error("Invalid skillProvider payload");
         }
-        const session = this.resolveSessionCallback(params.sessionId);
+        const session = this.sessions.get(params.sessionId);
         if (!session) {
             throw new Error(`Session not found: ${params.sessionId}`);
         }
@@ -5508,7 +4154,7 @@ export class CopilotClient {
             throw new Error("Invalid hooks invoke payload");
         }
 
-        const session = this.resolveSessionCallback(params.sessionId);
+        const session = this.sessions.get(params.sessionId);
         if (!session) {
             throw new Error(`Session not found: ${params.sessionId}`);
         }
@@ -5530,7 +4176,7 @@ export class CopilotClient {
             throw new Error("Invalid systemMessage.transform payload");
         }
 
-        const session = this.resolveSessionCallback(params.sessionId);
+        const session = this.sessions.get(params.sessionId);
         if (!session) {
             throw new Error(`Session not found: ${params.sessionId}`);
         }

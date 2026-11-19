@@ -2,24 +2,24 @@
 
 #![allow(clippy::unwrap_used)]
 
-use copilot_sdk::{RuntimeConnection, TcpRuntimeOptions};
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use copilot_sdk::extension_launch_provider::{
+use github_copilot_sdk::extension_launch_provider::{
     ExtensionLaunchProvider, ExtensionLaunchProviderResolveRequest,
     ExtensionLaunchProviderResolveResult,
 };
-use copilot_sdk::installation_confirmation::{
+use github_copilot_sdk::installation_confirmation::{
     InstallationConfirmationContext, InstallationConfirmationHandler,
     InstallationConfirmationRequest, InstallationDecision, InstallationReview,
     McpInstallationReview,
 };
-use copilot_sdk::rpc::SkillInstallationReview;
-use copilot_sdk::{
-    Client, ClientOptions, CopilotHttpRequest, CopilotHttpResponse, CopilotRequestContext,
-    CopilotRequestError, CopilotRequestHandler, Error, ErrorKind, Result,
+use github_copilot_sdk::rpc::SkillInstallationReview;
+use github_copilot_sdk::{
+    CliProgram, Client, ClientOptions, CopilotHttpRequest, CopilotHttpResponse,
+    CopilotRequestContext, CopilotRequestError, CopilotRequestHandler, Error, ErrorKind, Result,
+    Transport,
 };
 use serde_json::{Value, json};
 
@@ -223,12 +223,7 @@ impl Peer {
                 Arc::new(ControlledHandler(send)),
             )
         } else {
-            Client::from_streams(
-                copilot_sdk::ClientMode::CodingAgent,
-                client_reader,
-                client_writer,
-                directory.path().into(),
-            )
+            Client::from_streams(client_reader, client_writer, directory.path().into())
         }
         .unwrap();
         if start_router {
@@ -522,7 +517,7 @@ async fn real_client_start_installs_global_receiver_without_registration_or_sess
             &mut writer,
             json!({
                 "jsonrpc": "2.0", "id": connect["id"],
-                "result": { "ok": true, "protocolVersion": 4, "version": "test" }
+                "result": { "ok": true, "protocolVersion": 3, "version": "test" }
             }),
         )
         .await;
@@ -530,13 +525,14 @@ async fn real_client_start_installs_global_receiver_without_registration_or_sess
         read_frame(&mut reader).await
     });
     let client = Client::start(
-        ClientOptions::new(copilot_sdk::ClientMode::CodingAgent)
-            .with_runtime(RuntimeConnection::Tcp(TcpRuntimeOptions {
+        ClientOptions::new()
+            .with_program(CliProgram::Path("unused-external-transport".into()))
+            .with_transport(Transport::External {
                 host: "127.0.0.1".to_string(),
                 port,
                 connection_token: None,
-            }))
-            .with_installations(|group| group.with_confirmation_handler(ControlledHandler(send))),
+            })
+            .with_installation_confirmation_handler(ControlledHandler(send)),
     )
     .await
     .unwrap();
@@ -587,7 +583,7 @@ async fn blocked_global_callback_does_not_delay_confirmation_or_its_cancellation
             &mut writer,
             json!({
                 "jsonrpc": "2.0", "id": connect["id"],
-                "result": { "ok": true, "protocolVersion": 4, "version": "test" }
+                "result": { "ok": true, "protocolVersion": 3, "version": "test" }
             }),
         )
         .await;
@@ -612,19 +608,18 @@ async fn blocked_global_callback_does_not_delay_confirmation_or_its_cancellation
         forward.abort();
     });
     let client = Client::start(
-        ClientOptions::new(copilot_sdk::ClientMode::CodingAgent)
-            .with_runtime(RuntimeConnection::Tcp(TcpRuntimeOptions {
+        ClientOptions::new()
+            .with_program(CliProgram::Path("unused-external-transport".into()))
+            .with_transport(Transport::External {
                 host: "127.0.0.1".to_string(),
                 port,
                 connection_token: None,
-            }))
-            .with_extensions(|group| {
-                group.with_launch_provider(BlockedLaunchProvider {
-                    entered,
-                    release: release.clone(),
-                })
             })
-            .with_installations(|group| group.with_confirmation_handler(ControlledHandler(send))),
+            .with_extension_launch_provider(BlockedLaunchProvider {
+                entered,
+                release: release.clone(),
+            })
+            .with_installation_confirmation_handler(ControlledHandler(send)),
     )
     .await
     .unwrap();
@@ -709,7 +704,7 @@ async fn hung_llm_inference_request_does_not_delay_confirmation_or_its_cancellat
             let message = read_frame(&mut reader).await;
             assert_eq!(message["method"], method);
             let result = if method == "connect" {
-                json!({ "ok": true, "protocolVersion": 4, "version": "test" })
+                json!({ "ok": true, "protocolVersion": 3, "version": "test" })
             } else {
                 json!({ "success": true })
             };
@@ -733,14 +728,15 @@ async fn hung_llm_inference_request_does_not_delay_confirmation_or_its_cancellat
         forward.abort();
     });
     let client = Client::start(
-        ClientOptions::new(copilot_sdk::ClientMode::CodingAgent)
-            .with_runtime(RuntimeConnection::Tcp(TcpRuntimeOptions {
+        ClientOptions::new()
+            .with_program(CliProgram::Path("unused-external-transport".into()))
+            .with_transport(Transport::External {
                 host: "127.0.0.1".to_string(),
                 port,
                 connection_token: None,
-            }))
-            .with_models(|group| group.with_request_handler(HungRequestHandler(entered)))
-            .with_installations(|group| group.with_confirmation_handler(ControlledHandler(send))),
+            })
+            .with_request_handler(HungRequestHandler(entered))
+            .with_installation_confirmation_handler(ControlledHandler(send)),
     )
     .await
     .unwrap();
@@ -797,4 +793,37 @@ async fn hung_llm_inference_request_does_not_delay_confirmation_or_its_cancellat
     drop(to_server);
     timeout(WAIT, server).await.unwrap().unwrap();
     client.force_stop();
+}
+
+#[test]
+fn install_and_uninstall_reviews_both_round_trip() {
+    let install = request("install-review")["review"]["review"].clone();
+    let mut uninstall = install.clone();
+    let object = uninstall.as_object_mut().unwrap();
+    for key in [
+        "selectedChoice",
+        "configurationChange",
+        "inputs",
+        "suppliedSecrets",
+        "secretStorage",
+        "effectiveConfiguration",
+    ] {
+        object.remove(key);
+    }
+    object.insert("action".into(), json!("uninstall"));
+    object.insert("installationId".into(), json!("a".repeat(32)));
+    object.insert("restoresPreviousConfiguration".into(), json!(false));
+    object.insert("ownedSecretCount".into(), json!(0));
+    object.insert("preservesSharedAuthentication".into(), json!(true));
+
+    let parsed: McpInstallationReview = serde_json::from_value(install.clone()).unwrap();
+    assert!(matches!(parsed, McpInstallationReview::Install(_)));
+    assert_eq!(serde_json::to_value(&parsed).unwrap(), install);
+
+    let parsed: McpInstallationReview = serde_json::from_value(uninstall.clone()).unwrap();
+    let McpInstallationReview::Uninstall(review) = &parsed else {
+        panic!("expected typed uninstall review");
+    };
+    assert_eq!(review.installation_id, "a".repeat(32));
+    assert_eq!(serde_json::to_value(&parsed).unwrap(), uninstall);
 }

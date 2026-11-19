@@ -6,18 +6,18 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>com.microsoft</groupId>
-        <artifactId>copilot-sdk-parent</artifactId>
+        <groupId>com.github</groupId>
+        <artifactId>copilot-sdk-java-parent</artifactId>
         <version>${revision}</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <groupId>com.microsoft</groupId>
-    <artifactId>copilot-sdk-runtime</artifactId>
+    <groupId>com.github</groupId>
+    <artifactId>copilot-sdk-java-runtime</artifactId>
     <packaging>jar</packaging>
 
-    <name>Microsoft Copilot SDK :: Java :: Native Runtime</name>
-    <description>Native runtime artifacts for the Microsoft Copilot SDK, with host-matched platform classifier JARs</description>
+    <name>GitHub Copilot SDK :: Java :: Native Runtime</name>
+    <description>Native runtime artifacts for the GitHub Copilot Java SDK, with host-matched platform classifier JARs</description>
     <url>https://github.com/github/copilot-sdk</url>
 
     <scm>
@@ -126,7 +126,6 @@
                         native/<classifier>/runtime.node,
                         native/<classifier>/copilot-runtime or copilot-runtime.exe, and
                         native/<classifier>/platform.properties.
-                        Attach before tests so SDK reactor tests can resolve it.
                     -->
                     <execution>
                         <id>jar-native</id>
@@ -272,7 +271,7 @@
                         <executions>
                             <execution>
                                 <id>jar-native</id>
-                                <phase>process-resources</phase>
+                                <phase>package</phase>
                             </execution>
                         </executions>
                     </plugin>
@@ -300,6 +299,10 @@
                     <name>Linux</name>
                     <arch>amd64</arch>
                 </os>
+                <property>
+                    <name>copilot.native.libc</name>
+                    <value>glibc</value>
+                </property>
             </activation>
             <properties>
                 <copilot.native.classifier>linux-x64</copilot.native.classifier>
@@ -330,7 +333,7 @@
                         <executions>
                             <execution>
                                 <id>jar-native</id>
-                                <phase>process-resources</phase>
+                                <phase>package</phase>
                             </execution>
                         </executions>
                     </plugin>
@@ -354,6 +357,10 @@
                     <name>Linux</name>
                     <arch>aarch64</arch>
                 </os>
+                <property>
+                    <name>copilot.native.libc</name>
+                    <value>glibc</value>
+                </property>
             </activation>
             <properties>
                 <copilot.native.classifier>linux-arm64</copilot.native.classifier>
@@ -385,7 +392,7 @@
                         <executions>
                             <execution>
                                 <id>jar-native</id>
-                                <phase>process-resources</phase>
+                                <phase>package</phase>
                             </execution>
                         </executions>
                     </plugin>
@@ -443,7 +450,7 @@
                         <executions>
                             <execution>
                                 <id>jar-native</id>
-                                <phase>process-resources</phase>
+                                <phase>package</phase>
                             </execution>
                         </executions>
                     </plugin>
@@ -501,7 +508,7 @@
                         <executions>
                             <execution>
                                 <id>jar-native</id>
-                                <phase>process-resources</phase>
+                                <phase>package</phase>
                             </execution>
                         </executions>
                     </plugin>
@@ -555,7 +562,7 @@
                         <executions>
                             <execution>
                                 <id>jar-native</id>
-                                <phase>process-resources</phase>
+                                <phase>package</phase>
                             </execution>
                         </executions>
                     </plugin>
@@ -610,7 +617,7 @@
                         <executions>
                             <execution>
                                 <id>jar-native</id>
-                                <phase>process-resources</phase>
+                                <phase>package</phase>
                             </execution>
                         </executions>
                     </plugin>
@@ -665,7 +672,7 @@
                         <executions>
                             <execution>
                                 <id>jar-native</id>
-                                <phase>process-resources</phase>
+                                <phase>package</phase>
                             </execution>
                         </executions>
                     </plugin>
@@ -719,7 +726,7 @@
                         <executions>
                             <execution>
                                 <id>jar-native</id>
-                                <phase>process-resources</phase>
+                                <phase>package</phase>
                             </execution>
                         </executions>
                     </plugin>

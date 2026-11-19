@@ -13,21 +13,18 @@ import (
 	"testing"
 	"time"
 
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
-	"github.com/microsoft/copilot-sdk/go/v2/internal/e2e/testharness"
+	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/internal/e2e/testharness"
 )
 
 // E2E coverage for Mode = ModeEmpty + ToolSet patterns. The runtime is
 // mode-agnostic — these tests verify the SDK's translation reaches the
 // runtime by inspecting captured chat-completion requests via the proxy.
 func TestModeEmptyE2E(t *testing.T) {
-	t.Parallel()
 	ctx := testharness.NewTestContext(t)
 	client := ctx.NewClient(func(o *copilot.ClientOptions) {
 		o.Mode = copilot.ModeEmpty
-		connection := o.Runtime.(copilot.SpawnedStdioConnection)
-		connection.BaseDirectory = ctx.HomeDir
-		o.Runtime = connection
+		o.BaseDirectory = ctx.HomeDir
 	})
 	t.Cleanup(func() { client.ForceStop() })
 
@@ -64,7 +61,10 @@ func TestModeEmptyE2E(t *testing.T) {
 	t.Run("empty mode isolated set shell tool is not exposed", func(t *testing.T) {
 		ctx.ConfigureForTest(t)
 
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Tools: copilot.SessionToolOptions{AvailableTools: copilot.NewToolSet().AddBuiltIn(copilot.BuiltInToolsIsolated...).ToSlice()}})
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			AvailableTools:      copilot.NewToolSet().AddBuiltIn(copilot.BuiltInToolsIsolated...).ToSlice(),
+		})
 		if err != nil {
 			t.Fatalf("CreateSession failed: %v", err)
 		}
@@ -95,7 +95,10 @@ func TestModeEmptyE2E(t *testing.T) {
 	t.Run("empty mode builtin star exposes all built in tools", func(t *testing.T) {
 		ctx.ConfigureForTest(t)
 
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Tools: copilot.SessionToolOptions{AvailableTools: copilot.NewToolSet().AddBuiltIn("*").ToSlice()}})
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			AvailableTools:      copilot.NewToolSet().AddBuiltIn("*").ToSlice(),
+		})
 		if err != nil {
 			t.Fatalf("CreateSession failed: %v", err)
 		}
@@ -114,7 +117,11 @@ func TestModeEmptyE2E(t *testing.T) {
 	t.Run("empty mode excluded tools subtracts from available tools", func(t *testing.T) {
 		ctx.ConfigureForTest(t)
 
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Tools: copilot.SessionToolOptions{AvailableTools: copilot.NewToolSet().AddBuiltIn("*").ToSlice(), ExcludedTools: []string{"builtin:" + shellToolName}}})
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			AvailableTools:      copilot.NewToolSet().AddBuiltIn("*").ToSlice(),
+			ExcludedTools:       []string{"builtin:" + shellToolName},
+		})
 		if err != nil {
 			t.Fatalf("CreateSession failed: %v", err)
 		}
@@ -136,10 +143,13 @@ func TestModeEmptyE2E(t *testing.T) {
 	t.Run("empty mode strips environment context from the system message by default", func(t *testing.T) {
 		ctx.ConfigureForTest(t)
 
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Tools: copilot.SessionToolOptions{AvailableTools: copilot.NewToolSet().AddBuiltIn(copilot.BuiltInToolsIsolated...).ToSlice()}, SystemMessage: &copilot.SystemMessageConfig{
-			Mode:    "customize",
-			Content: "If the user asks you to name an element, reply with exactly the single word ARGON in all caps and nothing else.",
-		},
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			AvailableTools:      copilot.NewToolSet().AddBuiltIn(copilot.BuiltInToolsIsolated...).ToSlice(),
+			SystemMessage: &copilot.SystemMessageConfig{
+				Mode:    "customize",
+				Content: "If the user asks you to name an element, reply with exactly the single word ARGON in all caps and nothing else.",
+			},
 		})
 		if err != nil {
 			t.Fatalf("CreateSession failed: %v", err)
@@ -168,10 +178,13 @@ func TestModeEmptyE2E(t *testing.T) {
 	t.Run("empty mode system message replace llm follows caller content verbatim", func(t *testing.T) {
 		ctx.ConfigureForTest(t)
 
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Tools: copilot.SessionToolOptions{AvailableTools: copilot.NewToolSet().AddBuiltIn(copilot.BuiltInToolsIsolated...).ToSlice()}, SystemMessage: &copilot.SystemMessageConfig{
-			Mode:    "replace",
-			Content: "You are a test fixture. Whenever the user asks anything, reply with exactly the single word KRYPTON in all caps and nothing else.",
-		},
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			AvailableTools:      copilot.NewToolSet().AddBuiltIn(copilot.BuiltInToolsIsolated...).ToSlice(),
+			SystemMessage: &copilot.SystemMessageConfig{
+				Mode:    "replace",
+				Content: "You are a test fixture. Whenever the user asks anything, reply with exactly the single word KRYPTON in all caps and nothing else.",
+			},
 		})
 		if err != nil {
 			t.Fatalf("CreateSession failed: %v", err)
@@ -192,10 +205,13 @@ func TestModeEmptyE2E(t *testing.T) {
 	t.Run("empty mode append caller instruction takes effect and env context stripped", func(t *testing.T) {
 		ctx.ConfigureForTest(t)
 
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Tools: copilot.SessionToolOptions{AvailableTools: copilot.NewToolSet().AddBuiltIn(copilot.BuiltInToolsIsolated...).ToSlice()}, SystemMessage: &copilot.SystemMessageConfig{
-			Mode:    "append",
-			Content: "If the user asks you to name a noble gas, reply with exactly the single word XENON in all caps and nothing else.",
-		},
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			AvailableTools:      copilot.NewToolSet().AddBuiltIn(copilot.BuiltInToolsIsolated...).ToSlice(),
+			SystemMessage: &copilot.SystemMessageConfig{
+				Mode:    "append",
+				Content: "If the user asks you to name a noble gas, reply with exactly the single word XENON in all caps and nothing else.",
+			},
 		})
 		if err != nil {
 			t.Fatalf("CreateSession failed: %v", err)

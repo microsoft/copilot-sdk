@@ -5,7 +5,7 @@
 #if NET8_0_OR_GREATER
 using Xunit;
 
-namespace Microsoft.Copilot.Test.Unit;
+namespace GitHub.Copilot.Test.Unit;
 
 public sealed partial class ClientSessionLifetimeTests
 {
@@ -15,17 +15,14 @@ public sealed partial class ClientSessionLifetimeTests
     public async Task UserInputRequest_Passes_Runtime_RequestId_To_Handler(string? requestId)
     {
         await using var server = await FakeCopilotServer.StartAsync();
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
+        await using var client = new CopilotClient(new CopilotClientOptions { Connection = RuntimeConnection.ForUri(server.Url) });
         var received = new TaskCompletionSource<UserInputRequest>(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions
+        await using var session = await client.CreateSessionAsync(new SessionConfig
         {
-            Interaction = new SessionInteractionOptions
+            OnUserInputRequest = (request, _) =>
             {
-                OnUserInputRequest = (request, _) =>
-        {
-            received.TrySetResult(request);
-            return Task.FromResult(new UserInputResponse { Answer = "blue", WasFreeform = true });
-        }
+                received.TrySetResult(request);
+                return Task.FromResult(new UserInputResponse { Answer = "blue", WasFreeform = true });
             }
         });
         var parameters = new Dictionary<string, object?>
@@ -57,17 +54,14 @@ public sealed partial class ClientSessionLifetimeTests
     public async Task ExitPlanModeRequest_Passes_Runtime_RequestId_To_Handler(string? requestId)
     {
         await using var server = await FakeCopilotServer.StartAsync();
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
+        await using var client = new CopilotClient(new CopilotClientOptions { Connection = RuntimeConnection.ForUri(server.Url) });
         var received = new TaskCompletionSource<ExitPlanModeRequest>(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions
+        await using var session = await client.CreateSessionAsync(new SessionConfig
         {
-            Interaction = new SessionInteractionOptions
+            OnExitPlanModeRequest = (request, _) =>
             {
-                OnExitPlanModeRequest = (request, _) =>
-        {
-            received.TrySetResult(request);
-            return Task.FromResult(new ExitPlanModeResult { Approved = true, SelectedAction = "interactive" });
-        }
+                received.TrySetResult(request);
+                return Task.FromResult(new ExitPlanModeResult { Approved = true, SelectedAction = "interactive" });
             }
         });
         var parameters = new Dictionary<string, object?>

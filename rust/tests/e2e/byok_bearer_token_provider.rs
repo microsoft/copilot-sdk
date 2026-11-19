@@ -7,11 +7,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use copilot_sdk::handler::ApproveAllHandler;
-use copilot_sdk::{
+use github_copilot_sdk::handler::ApproveAllHandler;
+use github_copilot_sdk::{
     BearerTokenError, CopilotHttpRequest, CopilotHttpResponse, CopilotRequestContext,
-    CopilotRequestError, CopilotRequestHandler, CreateSessionOptions, MessageOptions,
-    NamedProviderConfig, ProviderModelConfig, ProviderTokenArgs,
+    CopilotRequestError, CopilotRequestHandler, MessageOptions, NamedProviderConfig,
+    ProviderModelConfig, ProviderTokenArgs, SessionConfig,
 };
 use http::HeaderMap;
 
@@ -121,7 +121,7 @@ fn synth_non_inference_response(url: &str) -> CopilotHttpResponse {
 }
 
 async fn run_turn(
-    client: &copilot_sdk::Client,
+    client: &github_copilot_sdk::Client,
     providers: Vec<NamedProviderConfig>,
     models: Vec<ProviderModelConfig>,
     selection_id: &str,
@@ -129,16 +129,78 @@ async fn run_turn(
 ) {
     let session = client
         .create_session(
-            CreateSessionOptions::default()
-                .with_permissions(|group| group.with_on_request(Arc::new(ApproveAllHandler)))
+            SessionConfig::default()
+                .with_permission_handler(Arc::new(ApproveAllHandler))
                 .with_model(selection_id)
-                .with_inference(|group| group.with_providers(providers))
-                .with_inference(|group| group.with_models(models)),
+                .with_providers(providers)
+                .with_models(models),
         )
         .await
         .expect("create session");
     let _ = session.send_and_wait(MessageOptions::new(prompt)).await;
     let _ = session.disconnect().await;
+}
+
+#[tokio::test]
+async fn callback_token_is_applied_as_authorization_header() {
+    // The runtime's LLM inference provider slot is process-global and is never released
+    // when the registering connection disconnects (runtime `shared_api/llm_inference.rs`).
+    // Over the in-process transport all clients share this process's runtime, so once a
+    // BYOK provider is registered here and the client stops, the dangling registration
+    // routes every later model-inference request (list-models, tool-using turns, hooks,
+    // …) to the dead connection and hangs them. Registering a BYOK provider in-process
+    // therefore poisons the shared runtime for the rest of the suite. The BYOK bearer-token
+    // wiring is covered over stdio (a separate child process per test); the SDK-side
+    // request/response plumbing is transport-agnostic.
+    if super::support::skip_inprocess(
+        "registering a BYOK LLM inference provider is process-global in-process and is never \
+         released on disconnect, poisoning later model-inference tests",
+    ) {
+        return;
+    }
+    with_e2e_context_no_snapshot(|ctx| {
+        Box::pin(async move {
+            ctx.set_default_copilot_user();
+            let handler = Arc::new(CapturingRequestHandler::default());
+            let client = ctx.start_llm_client(handler.clone(), &[]).await;
+            handler.reset();
+
+            let calls = Arc::new(AtomicUsize::new(0));
+            let callback_calls = calls.clone();
+            let providers = vec![
+                NamedProviderConfig::new("mi", PRIMARY_BASE_URL)
+                    .with_provider_type("openai")
+                    .with_wire_api("completions")
+                    .with_bearer_token_provider(Arc::new(move |_args: ProviderTokenArgs| {
+                        let callback_calls = callback_calls.clone();
+                        async move {
+                            callback_calls.fetch_add(1, Ordering::SeqCst);
+                            Ok::<_, BearerTokenError>("sentinel-bearer-token-abc123".to_string())
+                        }
+                    })),
+            ];
+            let models =
+                vec![ProviderModelConfig::new("default", "mi").with_wire_model("byok-gpt-4o")];
+
+            run_turn(&client, providers, models, "mi/default", "What is 5+5?").await;
+
+            assert!(
+                calls.load(Ordering::SeqCst) >= 1,
+                "expected callback to be invoked"
+            );
+            // Validate the captured Authorization header is the final assertion.
+            assert!(
+                handler
+                    .auth_headers()
+                    .contains(&"Bearer sentinel-bearer-token-abc123".to_string()),
+                "expected captured Authorization headers to include the sentinel token, got {:?}",
+                handler.auth_headers()
+            );
+
+            client.stop().await.expect("stop client");
+        })
+    })
+    .await;
 }
 
 #[tokio::test]
@@ -159,7 +221,7 @@ async fn reacquires_a_fresh_token_for_each_request() {
         Box::pin(async move {
             ctx.set_default_copilot_user();
             let handler = Arc::new(CapturingRequestHandler::default());
-            let client = ctx.start_llm_client(handler.clone()).await;
+            let client = ctx.start_llm_client(handler.clone(), &[]).await;
             handler.reset();
 
             let calls = Arc::new(AtomicUsize::new(0));
@@ -232,7 +294,7 @@ async fn dispatches_token_acquisition_per_provider() {
         Box::pin(async move {
             ctx.set_default_copilot_user();
             let handler = Arc::new(CapturingRequestHandler::default());
-            let client = ctx.start_llm_client(handler.clone()).await;
+            let client = ctx.start_llm_client(handler.clone(), &[]).await;
             handler.reset();
 
             let acquired_for = Arc::new(std::sync::Mutex::new(Vec::new()));

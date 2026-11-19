@@ -2,8 +2,8 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
-using Microsoft.Copilot.Rpc;
-using Microsoft.Copilot.Test.Harness;
+using GitHub.Copilot.Rpc;
+using GitHub.Copilot.Test.Harness;
 using System.Diagnostics;
 using System.Net.Http;
 using System.Text.Json;
@@ -11,7 +11,7 @@ using System.Threading.Channels;
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Microsoft.Copilot.Test.E2E;
+namespace GitHub.Copilot.Test.E2E;
 
 /// <summary>
 /// Representative scenario coverage for MCP lifecycle, OAuth, configuration, and MCP Apps.
@@ -26,8 +26,11 @@ public class ScenarioTestingMcpE2ETests(E2ETestFixture fixture, ITestOutputHelpe
     public async Task Should_List_Reload_Restart_And_Report_Scenario_Mcp_State()
     {
         const string serverName = "scenario-client-lifecycle";
-        await using var session = await CreateSessionAsync(new CreateSessionOptions
-        { ClientName = "scenario-client", Mcp = new SessionMcpOptions { Servers = CreateTestMcpServers(serverName) } });
+        await using var session = await CreateSessionAsync(new SessionConfig
+        {
+            ClientName = "scenario-client",
+            McpServers = CreateTestMcpServers(serverName),
+        });
         await WaitForMcpServerStatusAsync(session, serverName, McpServerStatus.Connected);
 
         var initial = await session.Rpc.Mcp.ListAsync();
@@ -65,18 +68,35 @@ public class ScenarioTestingMcpE2ETests(E2ETestFixture fixture, ITestOutputHelpe
         const string thirdPartyName = "scenario-client-third-party";
         var requests = Channel.CreateUnbounded<McpAuthContext>();
 
-        await using var session = await CreateSessionAsync(new CreateSessionOptions
+        await using var session = await CreateSessionAsync(new SessionConfig
         {
             ClientName = "scenario-client",
-            Mcp = new SessionMcpOptions
+            OnMcpAuthRequest = request =>
             {
-                OnAuthRequest = request =>
-        {
-            requests.Writer.TryWrite(request);
-            return Task.FromResult<McpAuthResult?>(request.ServerName == firstPartyName ? McpAuthResult.FromToken(new McpAuthToken { AccessToken = ExpectedToken, TokenType = "Bearer", ExpiresIn = 3600, }) : McpAuthResult.Cancel());
-        },
-                Servers = new Dictionary<string, McpServerConfig> { [firstPartyName] = new McpHttpServerConfig { Url = $"{firstParty.Url}/mcp", Tools = ["*"], }, [thirdPartyName] = new McpHttpServerConfig { Url = $"{thirdParty.Url}/mcp", Tools = ["*"], }, }
-            }
+                requests.Writer.TryWrite(request);
+                return Task.FromResult<McpAuthResult?>(
+                    request.ServerName == firstPartyName
+                        ? McpAuthResult.FromToken(new McpAuthToken
+                        {
+                            AccessToken = ExpectedToken,
+                            TokenType = "Bearer",
+                            ExpiresIn = 3600,
+                        })
+                        : McpAuthResult.Cancel());
+            },
+            McpServers = new Dictionary<string, McpServerConfig>
+            {
+                [firstPartyName] = new McpHttpServerConfig
+                {
+                    Url = $"{firstParty.Url}/mcp",
+                    Tools = ["*"],
+                },
+                [thirdPartyName] = new McpHttpServerConfig
+                {
+                    Url = $"{thirdParty.Url}/mcp",
+                    Tools = ["*"],
+                },
+            },
         });
 
         await session.Rpc.Mcp.ReloadAsync();
@@ -107,18 +127,27 @@ public class ScenarioTestingMcpE2ETests(E2ETestFixture fixture, ITestOutputHelpe
         const string serverName = "scenario-client-oauth-reconnect";
         var tokenRequests = 0;
 
-        await using var session = await CreateSessionAsync(new CreateSessionOptions
+        await using var session = await CreateSessionAsync(new SessionConfig
         {
             ClientName = "scenario-client",
-            Mcp = new SessionMcpOptions
+            OnMcpAuthRequest = request =>
             {
-                OnAuthRequest = request =>
-        {
-            Interlocked.Increment(ref tokenRequests);
-            return Task.FromResult<McpAuthResult?>(McpAuthResult.FromToken(new McpAuthToken { AccessToken = ExpectedToken, TokenType = "Bearer", ExpiresIn = 3600, }));
-        },
-                Servers = new Dictionary<string, McpServerConfig> { [serverName] = new McpHttpServerConfig { Url = $"{oauthServer.Url}/mcp", Tools = ["*"], }, }
-            }
+                Interlocked.Increment(ref tokenRequests);
+                return Task.FromResult<McpAuthResult?>(McpAuthResult.FromToken(new McpAuthToken
+                {
+                    AccessToken = ExpectedToken,
+                    TokenType = "Bearer",
+                    ExpiresIn = 3600,
+                }));
+            },
+            McpServers = new Dictionary<string, McpServerConfig>
+            {
+                [serverName] = new McpHttpServerConfig
+                {
+                    Url = $"{oauthServer.Url}/mcp",
+                    Tools = ["*"],
+                },
+            },
         });
 
         await session.Rpc.Mcp.ReloadAsync();
@@ -158,9 +187,24 @@ public class ScenarioTestingMcpE2ETests(E2ETestFixture fixture, ITestOutputHelpe
     {
         const string serverName = "scenario-mcp-app";
         const string resourceUri = "ui://scenario/app";
-        await using var client = Ctx.CreateClient();
-        await using var session = await Ctx.CreateSessionAsync(client, new CreateSessionOptions
-        { Mcp = new SessionMcpOptions { EnableApps = true, Servers = new Dictionary<string, McpServerConfig> { [serverName] = new McpStdioServerConfig { Command = "node", Args = [Path.Join(FindTestHarnessDir(), "test-mcp-app-server.mjs")], Tools = ["*"], }, } }, Experiments = new SessionExperimentOptions { Flags = new Dictionary<string, bool> { ["MCP_APPS"] = true } }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
+        var environment = Ctx.GetEnvironment();
+        environment["COPILOT_MCP_APPS"] = "true";
+        environment["MCP_APPS"] = "true";
+        await using var client = Ctx.CreateClient(environment: environment);
+        await using var session = await Ctx.CreateSessionAsync(client, new SessionConfig
+        {
+            EnableMcpApps = true,
+            McpServers = new Dictionary<string, McpServerConfig>
+            {
+                [serverName] = new McpStdioServerConfig
+                {
+                    Command = "node",
+                    Args = [Path.Join(FindTestHarnessDir(), "test-mcp-app-server.mjs")],
+                    Tools = ["*"],
+                },
+            },
+            OnPermissionRequest = PermissionHandler.ApproveAll,
+        });
         await WaitForMcpServerStatusAsync(session, serverName, McpServerStatus.Connected);
 
         var tools = await session.Rpc.Mcp.Apps.ListToolsAsync(
@@ -207,9 +251,17 @@ public class ScenarioTestingMcpE2ETests(E2ETestFixture fixture, ITestOutputHelpe
         ((McpStdioServerConfig)servers[serverName]).Env =
             new Dictionary<string, string> { ["SCENARIO_ORIGIN_VALUE"] = "origin-ok" };
 
-        await using var client = Ctx.CreateClient();
-        await using var session = await Ctx.CreateSessionAsync(client, new CreateSessionOptions
-        { ClientName = "scenario-client", Mcp = new SessionMcpOptions { EnableApps = true, Servers = servers }, Experiments = new SessionExperimentOptions { Flags = new Dictionary<string, bool> { ["MCP_APPS"] = true } }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
+        var environment = Ctx.GetEnvironment();
+        environment["COPILOT_MCP_APPS"] = "true";
+        environment["MCP_APPS"] = "true";
+        await using var client = Ctx.CreateClient(environment: environment);
+        await using var session = await Ctx.CreateSessionAsync(client, new SessionConfig
+        {
+            ClientName = "scenario-client",
+            EnableMcpApps = true,
+            McpServers = servers,
+            OnPermissionRequest = PermissionHandler.ApproveAll,
+        });
         await WaitForMcpServerStatusAsync(session, serverName, McpServerStatus.Connected);
         await WaitForMcpServerStatusAsync(session, otherServerName, McpServerStatus.Connected);
 
@@ -242,8 +294,14 @@ public class ScenarioTestingMcpE2ETests(E2ETestFixture fixture, ITestOutputHelpe
         const string enabledName = "scenario-client-enabled-mcp";
         const string disabledName = "scenario-client-disabled-mcp";
         var client1 = Ctx.CreateClient();
-        var session1 = await Ctx.CreateSessionAsync(client1, new CreateSessionOptions
-        { ClientName = "scenario-client", State = new SessionStateOptions { EnableCrossSessionStore = true }, Mcp = new SessionMcpOptions { Servers = CreateTestMcpServers(enabledName, disabledName), DisabledServers = [disabledName] }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
+        var session1 = await Ctx.CreateSessionAsync(client1, new SessionConfig
+        {
+            ClientName = "scenario-client",
+            EnableSessionStore = true,
+            McpServers = CreateTestMcpServers(enabledName, disabledName),
+            DisabledMcpServers = [disabledName],
+            OnPermissionRequest = PermissionHandler.ApproveAll,
+        });
         await WaitForMcpServerStatusAsync(session1, enabledName, McpServerStatus.Connected);
         await WaitForMcpServerStatusAsync(session1, disabledName, McpServerStatus.Disabled);
 
@@ -263,8 +321,14 @@ public class ScenarioTestingMcpE2ETests(E2ETestFixture fixture, ITestOutputHelpe
         await client1.ForceStopAsync();
 
         await using var client2 = Ctx.CreateClient();
-        await using var session2 = await Ctx.ResumeSessionAsync(client2, sessionId, new ResumeSessionOptions
-        { ClientName = "scenario-client", State = new SessionStateOptions { EnableCrossSessionStore = true }, Mcp = new SessionMcpOptions { Servers = CreateTestMcpServers(enabledName, disabledName), DisabledServers = [disabledName] }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
+        await using var session2 = await Ctx.ResumeSessionAsync(client2, sessionId, new ResumeSessionConfig
+        {
+            ClientName = "scenario-client",
+            EnableSessionStore = true,
+            McpServers = CreateTestMcpServers(enabledName, disabledName),
+            DisabledMcpServers = [disabledName],
+            OnPermissionRequest = PermissionHandler.ApproveAll,
+        });
         await WaitForMcpServerStatusAsync(session2, enabledName, McpServerStatus.Connected);
         await WaitForMcpServerStatusAsync(session2, disabledName, McpServerStatus.Disabled);
         var resumed = await session2.Rpc.Mcp.ListAsync();

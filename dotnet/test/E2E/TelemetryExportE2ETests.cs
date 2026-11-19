@@ -2,7 +2,7 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
-using Microsoft.Copilot.Test.Harness;
+using GitHub.Copilot.Test.Harness;
 using Microsoft.Extensions.AI;
 using System.Collections.Concurrent;
 using System.Diagnostics;
@@ -10,7 +10,7 @@ using System.Text.Json;
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Microsoft.Copilot.Test.E2E;
+namespace GitHub.Copilot.Test.E2E;
 
 public class TelemetryExportE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
     : E2ETestBase(fixture, "telemetry", output)
@@ -30,7 +30,7 @@ public class TelemetryExportE2ETests(E2ETestFixture fixture, ITestOutputHelper o
         ActivityTraceId traceId = default;
         using var listener = new ActivityListener
         {
-            ShouldListenTo = source => source == toolSource || source.Name == "microsoft.copilot",
+            ShouldListenTo = source => source == toolSource || source.Name == "github.copilot",
             Sample = (ref ActivityCreationOptions<ActivityContext> options) =>
                 options.Source == toolSource || options.Parent.TraceId == traceId
                     ? ActivitySamplingResult.AllDataAndRecorded
@@ -40,7 +40,7 @@ public class TelemetryExportE2ETests(E2ETestFixture fixture, ITestOutputHelper o
                 if (activity.TraceId == traceId)
                 {
                     sdkSpans.Enqueue(activity);
-                    if (activity.Source.Name == "microsoft.copilot" && activity.OperationName == "copilot.tool_handler")
+                    if (activity.Source.Name == "github.copilot" && activity.OperationName == "copilot.tool_handler")
                     {
                         handlerStopped.TrySetResult(true);
                     }
@@ -54,22 +54,21 @@ public class TelemetryExportE2ETests(E2ETestFixture fixture, ITestOutputHelper o
 
         await using var client = Ctx.CreateClient(options: new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForSpawnedStdio(),
-            Observability = new ClientObservabilityOptions
+            Connection = RuntimeConnection.ForStdio(),
+            Telemetry = new TelemetryConfig
             {
-                Telemetry = new TelemetryConfig
-                {
-                    FilePath = telemetryPath,
-                    ExporterType = "file",
-                    SourceName = sourceName,
-                    CaptureContent = true,
-                }
-            }
+                FilePath = telemetryPath,
+                ExporterType = "file",
+                SourceName = sourceName,
+                CaptureContent = true,
+            },
         });
 
-        var session = await Ctx.CreateSessionAsync(client, new CreateSessionOptions
-        { Tools = new SessionToolOptions { Definitions = [AIFunctionFactory.Create(EchoTelemetryMarker, toolName, "Echoes a marker string for telemetry validation.")] }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
+        var session = await Ctx.CreateSessionAsync(client, new SessionConfig
+        {
+            Tools = [AIFunctionFactory.Create(EchoTelemetryMarker, toolName, "Echoes a marker string for telemetry validation.")],
+            OnPermissionRequest = PermissionHandler.ApproveAll,
+        });
 
         var assistantMessage = await TestHelper.SendAndGetFinalAssistantMessageAsync(session, new MessageOptions { Prompt = prompt });
         Assert.NotNull(assistantMessage);
@@ -122,7 +121,7 @@ public class TelemetryExportE2ETests(E2ETestFixture fixture, ITestOutputHelper o
         var child = Assert.Single(sdkSpans, span => span.OperationName == "tool work");
         var handler = Assert.Single(sdkSpans, span => span.SpanId == child.ParentSpanId);
         Assert.Equal("copilot.tool_handler", handler.OperationName);
-        Assert.Equal("microsoft.copilot", handler.Source.Name);
+        Assert.Equal("github.copilot", handler.Source.Name);
         Assert.Equal(GetSpanId(toolSpan), handler.ParentSpanId.ToHexString());
         Assert.Equal(invokeAgentTraceId, child.TraceId.ToHexString());
 
@@ -142,23 +141,21 @@ public class TelemetryExportE2ETests(E2ETestFixture fixture, ITestOutputHelper o
 
         await using var client = Ctx.CreateClient(options: new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForSpawnedStdio(),
-            Observability = new ClientObservabilityOptions
+            Connection = RuntimeConnection.ForStdio(),
+            Telemetry = new TelemetryConfig
             {
-                Telemetry = new TelemetryConfig
-                {
-                    FilePath = telemetryPath,
-                    ExporterType = "file",
-                    SourceName = sourceName,
-                    CaptureContent = true,
-                }
-            }
+                FilePath = telemetryPath,
+                ExporterType = "file",
+                SourceName = sourceName,
+                CaptureContent = true,
+            },
         });
 
         await File.WriteAllTextAsync(Path.Join(Ctx.WorkDir, "subagent-otel.txt"), "SUBAGENT_OTEL_FILE_CONTENT");
-        var session = await Ctx.CreateSessionAsync(client, new CreateSessionOptions
-        { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
+        var session = await Ctx.CreateSessionAsync(client, new SessionConfig
+        {
+            OnPermissionRequest = PermissionHandler.ApproveAll,
+        });
 
         var response = await TestHelper.SendAndGetFinalAssistantMessageAsync(session, new MessageOptions { Prompt = prompt });
         Assert.Contains("SUBAGENT_OTEL_DONE", response?.Data.Content ?? string.Empty, StringComparison.Ordinal);

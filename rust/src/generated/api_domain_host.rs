@@ -12,14 +12,14 @@ pub(crate) use lifecycle_diagnostics::LifecycleDiagnosticEvent;
 use serde::{Deserialize, Serialize};
 pub use session_events::{
     AbortReason, AgentModelPolicy, AssistedApprovalAssessment, AutoTier, BlockedPermissionAction,
-    ContextTier, IdeConnectedInfo, IdeSelection, IndexedSearchState, ManagedPermissionsContext,
-    ManagedSettingsResolvedSource, McpOauthHttpResponse, McpOauthWWWAuthenticateParams,
-    McpServerMetadata, McpServerSource, McpServerStatus, McpSkillOrigin, ModelChangeSource,
-    ModelProviderKind, ModelProviderRef, OmittedBinaryOmittedReason, PermissionDecisionSource,
-    PermissionMode, PermissionPromptRequest, PermissionRule, PolicyHelperCapabilities,
-    PolicyHelperFailure, ProviderQuotaState, ReasoningSummary, RemediationAction,
-    SessionLimitsConfig, SessionMode, ShutdownType, SkillSource, TaskBlocker,
-    TaskCompletionOutcome, UsageGetMetricsResult, UserToolSessionApproval, Verbosity,
+    ContextTier, IndexedSearchState, ManagedPermissionsContext, ManagedSettingsResolvedSource,
+    McpOauthHttpResponse, McpOauthWWWAuthenticateParams, McpServerMetadata, McpServerSource,
+    McpServerStatus, McpSkillOrigin, ModelChangeSource, ModelProviderKind, ModelProviderRef,
+    OmittedBinaryOmittedReason, PermissionDecisionSource, PermissionMode, PermissionPromptRequest,
+    PermissionRule, PolicyHelperCapabilities, PolicyHelperFailure, ProviderQuotaState,
+    ReasoningSummary, RemediationAction, SessionLimitsConfig, SessionMode, ShutdownType,
+    SkillSource, TaskBlocker, TaskCompletionOutcome, UsageGetMetricsResult,
+    UserToolSessionApproval, Verbosity,
 };
 
 use super::sdk_api_shared::*;
@@ -643,17 +643,53 @@ pub struct AuthLoginAdvanceRequest {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthLoginBeginRequest {
-    /// Opaque cached base identity id returned by accounts.enumerate loginAccounts. Valid only with default mode; consumers must not parse it.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub account_id: Option<String>,
     /// The provider kind to sign in with.
     pub kind: LoginProviderKind,
-    /// How to authorize: `web` (default) or `device-code`. Device code is offered for `githubDotCom` and `proxima`; `proxima` still asks for its host through `input-required` first.
+}
+
+/// Extensible [`AuthLoginBeginRequest`], including inputs added after it was published.
+///
+/// Required inputs are [`AuthLoginBeginOptions::new`] arguments; optional inputs have fluent setters.
+/// Input-only: it serialises to the flat wire request and is not deserialisable.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthLoginBeginOptions {
+    #[serde(flatten)]
+    legacy: AuthLoginBeginRequest,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub method: Option<AuthLoginMethod>,
+    mode: Option<AuthLoginMode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    account_id: Option<String>,
+}
+
+impl AuthLoginBeginOptions {
+    /// Creates options with the required inputs.
+    pub fn new(kind: LoginProviderKind) -> Self {
+        Self {
+            legacy: AuthLoginBeginRequest { kind },
+            mode: None,
+            account_id: None,
+        }
+    }
+
     /// Neutral identity-selection intent. Omitted is equivalent to default.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mode: Option<AuthLoginMode>,
+    pub fn mode(mut self, value: AuthLoginMode) -> Self {
+        self.mode = Some(value);
+        self
+    }
+
+    /// Opaque cached base identity id returned by accounts.enumerate loginAccounts. Valid only with default mode; consumers must not parse it.
+    pub fn account_id(mut self, value: impl Into<String>) -> Self {
+        self.account_id = Some(value.into());
+        self
+    }
 }
 
 /// A started login flow: its opaque id and first step.
@@ -2056,7 +2092,7 @@ pub struct GitHubTokenAcquireRequest {
 pub struct GitHubTokenAcquireResultToken {
     /// GitHub access token acquired by the SDK host.
     pub access_token: String,
-    /// Remaining token lifetime in seconds when callback execution completes. It must exceed the one-hour preflight refresh threshold, and still exceed it after the runtime validates the token: validation time counts against this lifetime, so a value just above 3600 can be rejected.
+    /// Remaining token lifetime in seconds when callback execution completes. It must exceed the one-hour preflight refresh threshold.
     pub expires_in: i64,
     /// GitHub credential response variant discriminator.
     pub kind: GitHubTokenAcquireResultTokenKind,
@@ -2529,11 +2565,53 @@ pub struct WorkspacesDiffRequest {
     /// When true, ignore whitespace-only changes (git `--ignore-all-space`). Defaults to false.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ignore_whitespace: Option<bool>,
-    /// Include the full before/after text used to compute each session diff. Defaults to false; true is accepted only for session mode. Existing capture/read limits still apply, and binary or unavailable contents are not returned. This can substantially increase response size.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub include_contents: Option<bool>,
     /// Diff mode requested by the client.
     pub mode: WorkspaceDiffMode,
+}
+
+/// Extensible [`WorkspacesDiffRequest`], including inputs added after it was published.
+///
+/// Required inputs are [`WorkspacesDiffOptions::new`] arguments; optional inputs have fluent setters.
+/// Input-only: it serialises to the flat wire request and is not deserialisable.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspacesDiffOptions {
+    #[serde(flatten)]
+    legacy: WorkspacesDiffRequest,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    include_contents: Option<bool>,
+}
+
+impl WorkspacesDiffOptions {
+    /// Creates options with the required inputs.
+    pub fn new(mode: WorkspaceDiffMode) -> Self {
+        Self {
+            legacy: WorkspacesDiffRequest {
+                mode,
+                ignore_whitespace: None,
+            },
+            include_contents: None,
+        }
+    }
+
+    /// When true, ignore whitespace-only changes (git `--ignore-all-space`). Defaults to false.
+    pub fn ignore_whitespace(mut self, value: bool) -> Self {
+        self.legacy.ignore_whitespace = Some(value);
+        self
+    }
+
+    /// Include the full before/after text used to compute each session diff. Defaults to false; true is accepted only for session mode. Existing capture/read limits still apply, and binary or unavailable contents are not returned. This can substantially increase response size.
+    pub fn include_contents(mut self, value: bool) -> Self {
+        self.include_contents = Some(value);
+        self
+    }
 }
 
 /// Optional session context used when creating a local workspace.
@@ -3306,28 +3384,6 @@ pub enum AuthEnumerateValue {
     Accounts(AuthEnumerateValueAccounts),
     Providers(AuthEnumerateValueProviders),
     LoginAccounts(AuthEnumerateValueLoginAccounts),
-}
-
-/// How an interactive GitHub login is authorized.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum AuthLoginMethod {
-    /// Browser authorization with a loopback callback; the flow surfaces an `open-url` step.
-    #[serde(rename = "web")]
-    Web,
-    /// OAuth device authorization; the flow surfaces a `device-code` step with a one-time code, for terminals whose browser cannot reach a loopback callback.
-    #[serde(rename = "device-code")]
-    DeviceCode,
-    /// Unknown variant for forward compatibility.
-    #[default]
-    #[serde(other)]
-    Unknown,
 }
 
 /// How an interactive provider login should choose its base identity.

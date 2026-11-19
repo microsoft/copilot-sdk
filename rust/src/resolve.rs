@@ -13,19 +13,20 @@
 //!    `bundled-cli` is off).
 //!
 //! There is no PATH scanning and no walking of standard install locations.
-//! An invalid explicit environment override fails without falling back.
-//! If no configured source resolves to a real file,
+//! If none of the above resolves to a real file,
 //! [`Client::start`](crate::Client::start) returns
 //! an [`ErrorKind::BinaryNotFound`](crate::ErrorKind::BinaryNotFound) error.
 
-use std::ffi::OsStr;
+use std::env;
 use std::path::{Path, PathBuf};
 
-use crate::{Error, ErrorKind, StartupOptions};
+use tracing::warn;
+
+use crate::{Error, ErrorKind};
 
 /// Resolve the CLI binary, optionally overriding the directory the bundled
 /// CLI is extracted to. Called by `Client::start` to thread
-/// `StartupOptions::bundled_cli_extract_directory` through to
+/// `ClientOptions::bundled_cli_extract_dir` through to
 /// `embeddedcli::install_at`. `extract_dir` only applies when the
 /// `bundled-cli` feature is on — with it off the binary lives at a
 /// build-time-known conventional location and `extract_dir` is ignored
@@ -33,40 +34,47 @@ use crate::{Error, ErrorKind, StartupOptions};
 /// would be exactly equivalent to setting `CliProgram::Path`). Set
 /// `COPILOT_CLI_EXTRACT_DIR` at build time to relocate that extraction;
 /// the same env var is honored at runtime to find binaries written
-/// under it. `env_cli_path` comes from the effective process environment,
-/// not unconditionally from the host.
+/// under it.
 pub(crate) fn copilot_binary_with_extract_dir(
-    options: &StartupOptions,
+    extract_dir: Option<&Path>,
     use_runtime_wrapper: bool,
-    env_cli_path: Option<&OsStr>,
 ) -> Result<PathBuf, Error> {
-    if let Some(value) = env_cli_path.filter(|value| !value.is_empty()) {
-        let directory = options
-            .transport
-            .spawned_process()
-            .map(|process| process.working_directory.as_path())
-            .unwrap_or_else(|| Path::new(""));
-        let candidate = std::path::absolute(directory.join(value))?;
+    if let Ok(value) = env::var("COPILOT_CLI_PATH") {
+        let candidate = PathBuf::from(&value);
         if candidate.is_file() {
             return Ok(candidate);
         }
-        return Err(ErrorKind::BinaryNotFound {
-            name: candidate.display().to_string(),
-            hint: Some("COPILOT_CLI_PATH does not point to a file".into()),
-        }
-        .into());
+        warn!(
+            path = %candidate.display(),
+            "COPILOT_CLI_PATH is set but does not point to a file; falling back"
+        );
     }
 
-    let extract_dir = options.bundled_cli_extract_directory.as_deref();
     #[cfg(feature = "bundled-cli")]
-    if let Some(path) = bundled_program(extract_dir, use_runtime_wrapper)? {
-        return Ok(path);
+    {
+        let bundled = if use_runtime_wrapper {
+            match extract_dir {
+                Some(dir) => crate::embeddedcli::install_runtime_at(dir),
+                None => crate::embeddedcli::runtime_path(),
+            }
+        } else {
+            match extract_dir {
+                Some(dir) => crate::embeddedcli::install_at(dir),
+                None => crate::embeddedcli::path(),
+            }
+        };
+        if let Some(path) = bundled {
+            if use_runtime_wrapper {
+                validate_runtime_pair(&path)?;
+            }
+            return Ok(path);
+        }
     }
 
     #[cfg(not(feature = "bundled-cli"))]
     {
         let _ = extract_dir;
-        if let Some(program) = extracted_program(use_runtime_wrapper)? {
+        if let Some(program) = extracted_program(use_runtime_wrapper) {
             return Ok(program);
         }
     }
@@ -79,40 +87,14 @@ pub(crate) fn copilot_binary_with_extract_dir(
     Err(ErrorKind::BinaryNotFound {
         name: binary_name.into(),
         hint: Some(
-            "the Copilot CLI is not bundled in this build of copilot-sdk and \
+            "the Copilot CLI is not bundled in this build of github-copilot-sdk and \
              no applicable path override is set. Either keep the default `bundled-cli` cargo \
              feature enabled, set COPILOT_CLI_PATH, or supply an explicit path via \
-             `CliProgram::Path(...)` on `SpawnedProcessOptions::program`."
+             `CliProgram::Path(...)` on `ClientOptions::program`."
                 .into(),
         ),
     }
     .into())
-}
-
-/// Install (or find) the bundled program. `Ok(None)` means nothing is bundled;
-/// an installation failure is an error that names the directory.
-#[cfg(feature = "bundled-cli")]
-fn bundled_program(
-    extract_dir: Option<&Path>,
-    use_runtime_wrapper: bool,
-) -> Result<Option<PathBuf>, Error> {
-    let bundled = if use_runtime_wrapper {
-        match extract_dir {
-            Some(dir) => crate::embeddedcli::install_runtime_at(dir),
-            None => crate::embeddedcli::runtime_path(),
-        }
-    } else {
-        match extract_dir {
-            Some(dir) => crate::embeddedcli::install_at(dir),
-            None => crate::embeddedcli::path(),
-        }
-    }?;
-    if let Some(path) = &bundled
-        && use_runtime_wrapper
-    {
-        validate_runtime_pair(path)?;
-    }
-    Ok(bundled)
 }
 
 /// Path to the program extracted into the per-user cache by `build.rs` when
@@ -129,42 +111,35 @@ fn bundled_program(
 /// / `$LOCALAPPDATA` into the artifact, breaks sccache across machines,
 /// and prevents copying `target/` between hosts.
 #[cfg(all(not(feature = "bundled-cli"), has_extracted_cli))]
-fn extracted_program(use_runtime_wrapper: bool) -> Result<Option<PathBuf>, Error> {
+fn extracted_program(use_runtime_wrapper: bool) -> Option<PathBuf> {
     let cache_identity = env!("COPILOT_SDK_CLI_CACHE_ID");
-    let binary_name = if use_runtime_wrapper {
+    let dir = crate::cache_paths::extracted_runtime_install_dir(cache_identity);
+
+    let path = dir.join(if use_runtime_wrapper {
         runtime_binary_name()
     } else {
         cli_binary_name()
-    };
-    let dir =
-        crate::cache_paths::extracted_runtime_install_dir(cache_identity).map_err(|error| {
-            ErrorKind::BinaryNotFound {
-                name: binary_name.into(),
-                hint: Some(error.to_string()),
-            }
-        })?;
-
-    let path = dir.join(binary_name);
+    });
     if use_runtime_wrapper {
         if validate_runtime_pair(&path).is_ok() {
-            return Ok(Some(path));
+            return Some(path);
         }
     } else if path.is_file() {
-        return Ok(Some(path));
+        return Some(path);
     }
-    tracing::warn!(
+    warn!(
         path = %path.display(),
         "expected build-time-extracted CLI is missing; rebuild the crate or set COPILOT_CLI_PATH"
     );
-    Ok(None)
+    None
 }
 
 /// `has_extracted_cli` is absent when the target is unsupported or the
 /// build opted out via `COPILOT_SKIP_CLI_DOWNLOAD`. In both cases there's
 /// no binary to look up, so the resolver returns `None` immediately.
 #[cfg(all(not(feature = "bundled-cli"), not(has_extracted_cli)))]
-fn extracted_program(_use_runtime_wrapper: bool) -> Result<Option<PathBuf>, Error> {
-    Ok(None)
+fn extracted_program(_use_runtime_wrapper: bool) -> Option<PathBuf> {
+    None
 }
 
 #[cfg(any(feature = "bundled-cli", has_extracted_cli, test))]

@@ -55,19 +55,17 @@ class CommandsMultiClientContext:
 
         # Client 1 uses TCP mode so a second client can connect
         self._client1 = CopilotClient(
-            mode="coding-agent",
-            runtime=RuntimeConnection.for_spawned_tcp(
-                path=self.cli_path,
-                connection_token="py-tcp-shared-test-token",
-                working_directory=self.work_dir,
-                env=self._get_env(),
+            connection=RuntimeConnection.for_tcp(
+                path=self.cli_path, connection_token="py-tcp-shared-test-token"
             ),
-            github={"token": github_token},
+            working_directory=self.work_dir,
+            env=self._get_env(),
+            github_token=github_token,
         )
 
         # Trigger connection to get the port
         init_session = await self._client1.create_session(
-            permissions={"on_request": PermissionHandler.approve_all}
+            on_permission_request=PermissionHandler.approve_all,
         )
         await init_session.disconnect()
 
@@ -75,10 +73,9 @@ class CommandsMultiClientContext:
         assert actual_port is not None
 
         self._client2 = CopilotClient(
-            mode="coding-agent",
-            runtime=RuntimeConnection.for_tcp(
-                "localhost", actual_port, connection_token="py-tcp-shared-test-token"
-            ),
+            connection=RuntimeConnection.for_uri(
+                f"localhost:{actual_port}", connection_token="py-tcp-shared-test-token"
+            )
         )
 
     async def teardown(self, test_failed: bool = False):
@@ -190,7 +187,7 @@ class TestCommands:
         """Client receives commands.changed when another client joins with commands."""
         # Client 1 creates a session without commands
         session1 = await mctx.client1.create_session(
-            permissions={"on_request": PermissionHandler.approve_all}
+            on_permission_request=PermissionHandler.approve_all,
         )
 
         # Listen for the commands.changed event
@@ -207,16 +204,14 @@ class TestCommands:
         # Client 2 joins the same session with commands
         session2 = await mctx.client2.resume_session(
             session1.session_id,
-            permissions={"on_request": PermissionHandler.approve_all},
-            interaction={
-                "commands": [
-                    CommandDefinition(
-                        name="deploy",
-                        description="Deploy the app",
-                        handler=lambda ctx: None,
-                    ),
-                ]
-            },
+            on_permission_request=PermissionHandler.approve_all,
+            commands=[
+                CommandDefinition(
+                    name="deploy",
+                    description="Deploy the app",
+                    handler=lambda ctx: None,
+                ),
+            ],
         )
 
         # Wait for the commands.changed event (with timeout)
@@ -238,17 +233,15 @@ class TestCommandsLifecycle:
 
         assert isinstance(ctx, E2ETestContext)
         session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all},
-            interaction={
-                "commands": [
-                    CommandDefinition(
-                        name="deploy",
-                        description="Deploy the app",
-                        handler=lambda _: None,
-                    ),
-                    CommandDefinition(name="rollback", handler=lambda _: None),
-                ]
-            },
+            on_permission_request=PermissionHandler.approve_all,
+            commands=[
+                CommandDefinition(
+                    name="deploy",
+                    description="Deploy the app",
+                    handler=lambda _: None,
+                ),
+                CommandDefinition(name="rollback", handler=lambda _: None),
+            ],
         )
         try:
             assert session is not None
@@ -258,22 +251,20 @@ class TestCommandsLifecycle:
 
     async def test_session_with_commands_resumes_successfully(self, ctx):
         session1 = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all}
+            on_permission_request=PermissionHandler.approve_all,
         )
         session_id = session1.session_id
 
         session2 = await ctx.client.resume_session(
             session_id,
-            permissions={"on_request": PermissionHandler.approve_all},
-            interaction={
-                "commands": [
-                    CommandDefinition(
-                        name="deploy",
-                        description="Deploy",
-                        handler=lambda _: None,
-                    ),
-                ]
-            },
+            on_permission_request=PermissionHandler.approve_all,
+            commands=[
+                CommandDefinition(
+                    name="deploy",
+                    description="Deploy",
+                    handler=lambda _: None,
+                ),
+            ],
         )
         try:
             assert session2 is not None
@@ -284,7 +275,7 @@ class TestCommandsLifecycle:
 
     async def test_session_with_no_commands_creates_successfully(self, ctx):
         session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all}
+            on_permission_request=PermissionHandler.approve_all,
         )
         try:
             assert session is not None

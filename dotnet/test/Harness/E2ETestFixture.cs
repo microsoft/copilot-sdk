@@ -2,10 +2,10 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
-using Microsoft.Copilot.Test.Harness;
+using GitHub.Copilot.Test.Harness;
 using Xunit;
 
-namespace Microsoft.Copilot.Test;
+namespace GitHub.Copilot.Test;
 
 public class E2ETestFixture : IAsyncLifetime
 {
@@ -15,8 +15,7 @@ public class E2ETestFixture : IAsyncLifetime
     private CopilotClient? _client;
     public CopilotClient Client => _client ??= Ctx.CreateClient(options: new CopilotClientOptions
     {
-        Mode = CopilotClientMode.CodingAgent,
-        Runtime = CreateSharedConnection(E2ETestContext.UsesInProcessTransport)
+        Connection = CreateSharedConnection(E2ETestContext.UsesInProcessTransport),
     }, persistent: true);
 
     public async Task InitializeAsync()
@@ -27,7 +26,7 @@ public class E2ETestFixture : IAsyncLifetime
     internal static RuntimeConnection CreateSharedConnection(bool useInProcessTransport) =>
         useInProcessTransport
             ? RuntimeConnection.ForInProcess()
-            : RuntimeConnection.ForSpawnedTcp(connectionToken: SharedTcpConnectionToken);
+            : RuntimeConnection.ForTcp(connectionToken: SharedTcpConnectionToken);
 
     public async Task DisposeAsync()
     {

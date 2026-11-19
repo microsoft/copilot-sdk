@@ -8,40 +8,14 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
-using Microsoft.Copilot.Test.Harness;
+using GitHub.Copilot.Test.Harness;
 using Xunit;
 
-namespace Microsoft.Copilot.Test.Unit;
+namespace GitHub.Copilot.Test.Unit;
 
 public sealed class CopilotRequestHandlerProtocolTests
 {
     private static readonly TimeSpan s_timeout = TimeSpan.FromSeconds(5);
-
-    [Fact]
-    public async Task FramesAfterRequestFinished_AreIgnored()
-    {
-        var handler = new MetadataRequestHandler();
-        await using var peer = await ProtocolPeer.StartAsync(handler);
-        await peer.BeginRequestAsync("finished", null, body: "request-body");
-        await peer.AcknowledgeAsync(await peer.NextMethodAsync());
-        var end = await peer.NextMethodAsync();
-        Assert.True(end.GetProperty("params").GetProperty("end").GetBoolean());
-        await peer.AcknowledgeAsync(end);
-
-        var pending = peer.PendingRequests();
-        var deadline = DateTime.UtcNow + s_timeout;
-        while (pending.Count != 0 && DateTime.UtcNow < deadline)
-        {
-            await Task.Delay(10);
-        }
-        Assert.Empty(pending);
-
-        // Frames the runtime can still send, such as its cancel of a response it
-        // rejected over the size limit after the handler ended it.
-        await peer.ExpectSuccessfulResponseAsync(await peer.SendCancelAsync("finished"));
-        await peer.ExpectSuccessfulResponseAsync(await peer.SendMessageAsync("finished", "late", null));
-        Assert.Empty(pending);
-    }
 
     [Theory]
     [InlineData(null)]
@@ -567,9 +541,8 @@ public sealed class CopilotRequestHandlerProtocolTests
             var endpoint = (IPEndPoint)listener.LocalEndpoint;
             var client = new CopilotClient(new CopilotClientOptions
             {
-                Mode = CopilotClientMode.CodingAgent,
-                Runtime = RuntimeConnection.ForTcp("127.0.0.1", endpoint.Port),
-                Models = new ClientModelOptions { RequestHandler = handler }
+                Connection = RuntimeConnection.ForUri($"http://127.0.0.1:{endpoint.Port}"),
+                RequestHandler = handler,
             });
             var startTask = client.StartAsync();
             var tcpClient = await listener.AcceptTcpClientAsync().WaitAsync(s_timeout);
@@ -584,7 +557,7 @@ public sealed class CopilotRequestHandlerProtocolTests
                 {
                     writer.WriteStartObject();
                     writer.WriteBoolean("ok", true);
-                    writer.WriteNumber("protocolVersion", 4);
+                    writer.WriteNumber("protocolVersion", 3);
                     writer.WriteString("version", "test");
                     writer.WriteEndObject();
                 },
@@ -641,7 +614,7 @@ public sealed class CopilotRequestHandlerProtocolTests
             }
         }
 
-        internal Task<int> SendMessageAsync(string requestId, string data, string? invocationId, bool end = false) =>
+        internal Task SendMessageAsync(string requestId, string data, string? invocationId, bool end = false) =>
             WriteRequestAsync(
                 "llmInference.httpRequestChunk",
                 writer =>
@@ -655,7 +628,7 @@ public sealed class CopilotRequestHandlerProtocolTests
                     }
                 });
 
-        internal Task<int> CancelRequestAsync() =>
+        internal Task CancelRequestAsync() =>
             WriteRequestAsync(
                 "llmInference.httpRequestChunk",
                 writer =>
@@ -684,22 +657,6 @@ public sealed class CopilotRequestHandlerProtocolTests
             using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
             await Assert.ThrowsAnyAsync<OperationCanceledException>(
                 () => NextMethodAsync(cts.Token));
-        }
-
-        internal async Task ExpectSuccessfulResponseAsync(int id)
-        {
-            using var timeout = new CancellationTokenSource(s_timeout);
-            while (true)
-            {
-                var response = await _messages.Reader.ReadAsync(timeout.Token);
-                Assert.False(response.TryGetProperty("method", out _), response.ToString());
-                Assert.False(response.TryGetProperty("error", out _), response.ToString());
-                Assert.True(response.TryGetProperty("result", out _), response.ToString());
-                if (response.GetProperty("id").GetInt32() == id)
-                {
-                    return;
-                }
-            }
         }
 
         internal Task AcknowledgeAsync(JsonElement request) =>
@@ -736,25 +693,6 @@ public sealed class CopilotRequestHandlerProtocolTests
         internal Task StopClientAsync(bool force) =>
             force ? _client.ForceStopAsync() : _client.StopAsync();
 
-        internal System.Collections.IDictionary PendingRequests()
-        {
-            var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
-            var apis = typeof(CopilotClient).GetField("_clientGlobalApis", flags)!.GetValue(_client)!;
-            var adapter = apis.GetType().GetProperty("LlmInference")!.GetValue(apis)!;
-            return (System.Collections.IDictionary)adapter.GetType().GetField("_pending", flags)!.GetValue(adapter)!;
-        }
-
-        internal Task<int> SendCancelAsync(string requestId) =>
-            WriteRequestAsync(
-                "llmInference.httpRequestChunk",
-                writer =>
-                {
-                    writer.WriteString("requestId", requestId);
-                    writer.WriteString("data", string.Empty);
-                    writer.WriteBoolean("cancel", true);
-                    writer.WriteBoolean("end", true);
-                });
-
         public async ValueTask DisposeAsync()
         {
             _disposeCts.Cancel();
@@ -773,7 +711,7 @@ public sealed class CopilotRequestHandlerProtocolTests
             _disposeCts.Dispose();
         }
 
-        private async Task<int> WriteRequestAsync(string method, Action<Utf8JsonWriter> writeParams)
+        private async Task WriteRequestAsync(string method, Action<Utf8JsonWriter> writeParams)
         {
             var id = Interlocked.Increment(ref _nextRequestId);
             await WriteFrameAsync(
@@ -790,7 +728,6 @@ public sealed class CopilotRequestHandlerProtocolTests
                     writer.WriteEndObject();
                 },
                 _disposeCts.Token);
-            return id;
         }
 
         private async Task ReadLoopAsync()

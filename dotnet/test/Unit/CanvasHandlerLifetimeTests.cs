@@ -3,10 +3,10 @@
  *--------------------------------------------------------------------------------------------*/
 
 #if NET8_0_OR_GREATER
-using Microsoft.Copilot.Rpc;
+using GitHub.Copilot.Rpc;
 using Xunit;
 
-namespace Microsoft.Copilot.Test.Unit;
+namespace GitHub.Copilot.Test.Unit;
 
 public sealed partial class ClientSessionLifetimeTests
 {
@@ -19,25 +19,21 @@ public sealed partial class ClientSessionLifetimeTests
         server.ResponseFactory = _ => new Dictionary<string, object?>();
         await using var client = new CopilotClient(new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForTcp(server.Host, server.Port)
+            Connection = RuntimeConnection.ForUri(server.Url)
         });
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions
+        await using var session = await client.CreateSessionAsync(new SessionConfig
         {
-            Canvases = new SessionCanvasOptions
+            CanvasHandler = new CloseCallbackCanvasHandler(async token =>
             {
-                Handler = new CloseCallbackCanvasHandler(async token =>
-        {
-            started.SetResult();
-            await release.Task.WaitAsync(token);
-            if (fail)
-            {
-                throw new InvalidOperationException("close handler failed");
-            }
-        })
-            }
+                started.SetResult();
+                await release.Task.WaitAsync(token);
+                if (fail)
+                {
+                    throw new InvalidOperationException("close handler failed");
+                }
+            })
         });
         var close = server.SendRequestAsync("canvas.close", CanvasCloseParams(session));
         try
@@ -74,23 +70,19 @@ public sealed partial class ClientSessionLifetimeTests
         server.ResponseFactory = _ => new Dictionary<string, object?>();
         await using var client = new CopilotClient(new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForTcp(server.Host, server.Port)
+            Connection = RuntimeConnection.ForUri(server.Url)
         });
         var started = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
         var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions
+        await using var session = await client.CreateSessionAsync(new SessionConfig
         {
-            Canvases = new SessionCanvasOptions
+            CanvasHandler = new CloseCallbackCanvasHandler(async token =>
             {
-                Handler = new CloseCallbackCanvasHandler(async token =>
-        {
-            using var registration = token.Register(() => cancelled.TrySetResult());
-            started.SetResult(token);
-            await release.Task;
-        })
-            }
+                using var registration = token.Register(() => cancelled.TrySetResult());
+                started.SetResult(token);
+                await release.Task;
+            })
         });
         var close = server.SendRequestAsync("canvas.close", CanvasCloseParams(session));
         _ = close.ContinueWith(

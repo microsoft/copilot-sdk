@@ -2,12 +2,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use copilot_sdk::handler::{
+use github_copilot_sdk::handler::{
     ApproveAllHandler, PermissionHandler, PermissionResult, UserInputHandler, UserInputResponse,
 };
-use copilot_sdk::tool::ToolHandler;
-use copilot_sdk::{
-    CreateSessionOptions, Error, RequestId, SessionId, Tool, ToolInvocation, ToolResult,
+use github_copilot_sdk::tool::ToolHandler;
+use github_copilot_sdk::{
+    Error, RequestId, SessionConfig, SessionId, Tool, ToolInvocation, ToolResult,
 };
 use serde_json::json;
 use tokio::sync::{Notify, mpsc};
@@ -30,10 +30,10 @@ async fn should_invoke_user_input_handler_when_model_uses_ask_user_tool() {
                 });
                 let session = client
                     .create_session(
-                        CreateSessionOptions::default()
-                            .with_github(|group| group.with_token(DEFAULT_TEST_TOKEN))
-                            .with_interaction(|group| group.with_on_user_input_request(handler.clone() as Arc<dyn UserInputHandler>))
-                            .with_permissions(|group| group.with_on_request(handler as Arc<dyn PermissionHandler>)),
+                        SessionConfig::default()
+                            .with_github_token(DEFAULT_TEST_TOKEN)
+                            .with_user_input_handler(handler.clone() as Arc<dyn UserInputHandler>)
+                            .with_permission_handler(handler as Arc<dyn PermissionHandler>),
                     )
                     .await
                     .expect("create session");
@@ -74,10 +74,10 @@ async fn should_receive_choices_in_user_input_request() {
                 });
                 let session = client
                     .create_session(
-                        CreateSessionOptions::default()
-                            .with_github(|group| group.with_token(DEFAULT_TEST_TOKEN))
-                            .with_interaction(|group| group.with_on_user_input_request(handler.clone() as Arc<dyn UserInputHandler>))
-                            .with_permissions(|group| group.with_on_request(handler as Arc<dyn PermissionHandler>)),
+                        SessionConfig::default()
+                            .with_github_token(DEFAULT_TEST_TOKEN)
+                            .with_user_input_handler(handler.clone() as Arc<dyn UserInputHandler>)
+                            .with_permission_handler(handler as Arc<dyn PermissionHandler>),
                     )
                     .await
                     .expect("create session");
@@ -121,10 +121,10 @@ async fn should_handle_freeform_user_input_response() {
                 });
                 let session = client
                     .create_session(
-                        CreateSessionOptions::default()
-                            .with_github(|group| group.with_token(DEFAULT_TEST_TOKEN))
-                            .with_interaction(|group| group.with_on_user_input_request(handler.clone() as Arc<dyn UserInputHandler>))
-                            .with_permissions(|group| group.with_on_request(handler as Arc<dyn PermissionHandler>)),
+                        SessionConfig::default()
+                            .with_github_token(DEFAULT_TEST_TOKEN)
+                            .with_user_input_handler(handler.clone() as Arc<dyn UserInputHandler>)
+                            .with_permission_handler(handler as Arc<dyn PermissionHandler>),
                     )
                     .await
                     .expect("create session");
@@ -185,17 +185,13 @@ async fn ask_user_does_not_block_sibling_tool_call_in_same_turn() {
 
                 let session = client
                     .create_session(
-                        CreateSessionOptions::default()
-                            .with_github(|group| group.with_token(DEFAULT_TEST_TOKEN))
-                            .with_permissions(|group| {
-                                group.with_on_request(Arc::new(ApproveAllHandler))
-                            })
-                            .with_interaction(|group| {
-                                group.with_on_user_input_request(
-                                    user_input_handler as Arc<dyn UserInputHandler>,
-                                )
-                            })
-                            .with_tools(|group| group.with_definitions(tools)),
+                        SessionConfig::default()
+                            .with_github_token(DEFAULT_TEST_TOKEN)
+                            .with_permission_handler(Arc::new(ApproveAllHandler))
+                            .with_user_input_handler(
+                                user_input_handler as Arc<dyn UserInputHandler>,
+                            )
+                            .with_tools(tools),
                     )
                     .await
                     .expect("create session");
@@ -279,7 +275,7 @@ impl PermissionHandler for RecordingUserInputHandler {
         &self,
         _session_id: SessionId,
         _request_id: RequestId,
-        _data: copilot_sdk::PermissionRequestData,
+        _data: github_copilot_sdk::PermissionRequestData,
     ) -> PermissionResult {
         PermissionResult::approve_once()
     }

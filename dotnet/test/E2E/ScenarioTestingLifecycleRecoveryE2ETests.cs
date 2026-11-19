@@ -8,7 +8,7 @@ using System.Text.Json;
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Microsoft.Copilot.Test.E2E;
+namespace GitHub.Copilot.Test.E2E;
 
 public class ScenarioTestingLifecycleRecoveryE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
     : ScenarioTestingE2ETestBase(fixture, "scenario_testing_lifecycle_recovery", output)
@@ -21,8 +21,11 @@ public class ScenarioTestingLifecycleRecoveryE2ETests(E2ETestFixture fixture, IT
         var toolStarted = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseTool = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        await using var session = await CreateSessionAsync(new CreateSessionOptions
-        { Events = new SessionEventOptions { Streaming = true }, Tools = new SessionToolOptions { Definitions = [AIFunctionFactory.Create(BlockingLookup, "scenario_blocking_lookup")] } });
+        await using var session = await CreateSessionAsync(new SessionConfig
+        {
+            Streaming = true,
+            Tools = [AIFunctionFactory.Create(BlockingLookup, "scenario_blocking_lookup")],
+        });
 
         _ = session.SendAsync(new MessageOptions
         {
@@ -70,21 +73,22 @@ public class ScenarioTestingLifecycleRecoveryE2ETests(E2ETestFixture fixture, IT
         const string connectionToken = "scenario-client-lifecycle-token";
         await using var server = Ctx.CreateClient(options: new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForSpawnedTcp(connectionToken: connectionToken)
+            Connection = RuntimeConnection.ForTcp(connectionToken: connectionToken),
         });
         await server.StartAsync();
-        var runtimePort = server.RuntimePort!.Value;
+        var cliUrl = $"localhost:{server.RuntimePort}";
 
         string sessionId;
         await using (var firstClient = Ctx.CreateClient(options: new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForTcp("localhost", runtimePort, connectionToken: connectionToken)
+            Connection = RuntimeConnection.ForUri(cliUrl, connectionToken: connectionToken),
         }))
         {
-            var firstSession = await Ctx.CreateSessionAsync(firstClient, new CreateSessionOptions
-            { Events = new SessionEventOptions { Streaming = true }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
+            var firstSession = await Ctx.CreateSessionAsync(firstClient, new SessionConfig
+            {
+                Streaming = true,
+                OnPermissionRequest = PermissionHandler.ApproveAll,
+            });
             sessionId = firstSession.SessionId;
             var initialized = await firstSession.SendAndWaitAsync(new MessageOptions
             {
@@ -100,11 +104,13 @@ public class ScenarioTestingLifecycleRecoveryE2ETests(E2ETestFixture fixture, IT
 
         await using var secondClient = Ctx.CreateClient(options: new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForTcp("localhost", runtimePort, connectionToken: connectionToken),
+            Connection = RuntimeConnection.ForUri(cliUrl, connectionToken: connectionToken),
         });
-        await using var resumed = await Ctx.ResumeSessionAsync(secondClient, sessionId, new ResumeSessionOptions
-        { Events = new SessionEventOptions { Streaming = true }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
+        await using var resumed = await Ctx.ResumeSessionAsync(secondClient, sessionId, new ResumeSessionConfig
+        {
+            Streaming = true,
+            OnPermissionRequest = PermissionHandler.ApproveAll,
+        });
 
         var response = await resumed.SendAndWaitAsync(new MessageOptions
         {
@@ -121,11 +127,10 @@ public class ScenarioTestingLifecycleRecoveryE2ETests(E2ETestFixture fixture, IT
         var (cliPath, capturePath) = await ScenarioTestingTestCli.CreateAsync(Ctx);
         await using var client = Ctx.CreateClient(options: new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForSpawnedStdio(
+            Connection = RuntimeConnection.ForStdio(
                 path: cliPath,
                 args: ["--capture-file", capturePath, "--behavior", "delete-not-found"]),
-            GitHub = new ClientGitHubOptions { UseLoggedInUser = false }
+            UseLoggedInUser = false,
         });
 
         const string missingId = "missing-scenario-client-session";
@@ -147,21 +152,24 @@ public class ScenarioTestingLifecycleRecoveryE2ETests(E2ETestFixture fixture, IT
         var (cliPath, capturePath) = await ScenarioTestingTestCli.CreateAsync(Ctx);
         await using var client = Ctx.CreateClient(options: new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForSpawnedStdio(
+            Connection = RuntimeConnection.ForStdio(
                 path: cliPath,
                 args: ["--capture-file", capturePath, "--behavior", "resume-not-found-once"]),
-            GitHub = new ClientGitHubOptions { UseLoggedInUser = false }
+            UseLoggedInUser = false,
         });
 
         const string sessionId = "scenario-client-retry-session";
         var first = await Assert.ThrowsAnyAsync<Exception>(() =>
-            Ctx.ResumeSessionAsync(client, sessionId, new ResumeSessionOptions
-            { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } }));
+            Ctx.ResumeSessionAsync(client, sessionId, new ResumeSessionConfig
+            {
+                OnPermissionRequest = PermissionHandler.ApproveAll,
+            }));
         Assert.Contains("Session not found", first.ToString(), StringComparison.OrdinalIgnoreCase);
 
-        await using var resumed = await Ctx.ResumeSessionAsync(client, sessionId, new ResumeSessionOptions
-        { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
+        await using var resumed = await Ctx.ResumeSessionAsync(client, sessionId, new ResumeSessionConfig
+        {
+            OnPermissionRequest = PermissionHandler.ApproveAll,
+        });
         Assert.Equal(sessionId, resumed.SessionId);
 
         var requests = await ScenarioTestingTestCli.ReadRequestsAsync(capturePath);

@@ -1,12 +1,11 @@
 #![cfg(windows)]
 
-use copilot_sdk::{RuntimeConnection, SpawnedTcpRuntimeOptions};
 use std::io;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::path::Path;
 use std::time::Duration;
 
-use copilot_sdk::{CliProgram, Client, ClientOptions};
+use github_copilot_sdk::{CliProgram, Client, ClientOptions, Transport};
 use windows_sys::Win32::System::Threading::{
     OpenProcess, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, TerminateProcess, WaitForSingleObject,
 };
@@ -81,19 +80,13 @@ impl Drop for FixtureProcess {
 
 fn options(fake: &ShutdownCli, tcp: bool) -> ClientOptions {
     let mut options = fake.options();
-    let Some(RuntimeConnection::SpawnedStdio(mut process)) = options.runtime.take() else {
-        panic!("stdio fixture")
-    };
-    process.args.push("--fixture-descendant".into());
+    options.prefix_args.push("--fixture-descendant".into());
     if tcp {
-        process.args.push("--fixture-tcp".into());
-        options.runtime = Some(RuntimeConnection::SpawnedTcp(SpawnedTcpRuntimeOptions {
-            process,
+        options.prefix_args.push("--fixture-tcp".into());
+        options.transport = Transport::Tcp {
             port: 0,
             connection_token: None,
-        }));
-    } else {
-        options.runtime = Some(RuntimeConnection::SpawnedStdio(process));
+        };
     }
     options
 }
@@ -219,42 +212,33 @@ async fn last_clone_drop_is_private_to_its_client_job() {
 async fn abrupt_host_exit_terminates_root_and_descendant_without_rust_cleanup() {
     for tcp in [false, true] {
         let fake = ShutdownCli::new("force");
-        let mut options = options(&fake, tcp);
-        let options = options
-            .runtime
-            .as_mut()
-            .unwrap()
-            .child_process_options_mut()
-            .unwrap();
-        let CliProgram::Path(program) = &options.program else {
+        let options = options(&fake, tcp);
+        let CliProgram::Path(program) = options.program else {
             panic!("fixture uses an explicit program");
         };
         let prefix: Vec<_> = options
-            .args
+            .prefix_args
             .iter()
             .map(|arg| arg.to_str().expect("fixture argument is UTF-8"))
             .collect();
         let host_pid_file = fake.dir.path().join("host-cli.pid");
-        let mut host = tokio::process::Command::new(
-            std::path::Path::new(env!("CARGO_BIN_EXE_copilot-host-crash-fixture"))
-                .canonicalize()
-                .unwrap(),
-        )
-        .env("HOST_CRASH_FIXTURE_PROGRAM", program)
-        .env(
-            "HOST_CRASH_FIXTURE_PREFIX_ARGS_JSON",
-            serde_json::to_string(&prefix).expect("fixture args"),
-        )
-        .env("HOST_CRASH_FIXTURE_CWD", fake.dir.path())
-        .env("HOST_CRASH_FIXTURE_ENV_JSON", "[]")
-        .env("HOST_CRASH_FIXTURE_PID_FILE", &host_pid_file)
-        .env(
-            "HOST_CRASH_FIXTURE_TRANSPORT",
-            if tcp { "tcp" } else { "stdio" },
-        )
-        .kill_on_drop(true)
-        .spawn()
-        .expect("spawn SDK host fixture");
+        let mut host =
+            tokio::process::Command::new(env!("CARGO_BIN_EXE_copilot-host-crash-fixture"))
+                .env("HOST_CRASH_FIXTURE_PROGRAM", program)
+                .env(
+                    "HOST_CRASH_FIXTURE_PREFIX_ARGS_JSON",
+                    serde_json::to_string(&prefix).expect("fixture args"),
+                )
+                .env("HOST_CRASH_FIXTURE_CWD", fake.dir.path())
+                .env("HOST_CRASH_FIXTURE_ENV_JSON", "[]")
+                .env("HOST_CRASH_FIXTURE_PID_FILE", &host_pid_file)
+                .env(
+                    "HOST_CRASH_FIXTURE_TRANSPORT",
+                    if tcp { "tcp" } else { "stdio" },
+                )
+                .kill_on_drop(true)
+                .spawn()
+                .expect("spawn SDK host fixture");
         let reported_root = published_pid(&host_pid_file).await;
         assert_eq!(reported_root, published_pid(&fake.pid_file).await);
         let (root, descendant) = retain_tree(&fake).await;

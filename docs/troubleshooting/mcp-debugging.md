@@ -26,24 +26,19 @@ Before diving deep, verify these basics:
 
 Add environment variables to your MCP server config:
 
-<!-- docs-validate: strict -->
 ```typescript
-const session = await client.createSession({
-    mcp: {
-        servers: {
-            "my-server": {
-                type: "local",
-                command: "/path/to/server",
-                args: [],
-                env: {
-                    MCP_DEBUG: "1",
-                    DEBUG: "*",
-                    NODE_DEBUG: "mcp", // For Node.js MCP servers
-                },
-            },
-        },
+mcpServers: {
+  "my-server": {
+    type: "local",
+    command: "/path/to/server",
+    args: [],
+    env: {
+      MCP_DEBUG: "1",
+      DEBUG: "*",
+      NODE_DEBUG: "mcp",  // For Node.js MCP servers
     },
-});
+  },
+}
 ```
 
 ## Testing MCP servers independently
@@ -121,7 +116,7 @@ Usage:
 | Wrong command path | Use absolute path: `/usr/local/bin/server` |
 | Missing executable permission | Run `chmod +x /path/to/server` |
 | Missing dependencies | Check with `ldd` (Linux) or run manually |
-| Working directory issues | Set `workingDirectory` in config |
+| Working directory issues | Set `cwd` in config |
 
 **Debug by running manually:**
 ```bash
@@ -186,7 +181,7 @@ cd /expected/working/dir
 
 ### Timeout errors
 
-**Symptoms:** Tool calls fail with `McpError: MCP error -32001: Request timed out`.
+**Symptoms:** `MCP tool call timed out` errors.
 
 **Solutions:**
 
@@ -241,7 +236,7 @@ cd /expected/working/dir
 
 <!-- docs-validate: hidden -->
 ```csharp
-using Microsoft.Copilot;
+using GitHub.Copilot;
 
 public static class McpDotnetConfigExample
 {
@@ -276,7 +271,7 @@ public static class McpDotnetConfigExample
     Args = new List<string>(),
     WorkingDirectory = @"C:\Tools\MyServer",  // Set working directory
     Tools = new List<string> { "*" },
-},
+}
 
 // For dotnet tool (DLL)
 ["my-dotnet-tool"] = new McpStdioServerConfig
@@ -292,7 +287,7 @@ public static class McpDotnetConfigExample
 
 <!-- docs-validate: hidden -->
 ```csharp
-using Microsoft.Copilot;
+using GitHub.Copilot;
 
 public static class McpNpxConfigExample
 {
@@ -347,18 +342,27 @@ xattr -d com.apple.quarantine /path/to/mcp-server
 #### Homebrew paths
 
 <!-- docs-validate: strict -->
+<!-- docs-validate: hidden -->
+```typescript
+import { MCPStdioServerConfig } from "@github/copilot-sdk";
+
+const mcpServers: Record<string, MCPStdioServerConfig> = {
+  "my-server": {
+    command: "/opt/homebrew/bin/node",
+    args: ["/path/to/server.js"],
+    tools: ["*"],
+  },
+};
+```
+<!-- /docs-validate: hidden -->
 ```typescript
 // GUI apps may not have /opt/homebrew in PATH
-const session = await client.createSession({
-    mcp: {
-        servers: {
-            "my-server": {
-                command: "/opt/homebrew/bin/node", // Full path
-                args: ["/path/to/server.js"],
-            },
-        },
-    },
-});
+mcpServers: {
+  "my-server": {
+    command: "/opt/homebrew/bin/node",  // Full path
+    args: ["/path/to/server.js"],
+  },
+}
 ```
 
 ### Linux
@@ -404,19 +408,13 @@ tee -a "$LOG" | "$ACTUAL_SERVER" "$@" 2>> "$LOG" | tee -a "$LOG"
 ```
 
 Use it:
-
-<!-- docs-validate: strict -->
 ```typescript
-const session = await client.createSession({
-    mcp: {
-        servers: {
-            "debug-server": {
-                command: "/path/to/mcp-debug-wrapper.sh",
-                args: ["/actual/server/path", "arg1", "arg2"],
-            },
-        },
-    },
-});
+mcpServers: {
+  "debug-server": {
+    command: "/path/to/mcp-debug-wrapper.sh",
+    args: ["/actual/server/path", "arg1", "arg2"],
+  },
+}
 ```
 
 ### Inspect with MCP inspector
@@ -448,7 +446,7 @@ If versions don't match, update your MCP server library.
 When opening an issue or asking for help, collect:
 
 * [ ] SDK language and version
-* [ ] Runtime version (`version` from `client.getStatus()`)
+* [ ] CLI version (`copilot --version`)
 * [ ] MCP server type (Node.js, Python, .NET, Go, Rust, and more)
 * [ ] Full MCP server configuration (redact secrets)
 * [ ] Result of manual `initialize` test

@@ -143,10 +143,7 @@ pub struct PreMcpToolCallInput {
 ///
 /// `meta_to_use` has tri-state semantics:
 /// - `None`: field is absent in JSON, meaning preserve existing `_meta`
-/// - `Some(Value::Null)`: serialized as JSON `null`, meaning drop hook-controlled
-///   `_meta`; the runtime still sends its own keys, `com.github.copilot/toolCallId`
-///   and `com.github.copilot/turnId` (present only when the turn was started with
-///   a [`client_turn_id`](crate::types::MessageOptions::client_turn_id))
+/// - `Some(Value::Null)`: serialized as JSON `null`, meaning omit `_meta`
 /// - `Some(Value::Object(...))`: serialized as JSON object, meaning replace `_meta`
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -718,8 +715,8 @@ impl HookOutput {
 ///    shared dispatch logic.
 ///
 /// Hooks only fire when hooks are enabled on the session (via
-/// [`SessionHookOptions::handlers`](crate::types::SessionHookOptions::handlers),
-/// which [`SessionHookOptions::with_handlers`](crate::types::SessionHookOptions::with_handlers)
+/// [`SessionConfig::hooks = Some(true)`](crate::types::SessionConfig::hooks),
+/// which [`SessionConfig::with_hooks`](crate::types::SessionConfig::with_hooks)
 /// sets automatically).
 #[async_trait]
 pub trait SessionHooks: Send + Sync + 'static {

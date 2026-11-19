@@ -4,7 +4,7 @@
 
 using System.Text.RegularExpressions;
 
-namespace Microsoft.Copilot.Test.Harness;
+namespace GitHub.Copilot.Test.Harness;
 
 public static class TestHelper
 {

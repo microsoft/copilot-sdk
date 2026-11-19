@@ -8,7 +8,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Xunit;
 
-namespace Microsoft.Copilot.Test.Unit;
+namespace GitHub.Copilot.Test.Unit;
 
 public class CopilotToolTests
 {
@@ -97,7 +97,7 @@ public class CopilotToolTests
     [Fact]
     public void Namespace_Uses_Sdk_Facing_Type()
     {
-        Assert.Equal("Microsoft.Copilot.ToolNamespace",
+        Assert.Equal("GitHub.Copilot.ToolNamespace",
             typeof(CopilotToolOptions).GetProperty(nameof(CopilotToolOptions.Namespace))!.PropertyType.FullName);
     }
 

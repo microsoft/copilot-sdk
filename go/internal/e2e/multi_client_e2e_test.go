@@ -9,22 +9,23 @@ import (
 	"testing"
 	"time"
 
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
-	"github.com/microsoft/copilot-sdk/go/v2/internal/e2e/testharness"
-	"github.com/microsoft/copilot-sdk/go/v2/rpc"
+	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/internal/e2e/testharness"
+	"github.com/github/copilot-sdk/go/rpc"
 )
 
 func TestMultiClientE2E(t *testing.T) {
-	t.Parallel()
 	// Use TCP mode so a second client can connect to the same CLI process
 	ctx := testharness.NewTestContext(t)
 	client1 := ctx.NewClient(func(opts *copilot.ClientOptions) {
-		useTCP(opts, 0, sharedTCPToken)
+		opts.Connection = copilot.TCPConnection{Path: opts.Connection.(copilot.StdioConnection).Path, ConnectionToken: sharedTCPToken}
 	})
 	t.Cleanup(func() { client1.ForceStop() })
 
 	// Trigger connection so we can read the port
-	initSession, err := client1.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}})
+	initSession, err := client1.CreateSession(t.Context(), &copilot.SessionConfig{
+		OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+	})
 	if err != nil {
 		t.Fatalf("Failed to create init session: %v", err)
 	}
@@ -35,7 +36,9 @@ func TestMultiClientE2E(t *testing.T) {
 		t.Fatalf("Expected non-zero port from TCP mode client")
 	}
 
-	client2 := copilot.NewClient(&copilot.ClientOptions{Mode: copilot.ModeCodingAgent, Runtime: copilot.TCPConnection{Host: "localhost", Port: runtimePort, ConnectionToken: sharedTCPToken}})
+	client2 := copilot.NewClient(&copilot.ClientOptions{
+		Connection: copilot.URIConnection{URL: fmt.Sprintf("localhost:%d", runtimePort), ConnectionToken: sharedTCPToken},
+	})
 	t.Cleanup(func() { client2.ForceStop() })
 
 	t.Run("both clients see tool request and completion events", func(t *testing.T) {
@@ -51,13 +54,18 @@ func TestMultiClientE2E(t *testing.T) {
 			})
 
 		// Client 1 creates a session with a custom tool
-		session1, err := client1.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Tools: copilot.SessionToolOptions{Definitions: []copilot.Tool{tool}}})
+		session1, err := client1.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			Tools:               []copilot.Tool{tool},
+		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
 		}
 
 		// Client 2 resumes with NO tools — should not overwrite client 1's tools
-		session2, err := client2.ResumeSession(t.Context(), session1.SessionID, &copilot.ResumeSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}})
+		session2, err := client2.ResumeSession(t.Context(), session1.SessionID, &copilot.ResumeSessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+		})
 		if err != nil {
 			t.Fatalf("Failed to resume session: %v", err)
 		}
@@ -131,21 +139,23 @@ func TestMultiClientE2E(t *testing.T) {
 		var mu sync.Mutex
 
 		// Client 1 creates a session and manually approves permission requests
-		session1, err := client1.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: func(request copilot.PermissionRequest, invocation copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
-			mu.Lock()
-			client1PermissionRequests = append(client1PermissionRequests, request)
-			mu.Unlock()
-			return &rpc.PermissionDecisionApproveOnce{}, nil
-		}},
+		session1, err := client1.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: func(request copilot.PermissionRequest, invocation copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
+				mu.Lock()
+				client1PermissionRequests = append(client1PermissionRequests, request)
+				mu.Unlock()
+				return &rpc.PermissionDecisionApproveOnce{}, nil
+			},
 		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
 		}
 
 		// Client 2 observes the permission request but leaves the decision to client 1.
-		session2, err := client2.ResumeSession(t.Context(), session1.SessionID, &copilot.ResumeSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: func(request copilot.PermissionRequest, invocation copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
-			return &rpc.PermissionDecisionNoResult{}, nil
-		}},
+		session2, err := client2.ResumeSession(t.Context(), session1.SessionID, &copilot.ResumeSessionConfig{
+			OnPermissionRequest: func(request copilot.PermissionRequest, invocation copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
+				return &rpc.PermissionDecisionNoResult{}, nil
+			},
 		})
 		if err != nil {
 			t.Fatalf("Failed to resume session: %v", err)
@@ -231,18 +241,20 @@ func TestMultiClientE2E(t *testing.T) {
 		ctx.ConfigureForTest(t)
 
 		// Client 1 creates a session and denies all permission requests
-		session1, err := client1.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: func(request copilot.PermissionRequest, invocation copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
-			return &rpc.PermissionDecisionReject{}, nil
-		}},
+		session1, err := client1.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: func(request copilot.PermissionRequest, invocation copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
+				return &rpc.PermissionDecisionReject{}, nil
+			},
 		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
 		}
 
 		// Client 2 observes the permission request but leaves the decision to client 1.
-		session2, err := client2.ResumeSession(t.Context(), session1.SessionID, &copilot.ResumeSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: func(request copilot.PermissionRequest, invocation copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
-			return &rpc.PermissionDecisionNoResult{}, nil
-		}},
+		session2, err := client2.ResumeSession(t.Context(), session1.SessionID, &copilot.ResumeSessionConfig{
+			OnPermissionRequest: func(request copilot.PermissionRequest, invocation copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
+				return &rpc.PermissionDecisionNoResult{}, nil
+			},
 		})
 		if err != nil {
 			t.Fatalf("Failed to resume session: %v", err)
@@ -342,13 +354,19 @@ func TestMultiClientE2E(t *testing.T) {
 			})
 
 		// Client 1 creates a session with tool A
-		session1, err := client1.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Tools: copilot.SessionToolOptions{Definitions: []copilot.Tool{toolA}}})
+		session1, err := client1.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			Tools:               []copilot.Tool{toolA},
+		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
 		}
 
 		// Client 2 resumes with tool B (different tool, union should have both)
-		session2, err := client2.ResumeSession(t.Context(), session1.SessionID, &copilot.ResumeSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Tools: copilot.SessionToolOptions{Definitions: []copilot.Tool{toolB}}})
+		session2, err := client2.ResumeSession(t.Context(), session1.SessionID, &copilot.ResumeSessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			Tools:               []copilot.Tool{toolB},
+		})
 		if err != nil {
 			t.Fatalf("Failed to resume session: %v", err)
 		}
@@ -411,13 +429,19 @@ func TestMultiClientE2E(t *testing.T) {
 			})
 
 		// Client 1 creates a session with stable_tool
-		session1, err := client1.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Tools: copilot.SessionToolOptions{Definitions: []copilot.Tool{toolA}}})
+		session1, err := client1.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			Tools:               []copilot.Tool{toolA},
+		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
 		}
 
 		// Client 2 resumes with ephemeral_tool
-		_, err = client2.ResumeSession(t.Context(), session1.SessionID, &copilot.ResumeSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Tools: copilot.SessionToolOptions{Definitions: []copilot.Tool{toolB}}})
+		_, err = client2.ResumeSession(t.Context(), session1.SessionID, &copilot.ResumeSessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			Tools:               []copilot.Tool{toolB},
+		})
 		if err != nil {
 			t.Fatalf("Failed to resume session: %v", err)
 		}
@@ -471,7 +495,9 @@ func TestMultiClientE2E(t *testing.T) {
 		}
 
 		// Recreate client2 for cleanup (but don't rejoin the session)
-		client2 = copilot.NewClient(&copilot.ClientOptions{Mode: copilot.ModeCodingAgent, Runtime: copilot.TCPConnection{Host: "localhost", Port: runtimePort, ConnectionToken: sharedTCPToken}})
+		client2 = copilot.NewClient(&copilot.ClientOptions{
+			Connection: copilot.URIConnection{URL: fmt.Sprintf("localhost:%d", runtimePort), ConnectionToken: sharedTCPToken},
+		})
 
 		// Now only stable_tool should be available
 		afterResponse, err := session1.SendAndWait(t.Context(), copilot.MessageOptions{

@@ -12,18 +12,18 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use copilot_sdk::handler::{
+use futures_util::FutureExt;
+use github_copilot_sdk::handler::{
     McpAuthHandler, McpAuthRequest, McpAuthResult, PermissionHandler, PermissionResult,
 };
-use copilot_sdk::session::PreparedSession;
-use copilot_sdk::session_events::PolicyHelperFailure;
-use copilot_sdk::subscription::{EventSubscription, RecvErrorKind};
-use copilot_sdk::types::{
-    CloudSessionOptions, CloudSessionRepository, CreateSessionOptions, MessageOptions,
-    PermissionRequestData, RequestId, ResumeSessionOptions, SessionId,
+use github_copilot_sdk::session::PreparedSession;
+use github_copilot_sdk::session_events::PolicyHelperFailure;
+use github_copilot_sdk::subscription::{EventSubscription, RecvErrorKind};
+use github_copilot_sdk::types::{
+    CloudSessionOptions, CloudSessionRepository, MessageOptions, PermissionRequestData, RequestId,
+    ResumeSessionConfig, SessionConfig, SessionId,
 };
-use copilot_sdk::{Client, ErrorKind, SessionErrorKind};
-use futures_util::FutureExt;
+use github_copilot_sdk::{Client, ErrorKind, SessionErrorKind};
 use serde_json::{Value, json};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, duplex};
 use tokio::time::timeout;
@@ -228,13 +228,7 @@ impl McpAuthHandler for CancelMcpAuthHandler {
 fn make_client() -> (Client, FakeServer) {
     let (client_write, server_read) = duplex(1 << 20);
     let (server_write, client_read) = duplex(1 << 20);
-    let client = Client::from_streams(
-        copilot_sdk::ClientMode::CodingAgent,
-        client_read,
-        client_write,
-        std::env::temp_dir(),
-    )
-    .unwrap();
+    let client = Client::from_streams(client_read, client_write, std::env::temp_dir()).unwrap();
     (
         client,
         FakeServer {
@@ -383,7 +377,7 @@ async fn expect_event_id(events: &mut EventSubscription, id: &str) {
 }
 
 /// Unwrap the error arm of a result whose `Ok` type is not `Debug`.
-fn expect_error<T>(result: Result<T, copilot_sdk::Error>) -> copilot_sdk::Error {
+fn expect_error<T>(result: Result<T, github_copilot_sdk::Error>) -> github_copilot_sdk::Error {
     match result {
         Ok(_) => panic!("expected an error"),
         Err(error) => error,
@@ -451,9 +445,9 @@ async fn prepared_create_delivers_pre_response_burst_to_concurrent_drain() {
 
     let prepared = client
         .prepare_session(
-            CreateSessionOptions::default()
+            SessionConfig::default()
                 .with_session_id(session_id.clone())
-                .with_events(|group| group.with_buffer_capacity(2048)),
+                .with_event_buffer_capacity(2048),
         )
         .unwrap();
     let mut events = prepared.subscribe();
@@ -484,9 +478,9 @@ async fn prepared_create_retains_burst_for_deferred_consumer() {
 
     let prepared = client
         .prepare_session(
-            CreateSessionOptions::default()
+            SessionConfig::default()
                 .with_session_id(session_id.clone())
-                .with_events(|group| group.with_buffer_capacity(2048)),
+                .with_event_buffer_capacity(2048),
         )
         .unwrap();
     let mut events = prepared.subscribe();
@@ -515,9 +509,9 @@ async fn prepared_resume_delivers_pre_response_burst() {
 
     let prepared = client
         .prepare_resume_session(
-            ResumeSessionOptions::new(session_id.clone())
+            ResumeSessionConfig::new(session_id.clone())
                 .with_continue_pending_work(true)
-                .with_events(|group| group.with_buffer_capacity(2048)),
+                .with_event_buffer_capacity(2048),
         )
         .unwrap();
     let mut events = prepared.subscribe();
@@ -560,12 +554,10 @@ async fn undersized_buffer_reports_lag_and_keeps_live_tail() {
 
     let prepared = client
         .prepare_session(
-            CreateSessionOptions::default()
+            SessionConfig::default()
                 .with_session_id(session_id.clone())
-                .with_events(|group| group.with_buffer_capacity(8))
-                .with_permissions(|group| {
-                    group.with_on_request(Arc::new(PublicationFence(published.clone())))
-                }),
+                .with_event_buffer_capacity(8)
+                .with_permission_handler(Arc::new(PublicationFence(published.clone()))),
         )
         .unwrap();
     let mut events = prepared.subscribe();
@@ -613,7 +605,7 @@ async fn undersized_buffer_reports_lag_and_keeps_live_tail() {
 // 5 + 6. Inertness before start, and drop of an unstarted handle
 // ---------------------------------------------------------------------------
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn prepare_is_inert_until_start_is_polled() {
     let (client, mut server) = make_client();
     let session_id = SessionId::new("prepared-inert");
@@ -622,7 +614,7 @@ async fn prepare_is_inert_until_start_is_polled() {
         .metrics()
         .num_alive_tasks();
     let prepared = client
-        .prepare_session(CreateSessionOptions::default().with_session_id(session_id.clone()))
+        .prepare_session(SessionConfig::default().with_session_id(session_id.clone()))
         .unwrap();
     let _events = prepared.subscribe();
 
@@ -652,13 +644,13 @@ async fn prepare_is_inert_until_start_is_polled() {
     drop(session);
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn dropping_unstarted_prepared_session_leaves_no_state() {
     let (client, mut server) = make_client();
     let session_id = SessionId::new("prepared-dropped");
 
     let prepared = client
-        .prepare_session(CreateSessionOptions::default().with_session_id(session_id.clone()))
+        .prepare_session(SessionConfig::default().with_session_id(session_id.clone()))
         .unwrap();
     let mut events = prepared.subscribe();
     drop(prepared);
@@ -685,7 +677,7 @@ async fn cancelled_prepared_create_cleans_up_and_allows_retry() {
     let session_id = SessionId::new("prepared-create-cancel");
 
     let prepared = client
-        .prepare_session(CreateSessionOptions::default().with_session_id(session_id.clone()))
+        .prepare_session(SessionConfig::default().with_session_id(session_id.clone()))
         .unwrap();
     let mut events = prepared.subscribe();
     let start = tokio::spawn(prepared.start());
@@ -702,7 +694,7 @@ async fn cancelled_prepared_create_cleans_up_and_allows_retry() {
     // A retry with the same session ID succeeds.
     let retry = tokio::spawn(
         client
-            .prepare_session(CreateSessionOptions::default().with_session_id(session_id.clone()))
+            .prepare_session(SessionConfig::default().with_session_id(session_id.clone()))
             .unwrap()
             .start(),
     );
@@ -722,7 +714,7 @@ async fn cancelled_prepared_resume_cleans_up_and_allows_retry() {
     let session_id = SessionId::new("prepared-resume-cancel");
 
     let prepared = client
-        .prepare_resume_session(ResumeSessionOptions::new(session_id.clone()))
+        .prepare_resume_session(ResumeSessionConfig::new(session_id.clone()))
         .unwrap();
     let mut events = prepared.subscribe();
     let start = tokio::spawn(prepared.start());
@@ -737,7 +729,7 @@ async fn cancelled_prepared_resume_cleans_up_and_allows_retry() {
 
     let retry = tokio::spawn(
         client
-            .prepare_resume_session(ResumeSessionOptions::new(session_id.clone()))
+            .prepare_resume_session(ResumeSessionConfig::new(session_id.clone()))
             .unwrap()
             .start(),
     );
@@ -765,7 +757,7 @@ async fn create_rpc_error_preserves_kind_and_cleans_up() {
     });
 
     let prepared = client
-        .prepare_session(CreateSessionOptions::default().with_session_id(session_id.clone()))
+        .prepare_session(SessionConfig::default().with_session_id(session_id.clone()))
         .unwrap();
     let mut events = prepared.subscribe();
     let start = tokio::spawn(prepared.start());
@@ -804,7 +796,7 @@ async fn resume_rpc_error_preserves_data_and_cleans_up() {
     });
 
     let prepared = client
-        .prepare_resume_session(ResumeSessionOptions::new(session_id))
+        .prepare_resume_session(ResumeSessionConfig::new(session_id))
         .unwrap();
     let mut events = prepared.subscribe();
     let start = tokio::spawn(prepared.start());
@@ -837,7 +829,7 @@ async fn create_result_parse_error_preserves_kind_and_cleans_up() {
     let (client, mut server) = make_client();
     let session_id = SessionId::new("prepared-create-parse-error");
     let prepared = client
-        .prepare_session(CreateSessionOptions::default().with_session_id(session_id))
+        .prepare_session(SessionConfig::default().with_session_id(session_id))
         .unwrap();
     let mut events = prepared.subscribe();
     let start = tokio::spawn(prepared.start());
@@ -859,7 +851,7 @@ async fn create_session_id_mismatch_preserves_kind_and_cleans_up() {
     let session_id = SessionId::new("prepared-mismatch");
 
     let prepared = client
-        .prepare_session(CreateSessionOptions::default().with_session_id(session_id.clone()))
+        .prepare_session(SessionConfig::default().with_session_id(session_id.clone()))
         .unwrap();
     let mut events = prepared.subscribe();
     let start = tokio::spawn(prepared.start());
@@ -890,7 +882,7 @@ async fn resume_session_id_mismatch_preserves_kind_and_cleans_up() {
     let session_id = SessionId::new("prepared-resume-mismatch");
 
     let prepared = client
-        .prepare_resume_session(ResumeSessionOptions::new(session_id.clone()))
+        .prepare_resume_session(ResumeSessionConfig::new(session_id.clone()))
         .unwrap();
     let mut events = prepared.subscribe();
     let start = tokio::spawn(prepared.start());
@@ -925,9 +917,9 @@ async fn create_mcp_auth_interest_error_preserves_kind_and_cleans_up() {
 
     let prepared = client
         .prepare_session(
-            CreateSessionOptions::default()
+            SessionConfig::default()
                 .with_session_id(session_id.clone())
-                .with_mcp(|group| group.with_on_auth_request(Arc::new(CancelMcpAuthHandler))),
+                .with_mcp_auth_handler(Arc::new(CancelMcpAuthHandler)),
         )
         .unwrap();
     let mut events = prepared.subscribe();
@@ -959,15 +951,15 @@ async fn create_mcp_auth_interest_error_preserves_kind_and_cleans_up() {
 /// The resume counterpart. Interest registration runs before the
 /// best-effort `session.skills.reload`, so a failure must abort the
 /// startup without issuing the reload.
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn resume_mcp_auth_interest_error_preserves_kind_and_cleans_up() {
     let (client, mut server) = make_client();
     let session_id = SessionId::new("prepared-resume-interest-error");
 
     let prepared = client
         .prepare_resume_session(
-            ResumeSessionOptions::new(session_id.clone())
-                .with_mcp(|group| group.with_on_auth_request(Arc::new(CancelMcpAuthHandler))),
+            ResumeSessionConfig::new(session_id.clone())
+                .with_mcp_auth_handler(Arc::new(CancelMcpAuthHandler)),
         )
         .unwrap();
     let mut events = prepared.subscribe();
@@ -1000,25 +992,20 @@ async fn resume_mcp_auth_interest_error_preserves_kind_and_cleans_up() {
 async fn zero_event_buffer_capacity_is_invalid_config() {
     let (client, _server) = make_client();
 
-    let error = expect_error(client.prepare_session(
-        CreateSessionOptions::default().with_events(|group| group.with_buffer_capacity(0)),
-    ));
+    let error = expect_error(
+        client.prepare_session(SessionConfig::default().with_event_buffer_capacity(0)),
+    );
     assert!(matches!(error.kind(), ErrorKind::InvalidConfig));
 
-    let error = expect_error(
-        client.prepare_resume_session(
-            ResumeSessionOptions::new(SessionId::new("zero"))
-                .with_events(|group| group.with_buffer_capacity(0)),
-        ),
-    );
+    let error = expect_error(client.prepare_resume_session(
+        ResumeSessionConfig::new(SessionId::new("zero")).with_event_buffer_capacity(0),
+    ));
     assert!(matches!(error.kind(), ErrorKind::InvalidConfig));
 
     // The compatibility wrappers surface the same error.
     let error = expect_error(
         client
-            .create_session(
-                CreateSessionOptions::default().with_events(|group| group.with_buffer_capacity(0)),
-            )
+            .create_session(SessionConfig::default().with_event_buffer_capacity(0))
             .await,
     );
     assert!(matches!(error.kind(), ErrorKind::InvalidConfig));
@@ -1028,16 +1015,16 @@ async fn zero_event_buffer_capacity_is_invalid_config() {
 // 9. Early and late subscribers share one event loop
 // ---------------------------------------------------------------------------
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn early_and_late_subscribers_share_one_event_loop() {
     let (client, mut server) = make_client();
     let session_id = SessionId::new("prepared-two-subscribers");
 
     let prepared = client
         .prepare_session(
-            CreateSessionOptions::default()
+            SessionConfig::default()
                 .with_session_id(session_id.clone())
-                .with_events(|group| group.with_buffer_capacity(2048)),
+                .with_event_buffer_capacity(2048),
         )
         .unwrap();
     let mut early = prepared.subscribe();
@@ -1104,7 +1091,61 @@ async fn early_and_late_subscribers_share_one_event_loop() {
 // 10. Compatibility wrappers
 // ---------------------------------------------------------------------------
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
+async fn create_session_wrapper_keeps_rpc_sequence() {
+    let (client, mut server) = make_client();
+
+    let start = tokio::spawn({
+        let client = client.clone();
+        async move { client.create_session(SessionConfig::default()).await }
+    });
+
+    let create_req = server.read_request().await;
+    assert_eq!(create_req["method"], "session.create");
+    let session_id = create_req["params"]["sessionId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    server
+        .respond(&create_req, create_result(&session_id))
+        .await;
+
+    let session = timeout(TIMEOUT, start).await.unwrap().unwrap().unwrap();
+    assert_eq!(session.id().as_str(), session_id);
+    server.expect_quiet().await;
+    drop(session);
+}
+
+#[tokio::test]
+async fn resume_session_wrapper_keeps_rpc_sequence() {
+    let (client, mut server) = make_client();
+    let session_id = SessionId::new("wrapper-resume");
+
+    let start = tokio::spawn({
+        let client = client.clone();
+        let session_id = session_id.clone();
+        async move {
+            client
+                .resume_session(ResumeSessionConfig::new(session_id))
+                .await
+        }
+    });
+
+    let resume_req = server.read_request().await;
+    assert_eq!(resume_req["method"], "session.resume");
+    assert_eq!(resume_req["params"]["sessionId"], session_id.as_str());
+    server
+        .respond(&resume_req, json!({ "sessionId": session_id.as_str() }))
+        .await;
+    server.answer_skills_reload().await;
+
+    let session = timeout(TIMEOUT, start).await.unwrap().unwrap().unwrap();
+    assert_eq!(session.id(), &session_id);
+    server.expect_quiet().await;
+    drop(session);
+}
+
+#[tokio::test]
 async fn resume_bootstrap_retains_all_startup_phases_and_keeps_later_subscribers_live() {
     let (client, mut server) = make_client();
     let session_id = SessionId::new("resume-bootstrap-phases");
@@ -1116,14 +1157,10 @@ async fn resume_bootstrap_retains_all_startup_phases_and_keeps_later_subscribers
         async move {
             client
                 .resume_session(
-                    ResumeSessionOptions::new(session_id)
-                        .with_events(|group| group.with_buffer_capacity(1))
-                        .with_permissions(|group| {
-                            group.with_on_request(Arc::new(PublicationFence(published)))
-                        })
-                        .with_mcp(|group| {
-                            group.with_on_auth_request(Arc::new(CancelMcpAuthHandler))
-                        }),
+                    ResumeSessionConfig::new(session_id)
+                        .with_event_buffer_capacity(1)
+                        .with_permission_handler(Arc::new(PublicationFence(published)))
+                        .with_mcp_auth_handler(Arc::new(CancelMcpAuthHandler)),
                 )
                 .await
         }
@@ -1236,19 +1273,19 @@ async fn check_structured_output_preserves_bootstrap(cancel: bool) {
     let (client, mut server) = make_client();
     let session_id = SessionId::new("resume-structured-output");
     let published = Arc::new(tokio::sync::Notify::new());
-    let start =
-        tokio::spawn({
-            let client = client.clone();
-            let session_id = session_id.clone();
-            let published = published.clone();
-            async move {
-                client
-                    .resume_session(ResumeSessionOptions::new(session_id).with_permissions(
-                        |group| group.with_on_request(Arc::new(PublicationFence(published))),
-                    ))
-                    .await
-            }
-        });
+    let start = tokio::spawn({
+        let client = client.clone();
+        let session_id = session_id.clone();
+        let published = published.clone();
+        async move {
+            client
+                .resume_session(
+                    ResumeSessionConfig::new(session_id)
+                        .with_permission_handler(Arc::new(PublicationFence(published))),
+                )
+                .await
+        }
+    });
     let resume = server.read_request().await;
     server
         .send_event(session_id.as_str(), "startup-idle", "session.idle", true)
@@ -1327,7 +1364,7 @@ async fn populated_resume_bootstrap_cleans_up_after_setup_failure() {
     check_populated_resume_cleanup(false).await;
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn populated_resume_bootstrap_cleans_up_after_setup_cancellation() {
     check_populated_resume_cleanup(true).await;
 }
@@ -1343,13 +1380,9 @@ async fn check_populated_resume_cleanup(cancel: bool) {
         async move {
             client
                 .resume_session(
-                    ResumeSessionOptions::new(session_id)
-                        .with_permissions(|group| {
-                            group.with_on_request(Arc::new(PublicationFence(published)))
-                        })
-                        .with_mcp(|group| {
-                            group.with_on_auth_request(Arc::new(CancelMcpAuthHandler))
-                        }),
+                    ResumeSessionConfig::new(session_id)
+                        .with_permission_handler(Arc::new(PublicationFence(published)))
+                        .with_mcp_auth_handler(Arc::new(CancelMcpAuthHandler)),
                 )
                 .await
         }
@@ -1388,7 +1421,7 @@ async fn check_populated_resume_cleanup(cancel: bool) {
         let session_id = session_id.clone();
         async move {
             client
-                .resume_session(ResumeSessionOptions::new(session_id))
+                .resume_session(ResumeSessionConfig::new(session_id))
                 .await
         }
     });
@@ -1431,11 +1464,9 @@ async fn check_stopping_resume_bootstrap(claim: bool) {
         async move {
             let prepared = client
                 .prepare_resume_session(
-                    ResumeSessionOptions::new(session_id)
-                        .with_events(|group| group.with_buffer_capacity(1))
-                        .with_permissions(|group| {
-                            group.with_on_request(Arc::new(PublicationFence(published)))
-                        }),
+                    ResumeSessionConfig::new(session_id)
+                        .with_event_buffer_capacity(1)
+                        .with_permission_handler(Arc::new(PublicationFence(published))),
                 )
                 .unwrap();
             // A dropped prepared observer is not active at startup.
@@ -1498,11 +1529,9 @@ async fn active_prepared_resume_subscription_remains_bounded() {
     let published = Arc::new(tokio::sync::Notify::new());
     let prepared = client
         .prepare_resume_session(
-            ResumeSessionOptions::new(session_id.clone())
-                .with_events(|group| group.with_buffer_capacity(1))
-                .with_permissions(|group| {
-                    group.with_on_request(Arc::new(PublicationFence(published.clone())))
-                }),
+            ResumeSessionConfig::new(session_id.clone())
+                .with_event_buffer_capacity(1)
+                .with_permission_handler(Arc::new(PublicationFence(published.clone()))),
         )
         .unwrap();
     let mut events = prepared.subscribe();
@@ -1582,7 +1611,7 @@ fn prepared_session_is_send_static_and_not_clone() {
 /// which fails loudly on its own timeout if it did not.
 const DRIVE: Duration = Duration::from_millis(50);
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn stale_create_guard_does_not_unregister_same_id_retry() {
     let (client, mut server) = make_client();
     let session_id = SessionId::new("stale-create-guard");
@@ -1590,7 +1619,7 @@ async fn stale_create_guard_does_not_unregister_same_id_retry() {
     // First attempt: registers, sends `session.create`, then parks.
     let mut first = Box::pin(
         client
-            .prepare_session(CreateSessionOptions::default().with_session_id(session_id.clone()))
+            .prepare_session(SessionConfig::default().with_session_id(session_id.clone()))
             .unwrap()
             .start(),
     );
@@ -1602,9 +1631,9 @@ async fn stale_create_guard_does_not_unregister_same_id_retry() {
     // dropped, so it replaces the first attempt's router registration.
     let prepared = client
         .prepare_session(
-            CreateSessionOptions::default()
+            SessionConfig::default()
                 .with_session_id(session_id.clone())
-                .with_events(|group| group.with_buffer_capacity(64)),
+                .with_event_buffer_capacity(64),
         )
         .unwrap();
     let mut events = prepared.subscribe();
@@ -1640,14 +1669,14 @@ async fn stale_create_guard_does_not_unregister_same_id_retry() {
     drop(session);
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn stale_resume_guard_does_not_unregister_same_id_retry() {
     let (client, mut server) = make_client();
     let session_id = SessionId::new("stale-resume-guard");
 
     let mut first = Box::pin(
         client
-            .prepare_resume_session(ResumeSessionOptions::new(session_id.clone()))
+            .prepare_resume_session(ResumeSessionConfig::new(session_id.clone()))
             .unwrap()
             .start(),
     );
@@ -1655,19 +1684,9 @@ async fn stale_resume_guard_does_not_unregister_same_id_retry() {
     let first_req = server.read_request().await;
     assert_eq!(first_req["method"], "session.resume");
 
-    // Keep the first startup guard pending on skills reload so the ordinary
-    // retry can replace it before the first caller is cancelled.
-    server
-        .respond(&first_req, json!({ "sessionId": session_id.as_str() }))
-        .await;
-    let _ = timeout(DRIVE, &mut first).await;
-    let first_reload = server.read_request().await;
-    assert_eq!(first_reload["method"], "session.skills.reload");
-
     let prepared = client
         .prepare_resume_session(
-            ResumeSessionOptions::new(session_id.clone())
-                .with_events(|group| group.with_buffer_capacity(64)),
+            ResumeSessionConfig::new(session_id.clone()).with_event_buffer_capacity(64),
         )
         .unwrap();
     let mut events = prepared.subscribe();
@@ -1703,8 +1722,6 @@ async fn stale_resume_guard_does_not_unregister_same_id_retry() {
     let event = timeout(TIMEOUT, events.recv()).await.unwrap().unwrap();
     assert_eq!(event.id.as_str(), "evt-after-stale");
     drop(session);
-    expect_closed(&mut events).await;
-    await_no_registrations(&client).await;
 }
 
 /// A disconnected session must not unregister a same-ID session that
@@ -1716,7 +1733,7 @@ async fn dropping_superseded_session_does_not_unregister_its_replacement() {
 
     let first = tokio::spawn(
         client
-            .prepare_session(CreateSessionOptions::default().with_session_id(session_id.clone()))
+            .prepare_session(SessionConfig::default().with_session_id(session_id.clone()))
             .unwrap()
             .start(),
     );
@@ -1728,9 +1745,9 @@ async fn dropping_superseded_session_does_not_unregister_its_replacement() {
 
     let prepared = client
         .prepare_session(
-            CreateSessionOptions::default()
+            SessionConfig::default()
                 .with_session_id(session_id.clone())
-                .with_events(|group| group.with_buffer_capacity(64)),
+                .with_event_buffer_capacity(64),
         )
         .unwrap();
     let mut events = prepared.subscribe();
@@ -1769,12 +1786,12 @@ async fn dropping_superseded_session_does_not_unregister_its_replacement() {
 /// Cancelling a cloud create before the response arrives must leave no
 /// registration behind, even though the session ID is only known to the
 /// inline response callback.
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn cancelled_deferred_create_leaves_no_registration() {
     let (client, mut server) = make_client();
 
     let prepared = client
-        .prepare_session(CreateSessionOptions::default().with_cloud(cloud_options()))
+        .prepare_session(SessionConfig::default().with_cloud(cloud_options()))
         .unwrap();
     let mut events = prepared.subscribe();
     let start = tokio::spawn(prepared.start());
@@ -1803,7 +1820,7 @@ async fn cancelled_deferred_create_leaves_no_registration() {
     // A fresh cloud create still works afterwards.
     let retry = tokio::spawn(
         client
-            .prepare_session(CreateSessionOptions::default().with_cloud(cloud_options()))
+            .prepare_session(SessionConfig::default().with_cloud(cloud_options()))
             .unwrap()
             .start(),
     );
@@ -1843,12 +1860,12 @@ async fn await_registered(client: &Client, session_id: &str) {
 /// response and never polled again, so the callback (which runs on the
 /// JSON-RPC read task, independently of the caller) is guaranteed to have
 /// registered before the future is dropped.
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn deferred_create_cancelled_after_callback_registered_is_cleaned_up() {
     let (client, mut server) = make_client();
 
     let prepared = client
-        .prepare_session(CreateSessionOptions::default().with_cloud(cloud_options()))
+        .prepare_session(SessionConfig::default().with_cloud(cloud_options()))
         .unwrap();
     let mut events = prepared.subscribe();
     let mut start = Box::pin(prepared.start());
@@ -1876,7 +1893,7 @@ async fn deferred_create_cancelled_after_callback_registered_is_cleaned_up() {
     // attempt's cleanup interfering.
     let retry = tokio::spawn(
         client
-            .prepare_session(CreateSessionOptions::default().with_cloud(cloud_options()))
+            .prepare_session(SessionConfig::default().with_cloud(cloud_options()))
             .unwrap()
             .start(),
     );

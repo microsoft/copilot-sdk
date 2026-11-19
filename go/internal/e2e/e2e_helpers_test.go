@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
+	copilot "github.com/github/copilot-sdk/go"
 )
 
 func assistantContent(t *testing.T, event *copilot.SessionEvent) string {
@@ -103,23 +103,7 @@ func rpcPtr[T any](value T) *T {
 	return &value
 }
 
-func useTCP(options *copilot.ClientOptions, port int, token string) {
-	stdio := options.Runtime.(copilot.SpawnedStdioConnection)
-	options.Runtime = copilot.SpawnedTCPConnection{
-		Path:                      stdio.Path,
-		Args:                      stdio.Args,
-		Env:                       stdio.Env,
-		WorkingDirectory:          stdio.WorkingDirectory,
-		BaseDirectory:             stdio.BaseDirectory,
-		SessionIdleTimeoutSeconds: stdio.SessionIdleTimeoutSeconds,
-		Port:                      port,
-		ConnectionToken:           token,
-	}
-}
-
-func waitForListedSessions(t *testing.T, client interface {
-	ListSessions(context.Context, *copilot.SessionListFilter) ([]copilot.SessionMetadata, error)
-}, ids ...string) []copilot.SessionMetadata {
+func waitForListedSessions(t *testing.T, client *copilot.Client, ids ...string) []copilot.SessionMetadata {
 	t.Helper()
 	return waitForPersistedValue(t, "persisted sessions to appear in list", func(ctx context.Context) ([]copilot.SessionMetadata, error) {
 		return client.ListSessions(ctx, nil)

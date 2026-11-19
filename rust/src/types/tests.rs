@@ -6,82 +6,17 @@
 
 use std::path::PathBuf;
 
-use serde_json::{Value, json};
+use serde_json::json;
 
 use super::{
-    Attachment, AttachmentSelectionPosition, AttachmentSelectionRange, CreateSessionOptions,
-    GitHubReferenceType, McpServerConfig, McpStdioServerConfig, PermissionRequestData,
-    ProviderConfig, ResumeSessionOptions, SessionId, Tool, ensure_attachment_display_names,
+    Attachment, AttachmentSelectionPosition, AttachmentSelectionRange, GitHubReferenceType,
+    McpServerConfig, McpStdioServerConfig, PermissionRequestData, ProviderConfig,
+    ResumeSessionConfig, SessionConfig, SessionId, Tool, ensure_attachment_display_names,
 };
 use crate::generated::session_events::{
     AssistedApprovalAssessment, AssistedApprovalCompletedRecommendation,
 };
 use crate::rpc::SandboxConfig;
-
-#[test]
-fn local_model_configuration_survives_public_type_serialization() {
-    let provider = json!({
-        "name": "local", "type": "winml", "baseUrl": "model.gguf",
-        "localModel": { "device": "gpu", "future": [1, true] },
-    });
-    let model = json!({
-        "id": "model", "provider": "local",
-        "autoLocal": { "source": "azureml", "future": [1, true] },
-        "metadata": { "autoLocal": { "source": "azureml" }, "future": [1, true] },
-    });
-    let decoded: super::NamedProviderConfig = serde_json::from_value(provider.clone()).unwrap();
-    assert_eq!(serde_json::to_value(decoded).unwrap(), provider);
-    let decoded: super::ProviderModelConfig = serde_json::from_value(model.clone()).unwrap();
-    assert_eq!(serde_json::to_value(decoded).unwrap(), model);
-}
-
-#[test]
-fn permission_request_conversion_preserves_original_json_and_borrowed_data() {
-    for original in [
-        json!({
-            "kind": "future-permission",
-            "path": "/workspace/report.txt",
-            "managedApprovalRequired": null,
-            "permissionRequest": {"nested": "request-specific field"},
-            "future": {"nullable": null, "values": [false, 0, {"key": "value"}]},
-        }),
-        json!(null),
-        json!([null, {"future": ["nested"]}]),
-    ] {
-        let data = PermissionRequestData {
-            extra: json!({
-                "requestId": "permission-1",
-                "permissionRequest": original,
-                "futureEnvelopeField": "not part of the original request",
-            }),
-            ..Default::default()
-        };
-        let before = serde_json::to_value(&data).unwrap();
-        assert_eq!(Value::from(&data), original);
-        assert_eq!(serde_json::to_value(&data).unwrap(), before);
-        assert_eq!(Value::from(data), original);
-    }
-}
-
-#[test]
-fn permission_request_conversion_preserves_legacy_direct_json() {
-    for original in [
-        json!({
-            "kind": "write",
-            "path": "/workspace/report.txt",
-            "future": {"nullable": null, "values": [false, 0, {"key": "value"}]},
-        }),
-        json!(null),
-        json!([null, {"future": ["nested"]}]),
-    ] {
-        let data = PermissionRequestData {
-            extra: original.clone(),
-            ..Default::default()
-        };
-        assert_eq!(Value::from(&data), original);
-        assert_eq!(Value::from(data), original);
-    }
-}
 
 #[test]
 fn permission_request_exposes_assisted_approval_assessment() {
@@ -114,251 +49,9 @@ fn permission_request_exposes_assisted_approval_assessment() {
 }
 
 #[test]
-fn programmatic_event_provenance_preserves_legacy_payloads() {
-    use serde::Serialize;
-    use serde::de::DeserializeOwned;
-
-    use super::ProgrammaticToolCallData;
-    use crate::session_events::{
-        PermissionRequestedData, ToolExecutionCompleteData, ToolExecutionStartData,
-    };
-
-    fn assert_round_trip<T: DeserializeOwned + Serialize>(data: serde_json::Value) {
-        for parent_id in [None, Some("program-root")] {
-            let mut wire = data.clone();
-            if let Some(parent_id) = parent_id {
-                wire["programToolCallId"] = json!(parent_id);
-            }
-            let legacy: T = serde_json::from_value(wire.clone()).unwrap();
-            assert_eq!(serde_json::to_value(legacy).unwrap(), data);
-            let enriched: ProgrammaticToolCallData<T> =
-                serde_json::from_value(wire.clone()).unwrap();
-            assert_eq!(enriched.program_tool_call_id.as_deref(), parent_id);
-            assert_eq!(serde_json::to_value(&enriched.data).unwrap(), data);
-            assert_eq!(serde_json::to_value(enriched).unwrap(), wire);
-        }
-    }
-
-    assert_round_trip::<PermissionRequestedData>(json!({
-        "requestId": "permission-1",
-        "permissionRequest": {
-            "kind": "read",
-            "path": "fixture.rs",
-            "intention": "inspect"
-        }
-    }));
-    assert_round_trip::<ToolExecutionStartData>(json!({
-        "toolCallId": "child-1",
-        "toolName": "view"
-    }));
-    assert_round_trip::<ToolExecutionCompleteData>(json!({
-        "toolCallId": "child-1",
-        "success": true
-    }));
-}
-
-#[test]
-fn programmatic_typed_events_preserve_parent_ownership() {
-    use super::{ProgrammaticToolCallEvent, SessionEventWithMetadata};
-
-    for (event_type, data) in [
-        (
-            "tool.execution_start",
-            json!({
-                "toolCallId": "child-1",
-                "toolName": "view",
-                "arguments": {"programToolCallId": "ordinary-argument"}
-            }),
-        ),
-        (
-            "tool.execution_complete",
-            json!({"toolCallId": "child-1", "success": true}),
-        ),
-        (
-            "permission.requested",
-            json!({
-                "requestId": "permission-1",
-                "permissionRequest": {
-                    "kind": "read",
-                    "path": "fixture.rs",
-                    "intention": "inspect"
-                }
-            }),
-        ),
-    ] {
-        let plain_wire = json!({
-            "id": "event-1",
-            "timestamp": "2026-11-05T00:00:00Z",
-            "parentId": "event-0",
-            "ephemeral": false,
-            "agentId": "agent-1",
-            "type": event_type,
-            "data": data
-        });
-        for parent_id in [None, Some("program-root")] {
-            let mut wire = plain_wire.clone();
-            if let Some(parent_id) = parent_id {
-                wire["data"]["programToolCallId"] = json!(parent_id);
-            }
-            let typed: ProgrammaticToolCallEvent = serde_json::from_value(wire.clone()).unwrap();
-            assert_eq!(typed.program_tool_call_id.as_deref(), parent_id);
-            assert_eq!(serde_json::to_value(typed).unwrap(), wire, "{event_type}");
-
-            wire["checkpoint"] = json!(true);
-            let checkpointed: SessionEventWithMetadata<ProgrammaticToolCallEvent> =
-                serde_json::from_value(wire.clone()).unwrap();
-            assert_eq!(checkpointed.checkpoint, Some(true));
-            assert_eq!(
-                checkpointed.event.program_tool_call_id.as_deref(),
-                parent_id
-            );
-            assert_eq!(
-                serde_json::to_value(checkpointed).unwrap(),
-                wire,
-                "{event_type} checkpoint"
-            );
-        }
-        for invalid in [json!(42), json!(false), json!([]), json!({})] {
-            let mut wire = plain_wire.clone();
-            wire["data"]["programToolCallId"] = invalid;
-            assert!(
-                serde_json::from_value::<ProgrammaticToolCallEvent>(wire.clone()).is_err(),
-                "invalid ownership accepted: {wire}"
-            );
-        }
-    }
-}
-
-#[test]
-fn builtin_agent_allowlist_preserves_omission_empty_and_subset_on_create_and_resume() {
-    for agents in [
-        None,
-        Some(Vec::<String>::new()),
-        Some(vec!["explore".into()]),
-    ] {
-        let mut create = CreateSessionOptions::default();
-        let mut resume = ResumeSessionOptions::new(SessionId::new("allowlist-session"));
-        if let Some(ref agents) = agents {
-            create = create.with_agents(|group| group.with_included_builtin_agents(agents.clone()));
-            resume = resume.with_agents(|group| group.with_included_builtin_agents(agents.clone()));
-        }
-        let create = serde_json::to_value(create.into_wire(None).unwrap().0).unwrap();
-        let resume = serde_json::to_value(resume.into_wire().unwrap().0).unwrap();
-        for payload in [create, resume] {
-            match &agents {
-                None => assert!(
-                    payload["agents"].get("includedBuiltinAgents").is_none(),
-                    "{payload}"
-                ),
-                Some(agents) => {
-                    assert_eq!(payload["agents"]["includedBuiltinAgents"], json!(agents))
-                }
-            }
-        }
-    }
-}
-
-#[test]
-fn grouped_credentials_preserve_empty_token_byok_semantics() {
-    for token in ["", "session-token"] {
-        let provider: super::NamedProviderConfig = serde_json::from_value(json!({
-            "name": "gateway", "type": "openai", "baseUrl": "https://provider.example",
-        }))
-        .unwrap();
-        let create = CreateSessionOptions::default()
-            .with_inference(|group| group.with_providers(vec![provider.clone()]))
-            .with_github(|group| group.with_token(token))
-            .into_wire(None)
-            .map(|(wire, _)| serde_json::to_value(wire).unwrap());
-        let resume = ResumeSessionOptions::new(SessionId::from("credentials"))
-            .with_inference(|group| group.with_providers(vec![provider]))
-            .with_github(|group| group.with_token(token))
-            .into_wire()
-            .map(|(wire, _)| serde_json::to_value(wire).unwrap());
-        for result in [create, resume] {
-            let payload = result.unwrap();
-            assert_eq!(payload["github"]["token"], token);
-            assert_eq!(payload["inference"]["providers"][0]["type"], "openai");
-            assert!(payload["inference"].get("provider").is_none());
-        }
-    }
-}
-
-#[test]
-fn default_provider_preserves_omitted_and_null_on_create_and_resume() {
-    for default in [None, Some(None), Some(Some("gateway".to_string()))] {
-        let mut inference = super::SessionInferenceOptions::new().with_providers(vec![
-            super::NamedProviderConfig::new("gateway", "https://provider.example")
-                .with_wire_api("responses")
-                .with_transport("websockets")
-                .with_api_key_command("credential-helper"),
-        ]);
-        inference.default_provider = default.clone();
-        let capi = super::CapiSessionOptions::new().with_enabled(false);
-        let create = CreateSessionOptions::default()
-            .with_inference(|_| inference.clone())
-            .with_github(|group| group.with_capi(capi.clone()));
-        let resume = ResumeSessionOptions::new(SessionId::from("routing"))
-            .with_inference(|_| inference)
-            .with_github(|group| group.with_capi(capi));
-        for payload in [
-            serde_json::to_value(create.into_wire(None).unwrap().0).unwrap(),
-            serde_json::to_value(resume.into_wire().unwrap().0).unwrap(),
-        ] {
-            match &default {
-                None => assert!(payload["inference"].get("defaultProvider").is_none()),
-                Some(value) => assert_eq!(payload["inference"]["defaultProvider"], json!(value)),
-            }
-            assert_eq!(payload["github"]["capi"]["enabled"], false);
-            assert_eq!(
-                payload["inference"]["providers"][0]["transport"],
-                "websockets"
-            );
-            assert_eq!(
-                payload["inference"]["providers"][0]["apiKeyCommand"],
-                "credential-helper"
-            );
-        }
-    }
-}
-
-#[test]
-fn programmatic_typed_first_event_preserves_null_parent() {
-    use super::{ProgrammaticToolCallEvent, SessionEventWithMetadata};
-
-    let mut wire = json!({
-        "id": "event-0",
-        "timestamp": "2026-11-06T00:00:00Z",
-        "parentId": null,
-        "type": "session.info",
-        "data": {"infoType": "status", "message": "Initial event"}
-    });
-    let typed: ProgrammaticToolCallEvent = serde_json::from_value(wire.clone()).unwrap();
-    assert_eq!(typed.event.parent_id, None);
-    assert_eq!(typed.program_tool_call_id, None);
-    assert_eq!(serde_json::to_value(&typed).unwrap(), wire);
-
-    wire["checkpoint"] = json!(true);
-    let checkpointed = SessionEventWithMetadata {
-        event: typed,
-        checkpoint: Some(true),
-    };
-    assert_eq!(serde_json::to_value(checkpointed).unwrap(), wire);
-}
-
-#[test]
 #[should_panic(expected = "tool parameter schema must be a JSON object")]
 fn tool_with_parameters_panics_on_non_object_value() {
     let _ = Tool::new("noop").with_parameters(json!(null));
-}
-
-#[test]
-fn tool_annotations_serialize_only_when_set() {
-    let plain = serde_json::to_value(Tool::new("plain")).unwrap();
-    assert!(plain.get("idempotent").is_none());
-
-    let annotated = serde_json::to_value(Tool::new("lookup").with_idempotent(true)).unwrap();
-    assert_eq!(annotated["idempotent"], json!(true));
 }
 
 #[test]
@@ -385,8 +78,8 @@ fn mcp_servers_serialize_in_insertion_order() {
         );
     }
 
-    let (wire, _runtime) = CreateSessionOptions::default()
-        .with_mcp(|group| group.with_servers(servers))
+    let (wire, _runtime) = SessionConfig::default()
+        .with_mcp_servers(servers)
         .into_wire(None)
         .expect("into_wire should succeed");
     let json = serde_json::to_string(&wire).expect("serialize wire");
@@ -639,11 +332,14 @@ fn session_configs_redact_sandbox_config_in_debug() {
         }
     }))
     .unwrap();
-    let create = CreateSessionOptions::default()
-        .with_permissions(|group| group.with_sandbox(sandbox.clone()));
-    let resume = ResumeSessionOptions::new(SessionId::from("resume-sandbox"))
-        .with_permissions(|group| group.with_sandbox(sandbox));
+    let create = SessionConfig::default().with_sandbox_config(sandbox.clone());
+    let resume =
+        ResumeSessionConfig::new(SessionId::from("resume-sandbox")).with_sandbox_config(sandbox);
     for debug in [format!("{create:?}"), format!("{resume:?}")] {
+        assert!(
+            debug.contains("sandbox_config: Some(\"<redacted>\")"),
+            "{debug}"
+        );
         assert!(!debug.contains("proxy-secret"), "{debug}");
     }
 }

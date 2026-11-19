@@ -70,16 +70,12 @@ fn async_stop_keeps_current_thread_executor_responsive_during_native_shutdown() 
             .block_on(async {
                 let directory = tempfile::tempdir().unwrap();
                 let client = Client::from_streams(
-                    crate::ClientMode::CodingAgent,
                     tokio::io::empty(),
                     tokio::io::sink(),
                     directory.path().to_path_buf(),
                 )
                 .unwrap();
                 *client.inner.ffi_host.lock() = Some(Arc::new(FfiShared {
-                    #[cfg(copilot_cli_host)]
-                    library: super::tests::library_without_private_admission(),
-                    auth_owner: parking_lot::Mutex::new(None),
                     host_shutdown: gated_host_shutdown,
                     owns_host: true,
                     connection_write,
@@ -123,9 +119,6 @@ fn async_stop_keeps_current_thread_executor_responsive_during_native_shutdown() 
 fn attached_client_closes_only_its_connection() {
     ATTACHED_SHUTDOWNS.store(0, Ordering::SeqCst);
     let shared = FfiShared {
-        #[cfg(copilot_cli_host)]
-        library: super::tests::library_without_private_admission(),
-        auth_owner: parking_lot::Mutex::new(None),
         host_shutdown: count_attached_host_shutdown,
         owns_host: false,
         connection_write,
@@ -149,16 +142,12 @@ async fn stopping_attached_client_does_not_shutdown_the_cli_engine() {
     STOP_SHUTDOWNS.store(0, Ordering::SeqCst);
     let directory = tempfile::tempdir().unwrap();
     let client = Client::from_streams(
-        crate::ClientMode::CodingAgent,
         tokio::io::empty(),
         tokio::io::sink(),
         directory.path().to_path_buf(),
     )
     .unwrap();
     *client.inner.ffi_host.lock() = Some(Arc::new(FfiShared {
-        #[cfg(copilot_cli_host)]
-        library: super::tests::library_without_private_admission(),
-        auth_owner: parking_lot::Mutex::new(None),
         host_shutdown: count_stop_host_shutdown,
         owns_host: false,
         connection_write,

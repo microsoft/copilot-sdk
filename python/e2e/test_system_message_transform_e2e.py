@@ -38,7 +38,7 @@ class TestSystemMessageTransform:
                     "tone": {"action": tone_transform},
                 },
             },
-            permissions={"on_request": PermissionHandler.approve_all},
+            on_permission_request=PermissionHandler.approve_all,
         )
 
         write_file(ctx.work_dir, "test.txt", "Hello transform!")
@@ -70,7 +70,7 @@ class TestSystemMessageTransform:
                     "identity": {"action": identity_transform},
                 },
             },
-            permissions={"on_request": PermissionHandler.approve_all},
+            on_permission_request=PermissionHandler.approve_all,
         )
 
         write_file(ctx.work_dir, "hello.txt", "Hello!")
@@ -102,7 +102,7 @@ class TestSystemMessageTransform:
                     "identity": {"action": identity_transform},
                 },
             },
-            permissions={"on_request": PermissionHandler.approve_all},
+            on_permission_request=PermissionHandler.approve_all,
         )
 
         write_file(ctx.work_dir, "combo.txt", "Combo test!")

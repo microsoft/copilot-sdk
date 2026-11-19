@@ -11,13 +11,12 @@ import (
 	"testing"
 	"time"
 
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
-	"github.com/microsoft/copilot-sdk/go/v2/internal/e2e/testharness"
-	"github.com/microsoft/copilot-sdk/go/v2/rpc"
+	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/internal/e2e/testharness"
+	"github.com/github/copilot-sdk/go/rpc"
 )
 
 func TestSessionFSE2E(t *testing.T) {
-	t.Parallel()
 	ctx := testharness.NewTestContext(t)
 	providerRoot := t.TempDir()
 	sessionStatePath := createSessionStatePath(t)
@@ -44,7 +43,10 @@ func TestSessionFSE2E(t *testing.T) {
 	t.Run("should route file operations through the session fs provider", func(t *testing.T) {
 		ctx.ConfigureForTest(t)
 
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, State: copilot.SessionStateOptions{CreateSessionFSProvider: createSessionFSHandler}})
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest:     copilot.PermissionHandler.ApproveAll,
+			CreateSessionFSProvider: createSessionFSHandler,
+		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
 		}
@@ -90,12 +92,14 @@ func TestSessionFSE2E(t *testing.T) {
 		})
 		t.Cleanup(func() { binaryClient.ForceStop() })
 		readPaths := make(chan string, 1)
-		session, err := binaryClient.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, State: copilot.SessionStateOptions{CreateSessionFSProvider: func(session *copilot.Session) copilot.SessionFSProvider {
-			return &testBinarySessionFSHandler{
-				testSessionFSHandler: &testSessionFSHandler{root: providerRoot, sessionID: session.SessionID},
-				readPaths:            readPaths,
-			}
-		}},
+		session, err := binaryClient.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			CreateSessionFSProvider: func(session *copilot.Session) copilot.SessionFSProvider {
+				return &testBinarySessionFSHandler{
+					testSessionFSHandler: &testSessionFSHandler{root: providerRoot, sessionID: session.SessionID},
+					readPaths:            readPaths,
+				}
+			},
 		})
 		if err != nil {
 			t.Fatalf("Failed to create binary session: %v", err)
@@ -154,7 +158,10 @@ func TestSessionFSE2E(t *testing.T) {
 	t.Run("should load session data from fs provider on resume", func(t *testing.T) {
 		ctx.ConfigureForTest(t)
 
-		session1, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, State: copilot.SessionStateOptions{CreateSessionFSProvider: createSessionFSHandler}})
+		session1, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest:     copilot.PermissionHandler.ApproveAll,
+			CreateSessionFSProvider: createSessionFSHandler,
+		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
 		}
@@ -181,7 +188,10 @@ func TestSessionFSE2E(t *testing.T) {
 			t.Fatalf("Expected events file to exist before resume: %v", err)
 		}
 
-		session2, err := client.ResumeSession(t.Context(), sessionID, &copilot.ResumeSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, State: copilot.SessionStateOptions{CreateSessionFSProvider: createSessionFSHandler}})
+		session2, err := client.ResumeSession(t.Context(), sessionID, &copilot.ResumeSessionConfig{
+			OnPermissionRequest:     copilot.PermissionHandler.ApproveAll,
+			CreateSessionFSProvider: createSessionFSHandler,
+		})
 		if err != nil {
 			t.Fatalf("Failed to resume session: %v", err)
 		}
@@ -208,11 +218,13 @@ func TestSessionFSE2E(t *testing.T) {
 		ctx.ConfigureForTest(t)
 
 		client1 := ctx.NewClient(func(opts *copilot.ClientOptions) {
-			useTCP(opts, 0, "")
+			opts.Connection = copilot.TCPConnection{Path: ctx.CLIPath}
 		})
 		t.Cleanup(func() { client1.ForceStop() })
 
-		if _, err := client1.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}}); err != nil {
+		if _, err := client1.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+		}); err != nil {
 			t.Fatalf("Failed to create initial session: %v", err)
 		}
 
@@ -221,9 +233,11 @@ func TestSessionFSE2E(t *testing.T) {
 			t.Fatalf("Expected non-zero port from TCP mode client")
 		}
 
-		client2 := copilot.NewClient(&copilot.ClientOptions{Mode: copilot.ModeCodingAgent,
-			Runtime:   copilot.TCPConnection{Host: "localhost", Port: runtimePort},
-			SessionFS: sessionFSConfig,
+		client2 := copilot.NewClient(&copilot.ClientOptions{
+			Connection: copilot.URIConnection{URL: fmt.Sprintf("localhost:%d", runtimePort)},
+			LogLevel:   "error",
+			Env:        ctx.Env(),
+			SessionFS:  sessionFSConfig,
 		})
 		t.Cleanup(func() { client2.ForceStop() })
 
@@ -236,12 +250,15 @@ func TestSessionFSE2E(t *testing.T) {
 		ctx.ConfigureForTest(t)
 
 		suppliedFileContent := strings.Repeat("x", 100_000)
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, State: copilot.SessionStateOptions{CreateSessionFSProvider: createSessionFSHandler}, Tools: copilot.SessionToolOptions{Definitions: []copilot.Tool{
-			copilot.DefineTool("get_big_string", "Returns a large string",
-				func(_ struct{}, inv copilot.ToolInvocation) (string, error) {
-					return suppliedFileContent, nil
-				}),
-		}},
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest:     copilot.PermissionHandler.ApproveAll,
+			CreateSessionFSProvider: createSessionFSHandler,
+			Tools: []copilot.Tool{
+				copilot.DefineTool("get_big_string", "Returns a large string",
+					func(_ struct{}, inv copilot.ToolInvocation) (string, error) {
+						return suppliedFileContent, nil
+					}),
+			},
 		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
@@ -280,7 +297,10 @@ func TestSessionFSE2E(t *testing.T) {
 	t.Run("should succeed with compaction while using SessionFS", func(t *testing.T) {
 		ctx.ConfigureForTest(t)
 
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, State: copilot.SessionStateOptions{CreateSessionFSProvider: createSessionFSHandler}})
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest:     copilot.PermissionHandler.ApproveAll,
+			CreateSessionFSProvider: createSessionFSHandler,
+		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
 		}
@@ -301,7 +321,7 @@ func TestSessionFSE2E(t *testing.T) {
 			t.Fatalf("Expected events file to not contain checkpointNumber before compaction")
 		}
 
-		compactionResult, err := session.RPC.History.Compact(t.Context(), nil)
+		compactionResult, err := session.RPC.History.Compact(t.Context())
 		if err != nil {
 			t.Fatalf("Failed to compact session: %v", err)
 		}
@@ -316,7 +336,10 @@ func TestSessionFSE2E(t *testing.T) {
 	t.Run("should write workspace metadata via SessionFS", func(t *testing.T) {
 		ctx.ConfigureForTest(t)
 
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, State: copilot.SessionStateOptions{CreateSessionFSProvider: createSessionFSHandler}})
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest:     copilot.PermissionHandler.ApproveAll,
+			CreateSessionFSProvider: createSessionFSHandler,
+		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
 		}
@@ -355,7 +378,10 @@ func TestSessionFSE2E(t *testing.T) {
 	t.Run("should persist plan.md via SessionFS", func(t *testing.T) {
 		ctx.ConfigureForTest(t)
 
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, State: copilot.SessionStateOptions{CreateSessionFSProvider: createSessionFSHandler}})
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest:     copilot.PermissionHandler.ApproveAll,
+			CreateSessionFSProvider: createSessionFSHandler,
+		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
 		}
@@ -615,7 +641,6 @@ func waitForFileContent(path string, needle string, timeout time.Duration) error
 // It exercises every operation on testSessionFSHandler directly to ensure the test helper
 // implementation routes file operations correctly to the per-session provider root.
 func TestSessionFSHandlerOperationsE2E(t *testing.T) {
-	t.Parallel()
 	providerRoot := t.TempDir()
 	sessionID := "handler-session"
 	handler := &testSessionFSHandler{root: providerRoot, sessionID: sessionID}

@@ -1,4 +1,4 @@
-//go:build !copilot_no_inprocess && (darwin || linux || windows) && (amd64 || arm64)
+//go:build copilot_inprocess && (darwin || linux || windows)
 
 package testharness
 
@@ -6,7 +6,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/microsoft/copilot-sdk/go/v2/internal/ffihost"
+	"github.com/github/copilot-sdk/go/internal/ffihost"
 )
 
 func waitForInProcessCleanup() error {

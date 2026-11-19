@@ -26,21 +26,18 @@ class TestGitHubTelemetryE2E:
                 received.set_result(notification)
 
         client = CopilotClient(
-            mode="coding-agent",
-            runtime=RuntimeConnection.for_spawned_stdio(
-                path=get_cli_path_for_tests(),
-                args=(),
-                working_directory=ctx.work_dir,
-                env=ctx.get_env(),
-            ),
-            github={"token": DEFAULT_GITHUB_TOKEN, "on_telemetry": on_github_telemetry},
+            connection=RuntimeConnection.for_stdio(path=get_cli_path_for_tests(), args=()),
+            working_directory=ctx.work_dir,
+            env=ctx.get_env(),
+            github_token=DEFAULT_GITHUB_TOKEN,
+            on_github_telemetry=on_github_telemetry,
         )
 
         session = None
         try:
             await client.start()
             session = await client.create_session(
-                permissions={"on_request": PermissionHandler.approve_all}
+                on_permission_request=PermissionHandler.approve_all,
             )
 
             notification = await asyncio.wait_for(received, timeout=30.0)

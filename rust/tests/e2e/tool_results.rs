@@ -1,16 +1,44 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use copilot_sdk::handler::ApproveAllHandler;
-use copilot_sdk::session_events::{SessionEventType, ToolExecutionCompleteData};
-use copilot_sdk::tool::ToolHandler;
-use copilot_sdk::{
-    CreateSessionOptions, Error, Tool, ToolInvocation, ToolResult, ToolResultExpanded,
+use github_copilot_sdk::handler::ApproveAllHandler;
+use github_copilot_sdk::session_events::{SessionEventType, ToolExecutionCompleteData};
+use github_copilot_sdk::tool::ToolHandler;
+use github_copilot_sdk::{
+    Error, SessionConfig, Tool, ToolInvocation, ToolResult, ToolResultExpanded,
 };
 use serde_json::json;
 use tokio::sync::mpsc;
 
 use super::support::{assistant_message_content, collect_until_idle};
+
+#[tokio::test]
+async fn should_handle_structured_toolresultobject_from_custom_tool() {
+    super::support::with_shared_e2e_context(
+        &E2E,
+        "tool_results",
+        "should_handle_structured_toolresultobject_from_custom_tool",
+        |ctx| {
+            Box::pin(async move {
+                ctx.set_default_copilot_user();
+                let client = ctx.start_client().await;
+                let session = create_tool_session(ctx, &client, weather_tool()).await;
+
+                let answer = session
+                    .send_and_wait("What's the weather in Paris?")
+                    .await
+                    .expect("send")
+                    .expect("assistant message");
+                let content = assistant_message_content(&answer).to_lowercase();
+                assert!(content.contains("sunny") || content.contains("72"));
+
+                session.disconnect().await.expect("disconnect session");
+                client.stop().await.expect("stop client");
+            })
+        },
+    )
+    .await;
+}
 
 #[tokio::test]
 async fn should_handle_tool_result_with_failure_resulttype() {
@@ -164,16 +192,16 @@ async fn should_handle_tool_result_with_denied_resulttype() {
 
 async fn create_tool_session(
     _ctx: &super::support::E2eContext,
-    client: &copilot_sdk::Client,
+    client: &github_copilot_sdk::Client,
     tool: Tool,
-) -> copilot_sdk::session::Session {
+) -> github_copilot_sdk::session::Session {
     let __perm = Arc::new(ApproveAllHandler);
     client
         .create_session(
-            CreateSessionOptions::default()
-                .with_github(|group| group.with_token(super::support::DEFAULT_TEST_TOKEN))
-                .with_permissions(|group| group.with_on_request(__perm))
-                .with_tools(|group| group.with_definitions(vec![tool])),
+            SessionConfig::default()
+                .with_github_token(super::support::DEFAULT_TEST_TOKEN)
+                .with_permission_handler(__perm)
+                .with_tools(vec![tool]),
         )
         .await
         .expect("create session")
@@ -188,6 +216,33 @@ async fn recv_called(receiver: &mut mpsc::UnboundedReceiver<()>, description: &'
 
 fn expanded(text: impl Into<String>, result_type: impl Into<String>) -> ToolResult {
     ToolResult::Expanded(ToolResultExpanded::new(text, result_type))
+}
+
+fn weather_tool() -> Tool {
+    string_tool(
+        "get_weather",
+        "Gets weather for a city",
+        "city",
+        "City name",
+    )
+    .with_handler(Arc::new(WeatherTool))
+}
+
+struct WeatherTool;
+
+#[async_trait::async_trait]
+impl ToolHandler for WeatherTool {
+    async fn call(&self, invocation: ToolInvocation) -> Result<ToolResult, Error> {
+        let city = invocation
+            .arguments
+            .get("city")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("Paris");
+        Ok(expanded(
+            format!("The weather in {city} is sunny and 72\u{b0}F"),
+            "success",
+        ))
+    }
 }
 
 fn check_status_tool() -> Tool {
@@ -304,4 +359,4 @@ fn string_tool(
         }))
 }
 static E2E: super::support::SharedE2eGroup =
-    super::support::SharedE2eGroup::standard("tool_results", 4);
+    super::support::SharedE2eGroup::standard("tool_results", 5);

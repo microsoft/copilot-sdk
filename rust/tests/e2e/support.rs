@@ -1,7 +1,4 @@
-use copilot_sdk::{
-    InProcessRuntimeOptions, OwnedRuntimeOptions, RuntimeConnection, SpawnedTcpRuntimeOptions,
-};
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::future::Future;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -16,14 +13,14 @@ use std::sync::LazyLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use copilot_sdk::handler::ApproveAllHandler;
-use copilot_sdk::session::Session;
-use copilot_sdk::subscription::{EventSubscription, LifecycleSubscription};
-use copilot_sdk::{
-    CliProgram, Client, ClientOptions, CopilotRequestHandler, CreateSessionOptions, SessionEvent,
-    SessionId, SessionLifecycleEvent,
-};
 use futures_util::FutureExt;
+use github_copilot_sdk::handler::ApproveAllHandler;
+use github_copilot_sdk::session::Session;
+use github_copilot_sdk::subscription::{EventSubscription, LifecycleSubscription};
+use github_copilot_sdk::{
+    CliProgram, Client, ClientOptions, CopilotRequestHandler, SessionConfig, SessionEvent,
+    SessionId, SessionLifecycleEvent, Transport,
+};
 use serde_json::json;
 use tokio::sync::{Mutex, Semaphore};
 
@@ -89,7 +86,7 @@ impl Deref for SharedE2eClient {
 }
 
 impl SharedE2eClient {
-    pub async fn stop(&self) -> std::result::Result<(), copilot_sdk::StopErrors> {
+    pub async fn stop(&self) -> std::result::Result<(), github_copilot_sdk::StopErrors> {
         Ok(())
     }
 }
@@ -168,11 +165,12 @@ pub async fn with_shared_e2e_context<F>(
         let context = E2eContext::new(group.category, snapshot_name)
             .await
             .unwrap_or_else(|err| panic!("create shared E2E context: {err}"));
+        let _env_guard = InProcessEnvGuard::activate(&context);
         let options = (group.client_options)(&context);
         let mut startup = SHARED_E2E_RUNTIME.spawn(async move {
             let client = Client::start(options).await?;
             client.start_router_for_test();
-            Ok::<_, copilot_sdk::Error>(client)
+            Ok::<_, github_copilot_sdk::Error>(client)
         });
         let client = match tokio::time::timeout(default_test_timeout(), &mut startup).await {
             Ok(result) => result
@@ -190,6 +188,12 @@ pub async fn with_shared_e2e_context<F>(
         *state = Some(SharedE2eState { context, client });
     }
 
+    let _env_guard = InProcessEnvGuard::activate(
+        &state
+            .as_ref()
+            .expect("shared E2E state initialized")
+            .context,
+    );
     let (result, cleanup_result) = {
         let state = state.as_mut().expect("shared E2E state initialized");
         let result = match tokio::time::timeout(
@@ -307,6 +311,13 @@ where
         .await
         .unwrap_or_else(|err| panic!("create E2E context: {err}"));
 
+    // In-process hosting: the runtime loads into this test process and its worker
+    // inherits the ambient environment (per-client env is not honored in-process, see
+    // https://github.com/github/copilot-sdk/issues/1934), so mirror this context's env
+    // onto the process for the duration of the test and restore on drop. Safe because
+    // E2E_CONCURRENCY is 1 in-process, serializing the whole critical section.
+    let _env_guard = InProcessEnvGuard::activate(&ctx);
+
     let timed_out = tokio::time::timeout(default_test_timeout(), test(&mut ctx))
         .await
         .is_err();
@@ -361,6 +372,10 @@ where
     let mut ctx = E2eContext::new_no_snapshot()
         .await
         .unwrap_or_else(|err| panic!("create E2E context: {err}"));
+
+    // See `with_e2e_context` for why the in-process transport mirrors env onto the
+    // process (restored on drop).
+    let _env_guard = InProcessEnvGuard::activate(&ctx);
 
     let timed_out = tokio::time::timeout(default_test_timeout(), test(&mut ctx))
         .await
@@ -497,103 +512,70 @@ impl E2eContext {
                 .iter()
                 .map(|(key, value)| (OsString::from(*key), OsString::from(*value))),
         );
-        self.client_options_with_environment(
-            RuntimeConnection::for_default(Default::default()).unwrap(),
-            env,
-        )
-    }
-
-    pub fn client_options_with_transport(&self, transport: RuntimeConnection) -> ClientOptions {
-        self.client_options_with_environment(transport, self.environment())
-    }
-
-    fn client_options_with_environment(
-        &self,
-        transport: RuntimeConnection,
-        environment: Vec<(OsString, OsString)>,
-    ) -> ClientOptions {
-        let mut options =
-            client_options_for_cli(&self.cli_path, self.work_dir.path(), environment, transport);
-        if let Some(owned) = options
-            .runtime
-            .as_mut()
-            .and_then(RuntimeConnection::owned_options_mut)
-            && owned.base_directory.is_none()
-        {
-            owned.base_directory = Some(self.home_dir());
-        }
-        if matches!(options.runtime, Some(RuntimeConnection::Tcp(_))) {
-            return options;
-        }
-        self.configure_internal_test_options(&mut options);
+        let options = client_options_for_cli(&self.cli_path, self.work_dir.path(), env);
         if self.diagnostics {
-            options.with_observability(|group| group.with_log_level(copilot_sdk::LogLevel::Debug))
+            options.with_log_level(github_copilot_sdk::LogLevel::Debug)
         } else {
             options
         }
     }
 
+    pub fn client_options_with_transport(&self, transport: Transport) -> ClientOptions {
+        self.client_options().with_transport(transport)
+    }
+
     pub fn client_options_with_github_token(&self, token: &str) -> ClientOptions {
-        self.client_options()
-            .with_github(|group| group.with_token(token))
+        self.client_options().with_github_token(token)
     }
 
     pub async fn start_client(&self) -> Client {
-        Client::start(self.client_options_with_github_token(DEFAULT_TEST_TOKEN))
+        Client::start(self.client_options())
             .await
             .expect("start E2E client")
     }
 
     /// Start a client that hosts the bundled runtime directly in-process over
-    /// FFI ([`RuntimeConnection::for_in_process(Default::default())`]).
+    /// FFI ([`Transport::InProcess`]).
     #[cfg_attr(not(feature = "in-process"), allow(dead_code))]
     pub async fn start_inprocess_client(&self) -> Client {
-        let mut options = ClientOptions::new(copilot_sdk::ClientMode::CodingAgent)
-            .with_runtime(RuntimeConnection::for_in_process(
-                InProcessRuntimeOptions::new().with_owned(|_| {
-                    OwnedRuntimeOptions::new().with_base_directory(self.home_dir())
-                }),
-            ))
-            .with_github(|group| group.with_token(DEFAULT_TEST_TOKEN))
-            .with_github(|group| group.with_use_logged_in_user(false));
-        self.configure_internal_test_options(&mut options);
+        let options = ClientOptions::new().with_transport(Transport::InProcess);
         Client::start(options)
             .await
             .expect("start in-process FFI E2E client")
     }
 
-    /// Start a client wired to a Copilot request handler.
-    pub async fn start_llm_client<H>(&self, handler: H) -> Client
+    /// Start a client wired to a Copilot request handler, appending `extra_env`
+    /// to the spawned runtime's environment (used to flip the WebSocket ExP
+    /// flag for the WS transport tests).
+    pub async fn start_llm_client<H>(&self, handler: H, extra_env: &[(&str, &str)]) -> Client
     where
         H: CopilotRequestHandler,
     {
-        let options = self
-            .client_options()
-            .with_github(|group| group.with_token(DEFAULT_TEST_TOKEN))
-            .with_models(|group| group.with_request_handler(handler));
+        let mut env = self.environment();
+        env.extend(
+            extra_env
+                .iter()
+                .map(|(key, value)| (OsString::from(*key), OsString::from(*value))),
+        );
+        let options = client_options_for_cli(&self.cli_path, self.work_dir.path(), env)
+            .with_request_handler(handler);
         Client::start(options).await.expect("start E2E LLM client")
     }
 
     #[expect(dead_code, reason = "used by follow-on E2E ports")]
     pub async fn start_tcp_client(&self, port: u16, token: &str) -> Client {
-        Client::start(
-            self.client_options_with_transport(RuntimeConnection::SpawnedTcp(
-                SpawnedTcpRuntimeOptions {
-                    process: Default::default(),
-                    port,
-                    connection_token: Some(token.to_string()),
-                },
-            )),
-        )
+        Client::start(self.client_options_with_transport(Transport::Tcp {
+            port,
+            connection_token: Some(token.to_string()),
+        }))
         .await
         .expect("start TCP E2E client")
     }
 
-    pub fn approve_all_session_config(&self) -> CreateSessionOptions {
-        CreateSessionOptions::default()
-            .with_working_directory(self.work_dir())
-            .with_permissions(|group| group.with_on_request(std::sync::Arc::new(ApproveAllHandler)))
-            .with_github(|group| group.with_token(DEFAULT_TEST_TOKEN))
+    pub fn approve_all_session_config(&self) -> SessionConfig {
+        SessionConfig::default()
+            .with_permission_handler(std::sync::Arc::new(ApproveAllHandler))
+            .with_github_token(DEFAULT_TEST_TOKEN)
     }
 
     pub fn set_default_copilot_user(&self) {
@@ -686,47 +668,7 @@ impl E2eContext {
             })
     }
 
-    fn configure_internal_test_options(&self, options: &mut ClientOptions) {
-        options.internal_test_options = Some(copilot_sdk::InternalTestOptions {
-            copilot_api_url: Some(self.proxy_url().to_owned()),
-            github_api_url: Some(self.proxy_url().to_owned()),
-            proxy_url: Some(self.proxy().connect_proxy_url.clone()),
-            no_proxy: Some("127.0.0.1,localhost,::1".to_owned()),
-            ca_certificate_path: Some(self.proxy().ca_file_path.clone()),
-        });
-        if let Some(child) = options
-            .runtime
-            .as_mut()
-            .and_then(RuntimeConnection::child_process_options_mut)
-        {
-            child
-                .env
-                .as_mut()
-                .expect("harness replacement environment")
-                .retain(|(key, _)| {
-                    !matches!(
-                        key.to_str(),
-                        Some(
-                            "COPILOT_API_URL"
-                                | "COPILOT_DEBUG_GITHUB_API_URL"
-                                | "HTTP_PROXY"
-                                | "HTTPS_PROXY"
-                                | "http_proxy"
-                                | "https_proxy"
-                                | "NO_PROXY"
-                                | "no_proxy"
-                                | "NODE_EXTRA_CA_CERTS"
-                                | "SSL_CERT_FILE"
-                                | "REQUESTS_CA_BUNDLE"
-                                | "CURL_CA_BUNDLE"
-                                | "GIT_SSL_CAINFO"
-                        )
-                    )
-                });
-        }
-    }
-
-    pub(super) fn environment(&self) -> Vec<(OsString, OsString)> {
+    fn environment(&self) -> Vec<(OsString, OsString)> {
         let mut env = self.proxy().proxy_env();
         env.extend([
             ("COPILOT_API_URL".into(), self.proxy_url().into()),
@@ -773,19 +715,6 @@ impl E2eContext {
             ("COPILOT_HMAC_KEY".into(), "".into()),
             ("CAPI_HMAC_KEY".into(), "".into()),
         ]);
-        if is_inprocess_default() {
-            env.extend([
-                ("COPILOT_ALLOW_GET_PROVIDER_ENDPOINT".into(), "true".into()),
-                (
-                    "COPILOT_EXP_COPILOT_CLI_WEBSOCKET_RESPONSES".into(),
-                    "true".into(),
-                ),
-                (
-                    "COPILOT_EXP_COPILOT_CLI_SESSION_BASED_SUBAGENTS".into(),
-                    "true".into(),
-                ),
-            ]);
-        }
         env
     }
 
@@ -1005,10 +934,11 @@ where
             });
             let is_allowed_rate_limit = allow_rate_limit_error
                 && event.parsed_type()
-                    == copilot_sdk::session_events::SessionEventType::SessionError
+                    == github_copilot_sdk::session_events::SessionEventType::SessionError
                 && event.data.get("errorType").and_then(|value| value.as_str())
                     == Some("rate_limit");
-            if event.parsed_type() == copilot_sdk::session_events::SessionEventType::SessionError
+            if event.parsed_type()
+                == github_copilot_sdk::session_events::SessionEventType::SessionError
                 && !is_allowed_rate_limit
             {
                 panic!(
@@ -1083,9 +1013,11 @@ pub async fn collect_until_idle(mut events: EventSubscription) -> Vec<SessionEve
                 .recv()
                 .await
                 .unwrap_or_else(|err| panic!("event stream closed while collecting events: {err}"));
-            let is_idle =
-                event.parsed_type() == copilot_sdk::session_events::SessionEventType::SessionIdle;
-            if event.parsed_type() == copilot_sdk::session_events::SessionEventType::SessionError {
+            let is_idle = event.parsed_type()
+                == github_copilot_sdk::session_events::SessionEventType::SessionIdle;
+            if event.parsed_type()
+                == github_copilot_sdk::session_events::SessionEventType::SessionError
+            {
                 panic!("session.error while collecting events: {}", event.data);
             }
             observed.push(event);
@@ -1134,7 +1066,7 @@ pub fn capi_meta_body(models: serde_json::Value) -> serde_json::Value {
 #[allow(dead_code, reason = "used by follow-on E2E ports")]
 pub async fn wait_for_idle(session: &Session) -> SessionEvent {
     wait_for_event(session.subscribe(), "session.idle event", |event| {
-        event.parsed_type() == copilot_sdk::session_events::SessionEventType::SessionIdle
+        event.parsed_type() == github_copilot_sdk::session_events::SessionEventType::SessionIdle
     })
     .await
 }
@@ -1154,14 +1086,15 @@ pub async fn last_assistant_message(session: &Session) -> SessionEvent {
         .into_iter()
         .rev()
         .find(|event| {
-            event.parsed_type() == copilot_sdk::session_events::SessionEventType::AssistantMessage
+            event.parsed_type()
+                == github_copilot_sdk::session_events::SessionEventType::AssistantMessage
         })
         .expect("assistant.message event")
 }
 
 pub fn assistant_message_content(event: &SessionEvent) -> String {
     event
-        .typed_data::<copilot_sdk::session_events::AssistantMessageData>()
+        .typed_data::<github_copilot_sdk::session_events::AssistantMessageData>()
         .expect("assistant.message data")
         .content
 }
@@ -1193,6 +1126,12 @@ fn default_test_timeout() -> Duration {
 }
 
 fn e2e_concurrency() -> usize {
+    // The in-process transport mirrors per-test environment onto the shared process
+    // environment (see `InProcessEnvGuard`), which is only coherent when one test runs
+    // at a time. Force serial execution in-process; otherwise honor RUST_E2E_CONCURRENCY.
+    if is_inprocess_default() {
+        return 1;
+    }
     std::env::var("RUST_E2E_CONCURRENCY")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
@@ -1201,23 +1140,139 @@ fn e2e_concurrency() -> usize {
 }
 
 /// True when the E2E suite runs over the in-process (FFI) transport, i.e. the SDK
-/// resolves `COPILOT_SDK_DEFAULT_CONNECTION=inprocess` to [`RuntimeConnection::for_in_process(Default::default())`].
+/// resolves `COPILOT_SDK_DEFAULT_CONNECTION=inprocess` to [`Transport::InProcess`].
 pub fn is_inprocess_default() -> bool {
     std::env::var("COPILOT_SDK_DEFAULT_CONNECTION")
-        .map(|value| value.is_empty() || value.eq_ignore_ascii_case("inprocess"))
-        .unwrap_or(true)
+        .map(|value| value.eq_ignore_ascii_case("inprocess"))
+        .unwrap_or(false)
 }
 
 /// Skip guard for E2E tests exercising features the in-process (FFI) transport does not
 /// support (the runtime loads into the shared host process). Returns `true` — and logs —
 /// when running in-process so the caller can `return` early; such tests remain covered
-/// by the explicit stdio transport. See <https://github.com/github/copilot-sdk/issues/1934>.
+/// by the default (stdio) transport. See <https://github.com/github/copilot-sdk/issues/1934>.
 pub fn skip_inprocess(reason: &str) -> bool {
     if is_inprocess_default() {
         eprintln!("skipping test over the in-process (FFI) transport: {reason}");
         true
     } else {
         false
+    }
+}
+
+/// Mirrors an [`E2eContext`]'s environment onto the real process environment for the
+/// in-process transport, whose worker inherits this process's ambient environment
+/// rather than a per-client env block. Restores the previous values on drop. Only the
+/// in-process transport needs this; for stdio/tcp the environment is handed to the
+/// spawned child directly. Auth flows via GH_TOKEN/GITHUB_TOKEN and HMAC is disabled so
+/// host-side auth resolution picks the token the replay snapshots expect.
+struct InProcessEnvGuard {
+    saved: Vec<(OsString, Option<OsString>)>,
+    previous_cwd: PathBuf,
+}
+
+pub struct InProcessHostGuard {
+    saved: [(OsString, Option<OsString>); 2],
+}
+
+pub fn set_inprocess_host_for_test(
+    copilot_host: &str,
+    gh_host: &str,
+) -> Option<InProcessHostGuard> {
+    if !is_inprocess_default() {
+        return None;
+    }
+    let saved = [
+        (
+            "COPILOT_GH_HOST".into(),
+            std::env::var_os("COPILOT_GH_HOST"),
+        ),
+        ("GH_HOST".into(), std::env::var_os("GH_HOST")),
+    ];
+    // SAFETY: in-process E2E tests hold the suite's single concurrency permit.
+    unsafe {
+        std::env::set_var("COPILOT_GH_HOST", copilot_host);
+        std::env::set_var("GH_HOST", gh_host);
+    }
+    Some(InProcessHostGuard { saved })
+}
+
+impl Drop for InProcessHostGuard {
+    fn drop(&mut self) {
+        for (key, previous) in &self.saved {
+            // SAFETY: this guard is dropped before releasing the in-process permit.
+            match previous {
+                Some(value) => unsafe { std::env::set_var(key, value) },
+                None => unsafe { std::env::remove_var(key) },
+            }
+        }
+    }
+}
+
+impl InProcessEnvGuard {
+    /// Returns `Some` guard (having applied the env) when in-process, else `None`.
+    fn activate(ctx: &E2eContext) -> Option<Self> {
+        if !is_inprocess_default() {
+            return None;
+        }
+        let mut pairs: Vec<(OsString, OsString)> = ctx.environment();
+        pairs.retain(|(key, _)| {
+            key.as_os_str() != OsStr::new("COPILOT_HMAC_KEY")
+                && key.as_os_str() != OsStr::new("CAPI_HMAC_KEY")
+        });
+        pairs.push(("COPILOT_SDK_AUTH_TOKEN".into(), "".into()));
+        pairs.push((
+            "COPILOT_CLI_PATH".into(),
+            std::env::var_os("COPILOT_CLI_PATH")
+                .unwrap_or_else(|| ctx.cli_path.clone().into_os_string()),
+        ));
+        // Some tests opt into gated runtime APIs via per-client `options.env`, which the
+        // in-process transport does not pass to the shared native runtime (see issue #1934).
+        // These are process-global runtime gates (not per-client behavior), so applying
+        // them to the host process for the serial in-process suite is equivalent and
+        // inert for tests that don't exercise the gated API.
+        pairs.push(("COPILOT_ALLOW_GET_PROVIDER_ENDPOINT".into(), "true".into()));
+        pairs.push((
+            "COPILOT_EXP_COPILOT_CLI_WEBSOCKET_RESPONSES".into(),
+            "true".into(),
+        ));
+        pairs.push((
+            "COPILOT_EXP_COPILOT_CLI_SESSION_BASED_SUBAGENTS".into(),
+            "true".into(),
+        ));
+
+        let mut saved: Vec<(OsString, Option<OsString>)> = Vec::new();
+        for (key, value) in &pairs {
+            saved.push((key.clone(), std::env::var_os(key)));
+            // SAFETY: the E2E suite runs serially in-process (concurrency 1), so no
+            // other thread races these process-wide env mutations.
+            unsafe { std::env::set_var(key, value) };
+        }
+        for key in ["COPILOT_HMAC_KEY", "CAPI_HMAC_KEY"] {
+            let key = OsString::from(key);
+            saved.push((key.clone(), std::env::var_os(&key)));
+            // SAFETY: as above, the in-process suite is serialized.
+            unsafe { std::env::remove_var(key) };
+        }
+        let previous_cwd = std::env::current_dir().expect("read in-process test cwd");
+        std::env::set_current_dir(ctx.work_dir()).expect("set in-process test cwd");
+        Some(Self {
+            saved,
+            previous_cwd,
+        })
+    }
+}
+
+impl Drop for InProcessEnvGuard {
+    fn drop(&mut self) {
+        std::env::set_current_dir(&self.previous_cwd).expect("restore in-process test cwd");
+        for (key, previous) in self.saved.iter().rev() {
+            // SAFETY: as in `activate` — serial execution in-process.
+            match previous {
+                Some(value) => unsafe { std::env::set_var(key, value) },
+                None => unsafe { std::env::remove_var(key) },
+            }
+        }
     }
 }
 
@@ -1262,10 +1317,7 @@ pub fn get_tool_names(exchange: &serde_json::Value) -> Vec<String> {
 }
 
 fn repo_root() -> PathBuf {
-    // Node's entry-point guards compare regular paths with file URLs; Windows
-    // canonicalization adds a verbatim prefix that those URLs do not preserve.
-    std::path::absolute(env!("CARGO_MANIFEST_DIR"))
-        .expect("absolute Rust SDK checkout path")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("rust package has parent repo")
         .to_path_buf()
@@ -1299,38 +1351,29 @@ fn cli_path(repo_root: &Path) -> std::io::Result<PathBuf> {
     ))
 }
 
+#[allow(deprecated)]
 fn client_options_for_cli(
     cli_path: &Path,
     cwd: &Path,
     env: Vec<(OsString, OsString)>,
-    mut runtime: RuntimeConnection,
 ) -> ClientOptions {
-    let owned = runtime.owned_options_mut().is_some();
-    if let Some(process) = runtime.child_process_options_mut() {
-        if process.working_directory.as_os_str().is_empty() {
-            process.working_directory = cwd.to_owned();
-        }
-        if process.env.is_none() {
-            process.env = Some(std::env::vars_os().chain(env).collect());
-        }
-        if matches!(process.program, CliProgram::Resolve) {
-            if cli_path
-                .extension()
-                .and_then(|extension| extension.to_str())
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("js"))
-            {
-                process.program = CliProgram::Path(PathBuf::from(node_program()));
-                process.args.insert(0, cli_path.as_os_str().to_owned());
-            } else {
-                process.program = CliProgram::Path(cli_path.to_owned());
-            }
-        }
+    if is_inprocess_default() {
+        return ClientOptions::new();
     }
-    let options = ClientOptions::new(copilot_sdk::ClientMode::CodingAgent).with_runtime(runtime);
-    if owned {
-        options.with_github(|group| group.with_use_logged_in_user(false))
-    } else {
+    let options = ClientOptions::new()
+        .with_cwd(cwd)
+        .with_env(env)
+        .with_use_logged_in_user(false);
+    if cli_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("js"))
+    {
         options
+            .with_program(CliProgram::Path(PathBuf::from(node_program())))
+            .with_prefix_args([cli_path.as_os_str().to_owned()])
+    } else {
+        options.with_program(CliProgram::Path(cli_path.to_path_buf()))
     }
 }
 
@@ -1651,4 +1694,26 @@ fn program_exists_on_path(program: &str) -> bool {
     std::env::var_os("PATH").is_some_and(|path| {
         std::env::split_paths(&path).any(|directory| directory.join(program).is_file())
     })
+}
+
+#[test]
+fn e2e_context_isolates_copilot_cache() {
+    let home_dir = tempfile::tempdir().expect("create test home");
+    let home_dir = canonical_temp_path(home_dir.path());
+    let cache_dir = home_dir.join(".cache");
+    let expected = [
+        ("COPILOT_CACHE_HOME", cache_dir.join("copilot")),
+        ("XDG_CACHE_HOME", cache_dir),
+    ];
+
+    let environment = isolated_cache_environment(&home_dir);
+
+    for (key, value) in expected {
+        assert!(
+            environment.iter().any(|(actual_key, actual_value)| {
+                actual_key == key && actual_value == value.as_os_str()
+            }),
+            "{key} should use the isolated test home"
+        );
+    }
 }

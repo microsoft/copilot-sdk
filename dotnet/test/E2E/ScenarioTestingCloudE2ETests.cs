@@ -2,15 +2,15 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
-using Microsoft.Copilot.Rpc;
-using Microsoft.Copilot.Test.Harness;
+using GitHub.Copilot.Rpc;
+using GitHub.Copilot.Test.Harness;
 using System.Text.Json;
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Microsoft.Copilot.Test.E2E;
+namespace GitHub.Copilot.Test.E2E;
 
-#pragma warning disable MCPSDK001
+#pragma warning disable GHCP001
 
 public class ScenarioTestingCloudE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
     : ScenarioTestingE2ETestBase(fixture, "scenario_testing_cloud", output)
@@ -61,15 +61,25 @@ public class ScenarioTestingCloudE2ETests(E2ETestFixture fixture, ITestOutputHel
             TaskCreationOptions.RunContinuationsAsynchronously);
         await using var client = Ctx.CreateClient(options: new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForSpawnedStdio(
+            Connection = RuntimeConnection.ForStdio(
                 path: cliPath,
                 args: ["--capture-file", capturePath, "--behavior", "cloud-assigned-event"]),
-            GitHub = new ClientGitHubOptions { UseLoggedInUser = false }
+            UseLoggedInUser = false,
         });
 
-        await using var session = await Ctx.CreateSessionAsync(client, new CreateSessionOptions
-        { Cloud = new CloudSessionOptions { Repository = new CloudSessionRepository { Owner = "github", Name = "copilot-sdk", Branch = "main", }, }, Events = new SessionEventOptions { OnEvent = evt => firstEvent.TrySetResult(evt) } });
+        await using var session = await Ctx.CreateSessionAsync(client, new SessionConfig
+        {
+            Cloud = new CloudSessionOptions
+            {
+                Repository = new CloudSessionRepository
+                {
+                    Owner = "github",
+                    Name = "copilot-sdk",
+                    Branch = "main",
+                },
+            },
+            OnEvent = evt => firstEvent.TrySetResult(evt),
+        });
 
         Assert.Equal("server-assigned-cloud-session", session.SessionId);
         var started = Assert.IsType<SessionStartEvent>(
@@ -91,11 +101,10 @@ public class ScenarioTestingCloudE2ETests(E2ETestFixture fixture, ITestOutputHel
         var (cliPath, capturePath) = await CreateFakeCloudRuntimeAsync();
         await using var client = Ctx.CreateClient(options: new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForSpawnedStdio(
+            Connection = RuntimeConnection.ForStdio(
                 path: cliPath,
                 args: ["--capture-file", capturePath, "--resource-id", "github/copilot-sdk#123"]),
-            GitHub = new ClientGitHubOptions { UseLoggedInUser = false }
+            UseLoggedInUser = false,
         });
         await client.StartAsync();
 
@@ -126,11 +135,10 @@ public class ScenarioTestingCloudE2ETests(E2ETestFixture fixture, ITestOutputHel
         var (cliPath, capturePath) = await CreateFakeCloudRuntimeAsync();
         await using var client = Ctx.CreateClient(options: new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForSpawnedStdio(
+            Connection = RuntimeConnection.ForStdio(
                 path: cliPath,
                 args: ["--capture-file", capturePath, "--resource-id", "github/docs#456"]),
-            GitHub = new ClientGitHubOptions { UseLoggedInUser = false }
+            UseLoggedInUser = false,
         });
         await client.StartAsync();
 
@@ -227,7 +235,7 @@ public class ScenarioTestingCloudE2ETests(E2ETestFixture fixture, ITestOutputHel
           saveCapture();
 
           if (message.method === "connect") {
-            respond(message.id, { ok: true, protocolVersion: 4, version: "fake" });
+            respond(message.id, { ok: true, protocolVersion: 3, version: "fake" });
             return;
           }
 
@@ -299,4 +307,4 @@ public class ScenarioTestingCloudE2ETests(E2ETestFixture fixture, ITestOutputHel
         """;
 }
 
-#pragma warning restore MCPSDK001
+#pragma warning restore GHCP001
