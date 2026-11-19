@@ -2,14 +2,14 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
-using Microsoft.Copilot.Rpc;
-using Microsoft.Copilot.Test.Harness;
+using GitHub.Copilot.Rpc;
+using GitHub.Copilot.Test.Harness;
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Microsoft.Copilot.Test.E2E;
+namespace GitHub.Copilot.Test.E2E;
 
-#pragma warning disable MCPSDK001 // GitHub telemetry forwarding is experimental.
+#pragma warning disable GHCP001 // GitHub telemetry forwarding is experimental.
 
 // TODO(BYOK): Anthropic Messages produced no GitHub telemetry notification. Determine whether
 // provider-backed sessions should forward the same telemetry before keeping this CAPI-only.
@@ -25,25 +25,24 @@ public class GitHubTelemetryForwardingE2ETests(E2ETestFixture fixture, ITestOutp
 
         await using var client = Ctx.CreateClient(options: new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            GitHub = new ClientGitHubOptions
+            OnGitHubTelemetry = notification =>
             {
-                OnTelemetry = notification =>
-                        {
-                            if (notification.SessionId == sessionId)
-                            {
-                                notificationReceived.TrySetResult(notification);
-                            }
-                            return Task.CompletedTask;
-                        }
-            }
+                if (notification.SessionId == sessionId)
+                {
+                    notificationReceived.TrySetResult(notification);
+                }
+                return Task.CompletedTask;
+            },
         });
 
         CopilotSession? session = null;
         try
         {
-            session = await Ctx.CreateSessionAsync(client, new CreateSessionOptions
-            { SessionId = sessionId, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
+            session = await Ctx.CreateSessionAsync(client, new SessionConfig
+            {
+                SessionId = sessionId,
+                OnPermissionRequest = PermissionHandler.ApproveAll,
+            });
 
             var notification = await notificationReceived.Task.WaitAsync(TimeSpan.FromSeconds(30));
             Assert.False(string.IsNullOrEmpty(notification.SessionId));
@@ -64,4 +63,4 @@ public class GitHubTelemetryForwardingE2ETests(E2ETestFixture fixture, ITestOutp
     }
 }
 
-#pragma warning restore MCPSDK001
+#pragma warning restore GHCP001

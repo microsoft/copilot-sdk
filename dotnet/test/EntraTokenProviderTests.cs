@@ -3,10 +3,10 @@
  *--------------------------------------------------------------------------------------------*/
 
 using System.Text.Json.Nodes;
-using Microsoft.Copilot.Rpc;
+using GitHub.Copilot.Rpc;
 using Xunit;
 
-namespace Microsoft.Copilot.Test;
+namespace GitHub.Copilot.Test;
 
 public class EntraTokenProviderTests
 {
@@ -14,7 +14,7 @@ public class EntraTokenProviderTests
     public void Null_Configuration_Remains_Disabled()
     {
         EntraAuthOptions? config = null;
-        var options = new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Entra = config };
+        var options = new CopilotClientOptions { Entra = config };
         Assert.Null(options.Entra);
 
         config = new EntraAuthOptions { ClientId = "existing-client" };

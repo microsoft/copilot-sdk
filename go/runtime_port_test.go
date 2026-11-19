@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -100,12 +101,12 @@ func TestRuntimePortStandInProcess(t *testing.T) {
 	os.Exit(0)
 }
 
-func runtimePortStandIn(mode, once string) SpawnedTCPConnection {
+func runtimePortStandIn(mode, once string) TCPConnection {
 	env := append(os.Environ(), "GO_WANT_RUNTIME_PORT_STAND_IN="+mode)
 	if once != "" {
 		env = append(env, "RUNTIME_PORT_STAND_IN_ONCE="+once)
 	}
-	return SpawnedTCPConnection{
+	return TCPConnection{
 		Path: os.Args[0],
 		Args: []string{"-test.run=^TestRuntimePortStandInProcess$", "--"},
 		Env:  env,
@@ -122,7 +123,7 @@ func TestClient_RuntimePortAfterFailedStart(t *testing.T) {
 		{name: "handshake dropped after the port is announced", mode: "drop"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			client := NewClient(&ClientOptions{Mode: ModeCodingAgent, Runtime: runtimePortStandIn(tc.mode, "")})
+			client := NewClient(&ClientOptions{Connection: runtimePortStandIn(tc.mode, "")})
 			t.Cleanup(client.ForceStop)
 			if err := client.Start(t.Context()); err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("Start error = %v, want a failure containing %q", err, tc.wantErr)
@@ -145,7 +146,7 @@ func TestClient_RuntimePortAfterFailedStart(t *testing.T) {
 			if !tc.replacementStarts {
 				once = filepath.Join(t.TempDir(), "started")
 			}
-			client := NewClient(&ClientOptions{Mode: ModeCodingAgent, Runtime: runtimePortStandIn("serve", once)})
+			client := NewClient(&ClientOptions{Connection: runtimePortStandIn("serve", once)})
 			t.Cleanup(client.ForceStop)
 			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 			defer cancel()
@@ -194,7 +195,7 @@ func TestClient_RuntimePortOfExternalServerAfterFailedStart(t *testing.T) {
 	}
 	external := func(t *testing.T, port int) *Client {
 		t.Helper()
-		client := NewClient(&ClientOptions{Mode: ModeCodingAgent, Runtime: TCPConnection{Host: "127.0.0.1", Port: port}})
+		client := NewClient(&ClientOptions{Connection: URIConnection{URL: "127.0.0.1:" + strconv.Itoa(port)}})
 		t.Cleanup(client.ForceStop)
 		return client
 	}

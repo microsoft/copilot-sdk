@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/microsoft/copilot-sdk/go/v2/internal/jsonrpc2"
-	"github.com/microsoft/copilot-sdk/go/v2/rpc"
+	"github.com/github/copilot-sdk/go/internal/jsonrpc2"
+	"github.com/github/copilot-sdk/go/rpc"
 )
 
 // newTestSession creates a session with an event channel and starts the consumer goroutine.
@@ -1403,8 +1403,9 @@ func TestMCPAuthLegacySourceCompatibility(t *testing.T) {
 	})
 	client := &Client{}
 	var _ interface {
-		CreateSession(context.Context, *CreateSessionOptions) (*Session, error)
-		ResumeSession(context.Context, string, *ResumeSessionOptions) (*Session, error)
+		CreateSession(context.Context, *SessionConfig) (*Session, error)
+		ResumeSession(context.Context, string, *ResumeSessionConfig) (*Session, error)
+		ResumeSessionWithOptions(context.Context, string, *ResumeSessionConfig) (*Session, error)
 	} = client
 	if request.RequestID != "request" || invocation.SessionID != "session" || handler == nil {
 		t.Fatal("legacy MCP auth construction or client signatures changed")
@@ -2508,7 +2509,7 @@ func TestSession_Capabilities(t *testing.T) {
 		session, cleanup := newTestSession()
 		defer cleanup()
 
-		session.setCapabilities(withSessionUICapabilities(UICapabilities{Elicitation: true}))
+		session.setCapabilities(withRecoveryAwareSessionCapabilities(UICapabilities{Elicitation: true}))
 		caps := session.Capabilities()
 		if caps.UI == nil || !caps.UI.Elicitation {
 			t.Errorf("Expected UI.Elicitation to be true")
@@ -2519,7 +2520,7 @@ func TestSession_Capabilities(t *testing.T) {
 		session, cleanup := newTestSession()
 		defer cleanup()
 
-		session.setCapabilities(withSessionUICapabilities(UICapabilities{Elicitation: true}))
+		session.setCapabilities(withRecoveryAwareSessionCapabilities(UICapabilities{Elicitation: true}))
 		session.setCapabilities(nil)
 		caps := session.Capabilities()
 		if caps.UI != nil {
@@ -2741,7 +2742,7 @@ func TestSession_ElicitationCapabilityGating(t *testing.T) {
 		session, cleanup := newTestSession()
 		defer cleanup()
 
-		session.setCapabilities(withSessionUICapabilities(UICapabilities{Elicitation: true}))
+		session.setCapabilities(withRecoveryAwareSessionCapabilities(UICapabilities{Elicitation: true}))
 		err := session.assertElicitation()
 		if err != nil {
 			t.Errorf("Expected no error when elicitation capability is present, got %v", err)
@@ -2749,8 +2750,10 @@ func TestSession_ElicitationCapabilityGating(t *testing.T) {
 	})
 }
 
-func withSessionUICapabilities(ui UICapabilities) *SessionCapabilities {
-	return &SessionCapabilities{UI: &ui}
+func withRecoveryAwareSessionCapabilities(ui UICapabilities) *SessionCapabilitiesWithAutoModeRecovery {
+	return &SessionCapabilitiesWithAutoModeRecovery{
+		UI: &UICapabilitiesWithAutoModeRecovery{UICapabilities: ui},
+	}
 }
 
 func TestSession_CapabilitiesChangedKeepsCapabilitiesItDoesNotName(t *testing.T) {
@@ -2761,7 +2764,7 @@ func TestSession_CapabilitiesChangedKeepsCapabilitiesItDoesNotName(t *testing.T)
 	t.Run("an elicitation change keeps mcpApps", func(t *testing.T) {
 		session, cleanup := newTestSession()
 		defer cleanup()
-		session.setCapabilities(withSessionUICapabilities(UICapabilities{MCPApps: true}))
+		session.setCapabilities(withRecoveryAwareSessionCapabilities(UICapabilities{MCPApps: true}))
 		before := session.Capabilities()
 
 		changed(session, CapabilitiesChangedUI{Elicitation: Bool(true)})
@@ -2780,7 +2783,7 @@ func TestSession_CapabilitiesChangedKeepsCapabilitiesItDoesNotName(t *testing.T)
 	t.Run("an mcpApps change is applied and keeps elicitation", func(t *testing.T) {
 		session, cleanup := newTestSession()
 		defer cleanup()
-		session.setCapabilities(withSessionUICapabilities(UICapabilities{Elicitation: true}))
+		session.setCapabilities(withRecoveryAwareSessionCapabilities(UICapabilities{Elicitation: true}))
 
 		changed(session, CapabilitiesChangedUI{MCPApps: Bool(true)})
 
@@ -2795,7 +2798,7 @@ func TestSession_CapabilitiesChangedKeepsCapabilitiesItDoesNotName(t *testing.T)
 	t.Run("a change to false keeps the other capability", func(t *testing.T) {
 		session, cleanup := newTestSession()
 		defer cleanup()
-		session.setCapabilities(withSessionUICapabilities(UICapabilities{Elicitation: true, MCPApps: true}))
+		session.setCapabilities(withRecoveryAwareSessionCapabilities(UICapabilities{Elicitation: true, MCPApps: true}))
 
 		changed(session, CapabilitiesChangedUI{Elicitation: Bool(false)})
 
@@ -2811,7 +2814,7 @@ func TestSession_CapabilitiesChangedKeepsCapabilitiesItDoesNotName(t *testing.T)
 func TestSession_CapabilitiesChangedAppliesInNotificationOrder(t *testing.T) {
 	session, cleanup := newTestSession()
 	defer cleanup()
-	session.setCapabilities(withSessionUICapabilities(UICapabilities{Elicitation: true}))
+	session.setCapabilities(withRecoveryAwareSessionCapabilities(UICapabilities{Elicitation: true}))
 
 	for _, enabled := range []bool{true, false, true, false} {
 		session.dispatchEvent(SessionEvent{

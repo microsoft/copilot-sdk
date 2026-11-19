@@ -9,7 +9,7 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 import pytest
 
-from copilot.rpc import (
+from copilot.generated.rpc import (
     MCPAppsCallToolRequest,
     MCPListToolsRequest,
     MCPOauthLoginRequest,
@@ -137,16 +137,14 @@ class TestMcpOAuth:
         server_name = "oauth-cimd-mcp"
         try:
             session = await ctx.client.create_session(
-                permissions={"on_request": PermissionHandler.approve_all},
-                mcp={
-                    "auth_client_id_metadata_url": CIMD_URL,
-                    "servers": {
-                        server_name: MCPHTTPServerConfig(
-                            type="http",
-                            url=f"{url}/mcp",
-                            tools=["*"],
-                        )
-                    },
+                on_permission_request=PermissionHandler.approve_all,
+                auth_client_id_metadata_url=CIMD_URL,
+                mcp_servers={
+                    server_name: MCPHTTPServerConfig(
+                        type="http",
+                        url=f"{url}/mcp",
+                        tools=["*"],
+                    )
                 },
             )
             await _wait_for_mcp_server_status(session, server_name, McpServerStatus.NEEDS_AUTH)
@@ -184,8 +182,9 @@ class TestMcpOAuth:
                 }
             }
             async with await ctx.client.create_session(
-                permissions={"on_request": PermissionHandler.approve_all},
-                mcp={"on_auth_request": on_mcp_auth_request, "servers": mcp_servers},
+                on_permission_request=PermissionHandler.approve_all,
+                on_mcp_auth_request=on_mcp_auth_request,
+                mcp_servers=mcp_servers,
             ) as session:
                 await session.rpc.mcp.reload()
                 await _wait_for_mcp_server_status(session, server_name)
@@ -256,13 +255,11 @@ class TestMcpOAuth:
                 }
             }
             async with await ctx.client.create_session(
-                permissions={"on_request": PermissionHandler.approve_all},
-                mcp={
-                    "on_auth_request": on_mcp_auth_request,
-                    "servers": mcp_servers,
-                    "enable_apps": True,
-                },
-                experiments={"flags": {"MCP_APPS": True}},
+                on_permission_request=PermissionHandler.approve_all,
+                on_mcp_auth_request=on_mcp_auth_request,
+                mcp_servers=mcp_servers,
+                enable_mcp_apps=True,
+                feature_flags={"MCP_APPS": True},
             ) as session:
                 # Re-run startup after OAuth event interest is registered to avoid
                 # racing the initial challenge emitted during session.create.
@@ -319,8 +316,9 @@ class TestMcpOAuth:
                 }
             }
             async with await ctx.client.create_session(
-                permissions={"on_request": PermissionHandler.approve_all},
-                mcp={"on_auth_request": on_mcp_auth_request, "servers": mcp_servers},
+                on_permission_request=PermissionHandler.approve_all,
+                on_mcp_auth_request=on_mcp_auth_request,
+                mcp_servers=mcp_servers,
             ) as session:
                 await session.rpc.mcp.reload()
                 await _wait_for_mcp_server_status(session, server_name, McpServerStatus.NEEDS_AUTH)

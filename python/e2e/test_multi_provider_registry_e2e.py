@@ -99,9 +99,10 @@ class TestMultiProviderRegistry:
         self, ctx: E2ETestContext
     ):
         session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all},
-            inference={"providers": REGISTRY_PROVIDERS, "models": REGISTRY_MODELS},
-            agents={"definitions": REGISTRY_AGENTS},
+            on_permission_request=PermissionHandler.approve_all,
+            providers=REGISTRY_PROVIDERS,
+            models=REGISTRY_MODELS,
+            custom_agents=REGISTRY_AGENTS,
         )
 
         try:
@@ -162,9 +163,10 @@ class TestMultiProviderRegistry:
         ]
 
         session = await ctx.client.create_session(
+            on_permission_request=PermissionHandler.approve_all,
             model=selection_id,
-            permissions={"on_request": PermissionHandler.approve_all},
-            inference={"providers": providers, "models": models},
+            providers=providers,
+            models=models,
         )
 
         try:

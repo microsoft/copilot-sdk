@@ -22,13 +22,12 @@ use crate::generated::api_types::{
     HostAuthenticationCancelledNotification, HostDisposeRequest, HostListSessionsRequest,
     HostListSessionsResult, HostPublishSessionRequest, HostPublishSessionResult,
     HostSessionCreateCallback, HostSessionReleasedNotification,
-    HostSetSessionCreationPolicyRequest, HostStartRequest, HostStartResult,
+    HostSetSessionCreationPolicyRequest, HostStartOptions, HostStartResult,
     HostUnpublishSessionRequest, HostUnpublishSessionResult, HostValidateAuthenticationRequest,
 };
 use crate::session::Session;
 use crate::{
-    Client, ClientInner, CreateSessionOptions, Error, ErrorKind, ProtocolErrorKind,
-    ResumeSessionOptions,
+    Client, ClientInner, Error, ErrorKind, ProtocolErrorKind, ResumeSessionConfig, SessionConfig,
 };
 
 /// Experimental local callback for a host's exit or owner disconnection.
@@ -145,7 +144,7 @@ pub struct AhpSessionRequest {
     /// Trusted admission identity, never part of session configuration.
     pub authentication: AhpSessionAuthentication,
     /// Host-selected settings, with no permission handler installed.
-    pub config: CreateSessionOptions,
+    pub config: SessionConfig,
     /// Cancelled when the handoff ends, including timeout or owner loss.
     ///
     /// This is a child token: cancelling it does not cancel the host or session.
@@ -160,7 +159,7 @@ pub struct AhpSessionResumeRequest {
     /// Trusted admission context under the current application policy.
     pub authentication: AhpSessionAuthentication,
     /// Preserve these settings and add application tools, hooks and handlers.
-    pub config: ResumeSessionOptions,
+    pub config: ResumeSessionConfig,
     /// Cooperative cancellation; late returned sessions are still released once.
     pub cancellation_token: CancellationToken,
 }
@@ -232,7 +231,7 @@ where
 /// To choose asynchronous cleanup, spawn a task that owns the released `Arc`:
 ///
 /// ```no_run
-/// use copilot_sdk::AhpHostOptions;
+/// use github_copilot_sdk::AhpHostOptions;
 ///
 /// let options = AhpHostOptions::new().with_on_session_released(|original| {
 ///     tokio::spawn(async move {
@@ -369,9 +368,9 @@ impl AhpHostOptions {
     ///
     /// ```no_run
     /// use std::sync::Arc;
-    /// use copilot_sdk::{AhpHostAuthentication, AhpHostOptions, AhpSessionRequest, Client};
+    /// use github_copilot_sdk::{AhpHostAuthentication, AhpHostOptions, AhpSessionRequest, Client};
     ///
-    /// # async fn example(owner: &Client) -> Result<(), copilot_sdk::Error> {
+    /// # async fn example(owner: &Client) -> Result<(), github_copilot_sdk::Error> {
     /// let host = owner.start_ahp_host(
     ///     AhpHostOptions::new()
     ///         .with_authentication(AhpHostAuthentication::Github)
@@ -670,17 +669,29 @@ impl Client {
                 },
             );
         }
-        let start_options = HostStartRequest {
-            host_id,
-            authentication: Some(authentication.wire_policy()),
-            allow_creating_new_sessions: options.allow_creating_new_sessions,
-            compute_id: options.compute_id,
-            workspace: options.workspace,
-            local_server: options.local_server,
-            github_environment: options.github_environment,
-            session_factory,
-            resume_factory,
-        };
+        let mut start_options =
+            HostStartOptions::new(host_id).authentication(authentication.wire_policy());
+        if let Some(allowed) = options.allow_creating_new_sessions {
+            start_options = start_options.allow_creating_new_sessions(allowed);
+        }
+        if let Some(compute_id) = options.compute_id {
+            start_options = start_options.compute_id(compute_id);
+        }
+        if let Some(workspace) = options.workspace {
+            start_options = start_options.workspace(workspace);
+        }
+        if let Some(local_server) = options.local_server {
+            start_options = start_options.local_server(local_server);
+        }
+        if let Some(github_environment) = options.github_environment {
+            start_options = start_options.github_environment(github_environment);
+        }
+        if let Some(session_factory) = session_factory {
+            start_options = start_options.session_factory(session_factory);
+        }
+        if let Some(resume_factory) = resume_factory {
+            start_options = start_options.resume_factory(resume_factory);
+        }
         let request = self.inner.rpc.send_request_with_inline_callback(
             "host.start",
             Some(serde_json::to_value(start_options)?),
@@ -1281,111 +1292,104 @@ impl Client {
     }
 }
 
-// The host's flat settings are internal, not public session RPC payloads.
-// Decode into grouped SDK options without dropping a host-selected constraint.
+// These are SDK config names, not session.create wire names (notably
+// enableMcpApps and the options.update settings). Reject new unknown settings
+// rather than silently losing a host-selected constraint.
 macro_rules! host_settings {
     ($apply:ident) => {
         $apply! {
             "workingDirectory" => working_directory,
             "configDir" => config_directory,
-            "enableExperimentalMode" => experiments.enable_experimental_mode,
-            "infiniteSessions" => state.infinite_sessions,
-            "additionalDirectories" => filesystem.additional_directories,
-            "streaming" => events.streaming,
-            "gitHubToken" => github.token,
-            "mcpOAuthTokenStorage" => mcp.oauth_token_storage,
+            "enableExperimentalMode" => enable_experimental_mode,
+            "infiniteSessions" => infinite_sessions,
+            "additionalDirectories" => additional_directories,
+            "streaming" => streaming,
+            "gitHubToken" => github_token,
+            "mcpOAuthTokenStorage" => mcp_oauth_token_storage,
             "enableConfigDiscovery" => enable_config_discovery,
-            "featureFlags" => experiments.flags,
-            "enableManagedSettings" => github.fetch_managed_settings,
-            "excludedManagedSettings" => policy.excluded_managed_settings,
-            "enableSessionStore" => state.enable_cross_session_store,
-            "availableTools" => tools.available_tools,
-            "excludedTools" => tools.excluded_tools,
-            "allowedModels" => policy.allowed_models,
+            "featureFlags" => feature_flags,
+            "enableManagedSettings" => enable_managed_settings,
+            "excludedManagedSettings" => excluded_managed_settings,
+            "enableSessionStore" => enable_session_store,
+            "availableTools" => available_tools,
+            "excludedTools" => excluded_tools,
+            "allowedModels" => allowed_models,
             "systemMessage" => system_message,
-            "skipCustomInstructions" => instructions.skip_custom_instructions,
-            "customAgentsLocalOnly" => agents.local_discovery_only,
-            "coauthorEnabled" => git.coauthor_enabled,
-            "manageScheduleEnabled" => tools.manage_schedule_enabled,
-            "memory" => state.memory,
-            "pluginDirectories" => plugins.directories,
-            "skillDirectories" => skills.directories,
-            "agentDirectories" => agents.directories,
-            "hookDirectories" => hooks.directories,
-            "instructionDirectories" => instructions.directories,
-            "enableMcpApps" => mcp.enable_apps,
+            "skipCustomInstructions" => skip_custom_instructions,
+            "customAgentsLocalOnly" => custom_agents_local_only,
+            "coauthorEnabled" => coauthor_enabled,
+            "manageScheduleEnabled" => manage_schedule_enabled,
+            "memory" => memory,
+            "pluginDirectories" => plugin_directories,
+            "skillDirectories" => skill_directories,
+            "agentDirectories" => agent_directories,
+            "hookDirectories" => hook_directories,
+            "instructionDirectories" => instruction_directories,
+            "enableMcpApps" => enable_mcp_apps,
             "model" => model,
-            "reasoningEffort" => inference.reasoning_effort,
-            "allowMultipleToolCalls" => inference.allow_multiple_tool_calls,
-            "contextTier" => inference.context_tier,
-            "providers" => inference.providers,
-            "models" => inference.models,
-            "capi" => github.capi,
-            "autopilot" => execution.autopilot,
-            "permissionMode" => permissions.mode,
+            "reasoningEffort" => reasoning_effort,
+            "allowMultipleToolCalls" => allow_multiple_tool_calls,
+            "contextTier" => context_tier,
+            "autopilot" => autopilot,
+            "permissionMode" => permission_mode,
         }
     };
 }
 
-fn config_from_host(settings: &HashMap<String, Value>) -> Result<CreateSessionOptions, Error> {
-    let mut config = CreateSessionOptions::default();
+fn config_from_host(settings: &HashMap<String, Value>) -> Result<SessionConfig, Error> {
+    let mut config = SessionConfig::default();
     macro_rules! decode {
-        ($($name:literal => $($field:ident).+,)*) => {
-            for (name, value) in settings {
-                match name.as_str() {
-                    "sessionId" => config.session_id = Deserialize::deserialize(value)?,
-                    "refreshCustomInstructions" => config.instructions.refresh_custom_instructions = Deserialize::deserialize(value)?,
-                    "defaultProvider" => config.inference.default_provider = Some(Deserialize::deserialize(value)?),
-                    $($name => config.$($field).+ = Deserialize::deserialize(value)?,)*
-                    _ => return Err(handoff_error("Unsupported AHP session configuration setting")),
+                    ($($name:literal => $field:ident,)*) => {
+                        for (key, value) in settings {
+                            match key.as_str() {
+                                "sessionId" => config.session_id = Deserialize::deserialize(value)?,
+                                "refreshCustomInstructions" => config.refresh_custom_instructions = Deserialize::deserialize(value)?,
+                                $($name => config.$field = Deserialize::deserialize(value)?,)*
+                                _ => return Err(handoff_error("Unsupported AHP session configuration setting")),
+                            }
+                        }
+                    };
                 }
-            }
-        };
-    }
     host_settings!(decode);
     Ok(config)
 }
 
-pub(crate) fn config_for_host(config: &CreateSessionOptions) -> Result<Value, Error> {
+pub(crate) fn config_for_host(config: &SessionConfig) -> Result<Value, Error> {
     let mut settings = serde_json::Map::new();
     if let Some(id) = &config.session_id {
         settings.insert("sessionId".into(), serde_json::to_value(id)?);
     }
-    if let Some(refresh) = config.instructions.refresh_custom_instructions {
+    if let Some(refresh) = config.refresh_custom_instructions {
         settings.insert("refreshCustomInstructions".into(), Value::Bool(refresh));
     }
-    if let Some(value) = &config.inference.default_provider {
-        settings.insert("defaultProvider".into(), serde_json::to_value(value)?);
-    }
     macro_rules! encode {
-        ($($name:literal => $($field:ident).+,)*) => {
-            $(if let Some(value) = &config.$($field).+ {
-                settings.insert($name.to_owned(), serde_json::to_value(value)?);
-            })*
-        };
-    }
+                    ($($name:literal => $field:ident,)*) => {
+                        $(if let Some(value) = &config.$field {
+                            settings.insert($name.to_owned(), serde_json::to_value(value)?);
+                        })*
+                    };
+                }
     host_settings!(encode);
     Ok(Value::Object(settings))
 }
 
 fn resume_config_from_host(
     settings: &HashMap<String, Value>,
-) -> Result<ResumeSessionOptions, Error> {
+) -> Result<ResumeSessionConfig, Error> {
     let id = settings
         .get("sessionId")
         .and_then(Value::as_str)
         .ok_or_else(|| handoff_error("AHP resume requires sessionId"))?;
-    let mut config = ResumeSessionOptions::new(id.into());
+    let mut config = ResumeSessionConfig::new(id.into());
     macro_rules! decode {
-        ($($name:literal => $($field:ident).+,)*) => {
-            for (name, value) in settings {
-                match name.as_str() {
+        ($($name:literal => $field:ident,)*) => {
+            for (key, value) in settings {
+                match key.as_str() {
                     "sessionId" => {},
                     "continuePendingWork" => config.continue_pending_work = Deserialize::deserialize(value)?,
                     "suppressResumeEvent" => config.suppress_resume_event = Deserialize::deserialize(value)?,
                     "allowTranscriptRecovery" => config.allow_transcript_recovery = Deserialize::deserialize(value)?,
-                    "defaultProvider" => config.inference.default_provider = Some(Deserialize::deserialize(value)?),
-                    $($name => config.$($field).+ = Deserialize::deserialize(value)?,)*
+                    $($name => config.$field = Deserialize::deserialize(value)?,)*
                     _ => return Err(handoff_error("Unsupported AHP resume configuration setting")),
                 }
             }
@@ -1395,18 +1399,15 @@ fn resume_config_from_host(
     Ok(config)
 }
 
-pub(crate) fn resume_config_for_host(config: &ResumeSessionOptions) -> Result<Value, Error> {
+pub(crate) fn resume_config_for_host(config: &ResumeSessionConfig) -> Result<Value, Error> {
     let mut settings = serde_json::Map::new();
     settings.insert(
         "sessionId".into(),
         serde_json::to_value(&config.session_id)?,
     );
-    if let Some(value) = &config.inference.default_provider {
-        settings.insert("defaultProvider".into(), serde_json::to_value(value)?);
-    }
     macro_rules! encode {
-        ($($name:literal => $($field:ident).+,)*) => {
-            $(if let Some(value) = &config.$($field).+ {
+        ($($name:literal => $field:ident,)*) => {
+            $(if let Some(value) = &config.$field {
                 settings.insert($name.to_owned(), serde_json::to_value(value)?);
             })*
         };

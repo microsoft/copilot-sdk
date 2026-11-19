@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 #![cfg(test)]
 
-use copilot_sdk::{AutoModeRecoveryContext, ResumeSessionOptions, SessionErrorKind};
+use github_copilot_sdk::{AutoModeRecoveryContext, ResumeSessionConfig, SessionErrorKind};
 use serde_json::json;
 use tokio::sync::{mpsc, oneshot};
 
@@ -29,14 +29,10 @@ async fn exact_hex_provider_resume_skips_host_lookup() {
         let start = tokio::spawn(async move {
             client
                 .resume_session(
-                    ResumeSessionOptions::new(SessionId::from("abcdef0"))
-                        .with_interaction(|group| group.with_auto_mode_recovery(recovery))
-                        .with_interaction(|group| {
-                            group.with_on_auto_mode_switch_request(Arc::new(LegacyHandler))
-                        })
-                        .with_state(|group| {
-                            group.with_session_fs_provider(Arc::new(RecordingFsProvider::new()))
-                        }),
+                    ResumeSessionConfig::new(SessionId::from("abcdef0"))
+                        .with_auto_mode_recovery(recovery)
+                        .with_auto_mode_switch_handler(Arc::new(LegacyHandler))
+                        .with_session_fs_provider(Arc::new(RecordingFsProvider::new())),
                 )
                 .await
         });
@@ -67,12 +63,10 @@ async fn uuid_prefix_resume_routes_early_callbacks_and_cleanup_to_canonical_id()
         async move {
             client
                 .resume_session(
-                    ResumeSessionOptions::new(SessionId::from("ABCDEF12"))
+                    ResumeSessionConfig::new(SessionId::from("ABCDEF12"))
                         .with_config_directory("configured-home")
-                        .with_interaction(|group| {
-                            group.with_on_auto_mode_switch_request(Arc::new(LegacyHandler))
-                        })
-                        .with_interaction(|group| group.with_auto_mode_recovery(true)),
+                        .with_auto_mode_switch_handler(Arc::new(LegacyHandler))
+                        .with_auto_mode_recovery(true),
                 )
                 .await
         }
@@ -129,11 +123,9 @@ async fn unresolved_uuid_prefix_leaves_callbacks_unregistered() {
         async move {
             client
                 .resume_session(
-                    ResumeSessionOptions::new(SessionId::from("abcdef12"))
-                        .with_interaction(|group| {
-                            group.with_on_auto_mode_switch_request(Arc::new(LegacyHandler))
-                        })
-                        .with_interaction(|group| group.with_auto_mode_recovery(true)),
+                    ResumeSessionConfig::new(SessionId::from("abcdef12"))
+                        .with_auto_mode_switch_handler(Arc::new(LegacyHandler))
+                        .with_auto_mode_recovery(true),
                 )
                 .await
         }
@@ -163,7 +155,7 @@ async fn exact_hex_resume_uses_configured_storage_without_lookup() {
         async move {
             client
                 .resume_session(
-                    ResumeSessionOptions::new(SessionId::from("abcdef0"))
+                    ResumeSessionConfig::new(SessionId::from("abcdef0"))
                         .with_config_directory("configured-home"),
                 )
                 .await
@@ -171,7 +163,7 @@ async fn exact_hex_resume_uses_configured_storage_without_lookup() {
     });
     let resume = timeout(TIMEOUT, server.read_request()).await.unwrap();
     assert_eq!(resume["method"], "session.resume");
-    assert_eq!(resume["params"]["configDirectory"], "configured-home");
+    assert_eq!(resume["params"]["configDir"], "configured-home");
     assert_eq!(resume["params"]["sessionId"], canonical);
     server
         .respond(&resume, json!({"sessionId": canonical}))
@@ -184,8 +176,64 @@ async fn exact_hex_resume_uses_configured_storage_without_lookup() {
 }
 
 #[test]
-fn capabilities_changed_event_exposes_recovery_in_canonical_data() {
-    let event = copilot_sdk::types::SessionEvent {
+fn ui_capabilities_keeps_the_existing_struct_literal() {
+    let capabilities = github_copilot_sdk::UiCapabilities {
+        elicitation: Some(true),
+        mcp_apps: None,
+        canvases: None,
+    };
+    assert_eq!(capabilities.elicitation, Some(true));
+
+    let capabilities = github_copilot_sdk::session_events::CapabilitiesChangedUI {
+        canvases: Some(true),
+        elicitation: Some(false),
+        mcp_apps: None,
+    };
+    let github_copilot_sdk::session_events::CapabilitiesChangedUI {
+        canvases,
+        elicitation,
+        mcp_apps,
+    } = capabilities;
+    assert_eq!(
+        (canvases, elicitation, mcp_apps),
+        (Some(true), Some(false), None)
+    );
+}
+
+#[test]
+fn direct_registration_types_keep_legacy_struct_construction() {
+    let result = github_copilot_sdk::rpc::UIRegisterDirectAutoModeSwitchHandlerResult {
+        handle: "registration-1".to_owned(),
+    };
+    let github_copilot_sdk::rpc::UIRegisterDirectAutoModeSwitchHandlerResult { handle } = result;
+    assert_eq!(handle, "registration-1");
+
+    let result = github_copilot_sdk::rpc::SessionUiRegisterDirectAutoModeSwitchHandlerResult {
+        handle: "registration-2".to_owned(),
+    };
+    let github_copilot_sdk::rpc::SessionUiRegisterDirectAutoModeSwitchHandlerResult { handle } =
+        result;
+    assert_eq!(handle, "registration-2");
+
+    let params = github_copilot_sdk::rpc::SessionUiRegisterDirectAutoModeSwitchHandlerParams {
+        session_id: SessionId::from("registration-session"),
+    };
+    let github_copilot_sdk::rpc::SessionUiRegisterDirectAutoModeSwitchHandlerParams { session_id } =
+        params;
+    assert_eq!(session_id, SessionId::from("registration-session"));
+
+    let recovery_result: github_copilot_sdk::rpc::SessionUiRegisterDirectAutoModeSwitchHandlerResultWithAutoModeRecovery =
+        serde_json::from_value(serde_json::json!({
+            "handle": "registration-3",
+            "autoModeRecovery": true
+        }))
+        .expect("recovery-aware result must retain its acknowledgment");
+    assert_eq!(recovery_result.auto_mode_recovery, Some(true));
+}
+
+#[test]
+fn capabilities_changed_event_exposes_recovery_without_changing_legacy_data() {
+    let event = github_copilot_sdk::types::SessionEvent {
         id: "event-1".to_owned(),
         timestamp: "2026-11-04T00:00:00Z".to_owned(),
         parent_id: None,
@@ -203,9 +251,17 @@ fn capabilities_changed_event_exposes_recovery_in_canonical_data() {
         }),
     };
 
+    let legacy = event
+        .typed_data::<github_copilot_sdk::session_events::CapabilitiesChangedData>()
+        .expect("legacy capability payload must still deserialize");
+    assert_eq!(
+        legacy.ui.expect("legacy UI capabilities").canvases,
+        Some(true)
+    );
+
     let recovery = event
-        .capabilities_changed_data()
-        .expect("capability event must expose canonical data");
+        .capabilities_changed_data_with_auto_mode_recovery()
+        .expect("capability event must expose recovery-aware data");
     let ui = recovery
         .ui
         .as_ref()
@@ -218,11 +274,11 @@ fn capabilities_changed_event_exposes_recovery_in_canonical_data() {
         event.data
     );
     assert!(
-        copilot_sdk::types::SessionEvent {
+        github_copilot_sdk::types::SessionEvent {
             event_type: "session.idle".to_owned(),
             ..event
         }
-        .capabilities_changed_data()
+        .capabilities_changed_data_with_auto_mode_recovery()
         .is_none()
     );
 }
@@ -242,13 +298,8 @@ impl AutoModeSwitchHandler for LegacyHandler {
 fn auto_mode_recovery_client() -> (Client, FakeServer) {
     let (client_write, server_read) = duplex(8192);
     let (server_write, client_read) = duplex(8192);
-    let client = Client::from_streams(
-        copilot_sdk::ClientMode::CodingAgent,
-        client_read,
-        client_write,
-        std::env::current_dir().unwrap(),
-    )
-    .unwrap();
+    let client =
+        Client::from_streams(client_read, client_write, std::env::current_dir().unwrap()).unwrap();
     (
         client,
         FakeServer {
@@ -265,7 +316,7 @@ async fn open(
     acknowledged: Option<bool>,
     handler: Arc<dyn AutoModeSwitchHandler>,
 ) -> (
-    Result<copilot_sdk::session::Session, copilot_sdk::Error>,
+    Result<github_copilot_sdk::session::Session, github_copilot_sdk::Error>,
     Client,
     FakeServer,
     Value,
@@ -277,22 +328,18 @@ async fn open(
             if resume {
                 client
                     .resume_session(
-                        ResumeSessionOptions::new(SessionId::from("recovery-session"))
-                            .with_interaction(|group| {
-                                group.with_on_auto_mode_switch_request(handler)
-                            })
-                            .with_interaction(|group| group.with_auto_mode_recovery(enabled)),
+                        ResumeSessionConfig::new(SessionId::from("recovery-session"))
+                            .with_auto_mode_switch_handler(handler)
+                            .with_auto_mode_recovery(enabled),
                     )
                     .await
             } else {
                 client
                     .create_session(
-                        CreateSessionOptions::default()
+                        SessionConfig::default()
                             .with_session_id("recovery-session")
-                            .with_interaction(|group| {
-                                group.with_on_auto_mode_switch_request(handler)
-                            })
-                            .with_interaction(|group| group.with_auto_mode_recovery(enabled)),
+                            .with_auto_mode_switch_handler(handler)
+                            .with_auto_mode_recovery(enabled),
                     )
                     .await
             }
@@ -330,7 +377,7 @@ async fn open(
     (session, client, server, request)
 }
 
-async fn disconnect(session: copilot_sdk::session::Session, mut server: FakeServer) {
+async fn disconnect(session: github_copilot_sdk::session::Session, mut server: FakeServer) {
     let (result, ()) = tokio::join!(session.disconnect(), async {
         let request = timeout(TIMEOUT, server.read_request()).await.unwrap();
         assert_eq!(request["method"], "session.detach");
@@ -345,10 +392,7 @@ async fn disconnect(session: copilot_sdk::session::Session, mut server: FakeServ
 async fn enrollment_requires_handler_before_any_wire_request() {
     let (client, _server) = auto_mode_recovery_client();
     let error = client
-        .create_session(
-            CreateSessionOptions::default()
-                .with_interaction(|group| group.with_auto_mode_recovery(true)),
-        )
+        .create_session(SessionConfig::default().with_auto_mode_recovery(true))
         .await
         .err()
         .expect("missing handler must fail");
@@ -357,8 +401,7 @@ async fn enrollment_requires_handler_before_any_wire_request() {
         let error = timeout(
             TIMEOUT,
             client.resume_session(
-                ResumeSessionOptions::new(SessionId::from(session_id))
-                    .with_interaction(|group| group.with_auto_mode_recovery(true)),
+                ResumeSessionConfig::new(SessionId::from(session_id)).with_auto_mode_recovery(true),
             ),
         )
         .await
@@ -381,10 +424,7 @@ async fn missing_or_false_acknowledgment_detaches_and_unregisters() {
                 *error.kind(),
                 ErrorKind::Session(SessionErrorKind::AutoModeRecoveryNotSupported)
             );
-            assert_eq!(
-                request["params"]["interaction"]["requestAutoModeRecovery"],
-                true
-            );
+            assert_eq!(request["params"]["requestAutoModeRecovery"], true);
             assert_eq!(client.registered_session_count_for_test(), 0);
         }
     }
@@ -394,29 +434,26 @@ async fn start_unsupported_attachment(
     client: &Client,
     server: &mut FakeServer,
     resume: bool,
-) -> tokio::task::JoinHandle<Result<copilot_sdk::session::Session, copilot_sdk::Error>> {
+) -> tokio::task::JoinHandle<Result<github_copilot_sdk::session::Session, github_copilot_sdk::Error>>
+{
     let start = tokio::spawn({
         let client = client.clone();
         async move {
             if resume {
                 client
                     .resume_session(
-                        ResumeSessionOptions::new(SessionId::from("recovery-session"))
-                            .with_interaction(|group| {
-                                group.with_on_auto_mode_switch_request(Arc::new(LegacyHandler))
-                            })
-                            .with_interaction(|group| group.with_auto_mode_recovery(true)),
+                        ResumeSessionConfig::new(SessionId::from("recovery-session"))
+                            .with_auto_mode_switch_handler(Arc::new(LegacyHandler))
+                            .with_auto_mode_recovery(true),
                     )
                     .await
             } else {
                 client
                     .create_session(
-                        CreateSessionOptions::default()
+                        SessionConfig::default()
                             .with_session_id("recovery-session")
-                            .with_interaction(|group| {
-                                group.with_on_auto_mode_switch_request(Arc::new(LegacyHandler))
-                            })
-                            .with_interaction(|group| group.with_auto_mode_recovery(true)),
+                            .with_auto_mode_switch_handler(Arc::new(LegacyHandler))
+                            .with_auto_mode_recovery(true),
                     )
                     .await
             }
@@ -488,29 +525,27 @@ async fn assert_recovery_waits_for_ordinary_initialization(
     );
     let mut ordinary = Box::pin(async {
         if resume {
-            let mut config = ResumeSessionOptions::new(SessionId::from("recovery-session"));
+            let mut config = ResumeSessionConfig::new(SessionId::from("recovery-session"));
             if interest {
-                config = config
-                    .with_mcp(|group| group.with_on_auth_request(Arc::new(CancelMcpAuthHandler)));
+                config = config.with_mcp_auth_handler(Arc::new(CancelMcpAuthHandler));
             }
             if options {
-                config = config.with_git(|group| group.with_coauthor_enabled(false));
+                config = config.with_coauthor_enabled(false);
             }
             client.resume_session(config).await
         } else {
             let mut config = if matches!(phase, OrdinaryInitialization::CloudCreateInterest) {
-                CreateSessionOptions::default().with_cloud(CloudSessionOptions::with_repository(
+                SessionConfig::default().with_cloud(CloudSessionOptions::with_repository(
                     CloudSessionRepository::new("github", "copilot-sdk"),
                 ))
             } else {
-                CreateSessionOptions::default().with_session_id("recovery-session")
+                SessionConfig::default().with_session_id("recovery-session")
             };
             if interest {
-                config = config
-                    .with_mcp(|group| group.with_on_auth_request(Arc::new(CancelMcpAuthHandler)));
+                config = config.with_mcp_auth_handler(Arc::new(CancelMcpAuthHandler));
             }
             if options {
-                config = config.with_git(|group| group.with_coauthor_enabled(false));
+                config = config.with_coauthor_enabled(false);
             }
             client.create_session(config).await
         }
@@ -566,11 +601,9 @@ async fn assert_recovery_waits_for_ordinary_initialization(
 
     let mut recovery = Box::pin(
         client.resume_session(
-            ResumeSessionOptions::new(SessionId::from("recovery-session"))
-                .with_interaction(|group| {
-                    group.with_on_auto_mode_switch_request(Arc::new(LegacyHandler))
-                })
-                .with_interaction(|group| group.with_auto_mode_recovery(true)),
+            ResumeSessionConfig::new(SessionId::from("recovery-session"))
+                .with_auto_mode_switch_handler(Arc::new(LegacyHandler))
+                .with_auto_mode_recovery(true),
         ),
     );
     assert!(futures_util::poll!(&mut recovery).is_pending());
@@ -688,13 +721,13 @@ async fn recovery_waits_for_ordinary_create_post_rpc_setup() {
 async fn cancelled_displaced_startup_is_not_restored_as_a_resident_session() {
     let (client, mut server) = auto_mode_recovery_client();
     let mut create = Box::pin(
-        client.create_session(CreateSessionOptions::default().with_session_id("recovery-session")),
+        client.create_session(SessionConfig::default().with_session_id("recovery-session")),
     );
     assert!(futures_util::poll!(&mut create).is_pending());
     let request = timeout(TIMEOUT, server.read_request()).await.unwrap();
     assert_eq!(request["method"], "session.create");
     let mut resume = Box::pin(
-        client.resume_session(ResumeSessionOptions::new(SessionId::from(
+        client.resume_session(ResumeSessionConfig::new(SessionId::from(
             "recovery-session",
         ))),
     );
@@ -754,14 +787,14 @@ async fn pending_recovery_cleanup_blocks_same_id_initialization() {
                 let mut retry = Box::pin(async {
                     if retry_resume {
                         client
-                            .resume_session(ResumeSessionOptions::new(SessionId::from(
+                            .resume_session(ResumeSessionConfig::new(SessionId::from(
                                 "recovery-session",
                             )))
                             .await
                     } else {
                         client
                             .create_session(
-                                CreateSessionOptions::default().with_session_id("recovery-session"),
+                                SessionConfig::default().with_session_id("recovery-session"),
                             )
                             .await
                     }
@@ -830,9 +863,9 @@ async fn failed_recovery_cleanup_fences_same_id_after_failure_timeout_or_cancell
                 } else {
                     Some(start)
                 };
-                let mut waiting_resume = Box::pin(client.resume_session(
-                    ResumeSessionOptions::new(SessionId::from("recovery-session")),
-                ));
+                let mut waiting_resume = Box::pin(client.resume_session(ResumeSessionConfig::new(
+                    SessionId::from("recovery-session"),
+                )));
                 assert!(futures_util::poll!(&mut waiting_resume).is_pending());
                 initialization_wire_fence(&client, &mut server).await;
                 if detach_times_out {
@@ -866,14 +899,14 @@ async fn failed_recovery_cleanup_fences_same_id_after_failure_timeout_or_cancell
                 for retry_resume in [false, true] {
                     let result = if retry_resume {
                         client
-                            .resume_session(ResumeSessionOptions::new(SessionId::from(
+                            .resume_session(ResumeSessionConfig::new(SessionId::from(
                                 "recovery-session",
                             )))
                             .await
                     } else {
                         client
                             .create_session(
-                                CreateSessionOptions::default().with_session_id("recovery-session"),
+                                SessionConfig::default().with_session_id("recovery-session"),
                             )
                             .await
                     };
@@ -896,7 +929,7 @@ async fn failed_recovery_cleanup_fences_same_id_after_failure_timeout_or_cancell
 #[tokio::test]
 async fn server_assigned_create_cannot_replace_pending_or_failed_cleanup() {
     let cloud_config = || {
-        CreateSessionOptions::default().with_cloud(CloudSessionOptions::with_repository(
+        SessionConfig::default().with_cloud(CloudSessionOptions::with_repository(
             CloudSessionRepository::new("github", "copilot-sdk"),
         ))
     };
@@ -904,10 +937,8 @@ async fn server_assigned_create_cannot_replace_pending_or_failed_cleanup() {
     let mut start = Box::pin(
         client.create_session(
             cloud_config()
-                .with_interaction(|group| {
-                    group.with_on_auto_mode_switch_request(Arc::new(LegacyHandler))
-                })
-                .with_interaction(|group| group.with_auto_mode_recovery(true)),
+                .with_auto_mode_switch_handler(Arc::new(LegacyHandler))
+                .with_auto_mode_recovery(true),
         ),
     );
     assert!(futures_util::poll!(&mut start).is_pending());
@@ -995,20 +1026,14 @@ async fn cancelled_cloud_post_create_setup_owns_fenced_rollback() {
                 async move {
                     client
                         .create_session(
-                            CreateSessionOptions::default()
+                            SessionConfig::default()
                                 .with_cloud(CloudSessionOptions::with_repository(
                                     CloudSessionRepository::new("github", "copilot-sdk"),
                                 ))
-                                .with_interaction(|group| {
-                                    group.with_on_auto_mode_switch_request(Arc::new(LegacyHandler))
-                                })
-                                .with_interaction(|group| group.with_auto_mode_recovery(true))
-                                .with_mcp(|group| {
-                                    group.with_on_auth_request(Arc::new(CancelMcpAuthHandler))
-                                })
-                                .with_instructions(|group| {
-                                    group.with_skip_custom_instructions(true)
-                                }),
+                                .with_auto_mode_switch_handler(Arc::new(LegacyHandler))
+                                .with_auto_mode_recovery(true)
+                                .with_mcp_auth_handler(Arc::new(CancelMcpAuthHandler))
+                                .with_skip_custom_instructions(true),
                         )
                         .await
                 }
@@ -1051,7 +1076,7 @@ async fn cancelled_cloud_post_create_setup_owns_fenced_rollback() {
                 let session_id = server.session_id.clone();
                 async move {
                     client
-                        .resume_session(ResumeSessionOptions::new(SessionId::from(session_id)))
+                        .resume_session(ResumeSessionConfig::new(SessionId::from(session_id)))
                         .await
                 }
             });
@@ -1110,18 +1135,14 @@ async fn cloud_post_create_failure_is_deleted_before_returning_error() {
             async move {
                 client
                     .create_session(
-                        CreateSessionOptions::default()
+                        SessionConfig::default()
                             .with_cloud(CloudSessionOptions::with_repository(
                                 CloudSessionRepository::new("github", "copilot-sdk"),
                             ))
-                            .with_interaction(|group| {
-                                group.with_on_auto_mode_switch_request(Arc::new(LegacyHandler))
-                            })
-                            .with_interaction(|group| group.with_auto_mode_recovery(true))
-                            .with_mcp(|group| {
-                                group.with_on_auth_request(Arc::new(CancelMcpAuthHandler))
-                            })
-                            .with_instructions(|group| group.with_skip_custom_instructions(true)),
+                            .with_auto_mode_switch_handler(Arc::new(LegacyHandler))
+                            .with_auto_mode_recovery(true)
+                            .with_mcp_auth_handler(Arc::new(CancelMcpAuthHandler))
+                            .with_skip_custom_instructions(true),
                     )
                     .await
             }
@@ -1180,9 +1201,7 @@ async fn cloud_post_create_failure_is_deleted_before_returning_error() {
             assert!(error.to_string().contains("cloud rollback rejected"));
             let retry = timeout(
                 TIMEOUT,
-                client.resume_session(ResumeSessionOptions::new(SessionId::from(
-                    server.session_id,
-                ))),
+                client.resume_session(ResumeSessionConfig::new(SessionId::from(server.session_id))),
             )
             .await
             .unwrap();
@@ -1202,14 +1221,12 @@ async fn rejected_server_assigned_cloud_create_is_deleted_after_detach() {
         async move {
             client
                 .create_session(
-                    CreateSessionOptions::default()
+                    SessionConfig::default()
                         .with_cloud(CloudSessionOptions::with_repository(
                             CloudSessionRepository::new("github", "copilot-sdk"),
                         ))
-                        .with_interaction(|group| {
-                            group.with_on_auto_mode_switch_request(Arc::new(LegacyHandler))
-                        })
-                        .with_interaction(|group| group.with_auto_mode_recovery(true)),
+                        .with_auto_mode_switch_handler(Arc::new(LegacyHandler))
+                        .with_auto_mode_recovery(true),
                 )
                 .await
         }
@@ -1257,14 +1274,12 @@ async fn server_assigned_cloud_cleanup_deletes_even_when_detach_fails_and_keeps_
         async move {
             client
                 .create_session(
-                    CreateSessionOptions::default()
+                    SessionConfig::default()
                         .with_cloud(CloudSessionOptions::with_repository(
                             CloudSessionRepository::new("github", "copilot-sdk"),
                         ))
-                        .with_interaction(|group| {
-                            group.with_on_auto_mode_switch_request(Arc::new(LegacyHandler))
-                        })
-                        .with_interaction(|group| group.with_auto_mode_recovery(true)),
+                        .with_auto_mode_switch_handler(Arc::new(LegacyHandler))
+                        .with_auto_mode_recovery(true),
                 )
                 .await
         }
@@ -1314,14 +1329,9 @@ async fn server_assigned_cloud_cleanup_deletes_even_when_detach_fails_and_keeps_
     );
     assert_eq!(client.registered_session_count_for_test(), 0);
 
-    let mut retry = Box::pin(
-        client.create_session(CreateSessionOptions::default().with_cloud(
-            CloudSessionOptions::with_repository(CloudSessionRepository::new(
-                "github",
-                "copilot-sdk",
-            )),
-        )),
-    );
+    let mut retry = Box::pin(client.create_session(SessionConfig::default().with_cloud(
+        CloudSessionOptions::with_repository(CloudSessionRepository::new("github", "copilot-sdk")),
+    )));
     assert!(futures_util::poll!(&mut retry).is_pending());
     let retry_request = timeout(TIMEOUT, server.read_request()).await.unwrap();
     server
@@ -1352,14 +1362,12 @@ async fn server_assigned_cloud_cleanup_attempts_delete_after_detach_timeout() {
         async move {
             client
                 .create_session(
-                    CreateSessionOptions::default()
+                    SessionConfig::default()
                         .with_cloud(CloudSessionOptions::with_repository(
                             CloudSessionRepository::new("github", "copilot-sdk"),
                         ))
-                        .with_interaction(|group| {
-                            group.with_on_auto_mode_switch_request(Arc::new(LegacyHandler))
-                        })
-                        .with_interaction(|group| group.with_auto_mode_recovery(true)),
+                        .with_auto_mode_switch_handler(Arc::new(LegacyHandler))
+                        .with_auto_mode_recovery(true),
                 )
                 .await
         }
@@ -1399,14 +1407,9 @@ async fn server_assigned_cloud_cleanup_attempts_delete_after_detach_timeout() {
     );
     assert_eq!(client.registered_session_count_for_test(), 0);
 
-    let mut retry = Box::pin(
-        client.create_session(CreateSessionOptions::default().with_cloud(
-            CloudSessionOptions::with_repository(CloudSessionRepository::new(
-                "github",
-                "copilot-sdk",
-            )),
-        )),
-    );
+    let mut retry = Box::pin(client.create_session(SessionConfig::default().with_cloud(
+        CloudSessionOptions::with_repository(CloudSessionRepository::new("github", "copilot-sdk")),
+    )));
     assert!(futures_util::poll!(&mut retry).is_pending());
     let retry_request = timeout(TIMEOUT, server.read_request()).await.unwrap();
     server
@@ -1464,17 +1467,17 @@ struct ReentrantSessionFsProvider {
 }
 
 #[async_trait]
-impl copilot_sdk::session_fs::SessionFsProvider for ReentrantSessionFsProvider {
+impl github_copilot_sdk::session_fs::SessionFsProvider for ReentrantSessionFsProvider {
     async fn write_file(
         &self,
         _path: &str,
         _content: &str,
         _mode: Option<i64>,
-    ) -> Result<(), copilot_sdk::session_fs::FsError> {
+    ) -> Result<(), github_copilot_sdk::session_fs::FsError> {
         let client = self.client.clone();
         let create = async move {
             client
-                .create_session(CreateSessionOptions::default().with_session_id("recovery-session"))
+                .create_session(SessionConfig::default().with_session_id("recovery-session"))
                 .await
                 .map(|_| ())
                 .map_err(|error| error.to_string())
@@ -1488,7 +1491,7 @@ impl copilot_sdk::session_fs::SessionFsProvider for ReentrantSessionFsProvider {
         };
         let other_id = self
             .client
-            .create_session(CreateSessionOptions::default().with_session_id("independent-session"))
+            .create_session(SessionConfig::default().with_session_id("independent-session"))
             .await
             .map(|_| ())
             .map_err(|error| error.to_string());
@@ -1522,13 +1525,11 @@ async fn assert_session_fs_callback_reentry(spawn: bool) {
         async move {
             client
                 .create_session(
-                    CreateSessionOptions::default()
+                    SessionConfig::default()
                         .with_session_id("recovery-session")
-                        .with_interaction(|group| {
-                            group.with_on_auto_mode_switch_request(Arc::new(LegacyHandler))
-                        })
-                        .with_interaction(|group| group.with_auto_mode_recovery(true))
-                        .with_state(|group| group.with_session_fs_provider(provider)),
+                        .with_auto_mode_switch_handler(Arc::new(LegacyHandler))
+                        .with_auto_mode_recovery(true)
+                        .with_session_fs_provider(provider),
                 )
                 .await
         }
@@ -1595,7 +1596,7 @@ async fn recovery_resume_waits_for_an_ordinary_resume_rpc_before_replacing_regis
         let client = client.clone();
         async move {
             client
-                .resume_session(ResumeSessionOptions::new(SessionId::from(
+                .resume_session(ResumeSessionConfig::new(SessionId::from(
                     "recovery-session",
                 )))
                 .await
@@ -1610,11 +1611,9 @@ async fn recovery_resume_waits_for_an_ordinary_resume_rpc_before_replacing_regis
         let client = client.clone();
         async move {
             let recovery = client.resume_session(
-                ResumeSessionOptions::new(SessionId::from("recovery-session"))
-                    .with_interaction(|group| {
-                        group.with_on_auto_mode_switch_request(Arc::new(LegacyHandler))
-                    })
-                    .with_interaction(|group| group.with_auto_mode_recovery(true)),
+                ResumeSessionConfig::new(SessionId::from("recovery-session"))
+                    .with_auto_mode_switch_handler(Arc::new(LegacyHandler))
+                    .with_auto_mode_recovery(true),
             );
             tokio::pin!(recovery);
             assert!(
@@ -1701,7 +1700,7 @@ async fn spawned_session_end_hook_reentry_does_not_wait_on_cleanup() {
 }
 
 async fn assert_session_end_hook_reentry(spawn: bool) {
-    use copilot_sdk::hooks::{HookContext, SessionEndInput, SessionEndOutput, SessionHooks};
+    use github_copilot_sdk::hooks::{HookContext, SessionEndInput, SessionEndOutput, SessionHooks};
 
     struct ReenteringHook {
         client: Client,
@@ -1719,7 +1718,7 @@ async fn assert_session_end_hook_reentry(spawn: bool) {
             let client = self.client.clone();
             let resume = async move {
                 client
-                    .resume_session(ResumeSessionOptions::new(SessionId::from(input.session_id)))
+                    .resume_session(ResumeSessionConfig::new(SessionId::from(input.session_id)))
                     .await
                     .map(|_| ())
                     .map_err(|error| error.to_string())
@@ -1750,12 +1749,10 @@ async fn assert_session_end_hook_reentry(spawn: bool) {
         async move {
             client
                 .resume_session(
-                    ResumeSessionOptions::new(SessionId::from("recovery-session"))
-                        .with_interaction(|group| {
-                            group.with_on_auto_mode_switch_request(Arc::new(LegacyHandler))
-                        })
-                        .with_interaction(|group| group.with_auto_mode_recovery(true))
-                        .with_hooks(|group| group.with_handlers(hooks)),
+                    ResumeSessionConfig::new(SessionId::from("recovery-session"))
+                        .with_auto_mode_switch_handler(Arc::new(LegacyHandler))
+                        .with_auto_mode_recovery(true)
+                        .with_hooks(hooks),
                 )
                 .await
         }
@@ -1853,7 +1850,7 @@ impl AutoModeSwitchHandler for PendingRecoveryConsentHandler {
         if self.reenter {
             let result = self
                 .client
-                .resume_session(ResumeSessionOptions::new(session_id))
+                .resume_session(ResumeSessionConfig::new(session_id))
                 .await
                 .map(|_| ())
                 .map_err(|error| error.to_string());
@@ -1882,12 +1879,10 @@ async fn pending_recovery_consent_allows_same_id_initialization_without_a_lock_w
             async move {
                 client
                     .create_session(
-                        CreateSessionOptions::default()
+                        SessionConfig::default()
                             .with_session_id("recovery-session")
-                            .with_interaction(|group| {
-                                group.with_on_auto_mode_switch_request(handler)
-                            })
-                            .with_interaction(|group| group.with_auto_mode_recovery(true)),
+                            .with_auto_mode_switch_handler(handler)
+                            .with_auto_mode_recovery(true),
                     )
                     .await
             }
@@ -1928,11 +1923,9 @@ async fn pending_recovery_consent_allows_same_id_initialization_without_a_lock_w
                 async move {
                     client
                         .resume_session(
-                            ResumeSessionOptions::new(SessionId::from("recovery-session"))
-                                .with_interaction(|group| {
-                                    group.with_on_auto_mode_switch_request(Arc::new(LegacyHandler))
-                                })
-                                .with_interaction(|group| group.with_auto_mode_recovery(true)),
+                            ResumeSessionConfig::new(SessionId::from("recovery-session"))
+                                .with_auto_mode_switch_handler(Arc::new(LegacyHandler))
+                                .with_auto_mode_recovery(true),
                         )
                         .await
                 }
@@ -1982,7 +1975,7 @@ async fn pending_recovery_consent_allows_same_id_initialization_without_a_lock_w
 
 #[tokio::test]
 async fn direct_registration_with_params_retains_recovery_acknowledgment() {
-    use copilot_sdk::rpc::UIRegisterDirectAutoModeSwitchHandlerRequest;
+    use github_copilot_sdk::rpc::UIRegisterDirectAutoModeSwitchHandlerRequest;
 
     for acknowledged in [None, Some(false), Some(true)] {
         let (session, client, mut server, _) =
@@ -2016,12 +2009,12 @@ async fn direct_registration_with_params_retains_recovery_acknowledgment() {
             response["autoModeRecovery"] = serde_json::json!(acknowledged);
         }
         server.respond(&request, response.clone()).await;
-        let result: copilot_sdk::rpc::UIRegisterDirectAutoModeSwitchHandlerResult =
+        let result: github_copilot_sdk::rpc::UIRegisterDirectAutoModeSwitchHandlerResultWithAutoModeRecovery =
             timeout(TIMEOUT, registration)
-                .await
-                .unwrap()
-                .unwrap()
-                .expect("registration RPC must succeed");
+            .await
+            .unwrap()
+            .unwrap()
+            .expect("registration RPC must succeed");
         assert_eq!(result.auto_mode_recovery, acknowledged);
         assert_eq!(
             serde_json::to_value(result).unwrap(),
@@ -2061,14 +2054,14 @@ async fn parameterless_direct_registration_keeps_its_legacy_result_and_stays_une
             serde_json::json!({"handle": "legacy-registration"}),
         )
         .await;
-    let result: copilot_sdk::rpc::UIRegisterDirectAutoModeSwitchHandlerResult =
+    let result: github_copilot_sdk::rpc::UIRegisterDirectAutoModeSwitchHandlerResult =
         timeout(TIMEOUT, registration)
             .await
             .unwrap()
             .unwrap()
             .expect("legacy registration RPC must succeed");
-    assert_eq!(result.handle, "legacy-registration");
-    assert_eq!(result.auto_mode_recovery, None);
+    let github_copilot_sdk::rpc::UIRegisterDirectAutoModeSwitchHandlerResult { handle } = result;
+    assert_eq!(handle, "legacy-registration");
     client.force_stop();
 }
 
@@ -2080,15 +2073,13 @@ async fn rejected_explicit_id_cloud_create_is_not_deleted() {
         async move {
             client
                 .create_session(
-                    CreateSessionOptions::default()
+                    SessionConfig::default()
                         .with_session_id("explicit-cloud-session")
                         .with_cloud(CloudSessionOptions::with_repository(
                             CloudSessionRepository::new("github", "copilot-sdk"),
                         ))
-                        .with_interaction(|group| {
-                            group.with_on_auto_mode_switch_request(Arc::new(LegacyHandler))
-                        })
-                        .with_interaction(|group| group.with_auto_mode_recovery(true)),
+                        .with_auto_mode_switch_handler(Arc::new(LegacyHandler))
+                        .with_auto_mode_recovery(true),
                 )
                 .await
         }
@@ -2130,14 +2121,12 @@ async fn failed_cloud_deletion_keeps_same_id_fenced_after_caller_cancellation() 
         async move {
             client
                 .create_session(
-                    CreateSessionOptions::default()
+                    SessionConfig::default()
                         .with_cloud(CloudSessionOptions::with_repository(
                             CloudSessionRepository::new("github", "copilot-sdk"),
                         ))
-                        .with_interaction(|group| {
-                            group.with_on_auto_mode_switch_request(Arc::new(LegacyHandler))
-                        })
-                        .with_interaction(|group| group.with_auto_mode_recovery(true)),
+                        .with_auto_mode_switch_handler(Arc::new(LegacyHandler))
+                        .with_auto_mode_recovery(true),
                 )
                 .await
         }
@@ -2164,14 +2153,9 @@ async fn failed_cloud_deletion_keeps_same_id_fenced_after_caller_cancellation() 
             .is_cancelled()
     );
 
-    let mut retry = Box::pin(
-        client.create_session(CreateSessionOptions::default().with_cloud(
-            CloudSessionOptions::with_repository(CloudSessionRepository::new(
-                "github",
-                "copilot-sdk",
-            )),
-        )),
-    );
+    let mut retry = Box::pin(client.create_session(SessionConfig::default().with_cloud(
+        CloudSessionOptions::with_repository(CloudSessionRepository::new("github", "copilot-sdk")),
+    )));
     assert!(futures_util::poll!(&mut retry).is_pending());
     let retry_request = timeout(TIMEOUT, server.read_request()).await.unwrap();
     assert_eq!(retry_request["method"], "session.create");
@@ -2194,14 +2178,9 @@ async fn failed_cloud_deletion_keeps_same_id_fenced_after_caller_cancellation() 
     );
 
     tokio::time::advance(Duration::from_secs(11)).await;
-    let mut retry = Box::pin(
-        client.create_session(CreateSessionOptions::default().with_cloud(
-            CloudSessionOptions::with_repository(CloudSessionRepository::new(
-                "github",
-                "copilot-sdk",
-            )),
-        )),
-    );
+    let mut retry = Box::pin(client.create_session(SessionConfig::default().with_cloud(
+        CloudSessionOptions::with_repository(CloudSessionRepository::new("github", "copilot-sdk")),
+    )));
     assert!(futures_util::poll!(&mut retry).is_pending());
     let retry_request = timeout(TIMEOUT, server.read_request()).await.unwrap();
     assert_eq!(retry_request["method"], "session.create");
@@ -2226,6 +2205,47 @@ async fn failed_cloud_deletion_keeps_same_id_fenced_after_caller_cancellation() 
     client.force_stop();
 }
 
+#[tokio::test]
+async fn unresponsive_detach_is_bounded_and_still_unregisters() {
+    let (client, mut server) = auto_mode_recovery_client();
+    let start = tokio::spawn({
+        let client = client.clone();
+        async move {
+            client
+                .create_session(
+                    SessionConfig::default()
+                        .with_session_id("recovery-session")
+                        .with_auto_mode_switch_handler(Arc::new(LegacyHandler))
+                        .with_auto_mode_recovery(true),
+                )
+                .await
+        }
+    });
+    let request = timeout(TIMEOUT, server.read_request()).await.unwrap();
+    server
+        .respond(
+            &request,
+            serde_json::json!({"sessionId": server.session_id}),
+        )
+        .await;
+    let detach = timeout(TIMEOUT, server.read_request()).await.unwrap();
+    assert_eq!(detach["method"], "session.detach");
+
+    let result = timeout(Duration::from_secs(12), start)
+        .await
+        .expect("unsupported enrollment must not wait indefinitely for detach")
+        .unwrap();
+    let error = match result {
+        Ok(_) => panic!("unsupported enrollment unexpectedly succeeded"),
+        Err(error) => error,
+    };
+    assert_eq!(
+        *error.kind(),
+        ErrorKind::Session(SessionErrorKind::AutoModeRecoveryNotSupported)
+    );
+    assert_eq!(client.registered_session_count_for_test(), 0);
+}
+
 struct ResumedHandler {
     _on_drop: NotifyOnDrop,
 }
@@ -2248,13 +2268,11 @@ async fn assert_resume_callback_owner(acknowledged: Option<bool>, rpc_rejected: 
     let handler_dropped = Arc::new(Notify::new());
     let mut resume = Box::pin(
         client.resume_session(
-            ResumeSessionOptions::new(SessionId::from("recovery-session"))
-                .with_interaction(|group| {
-                    group.with_on_auto_mode_switch_request(Arc::new(ResumedHandler {
-                        _on_drop: NotifyOnDrop(handler_dropped.clone()),
-                    }))
-                })
-                .with_interaction(|group| group.with_auto_mode_recovery(true)),
+            ResumeSessionConfig::new(SessionId::from("recovery-session"))
+                .with_auto_mode_switch_handler(Arc::new(ResumedHandler {
+                    _on_drop: NotifyOnDrop(handler_dropped.clone()),
+                }))
+                .with_auto_mode_recovery(true),
         ),
     );
     let request = timeout(TIMEOUT, async {
@@ -2355,15 +2373,8 @@ async fn legacy_handler_stays_unenrolled_and_never_silently_accepts_auto_mode_re
         let (session, _client, mut server, request) =
             open(resume, false, None, Arc::new(LegacyHandler)).await;
         let session = session.unwrap();
-        assert_eq!(
-            request["params"]["interaction"]["requestAutoModeSwitch"],
-            true
-        );
-        assert!(
-            request["params"]["interaction"]
-                .get("requestAutoModeRecovery")
-                .is_none()
-        );
+        assert_eq!(request["params"]["requestAutoModeSwitch"], true);
+        assert!(request["params"].get("requestAutoModeRecovery").is_none());
         server
             .send_request(
                 10,
@@ -2437,10 +2448,7 @@ async fn complete_context_round_trips_to_the_auto_mode_recovery_handler() {
         let handler = Arc::new(AutoModeRecoveryHandler { observed });
         let (session, _client, mut server, request) = open(resume, true, Some(true), handler).await;
         let session = session.unwrap();
-        assert_eq!(
-            request["params"]["interaction"]["requestAutoModeRecovery"],
-            true
-        );
+        assert_eq!(request["params"]["requestAutoModeRecovery"], true);
         assert!(session.auto_mode_recovery_supported());
         let context = serde_json::json!({
             "requestId": "offer-1", "originalModel": "explicit-model", "allowAlways": false,

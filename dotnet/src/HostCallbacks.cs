@@ -2,7 +2,7 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
-namespace Microsoft.Copilot;
+namespace GitHub.Copilot;
 
 /// <summary>
 /// Runs SDK host callbacks that the runtime requests over JSON-RPC.

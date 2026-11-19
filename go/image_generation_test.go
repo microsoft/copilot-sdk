@@ -26,7 +26,7 @@ func TestImageGenerationSerialization(t *testing.T) {
 			if err := json.Unmarshal(data, &payload); err != nil {
 				t.Fatal(err)
 			}
-			value, present := sessionWireGroup(payload, "tools")["imageGeneration"]
+			value, present := payload["imageGeneration"]
 			if enabled == nil {
 				if present {
 					t.Fatalf("expected omitted imageGeneration, got %s", data)
@@ -60,15 +60,13 @@ func TestImageWatermarkSerialization(t *testing.T) {
 				t.Fatal(err)
 			}
 			var payload struct {
-				Tools struct {
-					ImageGeneration map[string]bool `json:"imageGeneration"`
-				} `json:"tools"`
+				ImageGeneration map[string]bool `json:"imageGeneration"`
 			}
 			if err := json.Unmarshal(data, &payload); err != nil {
 				t.Fatal(err)
 			}
-			value, present := payload.Tools.ImageGeneration["watermark"]
-			if !present || value != watermark || len(payload.Tools.ImageGeneration) != 1 {
+			value, present := payload.ImageGeneration["watermark"]
+			if !present || value != watermark || len(payload.ImageGeneration) != 1 {
 				t.Fatalf("watermark %v must serialize without enabling images: %s", watermark, data)
 			}
 		}
@@ -87,15 +85,13 @@ func TestImageSaveToDiskSerialization(t *testing.T) {
 				t.Fatal(err)
 			}
 			var payload struct {
-				Tools struct {
-					ImageGeneration map[string]bool `json:"imageGeneration"`
-				} `json:"tools"`
+				ImageGeneration map[string]bool `json:"imageGeneration"`
 			}
 			if err := json.Unmarshal(data, &payload); err != nil {
 				t.Fatal(err)
 			}
-			value, present := payload.Tools.ImageGeneration["saveToDisk"]
-			if !present || value != saveToDisk || len(payload.Tools.ImageGeneration) != 1 {
+			value, present := payload.ImageGeneration["saveToDisk"]
+			if !present || value != saveToDisk || len(payload.ImageGeneration) != 1 {
 				t.Fatalf("saveToDisk %v must serialize without enabling images: %s", saveToDisk, data)
 			}
 		}

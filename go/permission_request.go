@@ -3,7 +3,7 @@ package copilot
 import (
 	"encoding/json"
 
-	"github.com/microsoft/copilot-sdk/go/v2/rpc"
+	"github.com/github/copilot-sdk/go/rpc"
 )
 
 // PermissionRequestEnvelope retains original JSON for lossless forwarding.

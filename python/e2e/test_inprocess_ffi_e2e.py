@@ -1,8 +1,9 @@
 """E2E smoke test for the in-process (FFI) transport.
 
 Starts a client over the in-process FFI transport, performs a ``ping``
-round-trip through the native runtime library, and stops cleanly. Covers both
-the default with no environment override and explicit connection selection.
+round-trip through the native runtime library, and stops cleanly. Resolution of
+the transport from ``COPILOT_SDK_DEFAULT_CONNECTION`` is exercised by the full
+E2E suite running under the ``inprocess`` CI matrix cell, not here.
 
 Mirrors nodejs/test/e2e/inprocess_ffi.e2e.test.ts.
 """
@@ -14,7 +15,7 @@ import os
 
 import pytest
 
-from copilot.client import CopilotClient, RuntimeConnection, _InternalTestOptions
+from copilot.client import _InternalTestOptions
 
 from .testharness import E2ETestContext
 
@@ -36,19 +37,19 @@ class TestInProcessFfi:
             )
         clients = [
             ctx.create_inprocess_client(
-                mode="coding-agent",
+                base_directory=str(tmp_path / side),
+                github_token=f"ffi-{side}-token",
+                use_logged_in_user=False,
                 _test_options=_InternalTestOptions(
                     copilot_api_url=ctx.proxy_url, github_api_url=ctx.proxy_url
                 ),
-                runtime=RuntimeConnection.for_inprocess(base_directory=str(tmp_path / side)),
-                github={"token": f"ffi-{side}-token", "use_logged_in_user": False},
             )
             for side in ("first", "second")
         ]
         try:
             await asyncio.gather(*(client.start() for client in clients))
             statuses = await asyncio.gather(*(client.get_auth_status() for client in clients))
-            assert all(status.is_authenticated for status in statuses)
+            assert all(status.isAuthenticated for status in statuses)
             sessions = await asyncio.gather(
                 *(client.create_session(working_directory=ctx.work_dir) for client in clients)
             )
@@ -72,23 +73,16 @@ class TestInProcessFfi:
         finally:
             await asyncio.gather(*(client.force_stop() for client in clients))
 
-    @pytest.mark.parametrize("explicit", [False, True], ids=["default", "explicit"])
     @pytest.mark.parametrize("shutdown_method", ["stop", "force_stop"])
     async def test_should_start_and_connect_over_in_process_ffi(
-        self, ctx: E2ETestContext, shutdown_method: str, explicit: bool, monkeypatch
+        self, ctx: E2ETestContext, shutdown_method: str
     ):
         # In-process hosting loads runtime.node directly. ``ping`` is a purely local
         # RPC round-trip, so no auth or replay proxy is involved.
-        with monkeypatch.context() as environment:
-            environment.delenv("COPILOT_SDK_DEFAULT_CONNECTION", raising=False)
-            client = CopilotClient(
-                mode="coding-agent",
-                runtime=RuntimeConnection.for_inprocess() if explicit else None,
-            )
+        client = ctx.create_inprocess_client()
         await client.start()
 
         try:
-            assert client._ffi_host is not None
             pong = await client.ping("ffi message")
             assert pong.message == "pong: ffi message"
             assert pong.timestamp is not None

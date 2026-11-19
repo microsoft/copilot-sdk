@@ -165,7 +165,7 @@ impl Peer {
             None,
             None,
             None,
-            ClientMode::CodingAgent,
+            ClientMode::default(),
             None,
             None,
             false,

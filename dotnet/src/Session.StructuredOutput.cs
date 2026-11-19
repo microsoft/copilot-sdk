@@ -7,7 +7,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 
-namespace Microsoft.Copilot;
+namespace GitHub.Copilot;
 
 public sealed partial class CopilotSession
 {

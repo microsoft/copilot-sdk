@@ -4,31 +4,27 @@
 // before attributed prompt answers does, so the SDK must keep compiling it.
 package legacy
 
-import copilot "github.com/microsoft/copilot-sdk/go/v2"
+import copilot "github.com/github/copilot-sdk/go"
 
 var (
 	UserInput   = copilot.UserInputResponse{"Only src/app.ts", true}
 	PlanReview  = copilot.ExitPlanModeResult{true, "interactive", "Looks good"}
 	Elicitation = copilot.ElicitationResult{copilot.ElicitationActionAccept, map[string]copilot.ElicitationFieldValue{"region": "us-east"}}
 
-	Create = copilot.CreateSessionOptions{
-		Interaction: copilot.SessionInteractionOptions{
-			OnUserInputRequest: func(copilot.UserInputRequest, copilot.UserInputInvocation) (copilot.UserInputResponse, error) {
-				return UserInput, nil
-			},
-			OnExitPlanModeRequest: func(copilot.ExitPlanModeRequest, copilot.ExitPlanModeInvocation) (copilot.ExitPlanModeResult, error) {
-				return PlanReview, nil
-			},
-			OnElicitationRequest: func(copilot.ElicitationContext) (copilot.ElicitationResult, error) {
-				return Elicitation, nil
-			},
+	Create = copilot.SessionConfig{
+		OnUserInputRequest: func(copilot.UserInputRequest, copilot.UserInputInvocation) (copilot.UserInputResponse, error) {
+			return UserInput, nil
+		},
+		OnExitPlanModeRequest: func(copilot.ExitPlanModeRequest, copilot.ExitPlanModeInvocation) (copilot.ExitPlanModeResult, error) {
+			return PlanReview, nil
+		},
+		OnElicitationRequest: func(copilot.ElicitationContext) (copilot.ElicitationResult, error) {
+			return Elicitation, nil
 		},
 	}
-	Resume = copilot.ResumeSessionOptions{
-		Interaction: copilot.SessionInteractionOptions{
-			OnUserInputRequest:    Create.Interaction.OnUserInputRequest,
-			OnExitPlanModeRequest: Create.Interaction.OnExitPlanModeRequest,
-			OnElicitationRequest:  Create.Interaction.OnElicitationRequest,
-		},
+	Resume = copilot.ResumeSessionConfig{
+		OnUserInputRequest:    Create.OnUserInputRequest,
+		OnExitPlanModeRequest: Create.OnExitPlanModeRequest,
+		OnElicitationRequest:  Create.OnElicitationRequest,
 	}
 )

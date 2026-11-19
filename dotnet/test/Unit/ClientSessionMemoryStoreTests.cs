@@ -10,7 +10,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using Xunit;
 
-namespace Microsoft.Copilot.Test.Unit;
+namespace GitHub.Copilot.Test.Unit;
 
 public sealed partial class ClientSessionLifetimeTests
 {
@@ -19,7 +19,7 @@ public sealed partial class ClientSessionLifetimeTests
     {
         await using var server = await FakeCopilotServer.StartAsync();
         server.ResponseFactory = _ => null;
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
+        await using var client = new CopilotClient(new CopilotClientOptions { Connection = RuntimeConnection.ForUri(server.Url) });
         var storedSessionIds = new List<string>();
         var memory = new MemoryConfiguration
         {
@@ -44,14 +44,14 @@ public sealed partial class ClientSessionLifetimeTests
             }
         };
 
-        await using var created = await client.CreateSessionAsync(new CreateSessionOptions { SessionId = "memory-create", State = new SessionStateOptions { Memory = memory } });
-        await using var resumed = await client.ResumeSessionAsync("memory-resume", new ResumeSessionOptions { State = new SessionStateOptions { Memory = memory } });
+        await using var created = await client.CreateSessionAsync(new SessionConfig { SessionId = "memory-create", Memory = memory });
+        await using var resumed = await client.ResumeSessionAsync("memory-resume", new ResumeSessionConfig { Memory = memory });
 
         foreach (var method in new[] { "session.create", "session.resume" })
         {
             var wireParams = Assert.Single(server.Requests, request => request.Method == method).Params;
-            Assert.Equal("""{"enabled":true}""", wireParams.GetProperty("state").GetProperty("memory").GetRawText());
-            Assert.True(wireParams.GetProperty("state").GetProperty("hasMemoryStore").GetBoolean());
+            Assert.Equal("""{"enabled":true}""", wireParams.GetProperty("memory").GetRawText());
+            Assert.True(wireParams.GetProperty("hasMemoryStore").GetBoolean());
         }
 
         Assert.Equal(2, storeResults.Count);
@@ -64,9 +64,9 @@ public sealed partial class ClientSessionLifetimeTests
 
         server.BeforeResponseAsync = null;
         server.ClearRequests();
-        await using var withoutStore = await client.CreateSessionAsync(new CreateSessionOptions { State = new SessionStateOptions { Memory = new MemoryConfiguration { Enabled = true } } });
+        await using var withoutStore = await client.CreateSessionAsync(new SessionConfig { Memory = new MemoryConfiguration { Enabled = true } });
         Assert.False(Assert.Single(server.Requests, request => request.Method == "session.create")
-            .Params.GetProperty("state").TryGetProperty("hasMemoryStore", out _));
+            .Params.TryGetProperty("hasMemoryStore", out _));
     }
 
     [Fact]
@@ -74,20 +74,23 @@ public sealed partial class ClientSessionLifetimeTests
     {
         await using var server = await FakeCopilotServer.StartAsync();
         server.ResponseFactory = _ => null;
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
+        await using var client = new CopilotClient(new CopilotClientOptions { Connection = RuntimeConnection.ForUri(server.Url) });
         var memory = new MemoryConfiguration { Enabled = false, StoreMemory = (_, _) => Task.CompletedTask };
 
         var createError = await Assert.ThrowsAsync<ArgumentException>(() =>
-            client.CreateSessionAsync(new CreateSessionOptions { State = new SessionStateOptions { Memory = memory } }));
+            client.CreateSessionAsync(new SessionConfig { Memory = memory }));
         var resumeError = await Assert.ThrowsAsync<ArgumentException>(() =>
-            client.ResumeSessionAsync("memory-resume", new ResumeSessionOptions { State = new SessionStateOptions { Memory = memory } }));
+            client.ResumeSessionAsync("memory-resume", new ResumeSessionConfig { Memory = memory }));
 
         Assert.StartsWith("Memory.StoreMemory requires Memory.Enabled to be true.", createError.Message);
         Assert.StartsWith("Memory.StoreMemory requires Memory.Enabled to be true.", resumeError.Message);
         Assert.DoesNotContain(server.Requests, request => request.Method is "session.create" or "session.resume");
 
-        var cloudError = await Assert.ThrowsAsync<ArgumentException>(() => client.CreateSessionAsync(new CreateSessionOptions
-        { Cloud = new CloudSessionOptions(), State = new SessionStateOptions { Memory = new MemoryConfiguration { Enabled = true, StoreMemory = (_, _) => Task.CompletedTask } } }));
+        var cloudError = await Assert.ThrowsAsync<ArgumentException>(() => client.CreateSessionAsync(new SessionConfig
+        {
+            Cloud = new CloudSessionOptions(),
+            Memory = new MemoryConfiguration { Enabled = true, StoreMemory = (_, _) => Task.CompletedTask }
+        }));
         Assert.Equal("Memory stores are not supported for cloud sessions.", cloudError.Message);
     }
 
@@ -96,20 +99,17 @@ public sealed partial class ClientSessionLifetimeTests
     {
         await using var server = await FakeCopilotServer.StartAsync();
         server.ResponseFactory = _ => null;
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
+        await using var client = new CopilotClient(new CopilotClientOptions { Connection = RuntimeConnection.ForUri(server.Url) });
         StoredMemory? stored = null;
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions
+        await using var session = await client.CreateSessionAsync(new SessionConfig
         {
-            State = new SessionStateOptions
+            Memory = new MemoryConfiguration
             {
-                Memory = new MemoryConfiguration
+                Enabled = true,
+                StoreMemory = (memory, _) =>
                 {
-                    Enabled = true,
-                    StoreMemory = (memory, _) =>
-        {
-            stored = memory;
-            return Task.CompletedTask;
-        }
+                    stored = memory;
+                    return Task.CompletedTask;
                 }
             }
         });
@@ -130,10 +130,16 @@ public sealed partial class ClientSessionLifetimeTests
     {
         await using var server = await FakeCopilotServer.StartAsync();
         server.ResponseFactory = _ => null;
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
-        await using var failing = await client.CreateSessionAsync(new CreateSessionOptions
-        { State = new SessionStateOptions { Memory = new MemoryConfiguration { Enabled = true, StoreMemory = (_, _) => throw new InvalidOperationException("secret backend detail") } } });
-        await using var noStore = await client.CreateSessionAsync(new CreateSessionOptions());
+        await using var client = new CopilotClient(new CopilotClientOptions { Connection = RuntimeConnection.ForUri(server.Url) });
+        await using var failing = await client.CreateSessionAsync(new SessionConfig
+        {
+            Memory = new MemoryConfiguration
+            {
+                Enabled = true,
+                StoreMemory = (_, _) => throw new InvalidOperationException("secret backend detail")
+            }
+        });
+        await using var noStore = await client.CreateSessionAsync(new SessionConfig());
 
         var failure = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             server.SendRequestAsync("memoryStore.store", MemoryStoreRequest(failing.SessionId)));

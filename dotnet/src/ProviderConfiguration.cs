@@ -3,10 +3,10 @@
  *--------------------------------------------------------------------------------------------*/
 
 using System.Diagnostics.CodeAnalysis;
-using Microsoft.Copilot.Rpc;
-using RpcNamedProviderConfig = Microsoft.Copilot.Rpc.NamedProviderConfig;
+using GitHub.Copilot.Rpc;
+using RpcNamedProviderConfig = GitHub.Copilot.Rpc.NamedProviderConfig;
 
-namespace Microsoft.Copilot;
+namespace GitHub.Copilot;
 
 /// <summary>Conversions from discovered providers to saved provider settings.</summary>
 [Experimental(Diagnostics.Experimental)]

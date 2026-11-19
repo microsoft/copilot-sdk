@@ -8,54 +8,32 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/microsoft/copilot-sdk/go/v2/internal/jsonrpc2"
+	"github.com/github/copilot-sdk/go/internal/jsonrpc2"
 )
 
-func TestSessionsOpenPreservesUnionValuesAndWire(t *testing.T) {
+func TestSessionsOpenPreservesUnkeyedLiteralsAndWire(t *testing.T) {
 	emit := false
 	suppress := true
 	sessionID := "legacy"
-	var inference SessionOpenInferenceOptions
-	if err := json.Unmarshal([]byte(`{"defaultProvider":"gateway","providers":[{"name":"gateway","baseUrl":"https://provider.invalid"}],"models":[{"provider":"gateway","id":"friendly","wireModel":"deployment"}]}`), &inference); err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal([]byte(`{"reasoningEffort":"high"}`), &inference); err != nil {
-		t.Fatal(err)
-	}
 	cases := []struct {
 		params SessionOpenParams
 		want   map[string]any
 	}{
 		{
-			SessionsOpenCreate{EmitStart: &emit},
+			SessionsOpenCreate{&emit, nil},
 			map[string]any{"kind": "create", "emitStart": false},
 		},
 		{
-			SessionsOpenResume{Resume: &emit, SessionID: sessionID, SuppressResumeWorkspaceMetadataWriteback: &suppress},
+			SessionsOpenResume{nil, &emit, sessionID, &suppress},
 			map[string]any{
 				"kind": "resume", "resume": false, "sessionId": sessionID,
 				"suppressResumeWorkspaceMetadataWriteback": true,
 			},
 		},
-		{nil, nil},
-		{
-			SessionsOpenCreate{Options: &SessionOpenOptions{Inference: &inference}},
-			map[string]any{
-				"kind": "create",
-				"options": map[string]any{"inference": map[string]any{
-					"defaultProvider": "gateway",
-					"providers":       []any{map[string]any{"name": "gateway", "baseUrl": "https://provider.invalid"}},
-					"models":          []any{map[string]any{"provider": "gateway", "id": "friendly", "wireModel": "deployment"}},
-					"reasoningEffort": "high",
-				}},
-			},
-		},
 	}
 	expected := SessionOpenResult{
-		SessionAPI:     map[string]any{"legacy": true},
-		SessionID:      &sessionID,
-		StartupPrompts: []string{"startup"},
-		Status:         SessionsOpenStatusCreated,
+		nil, nil, nil, map[string]any{"legacy": true},
+		&sessionID, []string{"startup"}, SessionsOpenStatusCreated,
 	}
 
 	clientReader, clientWriter := io.Pipe()
@@ -84,7 +62,7 @@ func TestSessionsOpenPreservesUnionValuesAndWire(t *testing.T) {
 
 	sessions := NewServerRPC(client).Sessions
 	for _, testCase := range cases {
-		result, err := sessions.Open(t.Context(), testCase.params)
+		result, err := sessions.Open(t.Context(), &testCase.params)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -105,14 +83,5 @@ func TestSessionsOpenPreservesUnionValuesAndWire(t *testing.T) {
 		if plan, exists := publicResult["nativeConstructionPlan"]; exists {
 			t.Fatalf("private host plan reached the public result: %#v", plan)
 		}
-	}
-	if err := json.Unmarshal([]byte(`{"defaultProvider":null,"models":[]}`), &inference); err != nil {
-		t.Fatal(err)
-	}
-	if inference.DefaultProvider == nil || *inference.DefaultProvider != nil {
-		t.Fatalf("explicit null did not clear the default provider: %#v", inference.DefaultProvider)
-	}
-	if inference.Models == nil || len(inference.Models) != 0 || len(inference.Providers) != 1 || inference.ReasoningEffort == nil || *inference.ReasoningEffort != "high" {
-		t.Fatalf("partial clear changed omitted inference fields: %#v", inference)
 	}
 }

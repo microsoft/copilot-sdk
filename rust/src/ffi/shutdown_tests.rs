@@ -70,7 +70,6 @@ fn async_stop_keeps_current_thread_executor_responsive_during_native_shutdown() 
             .block_on(async {
                 let directory = tempfile::tempdir().unwrap();
                 let client = Client::from_streams(
-                    crate::ClientMode::CodingAgent,
                     tokio::io::empty(),
                     tokio::io::sink(),
                     directory.path().to_path_buf(),
@@ -149,7 +148,6 @@ async fn stopping_attached_client_does_not_shutdown_the_cli_engine() {
     STOP_SHUTDOWNS.store(0, Ordering::SeqCst);
     let directory = tempfile::tempdir().unwrap();
     let client = Client::from_streams(
-        crate::ClientMode::CodingAgent,
         tokio::io::empty(),
         tokio::io::sink(),
         directory.path().to_path_buf(),

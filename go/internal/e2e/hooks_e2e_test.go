@@ -6,8 +6,8 @@ import (
 	"sync"
 	"testing"
 
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
-	"github.com/microsoft/copilot-sdk/go/v2/internal/e2e/testharness"
+	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/internal/e2e/testharness"
 )
 
 func TestHooksE2E(t *testing.T) {
@@ -22,19 +22,21 @@ func TestHooksE2E(t *testing.T) {
 		var preToolUseInputs []copilot.PreToolUseHookInput
 		var mu sync.Mutex
 
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Hooks: copilot.SessionHookOptions{Handlers: &copilot.SessionHooks{
-			OnPreToolUse: func(input copilot.PreToolUseHookInput, invocation copilot.HookInvocation) (*copilot.PreToolUseHookOutput, error) {
-				mu.Lock()
-				preToolUseInputs = append(preToolUseInputs, input)
-				mu.Unlock()
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			Hooks: &copilot.SessionHooks{
+				OnPreToolUse: func(input copilot.PreToolUseHookInput, invocation copilot.HookInvocation) (*copilot.PreToolUseHookOutput, error) {
+					mu.Lock()
+					preToolUseInputs = append(preToolUseInputs, input)
+					mu.Unlock()
 
-				if invocation.SessionID == "" {
-					t.Error("Expected non-empty session ID in invocation")
-				}
+					if invocation.SessionID == "" {
+						t.Error("Expected non-empty session ID in invocation")
+					}
 
-				return &copilot.PreToolUseHookOutput{PermissionDecision: "allow"}, nil
+					return &copilot.PreToolUseHookOutput{PermissionDecision: "allow"}, nil
+				},
 			},
-		}},
 		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
@@ -79,19 +81,21 @@ func TestHooksE2E(t *testing.T) {
 		var postToolUseInputs []copilot.PostToolUseHookInput
 		var mu sync.Mutex
 
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Hooks: copilot.SessionHookOptions{Handlers: &copilot.SessionHooks{
-			OnPostToolUse: func(input copilot.PostToolUseHookInput, invocation copilot.HookInvocation) (*copilot.PostToolUseHookOutput, error) {
-				mu.Lock()
-				postToolUseInputs = append(postToolUseInputs, input)
-				mu.Unlock()
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			Hooks: &copilot.SessionHooks{
+				OnPostToolUse: func(input copilot.PostToolUseHookInput, invocation copilot.HookInvocation) (*copilot.PostToolUseHookOutput, error) {
+					mu.Lock()
+					postToolUseInputs = append(postToolUseInputs, input)
+					mu.Unlock()
 
-				if invocation.SessionID == "" {
-					t.Error("Expected non-empty session ID in invocation")
-				}
+					if invocation.SessionID == "" {
+						t.Error("Expected non-empty session ID in invocation")
+					}
 
-				return nil, nil
+					return nil, nil
+				},
 			},
-		}},
 		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
@@ -143,20 +147,22 @@ func TestHooksE2E(t *testing.T) {
 		var postToolUseInputs []copilot.PostToolUseHookInput
 		var mu sync.Mutex
 
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Hooks: copilot.SessionHookOptions{Handlers: &copilot.SessionHooks{
-			OnPreToolUse: func(input copilot.PreToolUseHookInput, invocation copilot.HookInvocation) (*copilot.PreToolUseHookOutput, error) {
-				mu.Lock()
-				preToolUseInputs = append(preToolUseInputs, input)
-				mu.Unlock()
-				return &copilot.PreToolUseHookOutput{PermissionDecision: "allow"}, nil
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			Hooks: &copilot.SessionHooks{
+				OnPreToolUse: func(input copilot.PreToolUseHookInput, invocation copilot.HookInvocation) (*copilot.PreToolUseHookOutput, error) {
+					mu.Lock()
+					preToolUseInputs = append(preToolUseInputs, input)
+					mu.Unlock()
+					return &copilot.PreToolUseHookOutput{PermissionDecision: "allow"}, nil
+				},
+				OnPostToolUse: func(input copilot.PostToolUseHookInput, invocation copilot.HookInvocation) (*copilot.PostToolUseHookOutput, error) {
+					mu.Lock()
+					postToolUseInputs = append(postToolUseInputs, input)
+					mu.Unlock()
+					return nil, nil
+				},
 			},
-			OnPostToolUse: func(input copilot.PostToolUseHookInput, invocation copilot.HookInvocation) (*copilot.PostToolUseHookOutput, error) {
-				mu.Lock()
-				postToolUseInputs = append(postToolUseInputs, input)
-				mu.Unlock()
-				return nil, nil
-			},
-		}},
 		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
@@ -211,15 +217,17 @@ func TestHooksE2E(t *testing.T) {
 		var preToolUseInputs []copilot.PreToolUseHookInput
 		var mu sync.Mutex
 
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Hooks: copilot.SessionHookOptions{Handlers: &copilot.SessionHooks{
-			OnPreToolUse: func(input copilot.PreToolUseHookInput, invocation copilot.HookInvocation) (*copilot.PreToolUseHookOutput, error) {
-				mu.Lock()
-				preToolUseInputs = append(preToolUseInputs, input)
-				mu.Unlock()
-				// Deny all tool calls
-				return &copilot.PreToolUseHookOutput{PermissionDecision: "deny"}, nil
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			Hooks: &copilot.SessionHooks{
+				OnPreToolUse: func(input copilot.PreToolUseHookInput, invocation copilot.HookInvocation) (*copilot.PreToolUseHookOutput, error) {
+					mu.Lock()
+					preToolUseInputs = append(preToolUseInputs, input)
+					mu.Unlock()
+					// Deny all tool calls
+					return &copilot.PreToolUseHookOutput{PermissionDecision: "deny"}, nil
+				},
 			},
-		}},
 		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)

@@ -56,13 +56,8 @@ async fn cancelled_nested_handlers_do_not_send_fallback_before_outer_abort() {
 async fn check_aborted_nested_dispatches(nested_first: bool) {
     let (client_write, mut server_read) = tokio::io::duplex(8192);
     let (_server_write, client_read) = tokio::io::duplex(8192);
-    let client = crate::Client::from_streams(
-        crate::ClientMode::CodingAgent,
-        client_read,
-        client_write,
-        std::env::temp_dir(),
-    )
-    .unwrap();
+    let client =
+        crate::Client::from_streams(client_read, client_write, std::env::temp_dir()).unwrap();
     let (entered_tx, mut entered_rx) = tokio::sync::mpsc::unbounded_channel();
     let handler = Arc::new(PendingNestedCallback(entered_tx));
     let handlers = SessionHandlers {
@@ -217,13 +212,8 @@ async fn deferred_callback_after_guard_drop_cannot_register_or_replace_retry() {
     for retry in [false, true] {
         let (client_write, _server_read) = tokio::io::duplex(8192);
         let (_server_write, client_read) = tokio::io::duplex(8192);
-        let client = crate::Client::from_streams(
-            crate::ClientMode::CodingAgent,
-            client_read,
-            client_write,
-            std::env::temp_dir(),
-        )
-        .unwrap();
+        let client =
+            crate::Client::from_streams(client_read, client_write, std::env::temp_dir()).unwrap();
         let stash = Arc::new(parking_lot::Mutex::new(None));
         let (guard, callback) = PendingSessionRegistration::deferred(
             client.clone(),
@@ -253,6 +243,57 @@ async fn deferred_callback_after_guard_drop_cannot_register_or_replace_retry() {
         }
         assert_eq!(client.registered_session_count_for_test(), 0);
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn aborted_startup_rejects_callback_without_polling() {
+    let tasks = Arc::new(StartupTasks::default());
+    let (completed_tx, completed_rx) = oneshot::channel();
+    tasks.abort();
+    let task = spawn_startup_tracked(
+        async move {
+            completed_tx.send(()).unwrap();
+        },
+        Some(&tasks),
+    );
+    assert!(task.is_none(), "aborted startup must not spawn a callback");
+    assert!(
+        timeout(Duration::from_secs(2), completed_rx)
+            .await
+            .unwrap()
+            .is_err(),
+        "rejected callback must be dropped without polling"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn abort_cancels_registered_callbacks() {
+    let tasks = Arc::new(StartupTasks::default());
+    let (entered_tx, entered_rx) = oneshot::channel();
+    let (mut release_tx, release_rx) = oneshot::channel::<()>();
+    let task = spawn_startup_tracked(
+        async move {
+            entered_tx.send(()).unwrap();
+            release_rx.await.unwrap();
+        },
+        Some(&tasks),
+    )
+    .unwrap();
+    timeout(Duration::from_secs(2), entered_rx)
+        .await
+        .unwrap()
+        .unwrap();
+    tasks.abort();
+    timeout(Duration::from_secs(2), release_tx.closed())
+        .await
+        .expect("registered callback must be aborted without releasing it");
+    assert!(
+        timeout(Duration::from_secs(2), task)
+            .await
+            .unwrap()
+            .unwrap_err()
+            .is_cancelled()
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

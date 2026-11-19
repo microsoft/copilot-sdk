@@ -2,12 +2,12 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
-using Microsoft.Copilot.Rpc;
-using Microsoft.Copilot.Test.Harness;
+using GitHub.Copilot.Rpc;
+using GitHub.Copilot.Test.Harness;
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Microsoft.Copilot.Test.E2E;
+namespace GitHub.Copilot.Test.E2E;
 
 public class CommandsE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
     : E2ETestBase(fixture, "commands", output)
@@ -17,8 +17,14 @@ public class CommandsE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
     [Fact]
     public async Task Session_Commands_List_Returns_Builtins_And_Respects_Client_Command_Filter()
     {
-        var session = await CreateSessionAsync(new CreateSessionOptions
-        { Interaction = new SessionInteractionOptions { Commands = [new CommandDefinition { Name = "deploy", Description = "Deploy the app", Handler = _ => Task.CompletedTask }, new CommandDefinition { Name = "rollback", Description = "Rollback the app", Handler = _ => Task.CompletedTask },] } });
+        var session = await CreateSessionAsync(new SessionConfig
+        {
+            Commands =
+            [
+                new CommandDefinition { Name = "deploy", Description = "Deploy the app", Handler = _ => Task.CompletedTask },
+                new CommandDefinition { Name = "rollback", Description = "Rollback the app", Handler = _ => Task.CompletedTask },
+            ],
+        });
 
         CommandList? clientCommands = null;
         await TestHelper.WaitForConditionAsync(
@@ -57,16 +63,21 @@ public class CommandsE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
     public async Task Session_Commands_Execute_Runs_Registered_Command_Handler()
     {
         var contextReceived = new TaskCompletionSource<CommandContext>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var session = await CreateSessionAsync(new CreateSessionOptions
+        var session = await CreateSessionAsync(new SessionConfig
         {
-            Interaction = new SessionInteractionOptions
-            {
-                Commands = [new CommandDefinition { Name = "deploy", Description = "Deploy the app", Handler = ctx =>
-{
-    contextReceived.TrySetResult(ctx);
-    return Task.CompletedTask;
-}, }, ]
-            }
+            Commands =
+            [
+                new CommandDefinition
+                {
+                    Name = "deploy",
+                    Description = "Deploy the app",
+                    Handler = ctx =>
+                    {
+                        contextReceived.TrySetResult(ctx);
+                        return Task.CompletedTask;
+                    },
+                },
+            ],
         });
 
         await WaitForClientCommandAsync(session, "deploy");
@@ -88,8 +99,18 @@ public class CommandsE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
     {
         // The handler's own cancellation, such as an HttpClient timeout, is a handler failure:
         // the SDK must still answer, or the pending command never completes.
-        var session = await CreateSessionAsync(new CreateSessionOptions
-        { Interaction = new SessionInteractionOptions { Commands = [new CommandDefinition { Name = "deploy", Description = "Deploy the app", Handler = _ => Task.FromCanceled(new CancellationToken(canceled: true)), },] } });
+        var session = await CreateSessionAsync(new SessionConfig
+        {
+            Commands =
+            [
+                new CommandDefinition
+                {
+                    Name = "deploy",
+                    Description = "Deploy the app",
+                    Handler = _ => Task.FromCanceled(new CancellationToken(canceled: true)),
+                },
+            ],
+        });
 
         await WaitForClientCommandAsync(session, "deploy");
 
@@ -120,8 +141,15 @@ public class CommandsE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
     [Fact]
     public async Task Session_With_Commands_Creates_Successfully()
     {
-        var session = await CreateSessionAsync(new CreateSessionOptions
-        { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll }, Interaction = new SessionInteractionOptions { Commands = [new CommandDefinition { Name = "deploy", Description = "Deploy the app", Handler = _ => Task.CompletedTask }, new CommandDefinition { Name = "rollback", Handler = _ => Task.CompletedTask },] } });
+        var session = await CreateSessionAsync(new SessionConfig
+        {
+            OnPermissionRequest = PermissionHandler.ApproveAll,
+            Commands =
+            [
+                new CommandDefinition { Name = "deploy", Description = "Deploy the app", Handler = _ => Task.CompletedTask },
+                new CommandDefinition { Name = "rollback", Handler = _ => Task.CompletedTask },
+            ],
+        });
 
         // Session should be created successfully with commands
         Assert.NotNull(session);
@@ -136,8 +164,14 @@ public class CommandsE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
         var sessionId = session1.SessionId;
         await SuspendAndUntrackSessionForResumeAsync(session1);
 
-        var session2 = await ResumeSessionAsync(sessionId, new ResumeSessionOptions
-        { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll }, Interaction = new SessionInteractionOptions { Commands = [new CommandDefinition { Name = "deploy", Description = "Deploy", Handler = _ => Task.CompletedTask },] } });
+        var session2 = await ResumeSessionAsync(sessionId, new ResumeSessionConfig
+        {
+            OnPermissionRequest = PermissionHandler.ApproveAll,
+            Commands =
+            [
+                new CommandDefinition { Name = "deploy", Description = "Deploy", Handler = _ => Task.CompletedTask },
+            ],
+        });
 
         Assert.NotNull(session2);
         Assert.Equal(sessionId, session2.SessionId);
@@ -179,8 +213,10 @@ public class CommandsE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
     [Fact]
     public async Task Session_With_No_Commands_Creates_Successfully()
     {
-        var session = await CreateSessionAsync(new CreateSessionOptions
-        { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
+        var session = await CreateSessionAsync(new SessionConfig
+        {
+            OnPermissionRequest = PermissionHandler.ApproveAll,
+        });
 
         Assert.NotNull(session);
         await session.DisposeAsync();
@@ -189,57 +225,43 @@ public class CommandsE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
     [Fact]
     public async Task Session_Config_Commands_Are_Cloned()
     {
-        var config = new CreateSessionOptions
+        var config = new SessionConfig
         {
-            Permissions = new SessionPermissionOptions
-            {
-                OnRequest = PermissionHandler.ApproveAll
-            },
-            Interaction = new SessionInteractionOptions
-            {
-                Commands = [new CommandDefinition
-        {
-            Name = "deploy",
-            Handler = _ => Task.CompletedTask
-        }, ]
-            }
+            OnPermissionRequest = PermissionHandler.ApproveAll,
+            Commands =
+            [
+                new CommandDefinition { Name = "deploy", Handler = _ => Task.CompletedTask },
+            ],
         };
 
         var clone = config.Clone();
 
-        Assert.NotNull(clone.Interaction.Commands);
-        Assert.Single(clone.Interaction.Commands!);
-        Assert.Equal("deploy", clone.Interaction.Commands![0].Name);
+        Assert.NotNull(clone.Commands);
+        Assert.Single(clone.Commands!);
+        Assert.Equal("deploy", clone.Commands![0].Name);
 
         // Verify collections are independent
-        clone.Interaction.Commands!.Add(new CommandDefinition { Name = "rollback", Handler = _ => Task.CompletedTask });
-        Assert.Single(config.Interaction.Commands!);
+        clone.Commands!.Add(new CommandDefinition { Name = "rollback", Handler = _ => Task.CompletedTask });
+        Assert.Single(config.Commands!);
     }
 
     [Fact]
     public void Resume_Config_Commands_Are_Cloned()
     {
-        var config = new ResumeSessionOptions
+        var config = new ResumeSessionConfig
         {
-            Permissions = new SessionPermissionOptions
-            {
-                OnRequest = PermissionHandler.ApproveAll
-            },
-            Interaction = new SessionInteractionOptions
-            {
-                Commands = [new CommandDefinition
-        {
-            Name = "deploy",
-            Handler = _ => Task.CompletedTask
-        }, ]
-            }
+            OnPermissionRequest = PermissionHandler.ApproveAll,
+            Commands =
+            [
+                new CommandDefinition { Name = "deploy", Handler = _ => Task.CompletedTask },
+            ],
         };
 
         var clone = config.Clone();
 
-        Assert.NotNull(clone.Interaction.Commands);
-        Assert.Single(clone.Interaction.Commands!);
-        Assert.Equal("deploy", clone.Interaction.Commands![0].Name);
+        Assert.NotNull(clone.Commands);
+        Assert.Single(clone.Commands!);
+        Assert.Equal("deploy", clone.Commands![0].Name);
     }
 
     private static bool IsCommand(SlashCommandInfo command, string name, SlashCommandKind kind)

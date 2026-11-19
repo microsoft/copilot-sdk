@@ -75,16 +75,14 @@ Steering sends a message that is injected directly into the agent's current turn
 
 <!-- docs-validate: strict -->
 ```typescript
-import { CopilotClient } from "@microsoft/copilot-sdk";
+import { CopilotClient } from "@github/copilot-sdk";
 
-const client = new CopilotClient({ mode: "coding-agent" });
+const client = new CopilotClient();
 await client.start();
 
 const session = await client.createSession({
     model: "auto",
-    permissions: {
-        onRequest: async () => ({ kind: "approve-once" }),
-    },
+    onPermissionRequest: async () => ({ kind: "approve-once" }),
 });
 
 // Start a long-running task
@@ -108,14 +106,13 @@ await session.send({
 from copilot import CopilotClient
 from copilot.session import PermissionDecisionApproveOnce
 
-
 async def main():
-    client = CopilotClient(mode="coding-agent")
+    client = CopilotClient()
     await client.start()
 
     session = await client.create_session(
+        on_permission_request=lambda req, inv: PermissionDecisionApproveOnce(),
         model="auto",
-        permissions={"on_request": lambda req, inv: PermissionDecisionApproveOnce()},
     )
 
     # Start a long-running task
@@ -141,51 +138,46 @@ async def main():
 package main
 
 import (
-	"context"
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
-	"github.com/microsoft/copilot-sdk/go/v2/rpc"
-	"log"
+    "context"
+    "log"
+    copilot "github.com/github/copilot-sdk/go"
+    "github.com/github/copilot-sdk/go/rpc"
 )
 
 func main() {
-	ctx := context.Background()
-	client := copilot.NewClient(&copilot.ClientOptions{Mode: copilot.ModeCodingAgent})
-	if err := client.Start(ctx); err != nil {
-		log.Fatal(err)
-	}
-	defer client.Stop()
+    ctx := context.Background()
+    client := copilot.NewClient(nil)
+    if err := client.Start(ctx); err != nil {
+        log.Fatal(err)
+    }
+    defer client.Stop()
 
-	session, err := client.CreateSession(ctx, &copilot.CreateSessionOptions{
-		Model: "auto",
-		Permissions: copilot.SessionPermissionOptions{
-			OnRequest: func(req copilot.PermissionRequest, inv copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
-				return &rpc.PermissionDecisionApproveOnce{}, nil
-			},
-		},
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
+    session, err := client.CreateSession(ctx, &copilot.SessionConfig{
+        Model: "auto",
+        OnPermissionRequest: func(req copilot.PermissionRequest, inv copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
+            return &rpc.PermissionDecisionApproveOnce{}, nil
+        },
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
 
-	// Start a long-running task
-	_, err = session.Send(ctx, copilot.MessageOptions{
+    // Start a long-running task
+    _, err = session.Send(ctx, copilot.MessageOptions{
+        Prompt: "Refactor the authentication module to use sessions",
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
 
-		Prompt: "Refactor the authentication module to use sessions",
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// While the agent is working, steer it
-	_, err = session.Send(ctx, copilot.MessageOptions{
-
-		Prompt: "Actually, use JWT tokens instead of sessions",
-
-		Mode: "immediate",
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
+    // While the agent is working, steer it
+    _, err = session.Send(ctx, copilot.MessageOptions{
+        Prompt: "Actually, use JWT tokens instead of sessions",
+        Mode:   "immediate",
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
 }
 ```
 
@@ -195,23 +187,23 @@ func main() {
 <summary><strong>.NET</strong></summary>
 
 ```csharp
-using Microsoft.Copilot;
-using Microsoft.Copilot.Rpc;
+using GitHub.Copilot;
+using GitHub.Copilot.Rpc;
 
-await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent });
-await using var session = await client.CreateSessionAsync(new CreateSessionOptions
+await using var client = new CopilotClient();
+await using var session = await client.CreateSessionAsync(new SessionConfig
 {
     Model = "auto",
-    Permissions = new SessionPermissionOptions
-    {
-        OnRequest = (req, inv) => Task.FromResult(PermissionDecision.ApproveOnce())
-    }
+    OnPermissionRequest = (req, inv) =>
+        Task.FromResult(PermissionDecision.ApproveOnce()),
 });
+
 // Start a long-running task
 var msgId = await session.SendAsync(new MessageOptions
 {
     Prompt = "Refactor the authentication module to use sessions"
 });
+
 // While the agent is working, steer it
 await session.SendAsync(new MessageOptions
 {
@@ -226,33 +218,28 @@ await session.SendAsync(new MessageOptions
 <summary><strong>Java</strong></summary>
 
 ```java
-import com.microsoft.copilot.CopilotClient;
-import com.microsoft.copilot.rpc.*;
+import com.github.copilot.CopilotClient;
+import com.github.copilot.rpc.*;
 
-try (var client = new CopilotClient(new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT))) {
-    client
-            .start()
-            .get();
+try (var client = new CopilotClient()) {
+    client.start().get();
 
-    var session = client
-            .createSession(new CreateSessionOptions()
-                    .setModel("auto")
-                    .setPermissions(new SessionPermissionOptions()
-                            .setOnRequest(PermissionHandler.APPROVE_ALL)))
-            .get();
+    var session = client.createSession(
+        new SessionConfig()
+            .setModel("auto")
+            .setOnPermissionRequest(PermissionHandler.APPROVE_ALL)
+    ).get();
 
     // Start a long-running task
-    session
-            .send(new MessageOptions()
-                    .setPrompt("Refactor the authentication module to use sessions"))
-            .get();
+    session.send(new MessageOptions()
+        .setPrompt("Refactor the authentication module to use sessions")
+    ).get();
 
     // While the agent is working, steer it
-    session
-            .send(new MessageOptions()
-                    .setPrompt("Actually, use JWT tokens instead of sessions")
-                    .setMode("immediate"))
-            .get();
+    session.send(new MessageOptions()
+        .setPrompt("Actually, use JWT tokens instead of sessions")
+        .setMode("immediate")
+    ).get();
 }
 ```
 
@@ -270,23 +257,21 @@ try (var client = new CopilotClient(new CopilotClientOptions().setMode(CopilotCl
 
 ## Queueing (enqueue mode)
 
-Queueing buffers messages to be processed sequentially after the current turn finishes. Each queued message starts its own full turn. This is the default mode: a message sent without `mode` is queued the same way while a turn is running. The two differ after a turn ends while a background agent is still running: a single message sent without `mode` starts a new turn right away, but a message sent with `mode: "enqueue"` waits until the background agents finish.
+Queueing buffers messages to be processed sequentially after the current turn finishes. Each queued message starts its own full turn. This is the default mode—if you omit `mode`, the SDK uses `"enqueue"`.
 
 <details open>
 <summary><strong>Node.js / TypeScript</strong></summary>
 
 <!-- docs-validate: strict -->
 ```typescript
-import { CopilotClient } from "@microsoft/copilot-sdk";
+import { CopilotClient } from "@github/copilot-sdk";
 
-const client = new CopilotClient({ mode: "coding-agent" });
+const client = new CopilotClient();
 await client.start();
 
 const session = await client.createSession({
     model: "auto",
-    permissions: {
-        onRequest: async () => ({ kind: "approve-once" }),
-    },
+    onPermissionRequest: async () => ({ kind: "approve-once" }),
 });
 
 // Send an initial task
@@ -315,14 +300,13 @@ await session.send({
 from copilot import CopilotClient
 from copilot.session import PermissionDecisionApproveOnce
 
-
 async def main():
-    client = CopilotClient(mode="coding-agent")
+    client = CopilotClient()
     await client.start()
 
     session = await client.create_session(
+        on_permission_request=lambda req, inv: PermissionDecisionApproveOnce(),
         model="auto",
-        permissions={"on_request": lambda req, inv: PermissionDecisionApproveOnce()},
     )
 
     # Send an initial task
@@ -354,40 +338,33 @@ package main
 
 import (
 	"context"
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
-	"github.com/microsoft/copilot-sdk/go/v2/rpc"
+	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/rpc"
 )
 
 func main() {
 	ctx := context.Background()
-	client := copilot.NewClient(&copilot.ClientOptions{Mode: copilot.ModeCodingAgent})
+	client := copilot.NewClient(nil)
 	client.Start(ctx)
 
-	session, _ := client.CreateSession(ctx, &copilot.CreateSessionOptions{
+	session, _ := client.CreateSession(ctx, &copilot.SessionConfig{
 		Model: "auto",
-		Permissions: copilot.SessionPermissionOptions{
-			OnRequest: func(req copilot.PermissionRequest, inv copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
-				return &rpc.PermissionDecisionApproveOnce{}, nil
-			},
+		OnPermissionRequest: func(req copilot.PermissionRequest, inv copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
+			return &rpc.PermissionDecisionApproveOnce{}, nil
 		},
 	})
 
 	session.Send(ctx, copilot.MessageOptions{
-
 		Prompt: "Set up the project structure",
 	})
 
 	session.Send(ctx, copilot.MessageOptions{
-
 		Prompt: "Add unit tests for the auth module",
-
 		Mode:   "enqueue",
 	})
 
 	session.Send(ctx, copilot.MessageOptions{
-
 		Prompt: "Update the README with setup instructions",
-
 		Mode:   "enqueue",
 	})
 }
@@ -448,39 +425,31 @@ await session.SendAsync(new MessageOptions
 <summary><strong>Java</strong></summary>
 
 ```java
-import com.microsoft.copilot.CopilotClient;
-import com.microsoft.copilot.rpc.*;
+import com.github.copilot.CopilotClient;
+import com.github.copilot.rpc.*;
 
-try (var client = new CopilotClient(new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT))) {
-    client
-            .start()
-            .get();
+try (var client = new CopilotClient()) {
+    client.start().get();
 
-    var session = client
-            .createSession(new CreateSessionOptions()
-                    .setModel("auto")
-                    .setPermissions(new SessionPermissionOptions()
-                            .setOnRequest(PermissionHandler.APPROVE_ALL)))
-            .get();
+    var session = client.createSession(
+        new SessionConfig()
+            .setModel("auto")
+            .setOnPermissionRequest(PermissionHandler.APPROVE_ALL)
+    ).get();
 
     // Send an initial task
-    session
-            .send(new MessageOptions()
-                    .setPrompt("Set up the project structure"))
-            .get();
+    session.send(new MessageOptions().setPrompt("Set up the project structure")).get();
 
     // Queue follow-up tasks while the agent is busy
-    session
-            .send(new MessageOptions()
-                    .setPrompt("Add unit tests for the auth module")
-                    .setMode("enqueue"))
-            .get();
+    session.send(new MessageOptions()
+        .setPrompt("Add unit tests for the auth module")
+        .setMode("enqueue")
+    ).get();
 
-    session
-            .send(new MessageOptions()
-                    .setPrompt("Update the README with setup instructions")
-                    .setMode("enqueue"))
-            .get();
+    session.send(new MessageOptions()
+        .setPrompt("Update the README with setup instructions")
+        .setMode("enqueue")
+    ).get();
 
     // Messages are processed in FIFO order after each turn completes
 }
@@ -507,9 +476,7 @@ You can use both patterns together in a single session. Steering affects the cur
 ```typescript
 const session = await client.createSession({
     model: "auto",
-    permissions: {
-        onRequest: async () => ({ kind: "approve-once" }),
-    },
+    onPermissionRequest: async () => ({ kind: "approve-once" }),
 });
 
 // Start a task
@@ -537,11 +504,11 @@ await session.send({
 from copilot import CopilotClient
 from copilot.session import PermissionDecisionApproveOnce
 
-client = CopilotClient(mode="coding-agent")
+client = CopilotClient()
 
 session = await client.create_session(
+    on_permission_request=lambda req, inv: PermissionDecisionApproveOnce(),
     model="auto",
-    permissions={"on_request": lambda req, inv: PermissionDecisionApproveOnce()},
 )
 
 # Start a task
@@ -578,7 +545,7 @@ await session.send(
 Here's a pattern for building an interactive UI that supports both modes:
 
 ```typescript
-import { CopilotClient, CopilotSession } from "@microsoft/copilot-sdk";
+import { CopilotClient, CopilotSession } from "@github/copilot-sdk";
 
 interface PendingMessage {
     prompt: string;
@@ -664,7 +631,7 @@ class InteractiveChat {
 | `"immediate"` | Inject into current turn | Injected before next LLM call | Starts a new turn immediately |
 
 > [!NOTE]
-> When the session is idle (not processing), both modes behave identically—the message starts a new turn immediately. If a turn has ended but a background agent is still running, `"immediate"` (and a single message sent without `mode`) starts a new turn immediately, while `"enqueue"` waits until the background agents finish.
+> When the session is idle (not processing), both modes behave identically—the message starts a new turn immediately.
 
 ## Best practices
 

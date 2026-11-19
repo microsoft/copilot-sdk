@@ -6,7 +6,7 @@ using System.Text.Json;
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Microsoft.Copilot.Test.E2E;
+namespace GitHub.Copilot.Test.E2E;
 
 /// <summary>
 /// E2E tests for the preMcpToolCall hook, verifying meta manipulation scenarios:
@@ -45,28 +45,22 @@ public class PreMcpToolCallHookE2ETests(E2ETestFixture fixture, ITestOutputHelpe
         var testHarnessDir = FindMetaEchoTestHarnessDir();
         var hookInputs = new List<PreMcpToolCallHookInput>();
 
-        var session = await CreateSessionAsync(new CreateSessionOptions
+        var session = await CreateSessionAsync(new SessionConfig
         {
-            Mcp = new SessionMcpOptions
+            McpServers = CreateMetaEchoMcpConfig(testHarnessDir),
+            Hooks = new SessionHooks
             {
-                Servers = CreateMetaEchoMcpConfig(testHarnessDir)
-            },
-            Hooks = new SessionHookOptions
-            {
-                Handlers = new SessionHooks
+                OnPreMcpToolCall = (input, invocation) =>
                 {
-                    OnPreMcpToolCall = (input, invocation) =>
+                    hookInputs.Add(input);
+                    using var doc = JsonDocument.Parse("""{"injected":"by-hook","source":"test"}""");
+                    return Task.FromResult<PreMcpToolCallHookOutput?>(new PreMcpToolCallHookOutput
                     {
-                        hookInputs.Add(input);
-                        using var doc = JsonDocument.Parse("""{"injected":"by-hook","source":"test"}""");
-                        return Task.FromResult<PreMcpToolCallHookOutput?>(new PreMcpToolCallHookOutput { MetaToUse = doc.RootElement.Clone() });
-                    },
-                }
+                        MetaToUse = doc.RootElement.Clone()
+                    });
+                },
             },
-            Permissions = new SessionPermissionOptions
-            {
-                OnRequest = PermissionHandler.ApproveAll
-            }
+            OnPermissionRequest = PermissionHandler.ApproveAll,
         });
 
         var message = await session.SendAndWaitAsync(new MessageOptions
@@ -93,29 +87,23 @@ public class PreMcpToolCallHookE2ETests(E2ETestFixture fixture, ITestOutputHelpe
         var testHarnessDir = FindMetaEchoTestHarnessDir();
         var hookInputs = new List<PreMcpToolCallHookInput>();
 
-        var session = await CreateSessionAsync(new CreateSessionOptions
+        var session = await CreateSessionAsync(new SessionConfig
         {
-            Mcp = new SessionMcpOptions
+            McpServers = CreateMetaEchoMcpConfig(testHarnessDir),
+            Hooks = new SessionHooks
             {
-                Servers = CreateMetaEchoMcpConfig(testHarnessDir)
-            },
-            Hooks = new SessionHookOptions
-            {
-                Handlers = new SessionHooks
+                OnPreMcpToolCall = (input, invocation) =>
                 {
-                    OnPreMcpToolCall = (input, invocation) =>
+                    hookInputs.Add(input);
+                    // Completely replace: ignore input.Meta entirely
+                    using var doc = JsonDocument.Parse("""{"completely":"replaced"}""");
+                    return Task.FromResult<PreMcpToolCallHookOutput?>(new PreMcpToolCallHookOutput
                     {
-                        hookInputs.Add(input);
-                        // Completely replace: ignore input.Meta entirely
-                        using var doc = JsonDocument.Parse("""{"completely":"replaced"}""");
-                        return Task.FromResult<PreMcpToolCallHookOutput?>(new PreMcpToolCallHookOutput { MetaToUse = doc.RootElement.Clone() });
-                    },
-                }
+                        MetaToUse = doc.RootElement.Clone()
+                    });
+                },
             },
-            Permissions = new SessionPermissionOptions
-            {
-                OnRequest = PermissionHandler.ApproveAll
-            }
+            OnPermissionRequest = PermissionHandler.ApproveAll,
         });
 
         var message = await session.SendAndWaitAsync(new MessageOptions
@@ -140,28 +128,22 @@ public class PreMcpToolCallHookE2ETests(E2ETestFixture fixture, ITestOutputHelpe
         var testHarnessDir = FindMetaEchoTestHarnessDir();
         var hookInputs = new List<PreMcpToolCallHookInput>();
 
-        var session = await CreateSessionAsync(new CreateSessionOptions
+        var session = await CreateSessionAsync(new SessionConfig
         {
-            Mcp = new SessionMcpOptions
+            McpServers = CreateMetaEchoMcpConfig(testHarnessDir),
+            Hooks = new SessionHooks
             {
-                Servers = CreateMetaEchoMcpConfig(testHarnessDir)
-            },
-            Hooks = new SessionHookOptions
-            {
-                Handlers = new SessionHooks
+                OnPreMcpToolCall = (input, invocation) =>
                 {
-                    OnPreMcpToolCall = (input, invocation) =>
+                    hookInputs.Add(input);
+                    // Return output with null MetaToUse to signal removal
+                    return Task.FromResult<PreMcpToolCallHookOutput?>(new PreMcpToolCallHookOutput
                     {
-                        hookInputs.Add(input);
-                        // Return output with null MetaToUse to signal removal
-                        return Task.FromResult<PreMcpToolCallHookOutput?>(new PreMcpToolCallHookOutput { MetaToUse = null });
-                    },
-                }
+                        MetaToUse = null
+                    });
+                },
             },
-            Permissions = new SessionPermissionOptions
-            {
-                OnRequest = PermissionHandler.ApproveAll
-            }
+            OnPermissionRequest = PermissionHandler.ApproveAll,
         });
 
         var message = await session.SendAndWaitAsync(new MessageOptions

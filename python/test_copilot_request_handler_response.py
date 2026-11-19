@@ -14,7 +14,7 @@ from copilot.copilot_request_handler import (
     _stream_response_to_exchange,
     create_copilot_request_adapter,
 )
-from copilot.rpc import (
+from copilot.generated.rpc import (
     LlmInferenceHTTPRequestChunkRequest,
     LlmInferenceHTTPRequestStartRequest,
     LlmInferenceHTTPRequestStartTransport,

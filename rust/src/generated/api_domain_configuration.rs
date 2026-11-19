@@ -138,18 +138,12 @@ pub struct FeatureFlagServiceReadParams {
     /// Wait for a different revision or service disposal using the existing change notification.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub after_revision: Option<i64>,
-    /// Return only the redacted UI projection, without assignment data or requested evaluations.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub display_only: Option<bool>,
     /// Feature names evaluated with their canonical experiment mappings.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub flags: Option<Vec<String>>,
     /// Explicit experiment/static queries, in result order.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub overrides: Option<Vec<FeatureFlagExpOverrideQuery>>,
-    /// Original display generation; a replaced service returns an unavailable projection.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub service_id: Option<String>,
     /// Wait for the current assignment. Omission does not wait.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub wait_for_exp_response: Option<bool>,
@@ -166,9 +160,6 @@ pub struct FeatureFlagServiceReadParams {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeatureFlagServiceReadResult {
-    /// Redacted runtime decisions for UI presentation, present only for an available display read.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub display_state: Option<serde_json::Value>,
     /// Requested feature values. Unknown or unset values are absent.
     pub flags: HashMap<String, bool>,
     /// Explicit override results; null means neither source supplies a boolean.
@@ -1527,7 +1518,7 @@ pub struct UserSettingsGetPathsResult {
     /// The repository's checked-in settings file, or null when no repository root was supplied.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repo_settings: Option<String>,
-    /// The user settings file: `settings.json` under the resolved Copilot home. This is the file `user.settings.get`, `user.settings.loadWithWarning`, and `user.settings.set` read and write.
+    /// The user settings file: `settings.json` under the resolved Copilot home. This is the file `user.settings.get`, `user.settings.load`, and `user.settings.set` read and write.
     pub user_settings: String,
 }
 
@@ -1799,7 +1790,7 @@ pub(crate) struct UserSettingsMigrateObsoleteOnDiskRequest {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UserSettingsMigrateObsoleteOnDiskResult {
-    /// What the cleanup did. Only `changed` rewrote the document. The cleaned settings are not returned here: the document is written before this replies, so `user.settings.loadWithWarning` reads it authoritatively.
+    /// What the cleanup did. Only `changed` rewrote the document. The cleaned settings are not returned here: the document is written before this replies, so `user.settings.load` reads it authoritatively.
     #[doc(hidden)]
     pub(crate) status: UserSettingsMigrateObsoleteOnDiskStatus,
 }
@@ -2065,7 +2056,7 @@ pub(crate) struct UserSettingsResetStaffModelSelectionOnceResult {
 pub(crate) struct UserSettingsSetHookDisabledRequest {
     /// True adds the key to `disabledHooks`, false removes it.
     pub disabled: bool,
-    /// Durable content-hash key of the hook, as `hooks.discover` reports it in `disableKey`.
+    /// Durable content-hash key of the hook, as `hooks.loadResources` reports it.
     pub disable_key: String,
     /// Path of the settings.json to rewrite.
     pub settings_path: String,

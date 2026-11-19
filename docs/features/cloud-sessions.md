@@ -1,6 +1,6 @@
 # Cloud sessions
 
-Cloud sessions run Copilot work on GitHub-hosted compute through Mission Control. Use them when your app should create a session that executes remotely instead of running a local Copilot runtime session on the user's machine or your server.
+Cloud sessions run Copilot work on GitHub-hosted compute through Mission Control. Use them when your app should create a session that executes remotely instead of starting a local Copilot CLI session on the user's machine or your server.
 
 ## Prerequisites
 
@@ -21,22 +21,20 @@ Set the create-session `cloud` option to create a cloud session. You can include
 
 <!-- docs-validate: strict -->
 ```typescript
-import { CopilotClient } from "@microsoft/copilot-sdk";
+import { CopilotClient } from "@github/copilot-sdk";
 
-const client = new CopilotClient({ mode: "coding-agent" });
+const client = new CopilotClient();
 await client.start();
 
 const session = await client.createSession({
-    permissions: {
-        onRequest: async () => ({ kind: "approve-once" }),
+  onPermissionRequest: async () => ({ kind: "approve-once" }),
+  cloud: {
+    repository: {
+      owner: "github",
+      name: "copilot-sdk",
+      branch: "main",
     },
-    cloud: {
-        repository: {
-            owner: "github",
-            name: "copilot-sdk",
-            branch: "main",
-        },
-    },
+  },
 });
 ```
 
@@ -50,10 +48,11 @@ from copilot import (
     PermissionHandler,
 )
 
-client = CopilotClient(mode="coding-agent")
+client = CopilotClient()
 await client.start()
 
 session = await client.create_session(
+    on_permission_request=PermissionHandler.approve_all,
     cloud=CloudSessionOptions(
         repository=CloudSessionRepository(
             owner="github",
@@ -61,7 +60,6 @@ session = await client.create_session(
             branch="main",
         )
     ),
-    permissions={"on_request": PermissionHandler.approve_all},
 )
 ```
 
@@ -72,73 +70,67 @@ session = await client.create_session(
 package main
 
 import (
-	"context"
+    "context"
 
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
-	"github.com/microsoft/copilot-sdk/go/v2/rpc"
+    copilot "github.com/github/copilot-sdk/go"
+    "github.com/github/copilot-sdk/go/rpc"
 )
 
 func main() {
-	_ = run(context.Background())
+    _ = run(context.Background())
 }
 
 func run(ctx context.Context) error {
-	client := copilot.NewClient(&copilot.ClientOptions{Mode: copilot.ModeCodingAgent})
-	if err := client.Start(ctx); err != nil {
-		return err
-	}
+    client := copilot.NewClient(nil)
+    if err := client.Start(ctx); err != nil {
+        return err
+    }
 
-	session, err := client.CreateSession(ctx, &copilot.CreateSessionOptions{
-		Cloud: &copilot.CloudSessionOptions{
-
-			Repository: &copilot.CloudSessionRepository{
-				Owner:  "github",
-				Name:   "copilot-sdk",
-				Branch: "main",
-			},
-		},
-		Permissions: copilot.SessionPermissionOptions{
-			OnRequest: func(req copilot.PermissionRequest, inv copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
-				return &rpc.PermissionDecisionApproveOnce{}, nil
-			},
-		},
-	})
-	_ = session
-	return err
+    session, err := client.CreateSession(ctx, &copilot.SessionConfig{
+        Cloud: &copilot.CloudSessionOptions{
+            Repository: &copilot.CloudSessionRepository{
+                Owner:  "github",
+                Name:   "copilot-sdk",
+                Branch: "main",
+            },
+        },
+        OnPermissionRequest: func(req copilot.PermissionRequest, inv copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
+            return &rpc.PermissionDecisionApproveOnce{}, nil
+        },
+    })
+    _ = session
+    return err
 }
 ```
 <!-- /docs-validate: hidden -->
 
 ```go
-client := copilot.NewClient(&copilot.ClientOptions{Mode: copilot.ModeCodingAgent})
+client := copilot.NewClient(nil)
 if err := client.Start(ctx); err != nil {
-	return err
+    return err
 }
 
-session, err := client.CreateSession(ctx, &copilot.CreateSessionOptions{
-	Cloud: &copilot.CloudSessionOptions{
-
-		Repository: &copilot.CloudSessionRepository{
-			Owner:  "github",
-			Name:   "copilot-sdk",
-			Branch: "main",
-		},
-	},
-	Permissions: copilot.SessionPermissionOptions{
-		OnRequest: func(req copilot.PermissionRequest, inv copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
-			return &rpc.PermissionDecisionApproveOnce{}, nil
-		},
-	},
+session, err := client.CreateSession(ctx, &copilot.SessionConfig{
+    Cloud: &copilot.CloudSessionOptions{
+        Repository: &copilot.CloudSessionRepository{
+            Owner:  "github",
+            Name:   "copilot-sdk",
+            Branch: "main",
+        },
+    },
+    OnPermissionRequest: func(req copilot.PermissionRequest, inv copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
+        return &rpc.PermissionDecisionApproveOnce{}, nil
+    },
 })
 _ = session
-
 ```
 
 ### .NET
 
 ```csharp
-await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent });
-var session = await client.CreateSessionAsync(new CreateSessionOptions
+await using var client = new CopilotClient();
+
+var session = await client.CreateSessionAsync(new SessionConfig
 {
     Cloud = new CloudSessionOptions
     {
@@ -149,34 +141,29 @@ var session = await client.CreateSessionAsync(new CreateSessionOptions
             Branch = "main",
         },
     },
-    Permissions = new SessionPermissionOptions
-    {
-        OnRequest = (req, inv) => Task.FromResult(PermissionDecision.ApproveOnce())
-    }
+    OnPermissionRequest = (req, inv) =>
+        Task.FromResult(PermissionDecision.ApproveOnce()),
 });
 ```
 
 ### Java
 
 ```java
-import com.microsoft.copilot.CopilotClient;
-import com.microsoft.copilot.rpc.*;
+import com.github.copilot.CopilotClient;
+import com.github.copilot.rpc.*;
 
-try (var client = new CopilotClient(new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT))) {
-    client
-            .start()
-            .get();
+try (var client = new CopilotClient()) {
+    client.start().get();
 
-    var session = client
-            .createSession(new CreateSessionOptions()
-                    .setCloud(new CloudSessionOptions()
-                            .setRepository(new CloudSessionRepository()
-                                    .setOwner("github")
-                                    .setName("copilot-sdk")
-                                    .setBranch("main")))
-                    .setPermissions(new SessionPermissionOptions()
-                            .setOnRequest(PermissionHandler.APPROVE_ALL)))
-            .get();
+    var session = client.createSession(
+        new SessionConfig()
+            .setCloud(new CloudSessionOptions()
+                .setRepository(new CloudSessionRepository()
+                    .setOwner("github")
+                    .setName("copilot-sdk")
+                    .setBranch("main")))
+            .setOnPermissionRequest(PermissionHandler.APPROVE_ALL)
+    ).get();
 }
 ```
 
@@ -184,20 +171,16 @@ try (var client = new CopilotClient(new CopilotClientOptions().setMode(CopilotCl
 
 ```rust
 use std::sync::Arc;
-use copilot_sdk::{CloudSessionOptions, CloudSessionRepository, CreateSessionOptions};
-use copilot_sdk::handler::ApproveAllHandler;
+use github_copilot_sdk::{CloudSessionOptions, CloudSessionRepository, SessionConfig};
+use github_copilot_sdk::handler::ApproveAllHandler;
 
-let session = client
-    .create_session(
-        CreateSessionOptions::default()
-            .with_cloud(CloudSessionOptions::with_repository(
-                CloudSessionRepository::new("github", "copilot-sdk").with_branch("main"),
-            ))
-            .with_permissions(|__sdk_group| {
-                __sdk_group.with_on_request(Arc::new(ApproveAllHandler))
-            }),
-    )
-    .await?;
+let session = client.create_session(
+    SessionConfig::default()
+        .with_cloud(CloudSessionOptions::with_repository(
+            CloudSessionRepository::new("github", "copilot-sdk").with_branch("main"),
+        ))
+        .with_permission_handler(Arc::new(ApproveAllHandler)),
+).await?;
 ```
 
 <!-- tabs:end -->
@@ -208,19 +191,15 @@ let session = client
 
 <!-- docs-validate: strict -->
 ```typescript
-import { CopilotClient, type CopilotSession } from "@microsoft/copilot-sdk";
+import { CopilotClient, type CopilotSession } from "@github/copilot-sdk";
 
-const client = new CopilotClient({ mode: "coding-agent" });
+const client = new CopilotClient();
 await client.start();
 
 const session: CopilotSession = await client.createSession({
-    events: {
-        streaming: true,
-    },
-    cloud: { repository: { owner: "github", name: "copilot-sdk" } },
-    permissions: {
-        onRequest: async () => ({ kind: "approve-once" }),
-    },
+  streaming: true, // required for assistant.message_delta to fire
+  cloud: { repository: { owner: "github", name: "copilot-sdk" } },
+  onPermissionRequest: async () => ({ kind: "approve-once" }),
 });
 
 // The remote worker has already started, so the first prompt can go out right away.
@@ -238,7 +217,7 @@ Capture the URL by subscribing to `session.info` and filtering by `infoType: "re
 <!-- docs-validate: strict -->
 <!-- docs-validate: hidden -->
 ```typescript
-import type { CopilotSession } from "@microsoft/copilot-sdk";
+import type { CopilotSession } from "@github/copilot-sdk";
 
 declare const session: CopilotSession;
 
@@ -285,9 +264,7 @@ The `cloud` option only applies when creating a new session. To resume an existi
 <!-- docs-validate: strict -->
 ```typescript
 const session = await client.resumeSession("session-id", {
-    permissions: {
-        onRequest: async () => ({ kind: "approve-once" }),
-    },
+  onPermissionRequest: async () => ({ kind: "approve-once" }),
 });
 ```
 
@@ -304,7 +281,7 @@ In TypeScript, surface the error message:
 <!-- docs-validate: hidden -->
 <!-- docs-validate: strict -->
 ```typescript
-import type { CloudSessionRepository } from "@microsoft/copilot-sdk";
+import type { CloudSessionRepository } from "@github/copilot-sdk";
 
 declare const repository: CloudSessionRepository;
 

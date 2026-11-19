@@ -19,24 +19,22 @@
 //!   the prompt of a turn the model has not answered removes it from the
 //!   persisted session, so a resume does not bring it back.
 
-use crate::byok;
-
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use copilot_sdk::handler::ApproveAllHandler;
-use copilot_sdk::rpc::{QueueWithdrawMessageRequest, SendMode, SendRequest};
-use copilot_sdk::session_events::{AssistantMessageData, UserMessageData};
-use copilot_sdk::{
+use futures_util::{SinkExt, StreamExt};
+use github_copilot_sdk::handler::ApproveAllHandler;
+use github_copilot_sdk::rpc::{QueueWithdrawMessageRequest, SendMode, SendRequest};
+use github_copilot_sdk::session_events::{AssistantMessageData, UserMessageData};
+use github_copilot_sdk::{
     CopilotHttpRequest, CopilotHttpResponse, CopilotRequestContext, CopilotRequestError,
     CopilotRequestHandler, CopilotWebSocketForwarder, CopilotWebSocketHandler,
-    CopilotWebSocketResponse, CreateSessionOptions, DeliveryMode, MessageOptions, MessageSource,
-    ProviderConfig, SessionEvent, forward_http,
+    CopilotWebSocketResponse, DeliveryMode, MessageOptions, MessageSource, ProviderConfig,
+    SessionConfig, SessionEvent, forward_http,
 };
-use futures_util::{SinkExt, StreamExt};
 use http::header::{HeaderName, HeaderValue};
 use http::{HeaderMap, Uri};
 use serde_json::{Value, json};
@@ -293,7 +291,7 @@ fn synth_inference_response(url: &str, body: &[u8], text: &str) -> CopilotHttpRe
     )
 }
 
-async fn session_send(session: &copilot_sdk::session::Session) -> Option<SessionEvent> {
+async fn session_send(session: &github_copilot_sdk::session::Session) -> Option<SessionEvent> {
     session
         .send_and_wait(say_ok())
         .await
@@ -538,12 +536,12 @@ async fn services_http_and_websocket_via_handler() {
             };
             let client = ctx.start_llm_client(handler).await;
             let session = client
-                .create_session(ctx.approve_all_session_config().with_github(|group| {
-                    group.with_capi(
-                        copilot_sdk::CapiSessionOptions::new()
+                .create_session(
+                    ctx.approve_all_session_config().with_capi(
+                        github_copilot_sdk::CapiSessionOptions::new()
                             .with_enable_web_socket_responses(true),
-                    )
-                }))
+                    ),
+                )
                 .await
                 .expect("create session");
 
@@ -768,23 +766,17 @@ async fn threads_session_id_into_inference() {
 
             // BYOK session.
             let before = handler.inference_records().len();
-            let byok_config = CreateSessionOptions::default()
-                .with_permissions(|group| group.with_on_request(Arc::new(ApproveAllHandler)))
+            let byok_config = SessionConfig::default()
+                .with_permission_handler(Arc::new(ApproveAllHandler))
                 .with_model("claude-sonnet-5")
-                .with_inference(|group| {
-                    byok::inference(
-                        group,
-                        ProviderConfig::new("https://byok.invalid/v1")
-                            .with_provider_type("openai")
-                            .with_wire_api("responses")
-                            .with_api_key("byok-secret")
-                            .with_model_id("claude-sonnet-5")
-                            .with_wire_model("claude-sonnet-5"),
-                    )
-                })
-                .with_github(|group| {
-                    group.with_capi(copilot_sdk::CapiSessionOptions::default().with_enabled(false))
-                });
+                .with_provider(
+                    ProviderConfig::new("https://byok.invalid/v1")
+                        .with_provider_type("openai")
+                        .with_wire_api("responses")
+                        .with_api_key("byok-secret")
+                        .with_model_id("claude-sonnet-5")
+                        .with_wire_model("claude-sonnet-5"),
+                );
             let byok_session = client
                 .create_session(byok_config)
                 .await
@@ -851,6 +843,70 @@ fn assert_agent_metadata(record: &InterceptedRequest) {
             .is_some_and(|kind| !kind.is_empty()),
         "inference request must carry an interaction type"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 3a: errors — a handler that returns `Err` on an inference request
+// surfaces a transport error rather than hanging the turn.
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+struct ThrowingHandler {
+    inference_attempts: AtomicU32,
+}
+
+#[async_trait]
+impl CopilotRequestHandler for ThrowingHandler {
+    async fn send_request(
+        &self,
+        request: CopilotHttpRequest,
+        _ctx: &CopilotRequestContext,
+    ) -> Result<CopilotHttpResponse, CopilotRequestError> {
+        if !is_inference_url(&request.url) {
+            return Ok(synth_non_inference_response(&request.url, None));
+        }
+        self.inference_attempts.fetch_add(1, Ordering::SeqCst);
+        Err(CopilotRequestError::message(
+            "synthetic-callback-transport-failure",
+        ))
+    }
+}
+
+#[tokio::test]
+async fn surfaces_handler_errors() {
+    if super::support::skip_inprocess("LLM inference providers are process-global in-process") {
+        return;
+    }
+    with_e2e_context_no_snapshot(|ctx| {
+        Box::pin(async move {
+            ctx.set_default_copilot_user();
+            let handler = Arc::new(ThrowingHandler::default());
+            let client = ctx.start_llm_client(handler.clone()).await;
+            let session = client
+                .create_session(ctx.approve_all_session_config())
+                .await
+                .expect("create session");
+
+            // The handler returns Err from the inference seam; the agent layer
+            // surfaces it as an error rather than hanging.
+            let send_result = session.send_and_wait(say_ok()).await;
+            let _ = session.disconnect().await;
+
+            assert!(
+                handler.inference_attempts.load(Ordering::SeqCst) > 0,
+                "expected the inference callback to be reached and raise"
+            );
+            if let Err(err) = send_result {
+                assert!(
+                    !err.to_string().is_empty(),
+                    "expected a non-empty error string when an error surfaces"
+                );
+            }
+
+            client.stop().await.expect("stop client");
+        })
+    })
+    .await;
 }
 
 // ---------------------------------------------------------------------------

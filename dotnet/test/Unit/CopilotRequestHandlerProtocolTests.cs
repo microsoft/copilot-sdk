@@ -8,10 +8,10 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
-using Microsoft.Copilot.Test.Harness;
+using GitHub.Copilot.Test.Harness;
 using Xunit;
 
-namespace Microsoft.Copilot.Test.Unit;
+namespace GitHub.Copilot.Test.Unit;
 
 public sealed class CopilotRequestHandlerProtocolTests
 {
@@ -567,9 +567,8 @@ public sealed class CopilotRequestHandlerProtocolTests
             var endpoint = (IPEndPoint)listener.LocalEndpoint;
             var client = new CopilotClient(new CopilotClientOptions
             {
-                Mode = CopilotClientMode.CodingAgent,
-                Runtime = RuntimeConnection.ForTcp("127.0.0.1", endpoint.Port),
-                Models = new ClientModelOptions { RequestHandler = handler }
+                Connection = RuntimeConnection.ForUri($"http://127.0.0.1:{endpoint.Port}"),
+                RequestHandler = handler,
             });
             var startTask = client.StartAsync();
             var tcpClient = await listener.AcceptTcpClientAsync().WaitAsync(s_timeout);
@@ -584,7 +583,7 @@ public sealed class CopilotRequestHandlerProtocolTests
                 {
                     writer.WriteStartObject();
                     writer.WriteBoolean("ok", true);
-                    writer.WriteNumber("protocolVersion", 4);
+                    writer.WriteNumber("protocolVersion", 3);
                     writer.WriteString("version", "test");
                     writer.WriteEndObject();
                 },

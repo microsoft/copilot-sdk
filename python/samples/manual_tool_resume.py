@@ -61,10 +61,11 @@ def leave_permission_pending(request, invocation) -> PermissionNoResult:
 
 async def main():
     # 1. Create a session with a declaration-only tool, then stop after the permission prompt.
-    client1 = CopilotClient(mode="coding-agent")
+    client1 = CopilotClient()
     await client1.start()
     session1 = await client1.create_session(
-        tools={"definitions": [tool]}, permissions={"on_request": leave_permission_pending}
+        tools=[tool],
+        on_permission_request=leave_permission_pending,
     )
 
     # Subscribe before sending so the permission event cannot be missed.
@@ -79,13 +80,13 @@ async def main():
     await pause()
 
     # 2. Resume pending work and grant permission to invoke the tool.
-    client2 = CopilotClient(mode="coding-agent")
+    client2 = CopilotClient()
     await client2.start()
     session2 = await client2.resume_session(
         session1.session_id,
+        tools=[tool],
+        on_permission_request=leave_permission_pending,
         continue_pending_work=True,
-        tools={"definitions": [tool]},
-        permissions={"on_request": leave_permission_pending},
     )
 
     # Subscribe before approving so the external tool request cannot be missed.
@@ -109,13 +110,13 @@ async def main():
     await pause()
 
     # 3. Resume again and manually provide the pending tool result.
-    client3 = CopilotClient(mode="coding-agent")
+    client3 = CopilotClient()
     await client3.start()
     session3 = await client3.resume_session(
         session1.session_id,
+        tools=[tool],
+        on_permission_request=leave_permission_pending,
         continue_pending_work=True,
-        tools={"definitions": [tool]},
-        permissions={"on_request": leave_permission_pending},
     )
 
     assistant_message = watch_event(session3, AssistantMessageData)

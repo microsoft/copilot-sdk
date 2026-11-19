@@ -8,7 +8,7 @@ These guides cover the capabilities you can add to your Copilot SDK application.
 
 | Feature | Description |
 |---|---|
-| [The Agent Loop](./agent-loop.md) | How the runtime processes a prompt—the tool-use loop, turns, and completion signals |
+| [The Agent Loop](./agent-loop.md) | How the CLI processes a prompt—the tool-use loop, turns, and completion signals |
 | [Hooks](./hooks.md) | Intercept and customize session behavior—control tool execution, transform results, handle errors |
 | [Custom Agents](./custom-agents.md) | Define specialized sub-agents with scoped tools and instructions |
 | [Changing Tools](./changing-tools.md) | Replace the tools a client supplies to a live session |
@@ -35,6 +35,6 @@ These guides cover the capabilities you can add to your Copilot SDK application.
 ## Related
 
 * [Hooks Reference](../hooks/README.md): detailed API reference for each hook type
-* [Integrations](../integrations/microsoft-agent-framework.md): MAF V2 compatibility status
+* [Integrations](../integrations/microsoft-agent-framework.md): use the SDK with other platforms (MAF, etc.)
 * [Troubleshooting](../troubleshooting/debugging.md): when things don't work as expected
 * [Compatibility](../troubleshooting/compatibility.md): SDK vs CLI feature matrix

@@ -3,7 +3,7 @@ package testharness
 import (
 	"context"
 
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
+	copilot "github.com/github/copilot-sdk/go"
 )
 
 // Client supplies fixture-owned session directories without changing process cwd.
@@ -13,7 +13,7 @@ type Client struct {
 	workDir string
 }
 
-func (c *Client) sessionConfig(config *copilot.CreateSessionOptions) *copilot.CreateSessionOptions {
+func (c *Client) sessionConfig(config *copilot.SessionConfig) *copilot.SessionConfig {
 	if config == nil || config.WorkingDirectory != "" || config.Cloud != nil || c.workDir == "" {
 		return config
 	}
@@ -22,6 +22,6 @@ func (c *Client) sessionConfig(config *copilot.CreateSessionOptions) *copilot.Cr
 	return &scoped
 }
 
-func (c *Client) CreateSession(ctx context.Context, config *copilot.CreateSessionOptions) (*copilot.Session, error) {
+func (c *Client) CreateSession(ctx context.Context, config *copilot.SessionConfig) (*copilot.Session, error) {
 	return c.Client.CreateSession(ctx, c.sessionConfig(config))
 }

@@ -251,12 +251,11 @@ async def handler_fixture(ctx: E2ETestContext):
     )
     env = {**ctx.get_env(), "COPILOT_EXP_COPILOT_CLI_WEBSOCKET_RESPONSES": "true"}
     client = CopilotClient(
-        mode="coding-agent",
-        runtime=RuntimeConnection.for_spawned_stdio(
-            path=ctx.cli_path, working_directory=ctx.work_dir, env=env
-        ),
-        github={"token": github_token},
-        models={"request_handler": handler},
+        connection=RuntimeConnection.for_stdio(path=ctx.cli_path),
+        working_directory=ctx.work_dir,
+        env=env,
+        github_token=github_token,
+        request_handler=handler,
     )
     try:
         yield _HandlerFixture(client=client, upstream=upstream, counters=counters)
@@ -275,7 +274,7 @@ class TestCopilotRequestHandler:
         fx = handler_fixture
         await fx.client.start()
         session = await fx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all}
+            on_permission_request=PermissionHandler.approve_all
         )
         text = ""
         try:

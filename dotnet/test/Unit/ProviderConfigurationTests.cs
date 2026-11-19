@@ -6,11 +6,11 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
-using Microsoft.Copilot.Rpc;
+using GitHub.Copilot.Rpc;
 using Xunit;
-using RpcNamedProviderConfig = Microsoft.Copilot.Rpc.NamedProviderConfig;
+using RpcNamedProviderConfig = GitHub.Copilot.Rpc.NamedProviderConfig;
 
-namespace Microsoft.Copilot.Test;
+namespace GitHub.Copilot.Test;
 
 public class ProviderConfigurationTests
 {

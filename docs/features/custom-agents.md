@@ -53,34 +53,30 @@ persisted: supply it again on resume to retain the restriction after a restart.
 <summary><strong>Node.js / TypeScript</strong></summary>
 
 ```typescript
-import { CopilotClient } from "@microsoft/copilot-sdk";
+import { CopilotClient } from "@github/copilot-sdk";
 
-const client = new CopilotClient({ mode: "coding-agent" });
+const client = new CopilotClient();
 await client.start();
 
 const session = await client.createSession({
     model: "auto",
-    agents: {
-        definitions: [
-            {
-                name: "researcher",
-                displayName: "Research Agent",
-                description: "Explores codebases and answers questions using read-only tools",
-                tools: ["grep", "glob", "view"],
-                prompt: "You are a research assistant. Analyze code and answer questions. Do not modify any files.",
-            },
-            {
-                name: "editor",
-                displayName: "Editor Agent",
-                description: "Makes targeted code changes",
-                tools: ["view", "edit", "bash"],
-                prompt: "You are a code editor. Make minimal, surgical changes to files as requested.",
-            },
-        ],
-    },
-    permissions: {
-        onRequest: async () => ({ kind: "approve-once" }),
-    },
+    customAgents: [
+        {
+            name: "researcher",
+            displayName: "Research Agent",
+            description: "Explores codebases and answers questions using read-only tools",
+            tools: ["grep", "glob", "view"],
+            prompt: "You are a research assistant. Analyze code and answer questions. Do not modify any files.",
+        },
+        {
+            name: "editor",
+            displayName: "Editor Agent",
+            description: "Makes targeted code changes",
+            tools: ["view", "edit", "bash"],
+            prompt: "You are a code editor. Make minimal, surgical changes to files as requested.",
+        },
+    ],
+    onPermissionRequest: async () => ({ kind: "approve-once" }),
 });
 ```
 
@@ -93,30 +89,28 @@ const session = await client.createSession({
 from copilot import CopilotClient
 from copilot.session import PermissionDecisionApproveOnce
 
-client = CopilotClient(mode="coding-agent")
+client = CopilotClient()
 await client.start()
 
 session = await client.create_session(
+    on_permission_request=lambda req, inv: PermissionDecisionApproveOnce(),
     model="auto",
-    permissions={"on_request": lambda req, inv: PermissionDecisionApproveOnce()},
-    agents={
-        "definitions": [
-            {
-                "name": "researcher",
-                "display_name": "Research Agent",
-                "description": "Explores codebases and answers questions using read-only tools",
-                "tools": ["grep", "glob", "view"],
-                "prompt": "You are a research assistant. Analyze code and answer questions. Do not modify any files.",
-            },
-            {
-                "name": "editor",
-                "display_name": "Editor Agent",
-                "description": "Makes targeted code changes",
-                "tools": ["view", "edit", "bash"],
-                "prompt": "You are a code editor. Make minimal, surgical changes to files as requested.",
-            },
-        ]
-    },
+    custom_agents=[
+        {
+            "name": "researcher",
+            "display_name": "Research Agent",
+            "description": "Explores codebases and answers questions using read-only tools",
+            "tools": ["grep", "glob", "view"],
+            "prompt": "You are a research assistant. Analyze code and answer questions. Do not modify any files.",
+        },
+        {
+            "name": "editor",
+            "display_name": "Editor Agent",
+            "description": "Makes targeted code changes",
+            "tools": ["view", "edit", "bash"],
+            "prompt": "You are a code editor. Make minimal, surgical changes to files as requested.",
+        },
+    ],
 )
 ```
 
@@ -131,55 +125,18 @@ package main
 
 import (
 	"context"
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
-	"github.com/microsoft/copilot-sdk/go/v2/rpc"
+	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/rpc"
 )
 
 func main() {
 	ctx := context.Background()
-	client := copilot.NewClient(&copilot.ClientOptions{Mode: copilot.ModeCodingAgent})
+	client := copilot.NewClient(nil)
 	client.Start(ctx)
 
-	session, _ := client.CreateSession(ctx, &copilot.CreateSessionOptions{
+	session, _ := client.CreateSession(ctx, &copilot.SessionConfig{
 		Model: "auto",
-		Agents: copilot.SessionAgentOptions{
-			Definitions: []copilot.CustomAgentConfig{
-				{
-					Name:        "researcher",
-					DisplayName: "Research Agent",
-					Description: "Explores codebases and answers questions using read-only tools",
-					Tools:       []string{"grep", "glob", "view"},
-					Prompt:      "You are a research assistant. Analyze code and answer questions. Do not modify any files.",
-				},
-				{
-					Name:        "editor",
-					DisplayName: "Editor Agent",
-					Description: "Makes targeted code changes",
-					Tools:       []string{"view", "edit", "bash"},
-					Prompt:      "You are a code editor. Make minimal, surgical changes to files as requested.",
-				},
-			},
-		},
-		Permissions: copilot.SessionPermissionOptions{
-			OnRequest: func(req copilot.PermissionRequest, inv copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
-				return &rpc.PermissionDecisionApproveOnce{}, nil
-			},
-		},
-	})
-	_ = session
-}
-```
-<!-- /docs-validate: hidden -->
-
-```go
-ctx := context.Background()
-client := copilot.NewClient(&copilot.ClientOptions{Mode: copilot.ModeCodingAgent})
-client.Start(ctx)
-
-session, _ := client.CreateSession(ctx, &copilot.CreateSessionOptions{
-	Model: "auto",
-	Agents: copilot.SessionAgentOptions{
-		Definitions: []copilot.CustomAgentConfig{
+		CustomAgents: []copilot.CustomAgentConfig{
 			{
 				Name:        "researcher",
 				DisplayName: "Research Agent",
@@ -195,14 +152,42 @@ session, _ := client.CreateSession(ctx, &copilot.CreateSessionOptions{
 				Prompt:      "You are a code editor. Make minimal, surgical changes to files as requested.",
 			},
 		},
-	},
-	Permissions: copilot.SessionPermissionOptions{
-		OnRequest: func(req copilot.PermissionRequest, inv copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
+		OnPermissionRequest: func(req copilot.PermissionRequest, inv copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
 			return &rpc.PermissionDecisionApproveOnce{}, nil
 		},
-	},
-})
+	})
+	_ = session
+}
+```
+<!-- /docs-validate: hidden -->
 
+```go
+ctx := context.Background()
+client := copilot.NewClient(nil)
+client.Start(ctx)
+
+session, _ := client.CreateSession(ctx, &copilot.SessionConfig{
+    Model: "auto",
+    CustomAgents: []copilot.CustomAgentConfig{
+        {
+            Name:        "researcher",
+            DisplayName: "Research Agent",
+            Description: "Explores codebases and answers questions using read-only tools",
+            Tools:       []string{"grep", "glob", "view"},
+            Prompt:      "You are a research assistant. Analyze code and answer questions. Do not modify any files.",
+        },
+        {
+            Name:        "editor",
+            DisplayName: "Editor Agent",
+            Description: "Makes targeted code changes",
+            Tools:       []string{"view", "edit", "bash"},
+            Prompt:      "You are a code editor. Make minimal, surgical changes to files as requested.",
+        },
+    },
+    OnPermissionRequest: func(req copilot.PermissionRequest, inv copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
+        return &rpc.PermissionDecisionApproveOnce{}, nil
+    },
+})
 ```
 
 </details>
@@ -211,49 +196,34 @@ session, _ := client.CreateSession(ctx, &copilot.CreateSessionOptions{
 <summary><strong>.NET</strong></summary>
 
 ```csharp
-using Microsoft.Copilot;
-using Microsoft.Copilot.Rpc;
+using GitHub.Copilot;
+using GitHub.Copilot.Rpc;
 
-await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent });
-await using var session = await client.CreateSessionAsync(new CreateSessionOptions
+await using var client = new CopilotClient();
+await using var session = await client.CreateSessionAsync(new SessionConfig
 {
     Model = "auto",
-    Agents = new SessionAgentOptions
+    CustomAgents = new List<CustomAgentConfig>
     {
-        Definitions = new List<CustomAgentConfig>
+        new()
         {
-            new()
-            {
-                Name = "researcher",
-                DisplayName = "Research Agent",
-                Description = "Explores codebases and answers questions using read-only tools",
-                Tools = new List<string>
-                {
-                    "grep",
-                    "glob",
-                    "view"
-                },
-                Prompt = "You are a research assistant. Analyze code and answer questions. Do not modify any files.",
-            },
-            new()
-            {
-                Name = "editor",
-                DisplayName = "Editor Agent",
-                Description = "Makes targeted code changes",
-                Tools = new List<string>
-                {
-                    "view",
-                    "edit",
-                    "bash"
-                },
-                Prompt = "You are a code editor. Make minimal, surgical changes to files as requested.",
-            },
-        }
+            Name = "researcher",
+            DisplayName = "Research Agent",
+            Description = "Explores codebases and answers questions using read-only tools",
+            Tools = new List<string> { "grep", "glob", "view" },
+            Prompt = "You are a research assistant. Analyze code and answer questions. Do not modify any files.",
+        },
+        new()
+        {
+            Name = "editor",
+            DisplayName = "Editor Agent",
+            Description = "Makes targeted code changes",
+            Tools = new List<string> { "view", "edit", "bash" },
+            Prompt = "You are a code editor. Make minimal, surgical changes to files as requested.",
+        },
     },
-    Permissions = new SessionPermissionOptions
-    {
-        OnRequest = (req, inv) => Task.FromResult(PermissionDecision.ApproveOnce())
-    }
+    OnPermissionRequest = (req, inv) =>
+        Task.FromResult(PermissionDecision.ApproveOnce()),
 });
 ```
 
@@ -263,37 +233,32 @@ await using var session = await client.CreateSessionAsync(new CreateSessionOptio
 <summary><strong>Java</strong></summary>
 
 ```java
-import com.microsoft.copilot.CopilotClient;
-import com.microsoft.copilot.rpc.*;
+import com.github.copilot.CopilotClient;
+import com.github.copilot.rpc.*;
 import java.util.List;
 
-try (var client = new CopilotClient(new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT))) {
-    client
-            .start()
-            .get();
+try (var client = new CopilotClient()) {
+    client.start().get();
 
-    var session = client
-            .createSession(new CreateSessionOptions()
-                    .setModel("auto")
-                    .setAgents(new SessionAgentOptions()
-                            .setDefinitions(List
-                                    .of(new CustomAgentConfig()
-                                            .setName("researcher")
-                                            .setDisplayName("Research Agent")
-                                            .setDescription("Explores codebases and answers questions using read-only tools")
-                                            .setTools(List
-                                                    .of("grep", "glob", "view"))
-                                            .setPrompt("You are a research assistant. Analyze code and answer questions. Do not modify any files."),
-                                            new CustomAgentConfig()
-                                                    .setName("editor")
-                                                    .setDisplayName("Editor Agent")
-                                                    .setDescription("Makes targeted code changes")
-                                                    .setTools(List
-                                                            .of("view", "edit", "bash"))
-                                                    .setPrompt("You are a code editor. Make minimal, surgical changes to files as requested."))))
-                    .setPermissions(new SessionPermissionOptions()
-                            .setOnRequest(PermissionHandler.APPROVE_ALL)))
-            .get();
+    var session = client.createSession(
+        new SessionConfig()
+            .setModel("auto")
+            .setCustomAgents(List.of(
+                new CustomAgentConfig()
+                    .setName("researcher")
+                    .setDisplayName("Research Agent")
+                    .setDescription("Explores codebases and answers questions using read-only tools")
+                    .setTools(List.of("grep", "glob", "view"))
+                    .setPrompt("You are a research assistant. Analyze code and answer questions. Do not modify any files."),
+                new CustomAgentConfig()
+                    .setName("editor")
+                    .setDisplayName("Editor Agent")
+                    .setDescription("Makes targeted code changes")
+                    .setTools(List.of("view", "edit", "bash"))
+                    .setPrompt("You are a code editor. Make minimal, surgical changes to files as requested.")
+            ))
+            .setOnPermissionRequest(PermissionHandler.APPROVE_ALL)
+    ).get();
 }
 ```
 
@@ -331,28 +296,22 @@ You can preload skills into an agent's context using the `skills` property. When
 
 ```typescript
 const session = await client.createSession({
-    skills: {
-        directories: ["./skills"],
-    },
-    agents: {
-        definitions: [
-            {
-                name: "security-auditor",
-                description: "Security-focused code reviewer",
-                prompt: "Focus on OWASP Top 10 vulnerabilities",
-                skills: ["security-scan", "dependency-check"],
-            },
-            {
-                name: "docs-writer",
-                description: "Technical documentation writer",
-                prompt: "Write clear, concise documentation",
-                skills: ["markdown-lint"],
-            },
-        ],
-    },
-    permissions: {
-        onRequest: async () => ({ kind: "approve-once" }),
-    },
+    skillDirectories: ["./skills"],
+    customAgents: [
+        {
+            name: "security-auditor",
+            description: "Security-focused code reviewer",
+            prompt: "Focus on OWASP Top 10 vulnerabilities",
+            skills: ["security-scan", "dependency-check"],
+        },
+        {
+            name: "docs-writer",
+            description: "Technical documentation writer",
+            prompt: "Write clear, concise documentation",
+            skills: ["markdown-lint"],
+        },
+    ],
+    onPermissionRequest: async () => ({ kind: "approve-once" }),
 });
 ```
 
@@ -370,19 +329,17 @@ This is equivalent to calling `session.rpc.agent.select()` after creation, but a
 <!-- docs-validate: strict -->
 ```typescript
 const session = await client.createSession({
-    agents: {
-        definitions: [
-            {
-                name: "researcher",
-                prompt: "You are a research assistant. Analyze code and answer questions.",
-            },
-            {
-                name: "editor",
-                prompt: "You are a code editor. Make minimal, surgical changes.",
-            },
-        ],
-        selected: "researcher",
-    },
+    customAgents: [
+        {
+            name: "researcher",
+            prompt: "You are a research assistant. Analyze code and answer questions.",
+        },
+        {
+            name: "editor",
+            prompt: "You are a code editor. Make minimal, surgical changes.",
+        },
+    ],
+    agent: "researcher", // Pre-select the researcher agent
 });
 ```
 
@@ -396,31 +353,10 @@ const session = await client.createSession({
 from copilot import CopilotClient
 from copilot.session import PermissionHandler
 
-
 async def main(client: CopilotClient):
     session = await client.create_session(
-        permissions={"on_request": PermissionHandler.approve_all},
-        agents={
-            "definitions": [
-                {
-                    "name": "researcher",
-                    "prompt": "You are a research assistant. Analyze code and answer questions.",
-                },
-                {
-                    "name": "editor",
-                    "prompt": "You are a code editor. Make minimal, surgical changes.",
-                },
-            ],
-            "selected": "researcher",
-        },
-    )
-```
-<!-- /docs-validate: hidden -->
-```python
-session = await client.create_session(
-    permissions={"on_request": PermissionHandler.approve_all},
-    agents={
-        "definitions": [
+        on_permission_request=PermissionHandler.approve_all,
+        custom_agents=[
             {
                 "name": "researcher",
                 "prompt": "You are a research assistant. Analyze code and answer questions.",
@@ -430,8 +366,24 @@ session = await client.create_session(
                 "prompt": "You are a code editor. Make minimal, surgical changes.",
             },
         ],
-        "selected": "researcher",
-    },
+        agent="researcher",  # Pre-select the researcher agent
+    )
+```
+<!-- /docs-validate: hidden -->
+```python
+session = await client.create_session(
+    on_permission_request=PermissionHandler.approve_all,
+    custom_agents=[
+        {
+            "name": "researcher",
+            "prompt": "You are a research assistant. Analyze code and answer questions.",
+        },
+        {
+            "name": "editor",
+            "prompt": "You are a code editor. Make minimal, surgical changes.",
+        },
+    ],
+    agent="researcher",  # Pre-select the researcher agent
 )
 ```
 
@@ -447,36 +399,14 @@ package main
 import (
 	"context"
 
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
+	copilot "github.com/github/copilot-sdk/go"
 )
 
 func main() {
 	var client *copilot.Client
 	ctx := context.Background()
-	session, _ := client.CreateSession(ctx, &copilot.CreateSessionOptions{
-		Agents: copilot.SessionAgentOptions{
-			Definitions: []copilot.CustomAgentConfig{
-				{
-					Name:   "researcher",
-					Prompt: "You are a research assistant. Analyze code and answer questions.",
-				},
-				{
-					Name:   "editor",
-					Prompt: "You are a code editor. Make minimal, surgical changes.",
-				},
-			},
-			Selected: "researcher",
-		},
-		// Pre-select the researcher agent
-	})
-	_ = session
-}
-```
-<!-- /docs-validate: hidden -->
-```go
-session, _ := client.CreateSession(ctx, &copilot.CreateSessionOptions{
-	Agents: copilot.SessionAgentOptions{
-		Definitions: []copilot.CustomAgentConfig{
+	session, _ := client.CreateSession(ctx, &copilot.SessionConfig{
+		CustomAgents: []copilot.CustomAgentConfig{
 			{
 				Name:   "researcher",
 				Prompt: "You are a research assistant. Analyze code and answer questions.",
@@ -486,11 +416,26 @@ session, _ := client.CreateSession(ctx, &copilot.CreateSessionOptions{
 				Prompt: "You are a code editor. Make minimal, surgical changes.",
 			},
 		},
-		Selected: "researcher",
-	},
-	// Pre-select the researcher agent
+		Agent: "researcher", // Pre-select the researcher agent
+	})
+	_ = session
+}
+```
+<!-- /docs-validate: hidden -->
+```go
+session, _ := client.CreateSession(ctx, &copilot.SessionConfig{
+    CustomAgents: []copilot.CustomAgentConfig{
+        {
+            Name:   "researcher",
+            Prompt: "You are a research assistant. Analyze code and answer questions.",
+        },
+        {
+            Name:   "editor",
+            Prompt: "You are a code editor. Make minimal, surgical changes.",
+        },
+    },
+    Agent: "researcher", // Pre-select the researcher agent
 })
-
 ```
 
 </details>
@@ -499,25 +444,14 @@ session, _ := client.CreateSession(ctx, &copilot.CreateSessionOptions{
 <summary><strong>.NET</strong></summary>
 
 ```csharp
-var session = await client.CreateSessionAsync(new CreateSessionOptions
+var session = await client.CreateSessionAsync(new SessionConfig
 {
-    Agents = new SessionAgentOptions
+    CustomAgents = new List<CustomAgentConfig>
     {
-        Definitions = new List<CustomAgentConfig>
-        {
-            new()
-            {
-                Name = "researcher",
-                Prompt = "You are a research assistant. Analyze code and answer questions."
-            },
-            new()
-            {
-                Name = "editor",
-                Prompt = "You are a code editor. Make minimal, surgical changes."
-            },
-        },
-        Selected = "researcher"
-    }
+        new() { Name = "researcher", Prompt = "You are a research assistant. Analyze code and answer questions." },
+        new() { Name = "editor", Prompt = "You are a code editor. Make minimal, surgical changes." },
+    },
+    Agent = "researcher", // Pre-select the researcher agent
 });
 ```
 
@@ -528,50 +462,48 @@ var session = await client.CreateSessionAsync(new CreateSessionOptions
 
 <!-- docs-validate: hidden -->
 ```java
-import com.microsoft.copilot.CopilotClient;
-import com.microsoft.copilot.rpc.*;
+import com.github.copilot.CopilotClient;
+import com.github.copilot.rpc.*;
 import java.util.List;
 
 public class SelectAgentAtCreationExample {
     public static void main(String[] args) throws Exception {
-        try (var client = new CopilotClient(new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT))) {
-            var session = client
-                    .createSession(new CreateSessionOptions()
-                            .setAgents(new SessionAgentOptions()
-                                    .setDefinitions(List
-                                            .of(new CustomAgentConfig()
-                                                    .setName("researcher")
-                                                    .setPrompt("You are a research assistant. Analyze code and answer questions."),
-                                                    new CustomAgentConfig()
-                                                            .setName("editor")
-                                                            .setPrompt("You are a code editor. Make minimal, surgical changes.")))
-                                    .setSelected("researcher"))
-                            .setPermissions(new SessionPermissionOptions()
-                                    .setOnRequest(PermissionHandler.APPROVE_ALL)))
-                    .get();
+        try (var client = new CopilotClient()) {
+            var session = client.createSession(
+                new SessionConfig()
+                    .setCustomAgents(List.of(
+                        new CustomAgentConfig()
+                            .setName("researcher")
+                            .setPrompt("You are a research assistant. Analyze code and answer questions."),
+                        new CustomAgentConfig()
+                            .setName("editor")
+                            .setPrompt("You are a code editor. Make minimal, surgical changes.")
+                    ))
+                    .setAgent("researcher") // Pre-select the researcher agent
+                    .setOnPermissionRequest(PermissionHandler.APPROVE_ALL)
+            ).get();
         }
     }
 }
 ```
 <!-- /docs-validate: hidden -->
 ```java
-import com.microsoft.copilot.rpc.*;
+import com.github.copilot.rpc.*;
 import java.util.List;
 
-var session = client
-        .createSession(new CreateSessionOptions()
-                .setAgents(new SessionAgentOptions()
-                        .setDefinitions(List
-                                .of(new CustomAgentConfig()
-                                        .setName("researcher")
-                                        .setPrompt("You are a research assistant. Analyze code and answer questions."),
-                                        new CustomAgentConfig()
-                                                .setName("editor")
-                                                .setPrompt("You are a code editor. Make minimal, surgical changes.")))
-                        .setSelected("researcher"))
-                .setPermissions(new SessionPermissionOptions()
-                        .setOnRequest(PermissionHandler.APPROVE_ALL)))
-        .get();
+var session = client.createSession(
+    new SessionConfig()
+        .setCustomAgents(List.of(
+            new CustomAgentConfig()
+                .setName("researcher")
+                .setPrompt("You are a research assistant. Analyze code and answer questions."),
+            new CustomAgentConfig()
+                .setName("editor")
+                .setPrompt("You are a code editor. Make minimal, surgical changes.")
+        ))
+        .setAgent("researcher") // Pre-select the researcher agent
+        .setOnPermissionRequest(PermissionHandler.APPROVE_ALL)
+).get();
 ```
 
 </details>
@@ -669,11 +601,8 @@ from copilot import CopilotClient
 from copilot.session import PermissionHandler
 from copilot.session_events import SessionEventType
 
-client = CopilotClient(mode="coding-agent")
-session = await client.create_session(
-    permissions={"on_request": PermissionHandler.approve_all}
-)
-
+client = CopilotClient()
+session = await client.create_session(on_permission_request=PermissionHandler.approve_all)
 
 def handle_event(event):
     if event.type == SessionEventType.SUBAGENT_STARTED:
@@ -688,12 +617,9 @@ def handle_event(event):
         tools = event.data.tools or "all"
         print(f"🎯 Agent selected: {event.data.agent_display_name} (tools: {tools})")
 
-
 unsubscribe = session.on(handle_event)
 
-response = await session.send_and_wait(
-    "Research how authentication works in this codebase"
-)
+response = await session.send_and_wait("Research how authentication works in this codebase")
 ```
 
 </details>
@@ -708,21 +634,19 @@ package main
 import (
 	"context"
 	"fmt"
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
-	"github.com/microsoft/copilot-sdk/go/v2/rpc"
+	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/rpc"
 )
 
 func main() {
 	ctx := context.Background()
-	client := copilot.NewClient(&copilot.ClientOptions{Mode: copilot.ModeCodingAgent})
+	client := copilot.NewClient(nil)
 	client.Start(ctx)
 
-	session, _ := client.CreateSession(ctx, &copilot.CreateSessionOptions{
+	session, _ := client.CreateSession(ctx, &copilot.SessionConfig{
 		Model: "auto",
-		Permissions: copilot.SessionPermissionOptions{
-			OnRequest: func(req copilot.PermissionRequest, inv copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
-				return &rpc.PermissionDecisionApproveOnce{}, nil
-			},
+		OnPermissionRequest: func(req copilot.PermissionRequest, inv copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
+			return &rpc.PermissionDecisionApproveOnce{}, nil
 		},
 	})
 
@@ -742,7 +666,6 @@ func main() {
 	})
 
 	_, err := session.SendAndWait(ctx, copilot.MessageOptions{
-
 		Prompt: "Research how authentication works in this codebase",
 	})
 	_ = err
@@ -811,9 +734,9 @@ await session.SendAndWaitAsync(new MessageOptions
 
 <!-- docs-validate: hidden -->
 ```java
-import com.microsoft.copilot.CopilotSession;
-import com.microsoft.copilot.generated.*;
-import com.microsoft.copilot.rpc.*;
+import com.github.copilot.CopilotSession;
+import com.github.copilot.generated.*;
+import com.github.copilot.rpc.*;
 
 public class SubAgentEventsExample {
     public static void example(CopilotSession session) throws Exception {
@@ -925,28 +848,26 @@ Use the `tools` property to restrict which tools an agent can access. This is es
 
 ```typescript
 const session = await client.createSession({
-    agents: {
-        definitions: [
-            {
-                name: "reader",
-                description: "Read-only exploration of the codebase",
-                tools: ["grep", "glob", "view"], // No write access
-                prompt: "You explore and analyze code. Never suggest modifications directly.",
-            },
-            {
-                name: "writer",
-                description: "Makes code changes",
-                tools: ["view", "edit", "bash"], // Write access
-                prompt: "You make precise code changes as instructed.",
-            },
-            {
-                name: "unrestricted",
-                description: "Full access agent for complex tasks",
-                tools: null, // All tools available
-                prompt: "You handle complex multi-step tasks using any available tools.",
-            },
-        ],
-    },
+    customAgents: [
+        {
+            name: "reader",
+            description: "Read-only exploration of the codebase",
+            tools: ["grep", "glob", "view"],  // No write access
+            prompt: "You explore and analyze code. Never suggest modifications directly.",
+        },
+        {
+            name: "writer",
+            description: "Makes code changes",
+            tools: ["view", "edit", "bash"],   // Write access
+            prompt: "You make precise code changes as instructed.",
+        },
+        {
+            name: "unrestricted",
+            description: "Full access agent for complex tasks",
+            tools: null,                        // All tools available
+            prompt: "You handle complex multi-step tasks using any available tools.",
+        },
+    ],
 });
 ```
 
@@ -966,7 +887,7 @@ This is useful when:
 <summary><strong>Node.js / TypeScript</strong></summary>
 
 ```typescript
-import { CopilotClient, defineTool, approveAll } from "@microsoft/copilot-sdk";
+import { CopilotClient, defineTool, approveAll } from "@github/copilot-sdk";
 import { z } from "zod";
 
 const heavyContextTool = defineTool("analyze-codebase", {
@@ -979,22 +900,18 @@ const heavyContextTool = defineTool("analyze-codebase", {
 });
 
 const session = await client.createSession({
-    tools: {
-        definitions: [heavyContextTool],
+    tools: [heavyContextTool],
+    defaultAgent: {
+        excludedTools: ["analyze-codebase"],
     },
-    agents: {
-        default: {
-            excludedTools: ["analyze-codebase"],
+    customAgents: [
+        {
+            name: "researcher",
+            description: "Deep codebase analysis agent with access to heavy-context tools",
+            tools: ["analyze-codebase"],
+            prompt: "You perform thorough codebase analysis using the analyze-codebase tool.",
         },
-        definitions: [
-            {
-                name: "researcher",
-                description: "Deep codebase analysis agent with access to heavy-context tools",
-                tools: ["analyze-codebase"],
-                prompt: "You perform thorough codebase analysis using the analyze-codebase tool.",
-            },
-        ],
-    },
+    ],
 });
 ```
 
@@ -1008,7 +925,6 @@ from copilot import CopilotClient
 from copilot.session import PermissionHandler
 from copilot.tools import Tool, ToolHandler
 
-
 async def create_research_session(client: CopilotClient, analyze_handler: ToolHandler):
     heavy_tool = Tool(
         name="analyze-codebase",
@@ -1018,19 +934,17 @@ async def create_research_session(client: CopilotClient, analyze_handler: ToolHa
     )
 
     return await client.create_session(
-        tools={"definitions": [heavy_tool]},
-        agents={
-            "default": {"excluded_tools": ["analyze-codebase"]},
-            "definitions": [
-                {
-                    "name": "researcher",
-                    "description": "Deep codebase analysis agent",
-                    "tools": ["analyze-codebase"],
-                    "prompt": "You perform thorough codebase analysis.",
-                },
-            ],
-        },
-        permissions={"on_request": PermissionHandler.approve_all},
+        tools=[heavy_tool],
+        default_agent={"excluded_tools": ["analyze-codebase"]},
+        custom_agents=[
+            {
+                "name": "researcher",
+                "description": "Deep codebase analysis agent",
+                "tools": ["analyze-codebase"],
+                "prompt": "You perform thorough codebase analysis.",
+            },
+        ],
+        on_permission_request=PermissionHandler.approve_all,
     )
 ```
 
@@ -1046,28 +960,24 @@ package main
 import (
 	"context"
 
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
+	copilot "github.com/github/copilot-sdk/go"
 )
 
 func main() {
 	var client *copilot.Client
 	var heavyTool copilot.Tool
 	ctx := context.Background()
-	session, err := client.CreateSession(ctx, &copilot.CreateSessionOptions{
-		Tools: copilot.SessionToolOptions{
-			Definitions: []copilot.Tool{heavyTool},
+	session, err := client.CreateSession(ctx, &copilot.SessionConfig{
+		Tools: []copilot.Tool{heavyTool},
+		DefaultAgent: &copilot.DefaultAgentConfig{
+			ExcludedTools: []string{"analyze-codebase"},
 		},
-		Agents: copilot.SessionAgentOptions{
-			Default: &copilot.DefaultAgentConfig{
-				ExcludedTools: []string{"analyze-codebase"},
-			},
-			Definitions: []copilot.CustomAgentConfig{
-				{
-					Name:        "researcher",
-					Description: "Deep codebase analysis agent",
-					Tools:       []string{"analyze-codebase"},
-					Prompt:      "You perform thorough codebase analysis.",
-				},
+		CustomAgents: []copilot.CustomAgentConfig{
+			{
+				Name:        "researcher",
+				Description: "Deep codebase analysis agent",
+				Tools:       []string{"analyze-codebase"},
+				Prompt:      "You perform thorough codebase analysis.",
 			},
 		},
 	})
@@ -1076,25 +986,20 @@ func main() {
 ```
 <!-- /docs-validate: hidden -->
 ```go
-session, err := client.CreateSession(ctx, &copilot.CreateSessionOptions{
-	Tools: copilot.SessionToolOptions{
-		Definitions: []copilot.Tool{heavyTool},
-	},
-	Agents: copilot.SessionAgentOptions{
-		Default: &copilot.DefaultAgentConfig{
-			ExcludedTools: []string{"analyze-codebase"},
-		},
-		Definitions: []copilot.CustomAgentConfig{
-			{
-				Name:        "researcher",
-				Description: "Deep codebase analysis agent",
-				Tools:       []string{"analyze-codebase"},
-				Prompt:      "You perform thorough codebase analysis.",
-			},
-		},
-	},
+session, err := client.CreateSession(ctx, &copilot.SessionConfig{
+    Tools: []copilot.Tool{heavyTool},
+    DefaultAgent: &copilot.DefaultAgentConfig{
+        ExcludedTools: []string{"analyze-codebase"},
+    },
+    CustomAgents: []copilot.CustomAgentConfig{
+        {
+            Name:        "researcher",
+            Description: "Deep codebase analysis agent",
+            Tools:       []string{"analyze-codebase"},
+            Prompt:      "You perform thorough codebase analysis.",
+        },
+    },
 })
-
 ```
 
 </details>
@@ -1104,55 +1009,51 @@ session, err := client.CreateSession(ctx, &copilot.CreateSessionOptions{
 
 <!-- docs-validate: hidden -->
 ```csharp
-using Microsoft.Copilot;
+using GitHub.Copilot;
 using Microsoft.Extensions.AI;
 
-await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent });
-AIFunction analyzeCodebaseTool = AIFunctionFactory.Create((string query) => "analysis", "analyze-codebase");
-var session = await client.CreateSessionAsync(new CreateSessionOptions
+await using var client = new CopilotClient();
+AIFunction analyzeCodebaseTool = AIFunctionFactory.Create(
+    (string query) => "analysis", "analyze-codebase");
+
+var session = await client.CreateSessionAsync(new SessionConfig
 {
-    Tools = new SessionToolOptions
+    Tools = [analyzeCodebaseTool],
+    DefaultAgent = new DefaultAgentConfig
     {
-        Definitions = [analyzeCodebaseTool]
+        ExcludedTools = ["analyze-codebase"],
     },
-    Agents = new SessionAgentOptions
-    {
-        Default = new DefaultAgentConfig
-        {
-            ExcludedTools = ["analyze-codebase"],
-        },
-        Definitions = [new CustomAgentConfig
+    CustomAgents =
+    [
+        new CustomAgentConfig
         {
             Name = "researcher",
             Description = "Deep codebase analysis agent",
             Tools = ["analyze-codebase"],
             Prompt = "You perform thorough codebase analysis.",
-        }, ]
-    }
+        },
+    ],
 });
 ```
 <!-- /docs-validate: hidden -->
 ```csharp
-var session = await client.CreateSessionAsync(new CreateSessionOptions
+var session = await client.CreateSessionAsync(new SessionConfig
 {
-    Tools = new SessionToolOptions
+    Tools = [analyzeCodebaseTool],
+    DefaultAgent = new DefaultAgentConfig
     {
-        Definitions = [analyzeCodebaseTool]
+        ExcludedTools = ["analyze-codebase"],
     },
-    Agents = new SessionAgentOptions
-    {
-        Default = new DefaultAgentConfig
-        {
-            ExcludedTools = ["analyze-codebase"],
-        },
-        Definitions = [new CustomAgentConfig
+    CustomAgents =
+    [
+        new CustomAgentConfig
         {
             Name = "researcher",
             Description = "Deep codebase analysis agent",
             Tools = ["analyze-codebase"],
             Prompt = "You perform thorough codebase analysis.",
-        }, ]
-    }
+        },
+    ],
 });
 ```
 
@@ -1189,25 +1090,19 @@ Each custom agent can have its own MCP (Model Context Protocol) servers, giving 
 
 ```typescript
 const session = await client.createSession({
-    agents: {
-        definitions: [
-            {
-                name: "db-analyst",
-                description: "Analyzes database schemas and queries",
-                prompt: "You are a database expert. Use the database MCP server to analyze schemas.",
-                mcpServers: {
-                    database: {
-                        command: "npx",
-                        args: [
-                            "-y",
-                            "@modelcontextprotocol/server-postgres",
-                            "postgresql://localhost/mydb",
-                        ],
-                    },
+    customAgents: [
+        {
+            name: "db-analyst",
+            description: "Analyzes database schemas and queries",
+            prompt: "You are a database expert. Use the database MCP server to analyze schemas.",
+            mcpServers: {
+                "database": {
+                    command: "npx",
+                    args: ["-y", "@modelcontextprotocol/server-postgres", "postgresql://localhost/mydb"],
                 },
             },
-        ],
-    },
+        },
+    ],
 });
 ```
 

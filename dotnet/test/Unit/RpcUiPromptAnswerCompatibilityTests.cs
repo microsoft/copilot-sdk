@@ -3,10 +3,10 @@
  *--------------------------------------------------------------------------------------------*/
 
 #if NET8_0_OR_GREATER
-using Microsoft.Copilot.Rpc;
+using GitHub.Copilot.Rpc;
 using Xunit;
 
-namespace Microsoft.Copilot.Test.Unit;
+namespace GitHub.Copilot.Test.Unit;
 
 public sealed partial class ClientSessionLifetimeTests
 {
@@ -19,10 +19,9 @@ public sealed partial class ClientSessionLifetimeTests
             : throw new InvalidOperationException($"Unexpected prompt answer request '{request.Method}'.");
         await using var client = new CopilotClient(new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForTcp(server.Host, server.Port)
+            Connection = RuntimeConnection.ForUri(server.Url)
         });
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions());
+        await using var session = await client.CreateSessionAsync(new SessionConfig());
         server.ClearRequests();
         using var cancellation = new CancellationTokenSource();
         var label = new PermissionDecisionContext
@@ -34,14 +33,29 @@ public sealed partial class ClientSessionLifetimeTests
         };
 
         await session.Rpc.Ui.HandlePendingUserInputAsync(
-            "input", new UIUserInputResponse { Answer = "yes" }, cancellationToken: cancellation.Token);
+            "input", new UIUserInputResponse { Answer = "yes" }, cancellation.Token);
         await session.Rpc.Ui.HandlePendingExitPlanModeAsync(
-            "plan", new UIExitPlanModeResponse { Approved = true }, cancellationToken: cancellation.Token);
+            "plan", new UIExitPlanModeResponse { Approved = true }, cancellation.Token);
         await session.Rpc.Ui.HandlePendingElicitationAsync(
-            "ask", new UIElicitationResponse { Action = UIElicitationResponseAction.Decline }, cancellationToken: cancellation.Token);
-        await session.Rpc.Ui.HandlePendingUserInputAsync(requestId: "labeled-input", response: new UIUserInputResponse { Answer = "yes" }, decisionContext: label, cancellationToken: cancellation.Token);
-        await session.Rpc.Ui.HandlePendingExitPlanModeAsync(requestId: "labeled-plan", response: new UIExitPlanModeResponse { Approved = true }, decisionContext: label, cancellationToken: cancellation.Token);
-        await session.Rpc.Ui.HandlePendingElicitationAsync(requestId: "labeled-ask", result: new UIElicitationResponse { Action = UIElicitationResponseAction.Accept }, decisionContext: label, cancellationToken: cancellation.Token);
+            "ask", new UIElicitationResponse { Action = UIElicitationResponseAction.Decline }, cancellation.Token);
+        await session.Rpc.Ui.HandlePendingUserInputAsync(new UIHandlePendingUserInputRequest
+        {
+            RequestId = "labeled-input",
+            Response = new UIUserInputResponse { Answer = "yes" },
+            DecisionContext = label,
+        }, cancellation.Token);
+        await session.Rpc.Ui.HandlePendingExitPlanModeAsync(new UIHandlePendingExitPlanModeRequest
+        {
+            RequestId = "labeled-plan",
+            Response = new UIExitPlanModeResponse { Approved = true },
+            DecisionContext = label,
+        }, cancellation.Token);
+        await session.Rpc.Ui.HandlePendingElicitationAsync(new UIHandlePendingElicitationRequest
+        {
+            RequestId = "labeled-ask",
+            Result = new UIElicitationResponse { Action = UIElicitationResponseAction.Accept },
+            DecisionContext = label,
+        }, cancellation.Token);
 
         var requests = server.Requests.ToArray();
         Assert.Equal(

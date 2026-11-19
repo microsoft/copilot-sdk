@@ -56,19 +56,17 @@ class MultiClientContext:
 
         # Client 1 uses TCP mode so a second client can connect to the same server
         self._client1 = CopilotClient(
-            mode="coding-agent",
-            runtime=RuntimeConnection.for_spawned_tcp(
-                path=self.cli_path,
-                connection_token="py-tcp-shared-test-token",
-                working_directory=self.work_dir,
-                env=self.get_env(),
+            connection=RuntimeConnection.for_tcp(
+                path=self.cli_path, connection_token="py-tcp-shared-test-token"
             ),
-            github={"token": github_token},
+            working_directory=self.work_dir,
+            env=self.get_env(),
+            github_token=github_token,
         )
 
         # Trigger connection by creating and disconnecting an init session
         init_session = await self._client1.create_session(
-            permissions={"on_request": PermissionHandler.approve_all}
+            on_permission_request=PermissionHandler.approve_all
         )
         await init_session.disconnect()
 
@@ -77,10 +75,9 @@ class MultiClientContext:
         assert actual_port is not None, "Client 1 should have an actual port after connecting"
 
         self._client2 = CopilotClient(
-            mode="coding-agent",
-            runtime=RuntimeConnection.for_tcp(
-                "localhost", actual_port, connection_token="py-tcp-shared-test-token"
-            ),
+            connection=RuntimeConnection.for_uri(
+                f"localhost:{actual_port}", connection_token="py-tcp-shared-test-token"
+            )
         )
 
     async def teardown(self, test_failed: bool = False):
@@ -205,13 +202,12 @@ class TestMultiClientBroadcast:
 
         # Client 1 creates a session with a custom tool
         session1 = await mctx.client1.create_session(
-            permissions={"on_request": PermissionHandler.approve_all},
-            tools={"definitions": [magic_number]},
+            on_permission_request=PermissionHandler.approve_all, tools=[magic_number]
         )
 
         # Client 2 resumes with NO tools â€” should not overwrite client 1's tools
         session2 = await mctx.client2.resume_session(
-            session1.session_id, permissions={"on_request": PermissionHandler.approve_all}
+            session1.session_id, on_permission_request=PermissionHandler.approve_all
         )
         waiters = []
         try:
@@ -255,17 +251,15 @@ class TestMultiClientBroadcast:
 
         # Client 1 creates a session and manually approves permission requests
         session1 = await mctx.client1.create_session(
-            permissions={
-                "on_request": lambda request, invocation: (
-                    permission_requests.append(request) or PermissionDecisionApproveOnce()
-                )
-            }
+            on_permission_request=lambda request, invocation: (
+                permission_requests.append(request) or PermissionDecisionApproveOnce()
+            ),
         )
 
         # Client 2 observes the permission request but leaves the decision to client 1.
         session2 = await mctx.client2.resume_session(
             session1.session_id,
-            permissions={"on_request": lambda request, invocation: PermissionNoResult()},
+            on_permission_request=lambda request, invocation: PermissionNoResult(),
         )
         waiters = []
         try:
@@ -313,13 +307,13 @@ class TestMultiClientBroadcast:
         """One client rejects a permission request and both see the result."""
         # Client 1 creates a session and denies all permission requests
         session1 = await mctx.client1.create_session(
-            permissions={"on_request": lambda request, invocation: PermissionDecisionReject()}
+            on_permission_request=lambda request, invocation: PermissionDecisionReject(),
         )
 
         # Client 2 observes the permission request but leaves the decision to client 1.
         session2 = await mctx.client2.resume_session(
             session1.session_id,
-            permissions={"on_request": lambda request, invocation: PermissionNoResult()},
+            on_permission_request=lambda request, invocation: PermissionNoResult(),
         )
         waiters = []
         try:
@@ -394,15 +388,14 @@ class TestMultiClientBroadcast:
 
         # Client 1 creates a session with tool A
         session1 = await mctx.client1.create_session(
-            permissions={"on_request": PermissionHandler.approve_all},
-            tools={"definitions": [city_lookup]},
+            on_permission_request=PermissionHandler.approve_all, tools=[city_lookup]
         )
 
         # Client 2 resumes with tool B (different tool, union should have both)
         session2 = await mctx.client2.resume_session(
             session1.session_id,
-            permissions={"on_request": PermissionHandler.approve_all},
-            tools={"definitions": [currency_lookup]},
+            on_permission_request=PermissionHandler.approve_all,
+            tools=[currency_lookup],
         )
 
         # Send prompts sequentially to avoid nondeterministic tool_call ordering
@@ -445,15 +438,14 @@ class TestMultiClientBroadcast:
 
         # Client 1 creates a session with stable_tool
         session1 = await mctx.client1.create_session(
-            permissions={"on_request": PermissionHandler.approve_all},
-            tools={"definitions": [stable_tool]},
+            on_permission_request=PermissionHandler.approve_all, tools=[stable_tool]
         )
 
         # Client 2 resumes with ephemeral_tool
         await mctx.client2.resume_session(
             session1.session_id,
-            permissions={"on_request": PermissionHandler.approve_all},
-            tools={"definitions": [ephemeral_tool]},
+            on_permission_request=PermissionHandler.approve_all,
+            tools=[ephemeral_tool],
         )
 
         # Verify both tools work before disconnect.
@@ -487,10 +479,9 @@ class TestMultiClientBroadcast:
         # Recreate client2 for future tests (but don't rejoin the session)
         actual_port = mctx.client1.runtime_port
         mctx._client2 = CopilotClient(
-            mode="coding-agent",
-            runtime=RuntimeConnection.for_tcp(
-                "localhost", actual_port, connection_token="py-tcp-shared-test-token"
-            ),
+            connection=RuntimeConnection.for_uri(
+                f"localhost:{actual_port}", connection_token="py-tcp-shared-test-token"
+            )
         )
 
         # Now only stable_tool should be available

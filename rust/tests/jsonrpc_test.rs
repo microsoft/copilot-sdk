@@ -1,8 +1,8 @@
 #![cfg(feature = "test-support")]
 #![allow(clippy::unwrap_used)]
 
-use copilot_sdk::test_support::{JsonRpcClient, JsonRpcNotification, JsonRpcRequest};
-use copilot_sdk::{ErrorKind, ProtocolErrorKind};
+use github_copilot_sdk::test_support::{JsonRpcClient, JsonRpcNotification, JsonRpcRequest};
+use github_copilot_sdk::{ErrorKind, ProtocolErrorKind};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, duplex};
 use tokio::sync::mpsc;
 

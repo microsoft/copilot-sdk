@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
+	copilot "github.com/github/copilot-sdk/go"
 )
 
 const defaultGitHubToken = "fake-token-for-e2e-tests"
@@ -63,10 +63,10 @@ type TestContext struct {
 }
 
 // isInProcessTransport reports whether the in-process (FFI) transport is selected
-// for E2E tests, including the default when no override is set.
+// for E2E tests via COPILOT_SDK_DEFAULT_CONNECTION=inprocess. Mirrors the
+// Node/Python/.NET harnesses.
 func isInProcessTransport() bool {
-	value := os.Getenv("COPILOT_SDK_DEFAULT_CONNECTION")
-	return value == "" || strings.EqualFold(value, "inprocess")
+	return strings.EqualFold(os.Getenv("COPILOT_SDK_DEFAULT_CONNECTION"), "inprocess")
 }
 
 // IsInProcessTransport reports whether E2E tests run under the in-process (FFI)
@@ -80,7 +80,7 @@ func IsInProcessTransport() bool {
 // transport, for behavior the shared in-process runtime cannot support (e.g. a
 // process-global LLM inference provider). The reason is
 // surfaced in the test log so the skip is explicit rather than a silent transport
-// downgrade. Such tests still run over stdio in the subprocess matrix cell.
+// downgrade. Such tests still run over stdio in the default matrix cell.
 func SkipIfInProcess(t *testing.T, reason string) {
 	t.Helper()
 	if isInProcessTransport() {
@@ -354,37 +354,24 @@ func (c *TestContext) Env() []string {
 // Optional overrides can be applied to the default ClientOptions via the opts function.
 func (c *TestContext) NewClient(opts ...func(*copilot.ClientOptions)) *Client {
 	defaultEnv := c.Env()
-	options := &copilot.ClientOptions{Mode: copilot.ModeCodingAgent,
-		Runtime: copilot.SpawnedStdioConnection{Path: c.CLIPath, BaseDirectory: c.HomeDir},
+	options := &copilot.ClientOptions{
+		Connection:       copilot.StdioConnection{Path: c.CLIPath},
+		BaseDirectory:    c.HomeDir,
+		WorkingDirectory: c.WorkDir,
+		Env:              slices.Clone(defaultEnv),
 	}
 
 	for _, opt := range opts {
 		opt(options)
 	}
-	inProcess := c.inProcess && c.shouldUseInProcess(options)
-	processEnv := defaultEnv
-	workDir := c.WorkDir
-	switch connection := options.Runtime.(type) {
-	case copilot.SpawnedStdioConnection:
-		if connection.Env != nil {
-			processEnv = slices.Clone(connection.Env)
-		}
-		if connection.WorkingDirectory != "" {
-			workDir = connection.WorkingDirectory
-		}
-	case copilot.SpawnedTCPConnection:
-		if connection.Env != nil {
-			processEnv = slices.Clone(connection.Env)
-		}
-		if connection.WorkingDirectory != "" {
-			workDir = connection.WorkingDirectory
-		}
+	if c.inProcess && c.shouldUseInProcess(options) && !slices.Equal(options.Env, defaultEnv) {
+		panic("per-client environment overrides require a child-process transport; use typed options in-process")
 	}
 
-	_, externalRuntime := options.Runtime.(copilot.TCPConnection)
-	if !externalRuntime && options.InternalTestOptions == nil {
+	_, externalRuntime := options.Connection.(copilot.URIConnection)
+	if !externalRuntime && options.InternalTestOptions == nil && options.Env != nil {
 		values := make(map[string]string)
-		for _, entry := range processEnv {
+		for _, entry := range options.Env {
 			key, value, _ := strings.Cut(entry, "=")
 			values[normalizedEnvironmentKey(key)] = value
 		}
@@ -407,50 +394,28 @@ func (c *TestContext) NewClient(opts ...func(*copilot.ClientOptions)) *Client {
 			"NO_PROXY": true, "no_proxy": true, "NODE_EXTRA_CA_CERTS": true, "SSL_CERT_FILE": true,
 			"REQUESTS_CA_BUNDLE": true, "CURL_CA_BUNDLE": true, "GIT_SSL_CAINFO": true,
 		}
-		filtered := make([]string, 0, len(processEnv))
-		for _, entry := range processEnv {
+		env := make([]string, 0, len(options.Env))
+		for _, entry := range options.Env {
 			key, _, _ := strings.Cut(entry, "=")
 			if !networkKeys[normalizedEnvironmentKey(key)] {
-				filtered = append(filtered, entry)
+				env = append(env, entry)
 			}
 		}
-		processEnv = filtered
+		options.Env = env
 	}
-	if options.GitHub.Token == "" && !externalRuntime {
-		options.GitHub.Token = defaultGitHubToken
+	if options.GitHubToken == "" && !externalRuntime {
+		options.GitHubToken = defaultGitHubToken
 	}
 
-	switch connection := options.Runtime.(type) {
-	case copilot.SpawnedStdioConnection:
-		if connection.BaseDirectory == "" {
-			connection.BaseDirectory = c.HomeDir
-		}
-		connection.Env = processEnv
-		connection.WorkingDirectory = workDir
-		options.Runtime = connection
-	case copilot.SpawnedTCPConnection:
-		if connection.BaseDirectory == "" {
-			connection.BaseDirectory = c.HomeDir
-		}
-		connection.Env = processEnv
-		connection.WorkingDirectory = workDir
-		options.Runtime = connection
-	case copilot.InProcessConnection:
-		if connection.BaseDirectory == "" {
-			connection.BaseDirectory = c.HomeDir
-		}
-		options.Runtime = connection
-	}
+	workDir := options.WorkingDirectory
 	if options.SessionFS != nil || externalRuntime {
 		workDir = ""
 	}
 	// Embedded hosts use typed startup options and session-level cwd.
-	if inProcess {
-		connection := options.Runtime.(copilot.SpawnedStdioConnection)
-		options.Runtime = copilot.InProcessConnection{
-			BaseDirectory:             connection.BaseDirectory,
-			SessionIdleTimeoutSeconds: connection.SessionIdleTimeoutSeconds,
-		}
+	if c.inProcess && c.shouldUseInProcess(options) {
+		options.Connection = copilot.InProcessConnection{}
+		options.WorkingDirectory = ""
+		options.Env = nil
 	}
 
 	return &Client{Client: copilot.NewClient(options), workDir: workDir}
@@ -470,20 +435,20 @@ func withoutSigningKeys(env []string) []string {
 }
 
 // shouldUseInProcess reports whether a client built from options should be hosted
-// in-process. Only the harness's placeholder stdio
-// connection is swapped; a test that pins custom process settings or a
-// TCP connection is exercising behavior that must stay on its own transport.
+// in-process for the inprocess matrix cell. Only the harness default stdio
+// connection is swapped; a test that pins a custom stdio path/args/env or a
+// TCP/URI connection is exercising behavior that must stay on its own transport.
 //
 // Options the in-process runtime cannot support (an LLM
 // inference provider) are NOT silently downgraded here — the affected tests skip
 // explicitly via testharness.SkipIfInProcess so the limitation is visible rather
 // than masked by a quiet transport swap.
 func (c *TestContext) shouldUseInProcess(options *copilot.ClientOptions) bool {
-	s, ok := options.Runtime.(copilot.SpawnedStdioConnection)
+	s, ok := options.Connection.(copilot.StdioConnection)
 	if !ok {
 		return false
 	}
-	return s.Path == c.CLIPath && len(s.Args) == 0 && s.Env == nil && s.WorkingDirectory == ""
+	return s.Path == c.CLIPath && len(s.Args) == 0 && s.Env == nil
 }
 
 func fileExists(path string) bool {

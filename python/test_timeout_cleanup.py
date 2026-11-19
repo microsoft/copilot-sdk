@@ -52,9 +52,7 @@ async def ctx():
     loop = asyncio.get_running_loop()
     rpc = JsonRpcClient(None)
     rpc._loop = loop
-    client = CopilotClient(
-        mode="coding-agent", runtime=RuntimeConnection.for_tcp("localhost", 1234)
-    )
+    client = CopilotClient(connection=RuntimeConnection.for_uri("localhost:1234"))
     client._client = rpc
     client._state = "connected"
     session = CopilotSession("resumed-session", rpc)

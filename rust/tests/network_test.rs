@@ -5,16 +5,17 @@
 #[path = "support/fake_runtime.rs"]
 mod fake_runtime;
 
-use copilot_sdk::{RuntimeConnection, TcpRuntimeOptions};
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use copilot_sdk::network::{
+use fake_runtime::{DropSignal, FakeRuntime, WAIT, read_frame, start, write_frame};
+use github_copilot_sdk::network::{
     NetworkAuthenticateBasicRequest, NetworkAuthenticateBasicResult,
     NetworkAuthenticateNegotiateRequest, NetworkConfig, NetworkResolveProxyRequest, NetworkScope,
 };
-use copilot_sdk::{Client, ClientOptions, CreateSessionOptions, Error, ErrorKind, Result};
-use fake_runtime::{DropSignal, FakeRuntime, WAIT, read_frame, start, write_frame};
+use github_copilot_sdk::{
+    CliProgram, Client, ClientOptions, Error, ErrorKind, Result, SessionConfig, Transport,
+};
 use serde_json::{Value, json};
 use tokio::io::AsyncReadExt;
 use tokio::sync::{mpsc, oneshot};
@@ -73,7 +74,7 @@ async fn authenticate_basic(
 }
 
 fn all_callbacks() -> ClientOptions {
-    ClientOptions::new(copilot_sdk::ClientMode::CodingAgent).with_network(
+    ClientOptions::new().with_network(
         NetworkConfig::new()
             .with_resolve_proxy(resolve_proxy)
             .with_authenticate_negotiate(authenticate_negotiate)
@@ -118,7 +119,7 @@ async fn start_stalled_request(
     let (events_tx, mut events) = mpsc::unbounded_channel();
     let (proxy_events, negotiate_events) = (events_tx.clone(), events_tx.clone());
     let (client, mut runtime) = start(
-        ClientOptions::new(copilot_sdk::ClientMode::CodingAgent).with_network(
+        ClientOptions::new().with_network(
             NetworkConfig::new()
                 .with_resolve_proxy(move |request: NetworkResolveProxyRequest| {
                     let events = proxy_events.clone();
@@ -243,27 +244,22 @@ async fn registers_all_callbacks_and_answers_concurrent_lookups() {
 #[tokio::test]
 async fn registers_only_configured_callbacks_and_scope() {
     let cases = [
+        (ClientOptions::new(), vec![]),
         (
-            ClientOptions::new(copilot_sdk::ClientMode::CodingAgent),
+            ClientOptions::new().with_network(NetworkConfig::new()),
             vec![],
         ),
         (
-            ClientOptions::new(copilot_sdk::ClientMode::CodingAgent)
-                .with_network(NetworkConfig::new()),
-            vec![],
-        ),
-        (
-            ClientOptions::new(copilot_sdk::ClientMode::CodingAgent)
+            ClientOptions::new()
                 .with_network(NetworkConfig::new().with_scope(NetworkScope::Runtime)),
             vec![],
         ),
         (
-            ClientOptions::new(copilot_sdk::ClientMode::CodingAgent)
-                .with_network(NetworkConfig::new().with_resolve_proxy(direct)),
+            ClientOptions::new().with_network(NetworkConfig::new().with_resolve_proxy(direct)),
             vec![json!({ "method": "network.setProvider", "params": { "resolveProxy": {} } })],
         ),
         (
-            ClientOptions::new(copilot_sdk::ClientMode::CodingAgent).with_network(
+            ClientOptions::new().with_network(
                 NetworkConfig::new()
                     .with_scope(NetworkScope::Runtime)
                     .with_authenticate_negotiate(unavailable),
@@ -274,12 +270,12 @@ async fn registers_only_configured_callbacks_and_scope() {
             })],
         ),
         (
-            ClientOptions::new(copilot_sdk::ClientMode::CodingAgent)
+            ClientOptions::new()
                 .with_network(NetworkConfig::new().with_authenticate_basic(authenticate_basic)),
             vec![json!({ "method": "network.setProvider", "params": { "authenticateBasic": {} } })],
         ),
         (
-            ClientOptions::new(copilot_sdk::ClientMode::CodingAgent).with_network(
+            ClientOptions::new().with_network(
                 NetworkConfig::new()
                     .with_scope(NetworkScope::Connection)
                     .with_resolve_proxy(direct),
@@ -315,7 +311,7 @@ async fn stream_clients_register_callbacks_explicitly() {
     let runtime = tokio::spawn(async move {
         let mut frames = Vec::new();
         for reply in [
-            json!({ "result": { "ok": true, "protocolVersion": 4, "version": "test" } }),
+            json!({ "result": { "ok": true, "protocolVersion": 3, "version": "test" } }),
             json!({ "error": { "code": -32603, "message": "runtime scope is held" } }),
             json!({ "result": null }),
         ] {
@@ -339,13 +335,7 @@ async fn stream_clients_register_callbacks_explicitly() {
         frames.push(read_frame(&mut reader).await);
         frames
     });
-    let client = Client::from_streams(
-        copilot_sdk::ClientMode::CodingAgent,
-        client_reader,
-        client_writer,
-        std::env::temp_dir(),
-    )
-    .unwrap();
+    let client = Client::from_streams(client_reader, client_writer, std::env::temp_dir()).unwrap();
     client.verify_protocol_version().await.unwrap();
     let rejected = client
         .register_network(
@@ -396,7 +386,7 @@ async fn dropped_registration_is_rolled_back_when_rejected() {
             &mut writer,
             json!({
                 "jsonrpc": "2.0", "id": connect["id"],
-                "result": { "ok": true, "protocolVersion": 4, "version": "test" }
+                "result": { "ok": true, "protocolVersion": 3, "version": "test" }
             }),
         )
         .await;
@@ -422,13 +412,7 @@ async fn dropped_registration_is_rolled_back_when_rejected() {
         }
         registrations
     });
-    let client = Client::from_streams(
-        copilot_sdk::ClientMode::CodingAgent,
-        client_reader,
-        client_writer,
-        std::env::temp_dir(),
-    )
-    .unwrap();
+    let client = Client::from_streams(client_reader, client_writer, std::env::temp_dir()).unwrap();
     client.verify_protocol_version().await.unwrap();
     let dropped = timeout(
         Duration::from_millis(50),
@@ -484,8 +468,8 @@ async fn dropped_registration_is_rolled_back_when_rejected() {
 async fn registers_before_other_startup_requests_and_sessions() {
     let plugins = std::env::temp_dir();
     let (client, mut runtime) = start(
-        ClientOptions::new(copilot_sdk::ClientMode::CodingAgent)
-            .with_plugins(|group| group.with_builtin_directories([&plugins]))
+        ClientOptions::new()
+            .with_builtin_plugin_directories([&plugins])
             .with_network(NetworkConfig::new().with_authenticate_negotiate(unavailable)),
         vec![json!({ "result": null }), json!({ "result": null })],
     )
@@ -493,7 +477,7 @@ async fn registers_before_other_startup_requests_and_sessions() {
     let client = client.unwrap();
     let session = tokio::spawn({
         let client = client.clone();
-        async move { client.create_session(CreateSessionOptions::default()).await }
+        async move { client.create_session(SessionConfig::default()).await }
     });
     let session_request = read_frame(&mut runtime.reader).await;
     client.force_stop();
@@ -519,8 +503,7 @@ async fn registers_before_other_startup_requests_and_sessions() {
 #[tokio::test]
 async fn failed_registration_fails_start() {
     let (client, _runtime) = start(
-        ClientOptions::new(copilot_sdk::ClientMode::CodingAgent)
-            .with_network(NetworkConfig::new().with_resolve_proxy(direct)),
+        ClientOptions::new().with_network(NetworkConfig::new().with_resolve_proxy(direct)),
         vec![json!({ "error": { "code": -32603, "message": "already registered" } })],
     )
     .await;
@@ -551,7 +534,7 @@ async fn cancelled_start_closes_the_connection_during_registration() {
             &mut writer,
             json!({
                 "jsonrpc": "2.0", "id": connect["id"],
-                "result": { "ok": true, "protocolVersion": 4, "version": "test" }
+                "result": { "ok": true, "protocolVersion": 3, "version": "test" }
             }),
         )
         .await;
@@ -563,13 +546,14 @@ async fn cancelled_start_closes_the_connection_during_registration() {
             .is_ok()
     });
     let starting = tokio::spawn(Client::start(
-        ClientOptions::new(copilot_sdk::ClientMode::CodingAgent)
-            .with_runtime(RuntimeConnection::Tcp(TcpRuntimeOptions {
+        ClientOptions::new()
+            .with_network(NetworkConfig::new().with_resolve_proxy(direct))
+            .with_program(CliProgram::Path("unused-external-transport".into()))
+            .with_transport(Transport::External {
                 host: "127.0.0.1".to_string(),
                 port,
                 connection_token: None,
-            }))
-            .with_network(NetworkConfig::new().with_resolve_proxy(direct)),
+            }),
     ));
     let method = timeout(WAIT, registration).await.unwrap().unwrap();
     starting.abort();

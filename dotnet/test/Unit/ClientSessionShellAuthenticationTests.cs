@@ -13,7 +13,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Xunit;
 
-namespace Microsoft.Copilot.Test.Unit;
+namespace GitHub.Copilot.Test.Unit;
 
 public sealed partial class ClientSessionLifetimeTests
 {
@@ -21,22 +21,27 @@ public sealed partial class ClientSessionLifetimeTests
     public async Task ShellAuthentication_Create_And_Resume_Request_Prompts_Only_With_A_Handler()
     {
         await using var server = await FakeCopilotServer.StartAsync();
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
+        await using var client = new CopilotClient(new CopilotClientOptions { Connection = RuntimeConnection.ForUri(server.Url) });
         Func<ShellAuthenticationRequest, CancellationToken, Task<ShellAuthenticationResponse>> handler =
             (_, _) => Task.FromResult(ShellAuthenticationResponse.Cancel());
 
-        await using var created = await client.CreateSessionAsync(new CreateSessionOptions
-        { SessionId = "secret-create", Interaction = new SessionInteractionOptions { OnShellAuthenticationRequest = handler } });
-        await using var resumed = await client.ResumeSessionAsync("secret-resume", new ResumeSessionOptions
-        { Interaction = new SessionInteractionOptions { OnShellAuthenticationRequest = handler } });
-        await using var plainCreated = await client.CreateSessionAsync(new CreateSessionOptions { SessionId = "plain-create" });
-        await using var plainResumed = await client.ResumeSessionAsync("plain-resume", new ResumeSessionOptions());
+        await using var created = await client.CreateSessionAsync(new SessionConfig
+        {
+            SessionId = "secret-create",
+            OnShellAuthenticationRequest = handler
+        });
+        await using var resumed = await client.ResumeSessionAsync("secret-resume", new ResumeSessionConfig
+        {
+            OnShellAuthenticationRequest = handler
+        });
+        await using var plainCreated = await client.CreateSessionAsync(new SessionConfig { SessionId = "plain-create" });
+        await using var plainResumed = await client.ResumeSessionAsync("plain-resume", new ResumeSessionConfig());
 
         bool? RequestShellAuthentication(string method, string sessionId)
         {
             var request = Assert.Single(server.Requests, request =>
                 request.Method == method && request.Params.GetProperty("sessionId").GetString() == sessionId);
-            return request.Params.GetProperty("interaction").TryGetProperty("requestShellAuthentication", out var flag) ? flag.GetBoolean() : null;
+            return request.Params.TryGetProperty("requestShellAuthentication", out var flag) ? flag.GetBoolean() : null;
         }
         Assert.Equal(
             new bool?[] { true, true, null, null },
@@ -54,7 +59,7 @@ public sealed partial class ClientSessionLifetimeTests
     {
         await using var server = await FakeCopilotServer.StartAsync();
         var logger = new ShellAuthenticationLogger();
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port), Observability = new ClientObservabilityOptions { Logger = logger } });
+        await using var client = new CopilotClient(new CopilotClientOptions { Connection = RuntimeConnection.ForUri(server.Url), Logger = logger });
         var failure = new InvalidOperationException("rejected HUNTER2-FAKE-0003");
         var gaveUp = new OperationCanceledException("handler gave up");
         var answers = new Queue<Func<ShellAuthenticationResponse>>(
@@ -65,8 +70,11 @@ public sealed partial class ClientSessionLifetimeTests
             () => ShellAuthenticationResponse.Cancel(),
             () => throw gaveUp,
         ]);
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions
-        { SessionId = "secret-answers", Interaction = new SessionInteractionOptions { OnShellAuthenticationRequest = (_, _) => Task.FromResult(answers.Dequeue()()) } });
+        await using var session = await client.CreateSessionAsync(new SessionConfig
+        {
+            SessionId = "secret-answers",
+            OnShellAuthenticationRequest = (_, _) => Task.FromResult(answers.Dequeue()())
+        });
 
         var results = new List<string>();
         for (var i = 0; i < 5; i++)
@@ -100,18 +108,15 @@ public sealed partial class ClientSessionLifetimeTests
     public async Task ShellAuthentication_Request_Passes_The_Runtime_Fields()
     {
         await using var server = await FakeCopilotServer.StartAsync();
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
+        await using var client = new CopilotClient(new CopilotClientOptions { Connection = RuntimeConnection.ForUri(server.Url) });
         var requests = new List<(ShellAuthenticationRequest Request, string SessionId)>();
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions
+        await using var session = await client.CreateSessionAsync(new SessionConfig
         {
             SessionId = "secret-fields",
-            Interaction = new SessionInteractionOptions
+            OnShellAuthenticationRequest = (request, _) =>
             {
-                OnShellAuthenticationRequest = (request, _) =>
-        {
-            requests.Add((request, request.SessionId));
-            return Task.FromResult(ShellAuthenticationResponse.Cancel());
-        }
+                requests.Add((request, request.SessionId));
+                return Task.FromResult(ShellAuthenticationResponse.Cancel());
             }
         });
 
@@ -134,19 +139,16 @@ public sealed partial class ClientSessionLifetimeTests
     {
         await using var server = await FakeCopilotServer.StartAsync();
         var logger = new ShellAuthenticationLogger();
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port), Observability = new ClientObservabilityOptions { Logger = logger } });
+        await using var client = new CopilotClient(new CopilotClientOptions { Connection = RuntimeConnection.ForUri(server.Url), Logger = logger });
         var started = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions
+        await using var session = await client.CreateSessionAsync(new SessionConfig
         {
             SessionId = "secret-cancel",
-            Interaction = new SessionInteractionOptions
+            OnShellAuthenticationRequest = async (_, cancellationToken) =>
             {
-                OnShellAuthenticationRequest = async (_, cancellationToken) =>
-        {
-            started.TrySetResult(cancellationToken);
-            await Task.Delay(Timeout.Infinite, cancellationToken);
-            return ShellAuthenticationResponse.Accept("too late");
-        }
+                started.TrySetResult(cancellationToken);
+                await Task.Delay(Timeout.Infinite, cancellationToken);
+                return ShellAuthenticationResponse.Accept("too late");
             }
         });
 
@@ -168,21 +170,18 @@ public sealed partial class ClientSessionLifetimeTests
     public async Task ShellAuthentication_Duplicate_Request_Cancels_Without_Closing_The_Open_Prompt()
     {
         await using var server = await FakeCopilotServer.StartAsync();
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
+        await using var client = new CopilotClient(new CopilotClientOptions { Connection = RuntimeConnection.ForUri(server.Url) });
         var calls = 0;
         var started = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions
+        await using var session = await client.CreateSessionAsync(new SessionConfig
         {
             SessionId = "secret-duplicate",
-            Interaction = new SessionInteractionOptions
+            OnShellAuthenticationRequest = async (_, cancellationToken) =>
             {
-                OnShellAuthenticationRequest = async (_, cancellationToken) =>
-        {
-            Interlocked.Increment(ref calls);
-            started.TrySetResult(cancellationToken);
-            await Task.Delay(Timeout.Infinite, cancellationToken);
-            return ShellAuthenticationResponse.Accept("too late");
-        }
+                Interlocked.Increment(ref calls);
+                started.TrySetResult(cancellationToken);
+                await Task.Delay(Timeout.Infinite, cancellationToken);
+                return ShellAuthenticationResponse.Accept("too late");
             }
         });
 
@@ -209,19 +208,16 @@ public sealed partial class ClientSessionLifetimeTests
     public async Task ShellAuthentication_Cancels_A_Handler_That_Never_Finishes()
     {
         await using var server = await FakeCopilotServer.StartAsync();
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
+        await using var client = new CopilotClient(new CopilotClientOptions { Connection = RuntimeConnection.ForUri(server.Url) });
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var never = new TaskCompletionSource<ShellAuthenticationResponse>();
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions
+        await using var session = await client.CreateSessionAsync(new SessionConfig
         {
             SessionId = "secret-never",
-            Interaction = new SessionInteractionOptions
+            OnShellAuthenticationRequest = (_, _) =>
             {
-                OnShellAuthenticationRequest = (_, _) =>
-        {
-            started.TrySetResult();
-            return never.Task;
-        }
+                started.TrySetResult();
+                return never.Task;
             }
         });
 
@@ -241,18 +237,15 @@ public sealed partial class ClientSessionLifetimeTests
     public async Task ShellAuthentication_Malformed_Request_Cancels_Without_Asking()
     {
         await using var server = await FakeCopilotServer.StartAsync();
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
+        await using var client = new CopilotClient(new CopilotClientOptions { Connection = RuntimeConnection.ForUri(server.Url) });
         var calls = 0;
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions
+        await using var session = await client.CreateSessionAsync(new SessionConfig
         {
             SessionId = "secret-malformed",
-            Interaction = new SessionInteractionOptions
+            OnShellAuthenticationRequest = (_, _) =>
             {
-                OnShellAuthenticationRequest = (_, _) =>
-        {
-            Interlocked.Increment(ref calls);
-            return Task.FromResult(ShellAuthenticationResponse.Accept("unused"));
-        }
+                Interlocked.Increment(ref calls);
+                return Task.FromResult(ShellAuthenticationResponse.Accept("unused"));
             }
         });
 
@@ -273,7 +266,7 @@ public sealed partial class ClientSessionLifetimeTests
     public async Task ShellAuthentication_Disposing_The_Session_Or_Losing_The_Connection_Cancels_Open_Prompts()
     {
         await using var server = await FakeCopilotServer.StartAsync();
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
+        await using var client = new CopilotClient(new CopilotClientOptions { Connection = RuntimeConnection.ForUri(server.Url) });
         var tokens = new List<TaskCompletionSource<CancellationToken>>
         {
             new(TaskCreationOptions.RunContinuationsAsynchronously),
@@ -285,8 +278,8 @@ public sealed partial class ClientSessionLifetimeTests
             await Task.Delay(Timeout.Infinite, cancellationToken);
             return ShellAuthenticationResponse.Accept("too late");
         };
-        var disposed = await client.CreateSessionAsync(new CreateSessionOptions { SessionId = "secret-disposed", Interaction = new SessionInteractionOptions { OnShellAuthenticationRequest = handler } });
-        await using var connected = await client.CreateSessionAsync(new CreateSessionOptions { SessionId = "secret-connected", Interaction = new SessionInteractionOptions { OnShellAuthenticationRequest = handler } });
+        var disposed = await client.CreateSessionAsync(new SessionConfig { SessionId = "secret-disposed", OnShellAuthenticationRequest = handler });
+        await using var connected = await client.CreateSessionAsync(new SessionConfig { SessionId = "secret-connected", OnShellAuthenticationRequest = handler });
 
         _ = await server.SendRequestWithoutWaitingAsync("shellAuthentication.request", ShellAuthenticationRequestParams(disposed.SessionId, "secret-1"));
         var disposedToken = await tokens[0].Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -315,7 +308,7 @@ public sealed partial class ClientSessionLifetimeTests
     public async Task ShellAuthentication_A_Throwing_Cancellation_Callback_Does_Not_Break_Cancel_Or_Teardown()
     {
         await using var server = await FakeCopilotServer.StartAsync();
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
+        await using var client = new CopilotClient(new CopilotClientOptions { Connection = RuntimeConnection.ForUri(server.Url) });
         var started = new ConcurrentDictionary<string, TaskCompletionSource>();
         TaskCompletionSource Started(string requestId) =>
             started.GetOrAdd(requestId, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
@@ -326,9 +319,9 @@ public sealed partial class ClientSessionLifetimeTests
             await Task.Delay(Timeout.Infinite, cancellationToken);
             return ShellAuthenticationResponse.Accept("too late");
         };
-        await using var cancelled = await client.CreateSessionAsync(new CreateSessionOptions { SessionId = "secret-cancelled", Interaction = new SessionInteractionOptions { OnShellAuthenticationRequest = handler } });
-        var disposed = await client.CreateSessionAsync(new CreateSessionOptions { SessionId = "secret-disposed", Interaction = new SessionInteractionOptions { OnShellAuthenticationRequest = handler } });
-        await using var stopped = await client.CreateSessionAsync(new CreateSessionOptions { SessionId = "secret-stopped", Interaction = new SessionInteractionOptions { OnShellAuthenticationRequest = handler } });
+        await using var cancelled = await client.CreateSessionAsync(new SessionConfig { SessionId = "secret-cancelled", OnShellAuthenticationRequest = handler });
+        var disposed = await client.CreateSessionAsync(new SessionConfig { SessionId = "secret-disposed", OnShellAuthenticationRequest = handler });
+        await using var stopped = await client.CreateSessionAsync(new SessionConfig { SessionId = "secret-stopped", OnShellAuthenticationRequest = handler });
 
         // The runtime's cancel still succeeds and the prompt answers cancel.
         var pending = await server.SendRequestWithoutWaitingAsync("shellAuthentication.request", ShellAuthenticationRequestParams(cancelled.SessionId, "secret-1"));
@@ -354,24 +347,21 @@ public sealed partial class ClientSessionLifetimeTests
     public async Task ShellAuthentication_Request_Completion_Preserves_Queued_Cancellation_Callbacks()
     {
         await using var server = await FakeCopilotServer.StartAsync();
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
+        await using var client = new CopilotClient(new CopilotClientOptions { Connection = RuntimeConnection.ForUri(server.Url) });
         var started = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
         var answer = new TaskCompletionSource<ShellAuthenticationResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
         var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var notificationQueued = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseNotification = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var notificationEntered = 0;
-        var session = await client.CreateSessionAsync(new CreateSessionOptions
+        var session = await client.CreateSessionAsync(new SessionConfig
         {
             SessionId = "secret-queued-cancellation",
-            Interaction = new SessionInteractionOptions
-            {
-                OnShellAuthenticationRequest = (_, token) =>
+            OnShellAuthenticationRequest = (_, token) =>
             {
                 token.Register(() => cancelled.TrySetResult());
                 started.TrySetResult(token);
                 return answer.Task;
-            }
             }
         });
         var pending = await server.SendRequestWithoutWaitingAsync("shellAuthentication.request", ShellAuthenticationRequestParams(session.SessionId, "secret-1"));
@@ -423,7 +413,7 @@ public sealed partial class ClientSessionLifetimeTests
     public async Task ShellAuthentication_A_Blocking_Cancellation_Callback_Does_Not_Block_The_Reader_Or_Teardown()
     {
         await using var server = await FakeCopilotServer.StartAsync();
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
+        await using var client = new CopilotClient(new CopilotClientOptions { Connection = RuntimeConnection.ForUri(server.Url) });
         var started = new ConcurrentDictionary<string, TaskCompletionSource>();
         var blocked = new ConcurrentDictionary<string, TaskCompletionSource>();
         var releases = new ConcurrentDictionary<string, ManualResetEventSlim>();
@@ -444,9 +434,9 @@ public sealed partial class ClientSessionLifetimeTests
         };
         try
         {
-            await using var cancelled = await client.CreateSessionAsync(new CreateSessionOptions { SessionId = "secret-cancelled", Interaction = new SessionInteractionOptions { OnShellAuthenticationRequest = handler } });
-            var disposed = await client.CreateSessionAsync(new CreateSessionOptions { SessionId = "secret-disposed", Interaction = new SessionInteractionOptions { OnShellAuthenticationRequest = handler } });
-            await using var stopped = await client.CreateSessionAsync(new CreateSessionOptions { SessionId = "secret-stopped", Interaction = new SessionInteractionOptions { OnShellAuthenticationRequest = handler } });
+            await using var cancelled = await client.CreateSessionAsync(new SessionConfig { SessionId = "secret-cancelled", OnShellAuthenticationRequest = handler });
+            var disposed = await client.CreateSessionAsync(new SessionConfig { SessionId = "secret-disposed", OnShellAuthenticationRequest = handler });
+            await using var stopped = await client.CreateSessionAsync(new SessionConfig { SessionId = "secret-stopped", OnShellAuthenticationRequest = handler });
 
             // The runtime's cancel is answered while the callback still waits, and the prompt answers cancel once it returns.
             var pending = await server.SendRequestWithoutWaitingAsync("shellAuthentication.request", ShellAuthenticationRequestParams(cancelled.SessionId, "secret-1"));

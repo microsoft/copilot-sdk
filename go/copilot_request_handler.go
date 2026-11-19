@@ -17,7 +17,7 @@ import (
 	"sync"
 
 	"github.com/coder/websocket"
-	"github.com/microsoft/copilot-sdk/go/v2/rpc"
+	"github.com/github/copilot-sdk/go/rpc"
 )
 
 // Hop-by-hop and length headers the transport recomputes; forwarding them

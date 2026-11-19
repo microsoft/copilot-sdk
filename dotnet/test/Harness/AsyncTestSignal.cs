@@ -2,7 +2,7 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
-namespace Microsoft.Copilot.Test.Harness;
+namespace GitHub.Copilot.Test.Harness;
 
 internal sealed class AsyncTestSignal
 {

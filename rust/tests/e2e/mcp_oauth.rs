@@ -4,11 +4,11 @@ use std::process::Stdio;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use copilot_sdk::handler::{McpAuthHandler, McpAuthRequest, McpAuthResult};
-use copilot_sdk::rpc::{McpAppsCallToolRequest, McpListToolsRequest, McpOauthLoginRequest};
-use copilot_sdk::session::Session;
-use copilot_sdk::session_events::{McpOauthRequestReason, McpServerStatus};
-use copilot_sdk::{IndexMap, McpHttpServerConfig, McpServerConfig, RequestId, SessionId};
+use github_copilot_sdk::handler::{McpAuthHandler, McpAuthRequest, McpAuthResult};
+use github_copilot_sdk::rpc::{McpAppsCallToolRequest, McpListToolsRequest, McpOauthLoginRequest};
+use github_copilot_sdk::session::Session;
+use github_copilot_sdk::session_events::{McpOauthRequestReason, McpServerStatus};
+use github_copilot_sdk::{IndexMap, McpHttpServerConfig, McpServerConfig, RequestId, SessionId};
 use parking_lot::Mutex;
 use reqwest::Url;
 use serde::Deserialize;
@@ -38,18 +38,16 @@ async fn should_use_cimd_url_instead_of_dynamic_registration() {
             let session = client
                 .create_session(
                     ctx.approve_all_session_config()
-                        .with_mcp(|group| group.with_auth_client_id_metadata_url(CIMD_URL))
-                        .with_mcp(|group| {
-                            group.with_servers(IndexMap::from([(
-                                server_name.to_string(),
-                                McpServerConfig::Http(McpHttpServerConfig {
-                                    tools: Some(vec!["*".to_string()]),
-                                    timeout: None,
-                                    url: format!("{}/mcp", oauth_server.url),
-                                    headers: HashMap::new(),
-                                }),
-                            )]))
-                        }),
+                        .with_auth_client_id_metadata_url(CIMD_URL)
+                        .with_mcp_servers(IndexMap::from([(
+                            server_name.to_string(),
+                            McpServerConfig::Http(McpHttpServerConfig {
+                                tools: Some(vec!["*".to_string()]),
+                                timeout: None,
+                                url: format!("{}/mcp", oauth_server.url),
+                                headers: HashMap::new(),
+                            }),
+                        )])),
                 )
                 .await
                 .expect("create session");
@@ -96,18 +94,16 @@ async fn should_satisfy_mcp_oauth_using_host_provided_token() {
             let session = client
                 .create_session(
                     ctx.approve_all_session_config()
-                        .with_mcp(|group| group.with_on_auth_request(handler.clone()))
-                        .with_mcp(|group| {
-                            group.with_servers(IndexMap::from([(
-                                server_name.to_string(),
-                                McpServerConfig::Http(McpHttpServerConfig {
-                                    tools: Some(vec!["*".to_string()]),
-                                    timeout: None,
-                                    url: format!("{}/mcp", oauth_server.url),
-                                    headers: HashMap::new(),
-                                }),
-                            )]))
-                        }),
+                        .with_mcp_auth_handler(handler.clone())
+                        .with_mcp_servers(IndexMap::from([(
+                            server_name.to_string(),
+                            McpServerConfig::Http(McpHttpServerConfig {
+                                tools: Some(vec!["*".to_string()]),
+                                timeout: None,
+                                url: format!("{}/mcp", oauth_server.url),
+                                headers: HashMap::new(),
+                            }),
+                        )])),
                 )
                 .await
                 .expect("create session");
@@ -192,19 +188,17 @@ async fn should_request_replacement_tokens_across_mcp_oauth_lifecycle() {
             let session = client
                 .create_session(
                     ctx.approve_all_session_config()
-                        .with_mcp(|group| group.with_enable_apps(true))
-                        .with_mcp(|group| group.with_on_auth_request(handler.clone()))
-                        .with_mcp(|group| {
-                            group.with_servers(IndexMap::from([(
-                                server_name.to_string(),
-                                McpServerConfig::Http(McpHttpServerConfig {
-                                    tools: Some(vec!["*".to_string()]),
-                                    timeout: None,
-                                    url: format!("{}/mcp", oauth_server.url),
-                                    headers: HashMap::new(),
-                                }),
-                            )]))
-                        }),
+                        .with_enable_mcp_apps(true)
+                        .with_mcp_auth_handler(handler.clone())
+                        .with_mcp_servers(IndexMap::from([(
+                            server_name.to_string(),
+                            McpServerConfig::Http(McpHttpServerConfig {
+                                tools: Some(vec!["*".to_string()]),
+                                timeout: None,
+                                url: format!("{}/mcp", oauth_server.url),
+                                headers: HashMap::new(),
+                            }),
+                        )])),
                 )
                 .await
                 .expect("create session");
@@ -272,18 +266,16 @@ async fn should_cancel_pending_mcp_oauth_request() {
             let session = client
                 .create_session(
                     ctx.approve_all_session_config()
-                        .with_mcp(|group| group.with_on_auth_request(handler.clone()))
-                        .with_mcp(|group| {
-                            group.with_servers(IndexMap::from([(
-                                server_name.to_string(),
-                                McpServerConfig::Http(McpHttpServerConfig {
-                                    tools: Some(vec!["*".to_string()]),
-                                    timeout: None,
-                                    url: format!("{}/mcp", oauth_server.url),
-                                    headers: HashMap::new(),
-                                }),
-                            )]))
-                        }),
+                        .with_mcp_auth_handler(handler.clone())
+                        .with_mcp_servers(IndexMap::from([(
+                            server_name.to_string(),
+                            McpServerConfig::Http(McpHttpServerConfig {
+                                tools: Some(vec!["*".to_string()]),
+                                timeout: None,
+                                url: format!("{}/mcp", oauth_server.url),
+                                headers: HashMap::new(),
+                            }),
+                        )])),
                 )
                 .await
                 .expect("create session");
@@ -541,7 +533,6 @@ async fn call_whoami(session: &Session, server_name: &str, scenario: &str) {
             origin_server_name: server_name.to_string(),
             server_name: server_name.to_string(),
             tool_name: "whoami".to_string(),
-            meta: None,
         })
         .await
         .expect("call whoami");

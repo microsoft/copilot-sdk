@@ -5,15 +5,15 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
-using Microsoft.Copilot.Rpc;
-using Microsoft.Copilot.Test.Harness;
+using GitHub.Copilot.Rpc;
+using GitHub.Copilot.Test.Harness;
 using Microsoft.Extensions.Logging;
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Microsoft.Copilot.Test.E2E;
+namespace GitHub.Copilot.Test.E2E;
 
-#pragma warning disable MCPSDK001
+#pragma warning disable GHCP001
 
 public class ScenarioTestingRuntimeE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
     : ScenarioTestingE2ETestBase(fixture, "scenario_testing_runtime", output)
@@ -35,7 +35,25 @@ public class ScenarioTestingRuntimeE2ETests(E2ETestFixture fixture, ITestOutputH
         await using var client = Ctx.CreateClient(
             options: new CopilotClientOptions
             {
+                Connection = RuntimeConnection.ForStdio(
+                    path: cliPath,
+                    args: ["--capture-file", capturePath, "--pid-file", pidPath, "--behavior", "normal"]),
                 Mode = CopilotClientMode.Empty,
+                BaseDirectory = scenarioHome,
+                BuiltinPluginDirectories = [pluginOne, pluginTwo],
+                GitHubToken = "scenario-client-runtime-token",
+                UseLoggedInUser = false,
+                LogLevel = CopilotLogLevel.Debug,
+                SessionIdleTimeoutSeconds = 23,
+                Telemetry = new TelemetryConfig
+                {
+                    OtlpEndpoint = "http://127.0.0.1:4318",
+                    OtlpProtocol = "http/protobuf",
+                    FilePath = Path.Join(Ctx.WorkDir, "scenario-client-telemetry.jsonl"),
+                    ExporterType = "file",
+                    SourceName = "scenario-client",
+                    CaptureContent = true,
+                },
                 ClientInfo = new CopilotClientInfo
                 {
                     ApplicationName = "scenario-client",
@@ -43,25 +61,7 @@ public class ScenarioTestingRuntimeE2ETests(E2ETestFixture fixture, ITestOutputH
                     IntegrationName = "copilot-sdk",
                     IntegrationVersion = "4.5.6",
                 },
-                Runtime = RuntimeConnection.ForSpawnedStdio(
-                    path: cliPath,
-                    args: ["--capture-file", capturePath, "--pid-file", pidPath, "--behavior", "normal"], baseDirectory: scenarioHome, sessionIdleTimeoutSeconds: 23),
-                Plugins = new ClientPluginOptions { BuiltinDirectories = [pluginOne, pluginTwo] },
-                GitHub = new ClientGitHubOptions { Token = "scenario-client-runtime-token", UseLoggedInUser = false },
-                Observability = new ClientObservabilityOptions
-                {
-                    LogLevel = CopilotLogLevel.Debug,
-                    Telemetry = new TelemetryConfig
-                    {
-                        OtlpEndpoint = "http://127.0.0.1:4318",
-                        OtlpProtocol = "http/protobuf",
-                        FilePath = Path.Join(Ctx.WorkDir, "scenario-client-telemetry.jsonl"),
-                        ExporterType = "file",
-                        SourceName = "scenario-client",
-                        CaptureContent = true,
-                    }
-                },
-                Extensions = new ClientExtensionOptions { LaunchProvider = launchProvider }
+                ExtensionLaunchProvider = launchProvider,
             });
 
         await client.StartAsync();
@@ -122,11 +122,10 @@ public class ScenarioTestingRuntimeE2ETests(E2ETestFixture fixture, ITestOutputH
         var (cliPath, capturePath, pidPath) = await CreateFakeRuntimeAsync("hang-connect");
         await using var client = Ctx.CreateClient(options: new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForSpawnedStdio(
+            Connection = RuntimeConnection.ForStdio(
                 path: cliPath,
                 args: ["--capture-file", capturePath, "--pid-file", pidPath, "--behavior", "hang-connect"]),
-            GitHub = new ClientGitHubOptions { UseLoggedInUser = false }
+            UseLoggedInUser = false,
         });
         using var cancellation = new CancellationTokenSource();
         var start = client.StartAsync(cancellation.Token);
@@ -188,11 +187,10 @@ public class ScenarioTestingRuntimeE2ETests(E2ETestFixture fixture, ITestOutputH
         var (cliPath, capturePath, pidPath) = await CreateFakeRuntimeAsync("hang-detach");
         await using var client = Ctx.CreateClient(options: new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForSpawnedStdio(
+            Connection = RuntimeConnection.ForStdio(
                 path: cliPath,
                 args: ["--capture-file", capturePath, "--pid-file", pidPath, "--behavior", "hang-detach"]),
-            GitHub = new ClientGitHubOptions { UseLoggedInUser = false }
+            UseLoggedInUser = false,
         });
         await using var session = await Ctx.CreateSessionAsync(client);
         using var process = Process.GetProcessById(
@@ -216,11 +214,10 @@ public class ScenarioTestingRuntimeE2ETests(E2ETestFixture fixture, ITestOutputH
         var exitPath = Path.Join(Ctx.WorkDir, $"scenario-runtime-exit-{Guid.NewGuid():N}");
         await using var client = Ctx.CreateClient(options: new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForSpawnedStdio(
+            Connection = RuntimeConnection.ForStdio(
                 path: cliPath,
                 args: ["--capture-file", capturePath, "--pid-file", pidPath, "--behavior", "normal", "--exit-file", exitPath]),
-            GitHub = new ClientGitHubOptions { UseLoggedInUser = false }
+            UseLoggedInUser = false,
         });
         await using var session = await Ctx.CreateSessionAsync(client);
 
@@ -393,7 +390,7 @@ public class ScenarioTestingRuntimeE2ETests(E2ETestFixture fixture, ITestOutputH
 
           if (message.method === "connect") {
             if (behavior !== "hang-connect") {
-              respond(message.id, { ok: true, protocolVersion: 4, version: "fake" });
+              respond(message.id, { ok: true, protocolVersion: 3, version: "fake" });
             }
             return;
           }
@@ -418,7 +415,7 @@ public class ScenarioTestingRuntimeE2ETests(E2ETestFixture fixture, ITestOutputH
             respond(message.id, {
               message: `pong: ${message.params?.message ?? ""}`,
               timestamp: new Date().toISOString(),
-              protocolVersion: 4
+              protocolVersion: 3
             });
             return;
           }
@@ -479,4 +476,4 @@ public class ScenarioTestingRuntimeE2ETests(E2ETestFixture fixture, ITestOutputH
         """;
 }
 
-#pragma warning restore MCPSDK001
+#pragma warning restore GHCP001

@@ -2,7 +2,7 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
-using Microsoft.Copilot.Rpc;
+using GitHub.Copilot.Rpc;
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
@@ -12,7 +12,7 @@ using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Threading.Channels;
 
-namespace Microsoft.Copilot;
+namespace GitHub.Copilot;
 
 /// <summary>
 /// Transport the runtime would otherwise use to issue an intercepted

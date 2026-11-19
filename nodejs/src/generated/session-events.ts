@@ -83,6 +83,7 @@ export type SessionEvent =
   | AbortEvent
   | ToolUserRequestedEvent
   | ToolExecutionStartEvent
+  | ToolExecutionPartialResultEvent
   | ToolShellOutputEvent
   | ToolExecutionProgressEvent
   | ToolExecutionCompleteEvent
@@ -1249,6 +1250,7 @@ export type BinaryAssetReferenceType =
  */
 export type ToolExecutionCompleteContent =
   | ToolExecutionCompleteContentText
+  | ToolExecutionCompleteContentTerminal
   | ToolExecutionCompleteContentShellExit
   | ToolExecutionCompleteContentImage
   | ToolExecutionCompleteContentAudio
@@ -2488,10 +2490,6 @@ export interface StartData {
    */
   providerId?: string;
   /**
-   * Credential-free effective model routing policy restored on cold resume.
-   */
-  providerRouting?: JsonValue;
-  /**
    * Reasoning effort level used for model calls, if applicable (e.g. "none", "low", "medium", "high", "xhigh", "max")
    */
   reasoningEffort?: string;
@@ -2688,10 +2686,6 @@ export interface ResumeData {
    * Provider of selectedModel at resume time, when explicitly selected.
    */
   providerId?: string;
-  /**
-   * Credential-free effective model routing policy restored on cold resume.
-   */
-  providerRouting?: JsonValue;
   /**
    * Reasoning effort level used for model calls, if applicable (e.g. "none", "low", "medium", "high", "xhigh", "max")
    */
@@ -3305,12 +3299,6 @@ export interface InfoData {
    */
   message: string;
   /**
-   * Credential-free provider routing policy applied at this configuration boundary.
-   *
-   * @internal
-   */
-  providerRouting?: JsonValue;
-  /**
    * Reasoning configuration consumed at this conversation boundary. Present on reasoning_effort updates; preserves the original request baseline and applied effort without creating a user message.
    *
    * @internal
@@ -3534,10 +3522,6 @@ export interface ModelChangeData {
    * Provider selected for newModel. Omitted for legacy or unattributed selections; never inferred from a later selection.
    */
   providerId?: string;
-  /**
-   * Credential-free provider routing policy and selected-model registration.
-   */
-  providerRouting?: JsonValue;
   /**
    * Reasoning effort level after the model change, if applicable
    */
@@ -6199,10 +6183,6 @@ export interface PermissionRecoveryAttempt {
    */
   requestFingerprint: string;
   /**
-   * Whether this deferral happened because the automatic permission review ended without a verdict (timeout, empty or unparseable reply). Such a deferral assesses nothing: it does not make a later identical request a repeated attempt or count toward the attempt limit. Older runtimes ignore it.
-   */
-  reviewIncomplete?: boolean;
-  /**
    * Tool-call identifier associated with this attempt, when available
    */
   toolCallId?: string;
@@ -8444,6 +8424,11 @@ export interface AssistantMessageData {
    */
   outputTokens?: number;
   /**
+   * @deprecated
+   * Tool call ID of the parent tool invocation when this event originates from a sub-agent
+   */
+  parentToolCallId?: string;
+  /**
    * Generation phase for phased-output models (e.g., thinking vs. response phases)
    */
   phase?: string;
@@ -8883,6 +8868,11 @@ export interface AssistantMessageDeltaData {
    * Message ID this delta belongs to, matching the corresponding assistant.message event
    */
   messageId: string;
+  /**
+   * @deprecated
+   * Tool call ID of the parent tool invocation when this event originates from a sub-agent
+   */
+  parentToolCallId?: string;
 }
 /**
  * Session event "assistant.turn_end". Turn completion metadata including the turn identifier
@@ -9205,6 +9195,11 @@ export interface AssistantUsageData {
    * Time to first observable model output in milliseconds. Includes text, reasoning, and tool-call output; only available for streaming requests that produce observable output.
    */
   outputTtftMs?: number;
+  /**
+   * @deprecated
+   * Parent tool call ID when this usage originates from a sub-agent
+   */
+  parentToolCallId?: string;
   /**
    * Bucket of AI credits the session had billed before this call, for the adaptive Anthropic prompt-cache policy. Omitted outside the adaptive TTL experiment.
    *
@@ -10052,6 +10047,11 @@ export interface ToolExecutionStartData {
    */
   model?: string;
   /**
+   * @deprecated
+   * Tool call ID of the parent tool invocation when this event originates from a sub-agent
+   */
+  parentToolCallId?: string;
+  /**
    * Host-owned call ID of the run_program invocation that requested this child tool. Its result is program input, not a model message; agent attribution remains independent.
    *
    * @experimental
@@ -10147,6 +10147,58 @@ export interface ToolExecutionStartToolDescriptionMetaUI {
    * Who can access this tool
    */
   visibility?: ToolExecutionStartToolDescriptionMetaUIVisibility[];
+}
+/**
+ * @deprecated
+ * Session event "tool.execution_partial_result". Deprecated merged replacement snapshot of shell output. Use tool.shell_output for append-only, stream-tagged output instead.
+ */
+export interface ToolExecutionPartialResultEvent {
+  /**
+   * Sub-agent instance identifier. Absent for events from the root/main agent and session-level events.
+   */
+  agentId?: string;
+  /**
+   * Whether this physical journal record belongs to a replay checkpoint rather than original session history.
+   */
+  checkpoint?: boolean;
+  /**
+   * Deprecated merged replacement snapshot of shell output. Use tool.shell_output for append-only, stream-tagged output instead.
+   */
+  data: ToolExecutionPartialData;
+  /**
+   * Always true for events that are transient and not persisted to the session event log on disk.
+   */
+  ephemeral: true;
+  /**
+   * Unique event identifier (UUID v4), generated when the event is emitted
+   */
+  id: string;
+  /**
+   * ID of the chronologically preceding event in the session, forming a linked chain. Null for the first event.
+   */
+  parentId: string | null;
+  /**
+   * ISO 8601 timestamp when the event was created
+   */
+  timestamp: string;
+  /**
+   * Type discriminator. Always "tool.execution_partial_result".
+   */
+  type: "tool.execution_partial_result";
+}
+/**
+ * @deprecated
+ * Deprecated merged replacement snapshot of shell output. Use tool.shell_output for append-only, stream-tagged output instead.
+ */
+export interface ToolExecutionPartialData {
+  /**
+   * Merged replacement snapshot from the running shell, not an append-only chunk
+   */
+  partialOutput: string;
+  /**
+   * Tool call ID this partial result belongs to
+   */
+  toolCallId: string;
 }
 /**
  * Session event "tool.shell_output". Live, append-only shell output. Not persisted or replayed to late subscribers. Text is decoded and redacted per chunk; chunks need not contain complete lines.
@@ -10347,6 +10399,11 @@ export interface ToolExecutionCompleteData {
    * Model identifier that generated this tool call
    */
   model?: string;
+  /**
+   * @deprecated
+   * Tool call ID of the parent tool invocation when this event originates from a sub-agent
+   */
+  parentToolCallId?: string;
   /**
    * Host-owned call ID of the run_program invocation that requested this child tool. Its result is program input, not a model message; agent attribution remains independent.
    *
@@ -10611,6 +10668,28 @@ export interface ToolExecutionCompleteContentText {
    * Content block type discriminator
    */
   type: "text";
+}
+/**
+ * @deprecated
+ * Deprecated for shell command exit metadata. Use ToolExecutionCompleteContentShellExit instead.
+ */
+export interface ToolExecutionCompleteContentTerminal {
+  /**
+   * Working directory where the command was executed
+   */
+  cwd?: string;
+  /**
+   * Process exit code, if the command has completed
+   */
+  exitCode?: number;
+  /**
+   * Terminal/shell output text
+   */
+  text: string;
+  /**
+   * Content block type discriminator
+   */
+  type: "terminal";
 }
 /**
  * Shell command exit metadata with optional output preview

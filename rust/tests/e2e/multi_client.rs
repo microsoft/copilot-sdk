@@ -1,17 +1,16 @@
-use copilot_sdk::{RuntimeConnection, SpawnedTcpRuntimeOptions, TcpRuntimeOptions};
 use std::net::TcpListener;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
-use copilot_sdk::handler::{ApproveAllHandler, PermissionHandler, PermissionResult};
-use copilot_sdk::session_events::{
+use github_copilot_sdk::handler::{ApproveAllHandler, PermissionHandler, PermissionResult};
+use github_copilot_sdk::session_events::{
     PermissionCompletedData, PermissionResult as EventPermissionResult, SessionEventType,
 };
-use copilot_sdk::tool::ToolHandler;
-use copilot_sdk::{
-    Client, CreateSessionOptions, PermissionRequestData, RequestId, ResumeSessionOptions,
-    SessionEvent, SessionId, Tool, ToolInvocation, ToolResult,
+use github_copilot_sdk::tool::ToolHandler;
+use github_copilot_sdk::{
+    Client, PermissionRequestData, RequestId, ResumeSessionConfig, SessionConfig, SessionEvent,
+    SessionId, Tool, ToolInvocation, ToolResult, Transport,
 };
 use serde_json::json;
 
@@ -33,20 +32,16 @@ async fn both_clients_see_tool_request_and_completion_events() {
                 let server = start_tcp_server(ctx, port).await;
                 let session1 = server
                     .create_session(
-                        CreateSessionOptions::default()
-                            .with_github(|group| group.with_token(DEFAULT_TEST_TOKEN))
-                            .with_permissions(|group| {
-                                group.with_on_request(Arc::new(ApproveAllHandler))
-                            })
-                            .with_tools(|group| {
-                                group.with_definitions(selective_tools(vec![EchoTool::new(
-                                    "magic_number",
-                                    "seed",
-                                    "MAGIC_",
-                                    "_42",
-                                )]))
-                            })
-                            .with_tools(|group| group.with_available_tools(["magic_number"])),
+                        SessionConfig::default()
+                            .with_github_token(DEFAULT_TEST_TOKEN)
+                            .with_permission_handler(Arc::new(ApproveAllHandler))
+                            .with_tools(selective_tools(vec![EchoTool::new(
+                                "magic_number",
+                                "seed",
+                                "MAGIC_",
+                                "_42",
+                            )]))
+                            .with_available_tools(["magic_number"]),
                     )
                     .await
                     .expect("create session");
@@ -54,12 +49,8 @@ async fn both_clients_see_tool_request_and_completion_events() {
                 let session2 = client2
                     .resume_session(
                         resume_config(session1.id().clone())
-                            .with_permissions(|group| {
-                                group.with_on_request(Arc::new(ApproveAllHandler))
-                            })
-                            .with_tools(|group| {
-                                group.with_definitions(selective_tools(Vec::new()))
-                            }),
+                            .with_permission_handler(Arc::new(ApproveAllHandler))
+                            .with_tools(selective_tools(Vec::new())),
                     )
                     .await
                     .expect("resume session");
@@ -125,24 +116,22 @@ async fn one_client_approves_permission_and_both_see_the_result() {
                 let permission_requests = Arc::new(AtomicUsize::new(0));
                 let session1 = server
                     .create_session(
-                        CreateSessionOptions::default()
-                            .with_github(|group| group.with_token(DEFAULT_TEST_TOKEN))
-                            .with_permissions(|group| {
-                                group.with_on_request(permission_handler_with_counter(
-                                    PermissionResult::approve_once(),
-                                    Arc::clone(&permission_requests),
-                                ))
-                            }),
+                        SessionConfig::default()
+                            .with_github_token(DEFAULT_TEST_TOKEN)
+                            .with_permission_handler(permission_handler_with_counter(
+                                PermissionResult::approve_once(),
+                                Arc::clone(&permission_requests),
+                            )),
                     )
                     .await
                     .expect("create session");
                 let client2 = start_external_client(ctx, port).await;
                 let session2 = client2
-                    .resume_session(resume_config(session1.id().clone()).with_permissions(
-                        |group| {
-                            group.with_on_request(permission_handler(PermissionResult::NoResult))
-                        },
-                    ))
+                    .resume_session(
+                        resume_config(session1.id().clone()).with_permission_handler(
+                            permission_handler(PermissionResult::NoResult),
+                        ),
+                    )
                     .await
                     .expect("resume session");
 
@@ -216,23 +205,21 @@ async fn one_client_rejects_permission_and_both_see_the_result() {
                 let server = start_tcp_server(ctx, port).await;
                 let session1 = server
                     .create_session(
-                        CreateSessionOptions::default()
-                            .with_github(|group| group.with_token(DEFAULT_TEST_TOKEN))
-                            .with_permissions(|group| {
-                                group.with_on_request(permission_handler(PermissionResult::reject(
-                                    None,
-                                )))
-                            }),
+                        SessionConfig::default()
+                            .with_github_token(DEFAULT_TEST_TOKEN)
+                            .with_permission_handler(permission_handler(PermissionResult::reject(
+                                None,
+                            ))),
                     )
                     .await
                     .expect("create session");
                 let client2 = start_external_client(ctx, port).await;
                 let session2 = client2
-                    .resume_session(resume_config(session1.id().clone()).with_permissions(
-                        |group| {
-                            group.with_on_request(permission_handler(PermissionResult::NoResult))
-                        },
-                    ))
+                    .resume_session(
+                        resume_config(session1.id().clone()).with_permission_handler(
+                            permission_handler(PermissionResult::NoResult),
+                        ),
+                    )
                     .await
                     .expect("resume session");
 
@@ -288,6 +275,72 @@ async fn one_client_rejects_permission_and_both_see_the_result() {
 }
 
 #[tokio::test]
+async fn two_clients_register_different_tools_and_agent_uses_both() {
+    with_e2e_context(
+        "rust_multi_client",
+        "two_clients_register_different_tools_and_agent_uses_both",
+        |ctx| {
+            Box::pin(async move {
+                ctx.set_default_copilot_user();
+                let port = free_tcp_port();
+                let server = start_tcp_server(ctx, port).await;
+                let session1 = server
+                    .create_session(
+                        SessionConfig::default()
+                            .with_github_token(DEFAULT_TEST_TOKEN)
+                            .with_permission_handler(Arc::new(ApproveAllHandler)).with_tools(selective_tools(vec![EchoTool::new(
+                                "city_lookup",
+                                "countryCode",
+                                "CITY_FOR_",
+                                "",
+                            )]))
+                            .with_available_tools(["city_lookup", "currency_lookup"]),
+                    )
+                    .await
+                    .expect("create session");
+                let client2 = start_external_client(ctx, port).await;
+                let session2 = client2
+                    .resume_session(
+                        resume_config(session1.id().clone())
+                            .with_permission_handler(Arc::new(ApproveAllHandler)).with_tools(selective_tools(vec![EchoTool::new(
+                                "currency_lookup",
+                                "countryCode",
+                                "CURRENCY_FOR_",
+                                "",
+                            )]))
+                            .with_available_tools(["city_lookup", "currency_lookup"]),
+                    )
+                    .await
+                    .expect("resume session");
+
+                let city = session1
+                    .send_and_wait(
+                        "Use the city_lookup tool with countryCode 'US' and tell me the result.",
+                    )
+                    .await
+                    .expect("send city")
+                    .expect("city answer");
+                assert!(assistant_message_content(&city).contains("CITY_FOR_US"));
+                let currency = session1
+                    .send_and_wait(
+                        "Now use the currency_lookup tool with countryCode 'US' and tell me the result.",
+                    )
+                    .await
+                    .expect("send currency")
+                    .expect("currency answer");
+                assert!(assistant_message_content(&currency).contains("CURRENCY_FOR_US"));
+
+                session2.disconnect().await.expect("disconnect second session");
+                client2.force_stop();
+                session1.disconnect().await.expect("disconnect first session");
+                server.stop().await.expect("stop server client");
+            })
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
 async fn disconnecting_client_removes_its_tools() {
     with_e2e_context(
         "rust_multi_client",
@@ -299,15 +352,15 @@ async fn disconnecting_client_removes_its_tools() {
                 let server = start_tcp_server(ctx, port).await;
                 let session1 = server
                     .create_session(
-                        CreateSessionOptions::default()
-                            .with_github(|group| group.with_token(DEFAULT_TEST_TOKEN))
-                            .with_permissions(|group| group.with_on_request(Arc::new(ApproveAllHandler))).with_tools(|group| group.with_definitions(selective_tools(vec![EchoTool::new(
+                        SessionConfig::default()
+                            .with_github_token(DEFAULT_TEST_TOKEN)
+                            .with_permission_handler(Arc::new(ApproveAllHandler)).with_tools(selective_tools(vec![EchoTool::new(
                                 "stable_tool",
                                 "input",
                                 "STABLE_",
                                 "",
-                            )])))
-                            .with_tools(|group| group.with_available_tools(["stable_tool", "ephemeral_tool"])),
+                            )]))
+                            .with_available_tools(["stable_tool", "ephemeral_tool"]),
                     )
                     .await
                     .expect("create session");
@@ -315,13 +368,13 @@ async fn disconnecting_client_removes_its_tools() {
                 let _session2 = client2
                     .resume_session(
                         resume_config(session1.id().clone())
-                            .with_permissions(|group| group.with_on_request(Arc::new(ApproveAllHandler))).with_tools(|group| group.with_definitions(selective_tools(vec![EchoTool::new(
+                            .with_permission_handler(Arc::new(ApproveAllHandler)).with_tools(selective_tools(vec![EchoTool::new(
                                 "ephemeral_tool",
                                 "input",
                                 "EPHEMERAL_",
                                 "",
-                            )])))
-                            .with_tools(|group| group.with_available_tools(["stable_tool", "ephemeral_tool"])),
+                            )]))
+                            .with_available_tools(["stable_tool", "ephemeral_tool"]),
                     )
                     .await
                     .expect("resume session");
@@ -367,36 +420,29 @@ async fn disconnecting_client_removes_its_tools() {
     .await;
 }
 
-fn resume_config(session_id: SessionId) -> ResumeSessionOptions {
-    ResumeSessionOptions::new(session_id)
-        .with_github(|group| group.with_token(DEFAULT_TEST_TOKEN))
-        .with_permissions(|group| group.with_on_request(Arc::new(ApproveAllHandler)))
-        .with_tools(|group| group.with_definitions(selective_tools(Vec::new())))
+fn resume_config(session_id: SessionId) -> ResumeSessionConfig {
+    ResumeSessionConfig::new(session_id)
+        .with_github_token(DEFAULT_TEST_TOKEN)
+        .with_permission_handler(Arc::new(ApproveAllHandler))
+        .with_tools(selective_tools(Vec::new()))
         .with_suppress_resume_event(true)
 }
 
 async fn start_tcp_server(ctx: &E2eContext, port: u16) -> Client {
-    Client::start(
-        ctx.client_options_with_transport(RuntimeConnection::SpawnedTcp(
-            SpawnedTcpRuntimeOptions {
-                process: Default::default(),
-                port,
-                connection_token: Some(SHARED_TOKEN.to_string()),
-            },
-        )),
-    )
+    Client::start(ctx.client_options_with_transport(Transport::Tcp {
+        port,
+        connection_token: Some(SHARED_TOKEN.to_string()),
+    }))
     .await
     .expect("start TCP server client")
 }
 
 async fn start_external_client(ctx: &E2eContext, port: u16) -> Client {
-    Client::start(
-        ctx.client_options_with_transport(RuntimeConnection::Tcp(TcpRuntimeOptions {
-            host: "127.0.0.1".to_string(),
-            port,
-            connection_token: Some(SHARED_TOKEN.to_string()),
-        })),
-    )
+    Client::start(ctx.client_options_with_transport(Transport::External {
+        host: "127.0.0.1".to_string(),
+        port,
+        connection_token: Some(SHARED_TOKEN.to_string()),
+    }))
     .await
     .expect("start external client")
 }
@@ -475,7 +521,10 @@ impl PermissionHandler for PermissionDecisionHandler {
 
 #[async_trait]
 impl ToolHandler for EchoTool {
-    async fn call(&self, invocation: ToolInvocation) -> Result<ToolResult, copilot_sdk::Error> {
+    async fn call(
+        &self,
+        invocation: ToolInvocation,
+    ) -> Result<ToolResult, github_copilot_sdk::Error> {
         Ok(EchoTool::call(self, invocation))
     }
 }

@@ -1,18 +1,17 @@
 #![allow(clippy::unwrap_used)]
 
-use copilot_sdk::{RuntimeConnection, TcpRuntimeOptions};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use copilot_sdk::extension_launch_provider::{
+use github_copilot_sdk::extension_launch_provider::{
     ExtensionLaunchProfile, ExtensionLaunchProvider, ExtensionLaunchProviderResolveRequest,
     ExtensionLaunchProviderResolveResult,
 };
-use copilot_sdk::rpc::ExtensionSource;
-use copilot_sdk::{Client, ClientOptions, Error, ErrorKind};
+use github_copilot_sdk::rpc::ExtensionSource;
+use github_copilot_sdk::{CliProgram, Client, ClientOptions, Error, ErrorKind, Transport};
 use serde_json::{Value, json};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, duplex};
 use tokio::net::{TcpListener, TcpStream};
@@ -92,7 +91,7 @@ impl ExtensionLaunchProvider for AppProvider {
     async fn resolve(
         &self,
         request: ExtensionLaunchProviderResolveRequest,
-    ) -> copilot_sdk::Result<ExtensionLaunchProviderResolveResult> {
+    ) -> github_copilot_sdk::Result<ExtensionLaunchProviderResolveResult> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         if let Some(observed) = &self.observed {
             observed.send(request).unwrap();
@@ -111,7 +110,7 @@ impl ExtensionLaunchProvider for PanickingProvider {
     async fn resolve(
         &self,
         _request: ExtensionLaunchProviderResolveRequest,
-    ) -> copilot_sdk::Result<ExtensionLaunchProviderResolveResult> {
+    ) -> github_copilot_sdk::Result<ExtensionLaunchProviderResolveResult> {
         panic!("extension profile lookup failed");
     }
 }
@@ -123,7 +122,7 @@ impl ExtensionLaunchProvider for FailingProvider {
     async fn resolve(
         &self,
         _request: ExtensionLaunchProviderResolveRequest,
-    ) -> copilot_sdk::Result<ExtensionLaunchProviderResolveResult> {
+    ) -> github_copilot_sdk::Result<ExtensionLaunchProviderResolveResult> {
         Err(Error::with_message(
             ErrorKind::InvalidConfig,
             "extension profile lookup failed",
@@ -235,13 +234,8 @@ async fn missing_provider_returns_client_global_handler_error() {
     let (client_write, mut server_read) = duplex(8192);
     let (mut server_write, client_read) = duplex(8192);
     let temp = tempfile::tempdir().unwrap();
-    let client = Client::from_streams(
-        copilot_sdk::ClientMode::CodingAgent,
-        client_read,
-        client_write,
-        temp.path().to_path_buf(),
-    )
-    .unwrap();
+    let client =
+        Client::from_streams(client_read, client_write, temp.path().to_path_buf()).unwrap();
     client.start_router_for_test();
 
     write_framed(
@@ -359,7 +353,7 @@ async fn respond_to_connect(
             "id": request["id"],
             "result": {
                 "ok": true,
-                "protocolVersion": 4,
+                "protocolVersion": 3,
                 "version": "test"
             }
         }),
@@ -375,13 +369,14 @@ async fn read_registration(reader: &mut (impl AsyncRead + Unpin)) -> Value {
 }
 
 fn external_options(port: u16, provider: AppProvider) -> ClientOptions {
-    ClientOptions::new(copilot_sdk::ClientMode::CodingAgent)
-        .with_runtime(RuntimeConnection::Tcp(TcpRuntimeOptions {
+    ClientOptions::new()
+        .with_program(CliProgram::Path("unused-for-external-transport".into()))
+        .with_transport(Transport::External {
             host: "127.0.0.1".to_string(),
             port,
             connection_token: None,
-        }))
-        .with_extensions(|group| group.with_launch_provider(provider))
+        })
+        .with_extension_launch_provider(provider)
 }
 
 #[tokio::test]

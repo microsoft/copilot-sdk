@@ -3,13 +3,13 @@
  *--------------------------------------------------------------------------------------------*/
 
 using System.Net.Http;
-using Microsoft.Copilot.Test.Harness;
+using GitHub.Copilot.Test.Harness;
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Microsoft.Copilot.Test.E2E;
+namespace GitHub.Copilot.Test.E2E;
 
-#pragma warning disable MCPSDK001 // The LLM inference surface is intentionally experimental.
+#pragma warning disable GHCP001 // The LLM inference surface is intentionally experimental.
 
 /// <summary>
 /// Cancellation and error coverage for <see cref="CopilotRequestHandler"/>. These
@@ -43,9 +43,8 @@ public class CopilotRequestCancelErrorE2ETests(E2ETestFixture fixture, ITestOutp
     private CopilotClient CreateClientWith(CopilotRequestHandler handler) =>
         Ctx.CreateClient(options: new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForSpawnedStdio(),
-            Models = new ClientModelOptions { RequestHandler = handler }
+            Connection = RuntimeConnection.ForStdio(),
+            RequestHandler = handler,
         });
 
     [Fact]
@@ -55,8 +54,10 @@ public class CopilotRequestCancelErrorE2ETests(E2ETestFixture fixture, ITestOutp
         await using var client = CreateClientWith(handler);
         await client.StartAsync();
 
-        var session = await Ctx.CreateSessionAsync(client, new CreateSessionOptions
-        { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
+        var session = await Ctx.CreateSessionAsync(client, new SessionConfig
+        {
+            OnPermissionRequest = PermissionHandler.ApproveAll,
+        });
 
         try
         {
@@ -80,8 +81,10 @@ public class CopilotRequestCancelErrorE2ETests(E2ETestFixture fixture, ITestOutp
         await using var client = CreateClientWith(handler);
         await client.StartAsync();
 
-        var session = await Ctx.CreateSessionAsync(client, new CreateSessionOptions
-        { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
+        var session = await Ctx.CreateSessionAsync(client, new SessionConfig
+        {
+            OnPermissionRequest = PermissionHandler.ApproveAll,
+        });
 
         try
         {

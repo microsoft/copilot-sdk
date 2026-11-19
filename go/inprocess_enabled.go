@@ -1,8 +1,8 @@
-//go:build !copilot_no_inprocess && (darwin || linux || windows) && (amd64 || arm64)
+//go:build copilot_inprocess && (darwin || linux || windows)
 
 package copilot
 
-import "github.com/microsoft/copilot-sdk/go/v2/internal/ffihost"
+import "github.com/github/copilot-sdk/go/internal/ffihost"
 
 const inProcessAvailable = true
 

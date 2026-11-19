@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/microsoft/copilot-sdk/go/v2/internal/jsonrpc2"
-	"github.com/microsoft/copilot-sdk/go/v2/rpc"
+	"github.com/github/copilot-sdk/go/internal/jsonrpc2"
+	"github.com/github/copilot-sdk/go/rpc"
 )
 
 // personAnsweredContext is the label a host attaches when a person answered a
@@ -278,21 +278,21 @@ func TestPromptHandlersFromSessionConfig(t *testing.T) {
 				var session *Session
 				var err error
 				if resume {
-					config := &ResumeSessionOptions{}
+					config := &ResumeSessionConfig{}
 					if tc.plain {
-						config.Interaction.OnUserInputRequest, config.Interaction.OnExitPlanModeRequest, config.Interaction.OnElicitationRequest = plainUserInput, plainPlan, plainElicitation
+						config.OnUserInputRequest, config.OnExitPlanModeRequest, config.OnElicitationRequest = plainUserInput, plainPlan, plainElicitation
 					}
 					if tc.attributed {
-						config.Interaction.OnAttributedUserInputRequest, config.Interaction.OnAttributedExitPlanModeRequest, config.Interaction.OnAttributedElicitationRequest = attributedUserInput, attributedPlan, attributedElicitation
+						config.OnAttributedUserInputRequest, config.OnAttributedExitPlanModeRequest, config.OnAttributedElicitationRequest = attributedUserInput, attributedPlan, attributedElicitation
 					}
 					session, err = client.ResumeSession(t.Context(), "prompt-handlers", config)
 				} else {
-					config := &CreateSessionOptions{SessionID: "prompt-handlers"}
+					config := &SessionConfig{SessionID: "prompt-handlers"}
 					if tc.plain {
-						config.Interaction.OnUserInputRequest, config.Interaction.OnExitPlanModeRequest, config.Interaction.OnElicitationRequest = plainUserInput, plainPlan, plainElicitation
+						config.OnUserInputRequest, config.OnExitPlanModeRequest, config.OnElicitationRequest = plainUserInput, plainPlan, plainElicitation
 					}
 					if tc.attributed {
-						config.Interaction.OnAttributedUserInputRequest, config.Interaction.OnAttributedExitPlanModeRequest, config.Interaction.OnAttributedElicitationRequest = attributedUserInput, attributedPlan, attributedElicitation
+						config.OnAttributedUserInputRequest, config.OnAttributedExitPlanModeRequest, config.OnAttributedElicitationRequest = attributedUserInput, attributedPlan, attributedElicitation
 					}
 					session, err = client.CreateSession(t.Context(), config)
 				}
@@ -302,20 +302,18 @@ func TestPromptHandlersFromSessionConfig(t *testing.T) {
 				t.Cleanup(session.stopEventProcessing)
 
 				var flags struct {
-					Interaction struct {
-						RequestUserInput    *bool `json:"requestUserInput"`
-						RequestExitPlanMode *bool `json:"requestExitPlanMode"`
-						RequestElicitation  *bool `json:"requestElicitation"`
-					} `json:"interaction"`
+					RequestUserInput    *bool `json:"requestUserInput"`
+					RequestExitPlanMode *bool `json:"requestExitPlanMode"`
+					RequestElicitation  *bool `json:"requestElicitation"`
 				}
 				params := <-openParams
 				if err := json.Unmarshal(params, &flags); err != nil {
 					t.Fatalf("decode open params: %v", err)
 				}
 				for name, flag := range map[string]*bool{
-					"requestUserInput":    flags.Interaction.RequestUserInput,
-					"requestExitPlanMode": flags.Interaction.RequestExitPlanMode,
-					"requestElicitation":  flags.Interaction.RequestElicitation,
+					"requestUserInput":    flags.RequestUserInput,
+					"requestExitPlanMode": flags.RequestExitPlanMode,
+					"requestElicitation":  flags.RequestElicitation,
 				} {
 					if flag == nil || !*flag {
 						t.Errorf("%s = %v, want true in %s", name, flag, params)

@@ -96,13 +96,7 @@ fn fixture() -> (Client, Peer) {
     let (client_write, read) = duplex(1 << 20);
     let (write, client_read) = duplex(1 << 20);
     (
-        Client::from_streams(
-            crate::ClientMode::CodingAgent,
-            client_read,
-            client_write,
-            PathBuf::from("."),
-        )
-        .unwrap(),
+        Client::from_streams(client_read, client_write, PathBuf::from(".")).unwrap(),
         Peer { read, write },
     )
 }
@@ -583,6 +577,22 @@ async fn queued_real_exit_precedes_disconnect_and_is_not_duplicated() {
             .is_none()
     );
     assert!(client.inner.ahp_host_callbacks.lock().is_empty());
+}
+
+#[tokio::test]
+async fn wire_exit_immediately_before_eof_is_not_replaced_by_disconnect() {
+    let (client, mut peer) = fixture();
+    let (options, mut exits) = callback_options();
+    let pending = start(&client, options);
+    let request = peer.request().await;
+    peer.started(&request, None).await;
+    let host = pending.await.unwrap().unwrap();
+    peer.exited(&host.host_id).await;
+    drop(peer);
+    let exit = timeout(TIMEOUT, exits.recv()).await.unwrap().unwrap();
+    assert_eq!(exit.reason, AhpHostExitReason::Exited);
+    assert_eq!(exit.exit_code, Some(17));
+    assert!(timeout(TIMEOUT, exits.recv()).await.unwrap().is_none());
 }
 
 #[tokio::test]

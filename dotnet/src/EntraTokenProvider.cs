@@ -3,9 +3,9 @@
  *--------------------------------------------------------------------------------------------*/
 
 using System.Diagnostics.CodeAnalysis;
-using Microsoft.Copilot.Rpc;
+using GitHub.Copilot.Rpc;
 
-namespace Microsoft.Copilot;
+namespace GitHub.Copilot;
 
 /// <summary>Entra application and optional host-owned identity and token acquisition.</summary>
 [Experimental(Diagnostics.Experimental)]
@@ -17,21 +17,13 @@ public sealed class EntraAuthOptions
     /// <summary>Gets or sets the host's MATS name. Omit to disable OneAuth MATS telemetry.</summary>
     public string? MatsAppName { get; set; }
 
-    /// <summary>Gets or sets the native OneAuth application descriptor. Omit or leave blank to use ClientId. This does not isolate accounts.</summary>
-    public string? OneAuthApplicationId { get; set; }
-
     /// <summary>
     /// Gets or sets the host callback. When absent, the runtime uses built-in sign-in.
     /// Unavailability or cancellation never falls back to runtime sign-in.
     /// </summary>
     public EntraTokenProvider? TokenProvider { get; set; }
 
-    internal EntraAuthConfig ToWire() => new()
-    {
-        ClientId = ClientId,
-        MatsAppName = MatsAppName,
-        OneAuthApplicationId = OneAuthApplicationId
-    };
+    internal EntraAuthConfig ToWire() => new() { ClientId = ClientId, MatsAppName = MatsAppName };
 }
 
 /// <summary>
@@ -41,7 +33,7 @@ public sealed class EntraAuthOptions
 [Experimental(Diagnostics.Experimental)]
 public delegate ValueTask<EntraTokenAcquireResult> EntraTokenProvider(
     EntraTokenAcquireRequest request,
-    CancellationToken cancellationToken = default);
+    CancellationToken cancellationToken);
 
 [Experimental(Diagnostics.Experimental)]
 internal sealed class EntraTokenAdapter(EntraTokenProvider provider) : IEntraTokenHandler

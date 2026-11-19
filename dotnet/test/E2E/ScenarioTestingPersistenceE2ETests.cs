@@ -2,12 +2,12 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
-using Microsoft.Copilot.Rpc;
-using Microsoft.Copilot.Test.Harness;
+using GitHub.Copilot.Rpc;
+using GitHub.Copilot.Test.Harness;
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Microsoft.Copilot.Test.E2E;
+namespace GitHub.Copilot.Test.E2E;
 
 public class ScenarioTestingPersistenceE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
     : ScenarioTestingE2ETestBase(fixture, "scenario_testing_persistence", output)
@@ -33,10 +33,10 @@ public class ScenarioTestingPersistenceE2ETests(E2ETestFixture fixture, ITestOut
         await using var context = await E2ETestContext.CreateAsync();
         await context.ConfigureForTestAsync("scenario_testing_persistence", replayOnly: true);
         await using var client = context.CreateClient();
-        await using var session = await context.CreateSessionAsync(client, new CreateSessionOptions
+        await using var session = await context.CreateSessionAsync(client, new SessionConfig
         {
             Model = "claude-sonnet-5",
-            Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll },
+            OnPermissionRequest = PermissionHandler.ApproveAll,
         });
         var initial = await session.SendAndWaitAsync(new MessageOptions
         {

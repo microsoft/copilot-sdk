@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
-	"github.com/microsoft/copilot-sdk/go/v2/internal/e2e/testharness"
+	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/internal/e2e/testharness"
 )
 
 // Mirrors dotnet/test/ClientSessionManagementTests.cs (snapshot category "client_api").
@@ -22,7 +22,9 @@ func TestClientAPIE2E(t *testing.T) {
 	t.Run("should delete session by id", func(t *testing.T) {
 		ctx.ConfigureForTest(t)
 
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}})
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
 		}
@@ -54,7 +56,7 @@ func TestClientAPIE2E(t *testing.T) {
 		if err == nil {
 			t.Fatal("Expected DeleteSession to fail for unknown id")
 		}
-		expectedMessage := "not found"
+		expectedMessage := "failed to delete session " + sessionID
 		if !strings.Contains(strings.ToLower(err.Error()), expectedMessage) {
 			t.Errorf("Expected error mentioning %q, got %v", expectedMessage, err)
 		}
@@ -62,9 +64,7 @@ func TestClientAPIE2E(t *testing.T) {
 
 	t.Run("should get null last session id before any sessions exist", func(t *testing.T) {
 		freshClient := ctx.NewClient(func(options *copilot.ClientOptions) {
-			connection := options.Runtime.(copilot.SpawnedStdioConnection)
-			connection.BaseDirectory = t.TempDir()
-			options.Runtime = connection
+			options.BaseDirectory = t.TempDir()
 		})
 		t.Cleanup(func() { freshClient.ForceStop() })
 
@@ -84,7 +84,9 @@ func TestClientAPIE2E(t *testing.T) {
 	t.Run("should track last session id after session created", func(t *testing.T) {
 		ctx.ConfigureForTest(t)
 
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}})
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
 		}
@@ -121,7 +123,9 @@ func TestClientAPIE2E(t *testing.T) {
 	})
 
 	t.Run("should report error when setting foreground session in headless mode", func(t *testing.T) {
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}})
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
 		}

@@ -4,10 +4,10 @@
 
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
-using Microsoft.Copilot.Rpc;
+using GitHub.Copilot.Rpc;
 using Xunit;
 
-namespace Microsoft.Copilot.Test.Unit;
+namespace GitHub.Copilot.Test.Unit;
 
 public class PermissionHandlerTests
 {

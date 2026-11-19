@@ -2,15 +2,15 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
-using Microsoft.Copilot.Rpc;
-using Microsoft.Copilot.Test.Harness;
+using GitHub.Copilot.Rpc;
+using GitHub.Copilot.Test.Harness;
 using Microsoft.Extensions.AI;
 using System.ComponentModel;
 using System.Text.Json;
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Microsoft.Copilot.Test.E2E;
+namespace GitHub.Copilot.Test.E2E;
 
 [Trait(E2ETestTraits.Backend, E2ETestTraits.CapiOnly)]
 public class ScenarioTestingCallbacksE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
@@ -28,52 +28,70 @@ public class ScenarioTestingCallbacksE2ETests(E2ETestFixture fixture, ITestOutpu
         PostToolUseHookInput? postTool = null;
         CopilotSession? session = null;
 
-        session = await CreateSessionAsync(new CreateSessionOptions
+        session = await CreateSessionAsync(new SessionConfig
         {
-            Tools = new SessionToolOptions
+            Tools = [AIFunctionFactory.Create(ScenarioHookTool, "scenario_hook_tool")],
+            Hooks = new SessionHooks
             {
-                Definitions = [AIFunctionFactory.Create(ScenarioHookTool, "scenario_hook_tool")]
-            },
-            Hooks = new SessionHookOptions
-            {
-                Handlers = new SessionHooks
+                OnUserPromptSubmitted = (input, invocation) =>
                 {
-                    OnUserPromptSubmitted = (input, invocation) =>
+                    Assert.Equal(session!.SessionId, invocation.SessionId);
+                    submitted = input;
+                    return Task.FromResult<UserPromptSubmittedHookOutput?>(new UserPromptSubmittedHookOutput
                     {
-                        Assert.Equal(session!.SessionId, invocation.SessionId);
-                        submitted = input;
-                        return Task.FromResult<UserPromptSubmittedHookOutput?>(new UserPromptSubmittedHookOutput { SuppressOutput = true, });
-                    },
-                    OnUserPromptTransformed = (input, invocation) =>
+                        SuppressOutput = true,
+                    });
+                },
+                OnUserPromptTransformed = (input, invocation) =>
+                {
+                    Assert.Equal(session!.SessionId, invocation.SessionId);
+                    transformed = input;
+                    return Task.FromResult<UserPromptTransformedHookOutput?>(new UserPromptTransformedHookOutput
                     {
-                        Assert.Equal(session!.SessionId, invocation.SessionId);
-                        transformed = input;
-                        return Task.FromResult<UserPromptTransformedHookOutput?>(new UserPromptTransformedHookOutput { ModifiedTransformedPrompt = "Call scenario_hook_tool with value 'original', then reply with exactly SCENARIO_POST_RESULT.", });
-                    },
-                    OnPreToolUse = (input, invocation) =>
+                        ModifiedTransformedPrompt =
+                            "Call scenario_hook_tool with value 'original', then reply with exactly SCENARIO_POST_RESULT.",
+                    });
+                },
+                OnPreToolUse = (input, invocation) =>
+                {
+                    if (input.ToolName != "scenario_hook_tool")
                     {
-                        if (input.ToolName != "scenario_hook_tool")
+                        return Task.FromResult<PreToolUseHookOutput?>(new PreToolUseHookOutput
                         {
-                            return Task.FromResult<PreToolUseHookOutput?>(new PreToolUseHookOutput { PermissionDecision = "allow", });
-                        }
+                            PermissionDecision = "allow",
+                        });
+                    }
 
-                        Assert.Equal(session!.SessionId, invocation.SessionId);
-                        preTool = input;
-                        return Task.FromResult<PreToolUseHookOutput?>(new PreToolUseHookOutput { PermissionDecision = "allow", ModifiedArgs = new Dictionary<string, object> { ["value"] = "pre-hook" }, SuppressOutput = false, });
-                    },
-                    OnPostToolUse = (input, invocation) =>
+                    Assert.Equal(session!.SessionId, invocation.SessionId);
+                    preTool = input;
+                    return Task.FromResult<PreToolUseHookOutput?>(new PreToolUseHookOutput
                     {
-                        if (input.ToolName != "scenario_hook_tool")
-                        {
-                            return Task.FromResult<PostToolUseHookOutput?>(null);
-                        }
+                        PermissionDecision = "allow",
+                        ModifiedArgs = new Dictionary<string, object> { ["value"] = "pre-hook" },
+                        SuppressOutput = false,
+                    });
+                },
+                OnPostToolUse = (input, invocation) =>
+                {
+                    if (input.ToolName != "scenario_hook_tool")
+                    {
+                        return Task.FromResult<PostToolUseHookOutput?>(null);
+                    }
 
-                        Assert.Equal(session!.SessionId, invocation.SessionId);
-                        postTool = input;
-                        return Task.FromResult<PostToolUseHookOutput?>(new PostToolUseHookOutput { ModifiedResult = new ToolResultObject { TextResultForLlm = "SCENARIO_POST_RESULT", ResultType = "success", ToolTelemetry = new Dictionary<string, object>(), }, SuppressOutput = false, });
-                    },
-                }
-            }
+                    Assert.Equal(session!.SessionId, invocation.SessionId);
+                    postTool = input;
+                    return Task.FromResult<PostToolUseHookOutput?>(new PostToolUseHookOutput
+                    {
+                        ModifiedResult = new ToolResultObject
+                        {
+                            TextResultForLlm = "SCENARIO_POST_RESULT",
+                            ResultType = "success",
+                            ToolTelemetry = new Dictionary<string, object>(),
+                        },
+                        SuppressOutput = false,
+                    });
+                },
+            },
         });
 
         var response = await session.SendAndWaitAsync(new MessageOptions
@@ -105,30 +123,26 @@ public class ScenarioTestingCallbacksE2ETests(E2ETestFixture fixture, ITestOutpu
         var (cliPath, capturePath) = await ScenarioTestingTestCli.CreateAsync(Ctx);
         await using var client = Ctx.CreateClient(options: new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForSpawnedStdio(
+            Connection = RuntimeConnection.ForStdio(
                 path: cliPath,
                 args: ["--capture-file", capturePath, "--behavior", "emit-ui-events"]),
-            GitHub = new ClientGitHubOptions { UseLoggedInUser = false }
+            UseLoggedInUser = false,
         });
 
-        await using var session = await Ctx.CreateSessionAsync(client, new CreateSessionOptions
+        await using var session = await Ctx.CreateSessionAsync(client, new SessionConfig
         {
-            Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll },
-            Events = new SessionEventOptions
+            OnPermissionRequest = PermissionHandler.ApproveAll,
+            OnEvent = evt =>
             {
-                OnEvent = evt =>
-        {
-            lock (events)
-            {
-                events.Add(evt);
-                if (events.Count(evt => evt is UserInputRequestedEvent or ElicitationRequestedEvent) == 4)
+                lock (events)
                 {
-                    allEventsReceived.TrySetResult();
+                    events.Add(evt);
+                    if (events.Count(evt => evt is UserInputRequestedEvent or ElicitationRequestedEvent) == 4)
+                    {
+                        allEventsReceived.TrySetResult();
+                    }
                 }
-            }
-        }
-            }
+            },
         });
 
         await allEventsReceived.Task.WaitAsync(TimeSpan.FromSeconds(30));
@@ -208,8 +222,11 @@ public class ScenarioTestingCallbacksE2ETests(E2ETestFixture fixture, ITestOutpu
         var callbackCancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         await using var client = Ctx.CreateClient();
-        var session = await Ctx.CreateSessionAsync(client, new CreateSessionOptions
-        { Tools = new SessionToolOptions { Definitions = [AIFunctionFactory.Create(BlockingHostCallback, "scenario_host_callback")] }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
+        var session = await Ctx.CreateSessionAsync(client, new SessionConfig
+        {
+            Tools = [AIFunctionFactory.Create(BlockingHostCallback, "scenario_host_callback")],
+            OnPermissionRequest = PermissionHandler.ApproveAll,
+        });
 
         _ = session.SendAsync(new MessageOptions
         {
@@ -251,18 +268,20 @@ public class ScenarioTestingCallbacksE2ETests(E2ETestFixture fixture, ITestOutpu
         var callback = new TaskCompletionSource<(ExitPlanModeRequest Request, ExitPlanModeInvocation Invocation)>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         await using var client = CreateAuthenticatedClient();
-        await using var session = await Ctx.CreateSessionAsync(client, new CreateSessionOptions
+        await using var session = await Ctx.CreateSessionAsync(client, new SessionConfig
         {
-            GitHub = new SessionGitHubOptions { Token = ModeHandlerToken },
-            Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll },
-            Interaction = new SessionInteractionOptions
+            GitHubToken = ModeHandlerToken,
+            OnPermissionRequest = PermissionHandler.ApproveAll,
+            OnExitPlanModeRequest = (request, invocation) =>
             {
-                OnExitPlanModeRequest = (request, invocation) =>
-        {
-            callback.TrySetResult((request, invocation));
-            return Task.FromResult(new ExitPlanModeResult { Approved = true, SelectedAction = "interactive", Feedback = "Approved by the scenario client", });
-        }
-            }
+                callback.TrySetResult((request, invocation));
+                return Task.FromResult(new ExitPlanModeResult
+                {
+                    Approved = true,
+                    SelectedAction = "interactive",
+                    Feedback = "Approved by the scenario client",
+                });
+            },
         });
 
         using var userMessageTask = TestHelper.ObserveEvent<UserMessageEvent>(
@@ -317,18 +336,15 @@ public class ScenarioTestingCallbacksE2ETests(E2ETestFixture fixture, ITestOutpu
         var callback = new TaskCompletionSource<(AutoModeSwitchRequest Request, AutoModeSwitchInvocation Invocation)>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         await using var client = CreateAuthenticatedClient();
-        await using var session = await Ctx.CreateSessionAsync(client, new CreateSessionOptions
+        await using var session = await Ctx.CreateSessionAsync(client, new SessionConfig
         {
-            GitHub = new SessionGitHubOptions { Token = ModeHandlerToken },
-            Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll },
-            Interaction = new SessionInteractionOptions
+            GitHubToken = ModeHandlerToken,
+            OnPermissionRequest = PermissionHandler.ApproveAll,
+            OnAutoModeSwitchRequest = (request, invocation) =>
             {
-                OnAutoModeSwitchRequest = (request, invocation) =>
-        {
-            callback.TrySetResult((request, invocation));
-            return Task.FromResult(AutoModeSwitchResponse.Yes);
-        }
-            }
+                callback.TrySetResult((request, invocation));
+                return Task.FromResult(AutoModeSwitchResponse.Yes);
+            },
         });
 
         const long expectedRetryAfter = 1;

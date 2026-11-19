@@ -5,14 +5,14 @@
 //! Set `COPILOT_CLI_PATH` to a built CLI before running this example. The
 //! example makes no Azure ML network request and downloads no model.
 
-use copilot_sdk::rpc::{
+use github_copilot_sdk::rpc::{
     AzureMlDownloadIdRequest, AzureMlFamilyReleaseRequest, AzureMlFamilyRequest, AzureMlRegistry,
 };
-use copilot_sdk::{Client, ClientOptions};
+use github_copilot_sdk::{Client, ClientOptions};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = Client::start(ClientOptions::new(copilot_sdk::ClientMode::CodingAgent)).await?;
+    let client = Client::start(ClientOptions::default()).await?;
     let lease = client
         .rpc()
         .azure_ml()

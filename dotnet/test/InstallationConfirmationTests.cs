@@ -9,13 +9,13 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization.Metadata;
-using InstallationDecision = Microsoft.Copilot.Rpc.InstallationDecision;
-using InstallationReviewMcp = Microsoft.Copilot.Rpc.InstallationReviewMcp;
-using InstallationsConfirmRequest = Microsoft.Copilot.Rpc.InstallationsConfirmRequest;
-using McpInstallationReviewInstall = Microsoft.Copilot.Rpc.McpInstallationReviewInstall;
+using InstallationDecision = GitHub.Copilot.Rpc.InstallationDecision;
+using InstallationReviewMcp = GitHub.Copilot.Rpc.InstallationReviewMcp;
+using InstallationsConfirmRequest = GitHub.Copilot.Rpc.InstallationsConfirmRequest;
+using McpInstallationReviewInstall = GitHub.Copilot.Rpc.McpInstallationReviewInstall;
 using Xunit;
 
-namespace Microsoft.Copilot.Test;
+namespace GitHub.Copilot.Test;
 
 public class InstallationConfirmationTests
 {
@@ -487,10 +487,9 @@ public class InstallationConfirmationTests
             var port = ((IPEndPoint)listener.LocalEndpoint).Port;
             var client = new CopilotClient(new CopilotClientOptions
             {
-                Mode = CopilotClientMode.CodingAgent,
-                Runtime = RuntimeConnection.ForTcp("127.0.0.1", port),
+                Connection = RuntimeConnection.ForUri($"127.0.0.1:{port}"),
+                InstallationConfirmationHandler = handler,
                 Entra = entra,
-                Installations = new ClientInstallationOptions { ConfirmationHandler = handler }
             });
             var start = client.StartAsync();
             var tcpClient = await WithTimeoutAsync(listener.AcceptTcpClientAsync());
@@ -504,7 +503,7 @@ public class InstallationConfirmationTests
                 ["result"] = new JsonObject
                 {
                     ["ok"] = true,
-                    ["protocolVersion"] = 4,
+                    ["protocolVersion"] = 3,
                     ["version"] = "installation-confirmation-test",
                     ["entraTokenProvider"] = entra?.TokenProvider is not null,
                 },

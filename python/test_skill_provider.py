@@ -139,11 +139,21 @@ def test_skill_provider_is_runtime_checkable_and_exported() -> None:
     }
 
 
+def test_skill_provider_descriptor_keeps_its_positional_arguments() -> None:
+    # `directory` was added after release, so it must not shift earlier positional arguments.
+    descriptor = SkillProviderDescriptor("Review", "review", "[target]", True, False)
+    assert descriptor.to_dict() == {
+        "argumentHint": "[target]",
+        "description": "Review",
+        "disableModelInvocation": True,
+        "name": "review",
+        "userInvocable": False,
+    }
+
+
 @pytest.mark.asyncio
 async def test_create_and_resume_send_skill_provider_flag_only_when_configured() -> None:
-    client = CopilotClient(
-        mode="coding-agent", runtime=RuntimeConnection.for_tcp("localhost", 1234)
-    )
+    client = CopilotClient(connection=RuntimeConnection.for_uri("localhost:1234"))
     captured: list[tuple[str, dict]] = []
 
     async def request(method: str, params: dict, kwargs: dict[str, Any]) -> dict[str, Any]:
@@ -153,25 +163,21 @@ async def test_create_and_resume_send_skill_provider_flag_only_when_configured()
     _install_fake_client(client, request)
     provider = _SyncSkillProvider(skills=[_descriptor("provided")])
 
-    await client.create_session(session_id="create-with-provider", skills={"provider": provider})
-    await client.resume_session("resume-with-provider", skills={"provider": provider})
+    await client.create_session(session_id="create-with-provider", skill_provider=provider)
+    await client.resume_session("resume-with-provider", skill_provider=provider)
     await client.create_session(session_id="create-without-provider")
     await client.resume_session("resume-without-provider")
 
     payloads = {(method, params["sessionId"]): params for method, params in captured}
-    assert payloads[("session.create", "create-with-provider")]["skills"]["hasProvider"] is True
-    assert payloads[("session.resume", "resume-with-provider")]["skills"]["hasProvider"] is True
-    assert "hasProvider" not in payloads[("session.create", "create-without-provider")].get(
-        "skills", {}
-    )
-    assert "hasProvider" not in payloads[("session.resume", "resume-without-provider")].get(
-        "skills", {}
-    )
+    assert payloads[("session.create", "create-with-provider")]["hasSkillProvider"] is True
+    assert payloads[("session.resume", "resume-with-provider")]["hasSkillProvider"] is True
+    assert "hasSkillProvider" not in payloads[("session.create", "create-without-provider")]
+    assert "hasSkillProvider" not in payloads[("session.resume", "resume-without-provider")]
 
 
 @pytest.mark.asyncio
 async def test_empty_mode_keeps_skill_provider_dormant_by_default() -> None:
-    client = CopilotClient(mode="empty", runtime=RuntimeConnection.for_tcp("localhost", 1234))
+    client = CopilotClient(connection=RuntimeConnection.for_uri("localhost:1234"), mode="empty")
     captured: list[tuple[str, dict]] = []
 
     async def request(method: str, params: dict, kwargs: dict[str, Any]) -> dict[str, Any]:
@@ -182,30 +188,35 @@ async def test_empty_mode_keeps_skill_provider_dormant_by_default() -> None:
     provider = _SyncSkillProvider(skills=[_descriptor("provided")])
 
     await client.create_session(
-        session_id="empty-create", tools={"available_tools": []}, skills={"provider": provider}
+        session_id="empty-create",
+        available_tools=[],
+        skill_provider=provider,
     )
     await client.resume_session(
-        "empty-resume", tools={"available_tools": []}, skills={"provider": provider}
+        "empty-resume",
+        available_tools=[],
+        skill_provider=provider,
     )
 
     payloads = {(method, params["sessionId"]): params for method, params in captured}
-    assert payloads[("session.create", "empty-create")]["skills"]["enabled"] is False
-    assert payloads[("session.resume", "empty-resume")]["skills"]["enabled"] is False
-    assert payloads[("session.create", "empty-create")]["skills"]["hasProvider"] is True
-    assert payloads[("session.resume", "empty-resume")]["skills"]["hasProvider"] is True
+    assert payloads[("session.create", "empty-create")]["enableSkills"] is False
+    assert payloads[("session.resume", "empty-resume")]["enableSkills"] is False
+    assert payloads[("session.create", "empty-create")]["hasSkillProvider"] is True
+    assert payloads[("session.resume", "empty-resume")]["hasSkillProvider"] is True
 
 
 @pytest.mark.asyncio
 async def test_cloud_create_rejects_skill_provider_before_connecting() -> None:
-    client = CopilotClient(
-        mode="coding-agent", runtime=RuntimeConnection.for_tcp("localhost", 1234)
-    )
+    client = CopilotClient(connection=RuntimeConnection.for_uri("localhost:1234"))
     start_mock = AsyncMock()
     setattr(client, "start", start_mock)
     provider = _SyncSkillProvider(skills=[_descriptor("cloud")])
 
     with pytest.raises(ValueError, match="Skill providers are not supported for cloud sessions\\."):
-        await client.create_session(cloud=CloudSessionOptions(), skills={"provider": provider})
+        await client.create_session(
+            cloud=CloudSessionOptions(),
+            skill_provider=provider,
+        )
 
     start_mock.assert_not_awaited()
     assert provider.list_calls == 0
@@ -214,9 +225,7 @@ async def test_cloud_create_rejects_skill_provider_before_connecting() -> None:
 
 @pytest.mark.asyncio
 async def test_early_skill_provider_callbacks_are_served_during_create_and_resume() -> None:
-    client = CopilotClient(
-        mode="coding-agent", runtime=RuntimeConnection.for_tcp("localhost", 1234)
-    )
+    client = CopilotClient(connection=RuntimeConnection.for_uri("localhost:1234"))
     observed: list[dict] = []
     provider = _SyncSkillProvider(
         skills=[_descriptor("early")],
@@ -237,8 +246,8 @@ async def test_early_skill_provider_callbacks_are_served_during_create_and_resum
 
     _install_fake_client(client, request)
 
-    await client.create_session(session_id="early-create", skills={"provider": provider})
-    await client.resume_session("early-resume", skills={"provider": provider})
+    await client.create_session(session_id="early-create", skill_provider=provider)
+    await client.resume_session("early-resume", skill_provider=provider)
 
     assert observed == [
         {"skills": [{"description": "Test skill", "name": "early"}]},
@@ -253,9 +262,7 @@ async def test_early_skill_provider_callbacks_are_served_during_create_and_resum
 async def test_skill_provider_dispatch_serializes_descriptors_and_reads_markdown(
     provider_cls: type[_SyncSkillProvider] | type[_AsyncSkillProvider],
 ) -> None:
-    client = CopilotClient(
-        mode="coding-agent", runtime=RuntimeConnection.for_tcp("localhost", 1234)
-    )
+    client = CopilotClient(connection=RuntimeConnection.for_uri("localhost:1234"))
     provider = provider_cls(
         skills=[
             _descriptor("alpha", "Alpha skill"),
@@ -492,9 +499,7 @@ async def test_skill_provider_json_rpc_errors_from_provider_are_not_forwarded() 
 
 @pytest.mark.asyncio
 async def test_skill_provider_unknown_session_and_no_provider_return_generic_errors() -> None:
-    client = CopilotClient(
-        mode="coding-agent", runtime=RuntimeConnection.for_tcp("localhost", 1234)
-    )
+    client = CopilotClient(connection=RuntimeConnection.for_uri("localhost:1234"))
 
     with pytest.raises(JsonRpcError) as unknown_error:
         await client._handle_skill_provider_list({"sessionId": "missing-session"})
@@ -521,9 +526,7 @@ async def test_skill_provider_unknown_session_and_no_provider_return_generic_err
 @pytest.mark.parametrize("method", ["list", "read"])
 @pytest.mark.asyncio
 async def test_skill_provider_invalid_params_are_json_rpc_invalid_params(method: str) -> None:
-    client = CopilotClient(
-        mode="coding-agent", runtime=RuntimeConnection.for_tcp("localhost", 1234)
-    )
+    client = CopilotClient(connection=RuntimeConnection.for_uri("localhost:1234"))
     params = {"sessionId": "session-1"} if method == "read" else {}
     handler = (
         client._handle_skill_provider_read
@@ -541,9 +544,7 @@ async def test_skill_provider_invalid_params_are_json_rpc_invalid_params(method:
 
 @pytest.mark.asyncio
 async def test_skill_provider_read_none_is_written_to_json_rpc_result() -> None:
-    sdk_client = CopilotClient(
-        mode="coding-agent", runtime=RuntimeConnection.for_tcp("localhost", 1234)
-    )
+    sdk_client = CopilotClient(connection=RuntimeConnection.for_uri("localhost:1234"))
     process = _WriteOnlyProcess()
     rpc_client = JsonRpcClient(process)
     sdk_client._client = rpc_client
@@ -594,9 +595,7 @@ async def test_skill_provider_task_is_cancelled_by_runtime_cancel_request(
         async def read_skill(self, name: str) -> str | None:
             return await self._block()
 
-    sdk_client = CopilotClient(
-        mode="coding-agent", runtime=RuntimeConnection.for_tcp("localhost", 1234)
-    )
+    sdk_client = CopilotClient(connection=RuntimeConnection.for_uri("localhost:1234"))
     process = _WriteOnlyProcess()
     rpc_client = JsonRpcClient(process)
     rpc_client._loop = asyncio.get_running_loop()
@@ -643,9 +642,7 @@ async def test_skill_provider_task_is_cancelled_by_runtime_cancel_request(
 @pytest.mark.asyncio
 async def test_skill_provider_is_cleared_on_teardown_paths(teardown: str) -> None:
     provider = _SyncSkillProvider(skills=[_descriptor("demo")])
-    client = CopilotClient(
-        mode="coding-agent", runtime=RuntimeConnection.for_tcp("localhost", 1234)
-    )
+    client = CopilotClient(connection=RuntimeConnection.for_uri("localhost:1234"))
     session = CopilotSession("session-1", Mock())
     session._register_skill_provider(provider)
 
@@ -676,9 +673,7 @@ async def test_skill_provider_is_cleared_on_teardown_paths(teardown: str) -> Non
 @pytest.mark.parametrize("operation", ["create", "resume"])
 @pytest.mark.asyncio
 async def test_skill_provider_is_cleared_after_failed_create_or_resume(operation: str) -> None:
-    client = CopilotClient(
-        mode="coding-agent", runtime=RuntimeConnection.for_tcp("localhost", 1234)
-    )
+    client = CopilotClient(connection=RuntimeConnection.for_uri("localhost:1234"))
     provider = _SyncSkillProvider(skills=[_descriptor("demo")])
     captured_session: CopilotSession | None = None
 
@@ -693,9 +688,9 @@ async def test_skill_provider_is_cleared_after_failed_create_or_resume(operation
 
     with pytest.raises(RuntimeError, match="admission failed"):
         if operation == "create":
-            await client.create_session(session_id="failed-session", skills={"provider": provider})
+            await client.create_session(session_id="failed-session", skill_provider=provider)
         else:
-            await client.resume_session("failed-session", skills={"provider": provider})
+            await client.resume_session("failed-session", skill_provider=provider)
 
     assert "failed-session" not in client._sessions
     assert captured_session is not None
@@ -704,9 +699,7 @@ async def test_skill_provider_is_cleared_after_failed_create_or_resume(operation
 
 @pytest.mark.asyncio
 async def test_failed_resume_restores_the_resident_skill_provider() -> None:
-    client = CopilotClient(
-        mode="coding-agent", runtime=RuntimeConnection.for_tcp("localhost", 1234)
-    )
+    client = CopilotClient(connection=RuntimeConnection.for_uri("localhost:1234"))
     resident = _SyncSkillProvider(skills=[_descriptor("demo")])
     replacement = _SyncSkillProvider(skills=[_descriptor("demo")])
 
@@ -716,10 +709,10 @@ async def test_failed_resume_restores_the_resident_skill_provider() -> None:
         return await _default_request(method, params, kwargs)
 
     _install_fake_client(client, request)
-    session = await client.create_session(session_id="session-1", skills={"provider": resident})
+    session = await client.create_session(session_id="session-1", skill_provider=resident)
 
     with pytest.raises(RuntimeError, match="resume failed"):
-        await client.resume_session("session-1", skills={"provider": replacement})
+        await client.resume_session("session-1", skill_provider=replacement)
 
     assert client._sessions["session-1"] is session
     assert await client._handle_skill_provider_list({"sessionId": "session-1"}) == {
@@ -730,9 +723,7 @@ async def test_failed_resume_restores_the_resident_skill_provider() -> None:
 
 @pytest.mark.asyncio
 async def test_resume_rebinds_or_unbinds_skill_provider() -> None:
-    client = CopilotClient(
-        mode="coding-agent", runtime=RuntimeConnection.for_tcp("localhost", 1234)
-    )
+    client = CopilotClient(connection=RuntimeConnection.for_uri("localhost:1234"))
     provider_a = _SyncSkillProvider(
         skills=[_descriptor("demo")],
         markdown={"demo": "from A"},
@@ -747,7 +738,7 @@ async def test_resume_rebinds_or_unbinds_skill_provider() -> None:
     session._register_skill_provider(provider_a)
     client._sessions["session-1"] = session
 
-    await client.resume_session("session-1", skills={"provider": provider_b})
+    await client.resume_session("session-1", skill_provider=provider_b)
     assert await client._handle_skill_provider_read({"sessionId": "session-1", "name": "demo"}) == {
         "markdown": "from B"
     }

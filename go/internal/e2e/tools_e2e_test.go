@@ -10,9 +10,9 @@ import (
 	"sync"
 	"testing"
 
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
-	"github.com/microsoft/copilot-sdk/go/v2/internal/e2e/testharness"
-	"github.com/microsoft/copilot-sdk/go/v2/rpc"
+	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/internal/e2e/testharness"
+	"github.com/github/copilot-sdk/go/rpc"
 )
 
 func TestToolsE2E(t *testing.T) {
@@ -35,7 +35,10 @@ func TestToolsE2E(t *testing.T) {
 				return "HOST_PATCH_HANDLED", nil
 			})
 		tool.OverridesBuiltInTool = true
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Tools: copilot.SessionToolOptions{Definitions: []copilot.Tool{tool}}})
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			Tools:               []copilot.Tool{tool},
+		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
 		}
@@ -74,7 +77,9 @@ func TestToolsE2E(t *testing.T) {
 			t.Fatalf("Failed to write test file: %v", err)
 		}
 
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}})
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
 		}
@@ -103,12 +108,14 @@ func TestToolsE2E(t *testing.T) {
 			Input string `json:"input" jsonschema:"String to encrypt"`
 		}
 
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Tools: copilot.SessionToolOptions{Definitions: []copilot.Tool{
-			copilot.DefineTool("encrypt_string", "Encrypts a string",
-				func(params EncryptParams, inv copilot.ToolInvocation) (string, error) {
-					return strings.ToUpper(params.Input), nil
-				}),
-		}},
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			Tools: []copilot.Tool{
+				copilot.DefineTool("encrypt_string", "Encrypts a string",
+					func(params EncryptParams, inv copilot.ToolInvocation) (string, error) {
+						return strings.ToUpper(params.Input), nil
+					}),
+			},
 		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
@@ -161,10 +168,13 @@ func TestToolsE2E(t *testing.T) {
 				return "Found: item_alpha, item_beta", nil
 			})
 
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Tools: copilot.SessionToolOptions{AvailableTools: copilot.NewToolSet().AddCustom("*").AddBuiltIn("web_fetch").ToSlice(), Definitions: []copilot.Tool{
-			setCurrentPhaseTool,
-			searchItemsTool,
-		}},
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			AvailableTools:      copilot.NewToolSet().AddCustom("*").AddBuiltIn("web_fetch").ToSlice(),
+			Tools: []copilot.Tool{
+				setCurrentPhaseTool,
+				searchItemsTool,
+			},
 		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
@@ -221,12 +231,14 @@ func TestToolsE2E(t *testing.T) {
 
 		type EmptyParams struct{}
 
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Tools: copilot.SessionToolOptions{Definitions: []copilot.Tool{
-			copilot.DefineTool("get_user_location", "Gets the user's location",
-				func(params EmptyParams, inv copilot.ToolInvocation) (any, error) {
-					return nil, errors.New("Melbourne")
-				}),
-		}},
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			Tools: []copilot.Tool{
+				copilot.DefineTool("get_user_location", "Gets the user's location",
+					func(params EmptyParams, inv copilot.ToolInvocation) (any, error) {
+						return nil, errors.New("Melbourne")
+					}),
+			},
 		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
@@ -324,27 +336,29 @@ func TestToolsE2E(t *testing.T) {
 
 		var receivedInvocation *copilot.ToolInvocation
 
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Tools: copilot.SessionToolOptions{Definitions: []copilot.Tool{
-			copilot.DefineTool("db_query", "Performs a database query",
-				func(params DbQueryParams, inv copilot.ToolInvocation) ([]City, error) {
-					receivedInvocation = &inv
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			Tools: []copilot.Tool{
+				copilot.DefineTool("db_query", "Performs a database query",
+					func(params DbQueryParams, inv copilot.ToolInvocation) ([]City, error) {
+						receivedInvocation = &inv
 
-					if params.Query.Table != "cities" {
-						t.Errorf("Expected table 'cities', got '%s'", params.Query.Table)
-					}
-					if len(params.Query.IDs) != 2 || params.Query.IDs[0] != 12 || params.Query.IDs[1] != 19 {
-						t.Errorf("Expected IDs [12, 19], got %v", params.Query.IDs)
-					}
-					if !params.Query.SortAscending {
-						t.Errorf("Expected sortAscending to be true")
-					}
+						if params.Query.Table != "cities" {
+							t.Errorf("Expected table 'cities', got '%s'", params.Query.Table)
+						}
+						if len(params.Query.IDs) != 2 || params.Query.IDs[0] != 12 || params.Query.IDs[1] != 19 {
+							t.Errorf("Expected IDs [12, 19], got %v", params.Query.IDs)
+						}
+						if !params.Query.SortAscending {
+							t.Errorf("Expected sortAscending to be true")
+						}
 
-					return []City{
-						{CountryID: 19, CityName: "Passos", Population: 135460},
-						{CountryID: 12, CityName: "San Lorenzo", Population: 204356},
-					}, nil
-				}),
-		}},
+						return []City{
+							{CountryID: 19, CityName: "Passos", Population: 135460},
+							{CountryID: 12, CityName: "San Lorenzo", Population: 204356},
+						}, nil
+					}),
+			},
 		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
@@ -416,12 +430,14 @@ func TestToolsE2E(t *testing.T) {
 		safeLookupTool.SkipPermission = true
 
 		didRunPermissionRequest := false
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: func(request copilot.PermissionRequest, invocation copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
-			didRunPermissionRequest = true
-			return &rpc.PermissionDecisionNoResult{}, nil
-		}}, Tools: copilot.SessionToolOptions{Definitions: []copilot.Tool{
-			safeLookupTool,
-		}},
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: func(request copilot.PermissionRequest, invocation copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
+				didRunPermissionRequest = true
+				return &rpc.PermissionDecisionNoResult{}, nil
+			},
+			Tools: []copilot.Tool{
+				safeLookupTool,
+			},
 		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
@@ -461,24 +477,26 @@ func TestToolsE2E(t *testing.T) {
 		cityCalled := make(chan string, 1)
 		countryCalled := make(chan string, 1)
 
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Tools: copilot.SessionToolOptions{Definitions: []copilot.Tool{
-			copilot.DefineTool("lookup_city", "Looks up city information",
-				func(params CityParams, inv copilot.ToolInvocation) (string, error) {
-					select {
-					case cityCalled <- params.City:
-					default:
-					}
-					return "CITY_" + strings.ToUpper(params.City), nil
-				}),
-			copilot.DefineTool("lookup_country", "Looks up country information",
-				func(params CountryParams, inv copilot.ToolInvocation) (string, error) {
-					select {
-					case countryCalled <- params.Country:
-					default:
-					}
-					return "COUNTRY_" + strings.ToUpper(params.Country), nil
-				}),
-		}},
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			Tools: []copilot.Tool{
+				copilot.DefineTool("lookup_city", "Looks up city information",
+					func(params CityParams, inv copilot.ToolInvocation) (string, error) {
+						select {
+						case cityCalled <- params.City:
+						default:
+						}
+						return "CITY_" + strings.ToUpper(params.City), nil
+					}),
+				copilot.DefineTool("lookup_country", "Looks up country information",
+					func(params CountryParams, inv copilot.ToolInvocation) (string, error) {
+						select {
+						case countryCalled <- params.Country:
+						default:
+						}
+						return "COUNTRY_" + strings.ToUpper(params.Country), nil
+					}),
+			},
 		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
@@ -532,17 +550,21 @@ func TestToolsE2E(t *testing.T) {
 
 		excludedToolCalled := false
 
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Tools: copilot.SessionToolOptions{Definitions: []copilot.Tool{
-			copilot.DefineTool("allowed_tool", "An allowed tool",
-				func(params InputParams, inv copilot.ToolInvocation) (string, error) {
-					return "ALLOWED_" + strings.ToUpper(params.Input), nil
-				}),
-			copilot.DefineTool("excluded_tool", "A tool that should be excluded",
-				func(params InputParams, inv copilot.ToolInvocation) (string, error) {
-					excludedToolCalled = true
-					return "EXCLUDED_" + strings.ToUpper(params.Input), nil
-				}),
-		}, AvailableTools: []string{"allowed_tool", "excluded_tool"}, ExcludedTools: []string{"excluded_tool"}},
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			Tools: []copilot.Tool{
+				copilot.DefineTool("allowed_tool", "An allowed tool",
+					func(params InputParams, inv copilot.ToolInvocation) (string, error) {
+						return "ALLOWED_" + strings.ToUpper(params.Input), nil
+					}),
+				copilot.DefineTool("excluded_tool", "A tool that should be excluded",
+					func(params InputParams, inv copilot.ToolInvocation) (string, error) {
+						excludedToolCalled = true
+						return "EXCLUDED_" + strings.ToUpper(params.Input), nil
+					}),
+			},
+			AvailableTools: []string{"allowed_tool", "excluded_tool"},
+			ExcludedTools:  []string{"excluded_tool"},
 		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
@@ -581,9 +603,11 @@ func TestToolsE2E(t *testing.T) {
 			})
 		grepTool.OverridesBuiltInTool = true
 
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Tools: copilot.SessionToolOptions{Definitions: []copilot.Tool{
-			grepTool,
-		}},
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			Tools: []copilot.Tool{
+				grepTool,
+			},
 		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
@@ -616,17 +640,19 @@ func TestToolsE2E(t *testing.T) {
 		var permissionRequests []copilot.PermissionRequest
 		var mu sync.Mutex
 
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Tools: copilot.SessionToolOptions{Definitions: []copilot.Tool{
-			copilot.DefineTool("encrypt_string", "Encrypts a string",
-				func(params EncryptParams, inv copilot.ToolInvocation) (string, error) {
-					return strings.ToUpper(params.Input), nil
-				}),
-		}}, Permissions: copilot.SessionPermissionOptions{OnRequest: func(request copilot.PermissionRequest, invocation copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
-			mu.Lock()
-			permissionRequests = append(permissionRequests, request)
-			mu.Unlock()
-			return &rpc.PermissionDecisionApproveOnce{}, nil
-		}},
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			Tools: []copilot.Tool{
+				copilot.DefineTool("encrypt_string", "Encrypts a string",
+					func(params EncryptParams, inv copilot.ToolInvocation) (string, error) {
+						return strings.ToUpper(params.Input), nil
+					}),
+			},
+			OnPermissionRequest: func(request copilot.PermissionRequest, invocation copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
+				mu.Lock()
+				permissionRequests = append(permissionRequests, request)
+				mu.Unlock()
+				return &rpc.PermissionDecisionApproveOnce{}, nil
+			},
 		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
@@ -674,15 +700,17 @@ func TestToolsE2E(t *testing.T) {
 
 		toolHandlerCalled := false
 
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Tools: copilot.SessionToolOptions{Definitions: []copilot.Tool{
-			copilot.DefineTool("encrypt_string", "Encrypts a string",
-				func(params EncryptParams, inv copilot.ToolInvocation) (string, error) {
-					toolHandlerCalled = true
-					return strings.ToUpper(params.Input), nil
-				}),
-		}}, Permissions: copilot.SessionPermissionOptions{OnRequest: func(request copilot.PermissionRequest, invocation copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
-			return &rpc.PermissionDecisionReject{}, nil
-		}},
+		session, err := client.CreateSession(t.Context(), &copilot.SessionConfig{
+			Tools: []copilot.Tool{
+				copilot.DefineTool("encrypt_string", "Encrypts a string",
+					func(params EncryptParams, inv copilot.ToolInvocation) (string, error) {
+						toolHandlerCalled = true
+						return strings.ToUpper(params.Input), nil
+					}),
+			},
+			OnPermissionRequest: func(request copilot.PermissionRequest, invocation copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
+				return &rpc.PermissionDecisionReject{}, nil
+			},
 		})
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)

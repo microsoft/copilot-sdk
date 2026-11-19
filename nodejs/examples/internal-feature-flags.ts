@@ -62,9 +62,7 @@ async function showFeatureFlags(
             mode: "local",
             streamerMode: false,
         },
-        experiments: {
-            assignments: { Features: [], Flights: {}, Configs: [], AssignmentContext: "example" },
-        },
+        expAssignments: { Features: [], Flights: {}, Configs: [], AssignmentContext: "example" },
     });
     const session = createInternalSessionRpc(connection, sessionId);
     const initial = await session.settings.evaluatePredicate({ name: "githubIqEnabled" });

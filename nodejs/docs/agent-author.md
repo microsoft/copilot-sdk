@@ -61,7 +61,7 @@ Discovery rules:
 ## Minimal Skeleton
 
 ```js
-import { joinSession } from "@microsoft/copilot-sdk/extension";
+import { joinSession } from "@github/copilot-sdk/extension";
 
 await joinSession({
     tools: [], // Optional — custom tools

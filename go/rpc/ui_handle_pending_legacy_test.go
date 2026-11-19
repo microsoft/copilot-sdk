@@ -10,17 +10,18 @@ import (
 )
 
 var _ interface {
-	HandlePendingElicitation(context.Context, *UIHandlePendingElicitationRequest) (*UIElicitationResult, error)
-	HandlePendingUserInput(context.Context, *UIHandlePendingUserInputRequest) (*UIHandlePendingResult, error)
-	HandlePendingExitPlanMode(context.Context, *UIHandlePendingExitPlanModeRequest) (*UIHandlePendingResult, error)
+	HandlePendingElicitationWithOptions(context.Context, *UIHandlePendingElicitationOptions) (*UIElicitationResult, error)
+	HandlePendingUserInputWithOptions(context.Context, *UIHandlePendingUserInputOptions) (*UIHandlePendingResult, error)
+	HandlePendingExitPlanModeWithOptions(context.Context, *UIHandlePendingExitPlanModeOptions) (*UIHandlePendingResult, error)
 } = (*UIAPI)(nil)
 
-// Unspecified decision attribution must remain absent from prompt-answer requests.
-func TestUIHandlePendingRequestsOmitUnspecifiedDecisionContext(t *testing.T) {
+// The published prompt-answer requests keep their positional literals; the
+// label travels only through the options requests.
+func TestUIHandlePendingRequestsPreserveUnkeyedLiterals(t *testing.T) {
 	for _, request := range []any{
-		UIHandlePendingElicitationRequest{RequestID: "elicitation", Result: UIElicitationResponse{Action: UIElicitationResponseActionAccept}},
-		UIHandlePendingUserInputRequest{RequestID: "input", Response: UIUserInputResponse{Answer: "yes"}},
-		UIHandlePendingExitPlanModeRequest{RequestID: "plan", Response: UIExitPlanModeResponse{Approved: true}},
+		UIHandlePendingElicitationRequest{"elicitation", UIElicitationResponse{Action: UIElicitationResponseActionAccept}},
+		UIHandlePendingUserInputRequest{"input", UIUserInputResponse{Answer: "yes"}},
+		UIHandlePendingExitPlanModeRequest{"plan", UIExitPlanModeResponse{Approved: true}},
 	} {
 		data, err := json.Marshal(request)
 		if err != nil {

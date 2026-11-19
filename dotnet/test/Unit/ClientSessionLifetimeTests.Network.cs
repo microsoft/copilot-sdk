@@ -5,10 +5,10 @@
 #if NET8_0_OR_GREATER
 using System.Text;
 using System.Text.Json;
-using Microsoft.Copilot.Rpc;
+using GitHub.Copilot.Rpc;
 using Xunit;
 
-namespace Microsoft.Copilot.Test.Unit;
+namespace GitHub.Copilot.Test.Unit;
 
 public sealed partial class ClientSessionLifetimeTests
 {
@@ -24,8 +24,7 @@ public sealed partial class ClientSessionLifetimeTests
         var calls = new List<string>();
         await using var client = new CopilotClient(new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForTcp(server.Host, server.Port),
+            Connection = RuntimeConnection.ForUri(server.Url),
             Network = new NetworkConfig
             {
                 ResolveProxy = async (request, _) =>
@@ -103,8 +102,7 @@ public sealed partial class ClientSessionLifetimeTests
         server.ResponseFactory = NetworkSetProviderResponse;
         await using var client = new CopilotClient(new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForTcp(server.Host, server.Port),
+            Connection = RuntimeConnection.ForUri(server.Url),
             Network = configured
                 ? new NetworkConfig
                 {
@@ -157,15 +155,14 @@ public sealed partial class ClientSessionLifetimeTests
         };
         await using var client = new CopilotClient(new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForTcp(server.Host, server.Port),
+            Connection = RuntimeConnection.ForUri(server.Url),
             Network = new NetworkConfig { AuthenticateNegotiate = (_, _) => Task.FromResult<string?>(null) }
         });
         var timeout = TimeSpan.FromSeconds(5);
 
         var starting = client.StartAsync();
         await server.RequestsChanged.WaitForAsync(() => server.Requests.Any(request => request.Method == "connect"), timeout);
-        var creating = client.CreateSessionAsync(new CreateSessionOptions());
+        var creating = client.CreateSessionAsync(new SessionConfig());
         try
         {
             // A reply on the same transport acknowledges preceding client writes
@@ -188,21 +185,23 @@ public sealed partial class ClientSessionLifetimeTests
     }
 
     [Fact]
-    public async Task Network_SetProvider_Omits_Null_Callbacks()
+    public async Task Network_SetProvider_Preserves_Nullable_Positional_Calls()
     {
         await using var server = await FakeCopilotServer.StartAsync();
         server.ResponseFactory = NetworkSetProviderResponse;
         await using var client = new CopilotClient(new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForTcp(server.Host, server.Port)
+            Connection = RuntimeConnection.ForUri(server.Url)
         });
         await client.StartAsync();
         server.ClearRequests();
 
         await client.Rpc.Network.SetProviderAsync(null);
         await client.Rpc.Network.SetProviderAsync(null, cancellationToken: CancellationToken.None);
-        await client.Rpc.Network.SetProviderAsync(authenticateBasic: new NetworkAuthenticateBasicOptions());
+        await client.Rpc.Network.SetProviderWithOptionsAsync(new NetworkSetProviderRequest
+        {
+            AuthenticateBasic = new NetworkAuthenticateBasicOptions(),
+        });
 
         Assert.Equal(
             ["{}", "{}", """{"authenticateBasic":{}}"""],
@@ -217,8 +216,7 @@ public sealed partial class ClientSessionLifetimeTests
         var fail = false;
         await using var client = new CopilotClient(new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForTcp(server.Host, server.Port),
+            Connection = RuntimeConnection.ForUri(server.Url),
             Network = new NetworkConfig
             {
                 ResolveProxy = (_, _) => fail ? throw new InvalidOperationException("lookup failed") : Task.FromResult<string?>(null),
@@ -257,8 +255,7 @@ public sealed partial class ClientSessionLifetimeTests
         server.ResponseFactory = NetworkSetProviderResponse;
         await using var client = new CopilotClient(new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForTcp(server.Host, server.Port),
+            Connection = RuntimeConnection.ForUri(server.Url),
             Network = AllNetworkCallbacks(async _ =>
             {
                 using var callbackTimeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(10));
@@ -287,8 +284,7 @@ public sealed partial class ClientSessionLifetimeTests
         var observedCancellation = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var client = new CopilotClient(new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForTcp(server.Host, server.Port),
+            Connection = RuntimeConnection.ForUri(server.Url),
             // Simulates a lookup that blocks (for example on a credential prompt) until cancelled before returning
             // a task, then answers anyway.
             Network = AllNetworkCallbacks(cancellationToken =>
@@ -324,8 +320,7 @@ public sealed partial class ClientSessionLifetimeTests
         var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var client = new CopilotClient(new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForTcp(server.Host, server.Port),
+            Connection = RuntimeConnection.ForUri(server.Url),
             Network = AllNetworkCallbacks(async cancellationToken =>
             {
                 started.SetResult(cancellationToken);
@@ -529,7 +524,7 @@ public sealed partial class ClientSessionLifetimeTests
     }
 
     private static INetworkHandler CreateNetworkAdapter(NetworkConfig config) => (INetworkHandler)Activator.CreateInstance(
-        typeof(NetworkConfig).Assembly.GetType("Microsoft.Copilot.NetworkAdapter", throwOnError: true)!,
+        typeof(NetworkConfig).Assembly.GetType("GitHub.Copilot.NetworkAdapter", throwOnError: true)!,
         System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic,
         binder: null,
         args: [config],

@@ -1,7 +1,7 @@
 //! Connection-level interception of the model-layer HTTP and WebSocket traffic
 //! the runtime issues — for both CAPI and BYOK sessions.
 //!
-//! When [`ClientModelOptions::request_handler`](crate::ClientModelOptions::request_handler)
+//! When [`ClientOptions::request_handler`](crate::ClientOptions::request_handler)
 //! is set, the SDK registers itself as the runtime's request handler on
 //! [`Client::start`](crate::Client::start). From then on, whenever the runtime
 //! would issue a model-layer request (inference, `/models`, `/policy`, …) it
@@ -16,8 +16,6 @@
 //! mutate the handshake or return a custom [`CopilotWebSocketHandler`].
 //! Default pass-through uses platform-verified Rustls on macOS for TLS 1.3,
 //! and native-tls on other platforms, for HTTPS and secure WebSockets.
-//! macOS's native-tls adapter uses TLS-1.2-only Secure Transport; the native
-//! transport and OS-crypto migration boundaries are documented in `network_tls`.
 //!
 //! # Cancellation
 //!

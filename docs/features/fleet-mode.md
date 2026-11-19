@@ -25,7 +25,7 @@ Fleet mode works best when the parent session can create clear units of work, as
 
 ## Starting fleet mode
 
-The SDK exposes fleet mode through the session RPC namespace in several languages. The binding is experimental in the generated RPC surface; pin both the SDK and the Copilot runtime if your application depends on it.
+The SDK exposes fleet mode through the session RPC namespace in several languages. The binding is experimental in the generated RPC surface; pin both the SDK and the Copilot CLI runtime if your application depends on it.
 
 ### From within a session
 
@@ -54,10 +54,8 @@ from copilot import CopilotClient
 from copilot.rpc import FleetStartRequest
 from copilot.session import PermissionHandler
 
-client = CopilotClient(mode="coding-agent")
-session = await client.create_session(
-    permissions={"on_request": PermissionHandler.approve_all}
-)
+client = CopilotClient()
+session = await client.create_session(on_permission_request=PermissionHandler.approve_all)
 
 result = await session.rpc.fleet.start(
     FleetStartRequest(
@@ -82,8 +80,8 @@ import (
 	"context"
 	"fmt"
 
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
-	"github.com/microsoft/copilot-sdk/go/v2/rpc"
+	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/rpc"
 )
 
 func main() {
@@ -91,8 +89,8 @@ func main() {
 }
 
 func run(ctx context.Context) error {
-	client := copilot.NewClient(&copilot.ClientOptions{Mode: copilot.ModeCodingAgent})
-	session, err := client.CreateSession(ctx, &copilot.CreateSessionOptions{})
+	client := copilot.NewClient(nil)
+	session, err := client.CreateSession(ctx, &copilot.SessionConfig{})
 	if err != nil {
 		return err
 	}
@@ -132,11 +130,14 @@ if result.Started {
 
 <!-- docs-validate: hidden -->
 ```csharp
-using Microsoft.Copilot;
+using GitHub.Copilot;
 
-await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent });
-await using var session = await client.CreateSessionAsync(new CreateSessionOptions());
-var result = await session.Rpc.Fleet.StartAsync("Audit each project independently, then summarize the findings.");
+await using var client = new CopilotClient();
+await using var session = await client.CreateSessionAsync(new SessionConfig());
+
+var result = await session.Rpc.Fleet.StartAsync(
+    "Audit each project independently, then summarize the findings.");
+
 if (result.Started)
 {
     Console.WriteLine("Fleet mode started");
@@ -145,7 +146,9 @@ if (result.Started)
 <!-- /docs-validate: hidden -->
 
 ```csharp
-var result = await session.Rpc.Fleet.StartAsync("Audit each project independently, then summarize the findings.");
+var result = await session.Rpc.Fleet.StartAsync(
+    "Audit each project independently, then summarize the findings.");
+
 if (result.Started)
 {
     Console.WriteLine("Fleet mode started");
@@ -158,7 +161,7 @@ if (result.Started)
 <summary><strong>Rust</strong></summary>
 
 ```rust
-use copilot_sdk::rpc::FleetStartRequest;
+use github_copilot_sdk::rpc::FleetStartRequest;
 
 let mut request = FleetStartRequest::default();
 request.prompt = Some("Research each crate independently, then summarize the plan.".into());
@@ -277,12 +280,11 @@ from copilot import CopilotClient
 from copilot.session import PermissionHandler
 from copilot.session_events import SessionEventType
 
-
 async def main():
-    client = CopilotClient(mode="coding-agent")
+    client = CopilotClient()
     await client.start()
     session = await client.create_session(
-        permissions={"on_request": PermissionHandler.approve_all}
+        on_permission_request=PermissionHandler.approve_all,
     )
 
     def handle_event(event):
@@ -292,7 +294,6 @@ async def main():
             print(f"Completed {event.data.agent_display_name}")
 
     unsubscribe = session.on(handle_event)
-
 
 asyncio.run(main())
 ```
@@ -316,7 +317,7 @@ For hook configuration that is already exposed at the SDK layer, see [Hooks](hoo
 
 ## Plugin sub-agents
 
-Load plugin agents through the SDK's [plugin directory options](plugin-directories.md): `--plugin-dir` for a shared runtime process, `plugins.directories` for session-specific additions, or `plugins.builtinDirectories` for trusted host-bundled plugins. Active plugin agents are available as `task(agent_type=...)` sub-agent types, so fleet mode can dispatch to those workers.
+Load plugin agents through the SDK's [plugin directory options](plugin-directories.md): `--plugin-dir` for a shared runtime process, `pluginDirectories` for session-specific additions, or `builtinPluginDirectories` for trusted host-bundled plugins. Active plugin agents are available as `task(agent_type=...)` sub-agent types, so fleet mode can dispatch to those workers.
 
 Conceptually, a fleet prompt can then ask for a specific worker type:
 

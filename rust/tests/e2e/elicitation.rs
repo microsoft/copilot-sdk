@@ -2,15 +2,40 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use copilot_sdk::handler::{ElicitationHandler, PermissionHandler, PermissionResult};
-use copilot_sdk::{
-    CreateSessionOptions, ElicitationRequest, ElicitationResult, RequestId, SessionId,
-    UiInputOptions,
+use github_copilot_sdk::handler::{ElicitationHandler, PermissionHandler, PermissionResult};
+use github_copilot_sdk::{
+    ElicitationRequest, ElicitationResult, RequestId, SessionConfig, SessionId, UiInputOptions,
 };
 use serde_json::json;
 use tokio::sync::Mutex;
 
-use super::support::DEFAULT_TEST_TOKEN;
+use super::support::{DEFAULT_TEST_TOKEN, assert_uuid_like};
+
+#[tokio::test]
+async fn defaults_capabilities_when_not_provided() {
+    super::support::with_shared_e2e_context(
+        &E2E,
+        "elicitation",
+        "defaults_capabilities_when_not_provided",
+        |ctx| {
+            Box::pin(async move {
+                ctx.set_default_copilot_user();
+                let client = ctx.start_client().await;
+                let session = client
+                    .create_session(ctx.approve_all_session_config())
+                    .await
+                    .expect("create session");
+
+                let _capabilities = session.capabilities();
+                assert_uuid_like(session.id());
+
+                session.disconnect().await.expect("disconnect session");
+                client.stop().await.expect("stop client");
+            })
+        },
+    )
+    .await;
+}
 
 #[tokio::test]
 async fn elicitation_throws_when_capability_is_missing() {
@@ -58,6 +83,39 @@ async fn elicitation_throws_when_capability_is_missing() {
 }
 
 #[tokio::test]
+async fn sends_requestelicitation_when_handler_provided() {
+    super::support::with_shared_e2e_context(
+        &E2E,
+        "elicitation",
+        "sends_requestelicitation_when_handler_provided",
+        |ctx| {
+            Box::pin(async move {
+                ctx.set_default_copilot_user();
+                let client = ctx.start_client().await;
+                let session = client
+                    .create_session(
+                        SessionConfig::default()
+                            .with_github_token(DEFAULT_TEST_TOKEN)
+                            .pipe_handler(QueuedElicitationHandler::new([accept(json!({}))])),
+                    )
+                    .await
+                    .expect("create session");
+
+                assert_uuid_like(session.id());
+                assert_eq!(
+                    session.capabilities().ui.and_then(|ui| ui.elicitation),
+                    Some(true)
+                );
+
+                session.disconnect().await.expect("disconnect session");
+                client.stop().await.expect("stop client");
+            })
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
 async fn should_report_elicitation_capability_based_on_handler_presence() {
     super::support::with_shared_e2e_context(
         &E2E,
@@ -69,8 +127,8 @@ async fn should_report_elicitation_capability_based_on_handler_presence() {
                 let client = ctx.start_client().await;
                 let with_handler = client
                     .create_session(
-                        CreateSessionOptions::default()
-                            .with_github(|group| group.with_token(DEFAULT_TEST_TOKEN))
+                        SessionConfig::default()
+                            .with_github_token(DEFAULT_TEST_TOKEN)
                             .pipe_handler(QueuedElicitationHandler::new([accept(json!({}))])),
                     )
                     .await
@@ -105,6 +163,31 @@ async fn should_report_elicitation_capability_based_on_handler_presence() {
 }
 
 #[tokio::test]
+async fn session_without_elicitationhandler_creates_successfully() {
+    super::support::with_shared_e2e_context(
+        &E2E,
+        "elicitation",
+        "session_without_elicitationhandler_creates_successfully",
+        |ctx| {
+            Box::pin(async move {
+                ctx.set_default_copilot_user();
+                let client = ctx.start_client().await;
+                let session = client
+                    .create_session(ctx.approve_all_session_config())
+                    .await
+                    .expect("create session");
+
+                assert_uuid_like(session.id());
+
+                session.disconnect().await.expect("disconnect session");
+                client.stop().await.expect("stop client");
+            })
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
 async fn confirm_returns_true_when_handler_accepts() {
     super::support::with_shared_e2e_context(
         &E2E,
@@ -116,8 +199,8 @@ async fn confirm_returns_true_when_handler_accepts() {
                 let client = ctx.start_client().await;
                 let session = client
                     .create_session(
-                        CreateSessionOptions::default()
-                            .with_github(|group| group.with_token(DEFAULT_TEST_TOKEN))
+                        SessionConfig::default()
+                            .with_github_token(DEFAULT_TEST_TOKEN)
                             .pipe_handler(QueuedElicitationHandler::new([accept(
                                 json!({ "confirmed": true }),
                             )])),
@@ -147,8 +230,8 @@ async fn confirm_returns_false_when_handler_declines() {
                 let client = ctx.start_client().await;
                 let session = client
                     .create_session(
-                        CreateSessionOptions::default()
-                            .with_github(|group| group.with_token(DEFAULT_TEST_TOKEN))
+                        SessionConfig::default()
+                            .with_github_token(DEFAULT_TEST_TOKEN)
                             .pipe_handler(QueuedElicitationHandler::new([decline()])),
                     )
                     .await
@@ -176,8 +259,8 @@ async fn select_returns_selected_option() {
                 let client = ctx.start_client().await;
                 let session = client
                     .create_session(
-                        CreateSessionOptions::default()
-                            .with_github(|group| group.with_token(DEFAULT_TEST_TOKEN))
+                        SessionConfig::default()
+                            .with_github_token(DEFAULT_TEST_TOKEN)
                             .pipe_handler(QueuedElicitationHandler::new([accept(
                                 json!({ "selection": "beta" }),
                             )])),
@@ -215,8 +298,8 @@ async fn input_returns_freeform_value() {
                 let client = ctx.start_client().await;
                 let session = client
                     .create_session(
-                        CreateSessionOptions::default()
-                            .with_github(|group| group.with_token(DEFAULT_TEST_TOKEN))
+                        SessionConfig::default()
+                            .with_github_token(DEFAULT_TEST_TOKEN)
                             .pipe_handler(QueuedElicitationHandler::new([accept(
                                 json!({ "value": "typed value" }),
                             )])),
@@ -262,8 +345,8 @@ async fn elicitation_returns_all_action_shapes() {
                 let client = ctx.start_client().await;
                 let session = client
                     .create_session(
-                        CreateSessionOptions::default()
-                            .with_github(|group| group.with_token(DEFAULT_TEST_TOKEN))
+                        SessionConfig::default()
+                            .with_github_token(DEFAULT_TEST_TOKEN)
                             .pipe_handler(QueuedElicitationHandler::new([
                                 accept(json!({ "name": "Mona" })),
                                 decline(),
@@ -330,7 +413,7 @@ impl PermissionHandler for QueuedElicitationHandler {
         &self,
         _session_id: SessionId,
         _request_id: RequestId,
-        _data: copilot_sdk::PermissionRequestData,
+        _data: github_copilot_sdk::PermissionRequestData,
     ) -> PermissionResult {
         PermissionResult::approve_once()
     }
@@ -353,25 +436,21 @@ impl ElicitationHandler for QueuedElicitationHandler {
 }
 
 /// Test helper: install a single struct that implements both
-/// [`PermissionHandler`] and [`ElicitationHandler`] on a [`CreateSessionOptions`].
+/// [`PermissionHandler`] and [`ElicitationHandler`] on a [`SessionConfig`].
 trait PipeHandler {
     fn pipe_handler<H>(self, handler: H) -> Self
     where
         H: PermissionHandler + ElicitationHandler + 'static;
 }
 
-impl PipeHandler for CreateSessionOptions {
+impl PipeHandler for SessionConfig {
     fn pipe_handler<H>(self, handler: H) -> Self
     where
         H: PermissionHandler + ElicitationHandler + 'static,
     {
         let handler = Arc::new(handler);
-        self.with_permissions(|group| {
-            group.with_on_request(handler.clone() as Arc<dyn PermissionHandler>)
-        })
-        .with_interaction(|group| {
-            group.with_on_elicitation_request(handler as Arc<dyn ElicitationHandler>)
-        })
+        self.with_permission_handler(handler.clone() as Arc<dyn PermissionHandler>)
+            .with_elicitation_handler(handler as Arc<dyn ElicitationHandler>)
     }
 }
 
@@ -396,4 +475,4 @@ fn cancel() -> ElicitationResult {
     }
 }
 static E2E: super::support::SharedE2eGroup =
-    super::support::SharedE2eGroup::standard("elicitation", 7);
+    super::support::SharedE2eGroup::standard("elicitation", 10);

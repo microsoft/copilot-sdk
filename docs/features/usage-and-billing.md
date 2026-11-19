@@ -33,12 +33,12 @@ Check `observationKind`, `quantityKind`, and `acquisitionStatus` before interpre
 
 For Microsoft 365 Copilot, access and capacity are service verdicts, while quantities are advisory. For example, `allowed`/`available` with both quantities explicitly zero means **0 / 0 AIC reported**, not 100% consumed or inconsistent state. A missing entitlement is different from a zero entitlement. The `-1` entitlement sentinel means unlimited entitlement without changing the reported capacity state. Inference headers can reflect cached admission state; neither those headers nor an on-demand quota refresh establish the charge for the preceding call.
 
-Usage totals belong to a session, not the active account. In the interactive CLI, switching away from a non-empty Microsoft 365 Copilot session requires starting a new session. The previous session retains its usage and history for resume; the new session starts its own totals.
+Usage totals belong to a session, not the active account. In the CLI, switching away from a non-empty Microsoft 365 Copilot session requires starting a new session. The previous session retains its usage and history for resume; the new session starts its own totals.
 
 > [!NOTE]
-> `session.quota`, `session.usage.getMetrics`, `session.metadata.contextInfo`, and `session.metadata.recomputeContextTokens` are marked experimental in the generated RPC surface. In .NET they raise the `MCPSDK001` experimental diagnostic, which you suppress with `#pragma warning disable MCPSDK001` or a project-level `<NoWarn>MCPSDK001</NoWarn>`. Pin both the SDK and the Copilot runtime if your application depends on them.
+> `session.quota`, `session.usage.getMetrics`, `session.metadata.contextInfo`, and `session.metadata.recomputeContextTokens` are marked experimental in the generated RPC surface. In .NET they raise the `GHCP001` experimental diagnostic, which you suppress with `#pragma warning disable GHCP001` or a project-level `<NoWarn>GHCP001</NoWarn>`. Pin both the SDK and the Copilot CLI runtime if your application depends on them.
 
-The field tables below list only the fields used in the examples on this page. The complete, always-current field reference is the generated SDK types plus [Streaming events](./streaming-events.md), which is regenerated from the runtime schema on every dependency bump. Treat those as the source of truth and this page as a task-oriented guide.
+The field tables below list only the fields used in the examples on this page. The complete, always-current field reference is the generated SDK types plus [Streaming events](./streaming-events.md), which is regenerated from the CLI schema on every dependency bump. Treat those as the source of truth and this page as a task-oriented guide.
 
 ## Per-call token counts
 
@@ -65,14 +65,10 @@ The example below uses `model`, `inputTokens`, `outputTokens` and `cost`; the ca
 
 <!-- docs-validate: hidden -->
 ```typescript
-import { CopilotClient } from "@microsoft/copilot-sdk";
+import { CopilotClient } from "@github/copilot-sdk";
 
-const client = new CopilotClient({ mode: "coding-agent" });
-const session = await client.createSession({
-    events: {
-        streaming: true,
-    },
-});
+const client = new CopilotClient();
+const session = await client.createSession({ streaming: true });
 
 session.on("assistant.usage", (event) => {
     const { model, inputTokens, outputTokens, cost } = event.data;
@@ -102,15 +98,13 @@ session.on("assistant.usage", (event) => {
 from copilot import CopilotClient
 from copilot.session_events import SessionEventType
 
-client = CopilotClient(mode="coding-agent")
-session = await client.create_session(events={"streaming": True})
-
+client = CopilotClient()
+session = await client.create_session(streaming=True)
 
 def on_usage(event):
     if event.type == SessionEventType.ASSISTANT_USAGE:
         data = event.data
         print(f"{data.model}: in={data.input_tokens or 0} out={data.output_tokens or 0} cost={data.cost or 0}")
-
 
 session.on(on_usage)
 ```
@@ -138,23 +132,19 @@ import (
 	"context"
 	"fmt"
 
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
-	"github.com/microsoft/copilot-sdk/go/v2/rpc"
+	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/rpc"
 )
 
 func main() {
 	ctx := context.Background()
-	client := copilot.NewClient(&copilot.ClientOptions{Mode: copilot.ModeCodingAgent})
+	client := copilot.NewClient(nil)
 	client.Start(ctx)
 
-	session, _ := client.CreateSession(ctx, &copilot.CreateSessionOptions{
-		Events: copilot.SessionEventOptions{
-			Streaming: copilot.Bool(true),
-		},
-		Permissions: copilot.SessionPermissionOptions{
-			OnRequest: func(req copilot.PermissionRequest, inv copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
-				return &rpc.PermissionDecisionApproveOnce{}, nil
-			},
+	session, _ := client.CreateSession(ctx, &copilot.SessionConfig{
+		Streaming: copilot.Bool(true),
+		OnPermissionRequest: func(req copilot.PermissionRequest, inv copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
+			return &rpc.PermissionDecisionApproveOnce{}, nil
 		},
 	})
 
@@ -206,7 +196,7 @@ session.On(func(event copilot.SessionEvent) {
 <summary><strong>.NET</strong></summary>
 
 ```csharp
-#pragma warning disable MCPSDK001 // The per-call Cost field is experimental.
+#pragma warning disable GHCP001 // The per-call Cost field is experimental.
 session.On<AssistantUsageEvent>(evt =>
 {
     var data = evt.Data;
@@ -222,8 +212,8 @@ session.On<AssistantUsageEvent>(evt =>
 
 <!-- docs-validate: hidden -->
 ```java
-import com.microsoft.copilot.CopilotSession;
-import com.microsoft.copilot.generated.AssistantUsageEvent;
+import com.github.copilot.CopilotSession;
+import com.github.copilot.generated.AssistantUsageEvent;
 
 public class AssistantUsageExample {
     static void printUsage(CopilotSession session) {
@@ -255,7 +245,7 @@ session.on(AssistantUsageEvent.class, event -> {
 <summary><strong>Rust</strong></summary>
 
 ```rust
-use copilot_sdk::session_events::AssistantUsageData;
+use github_copilot_sdk::session_events::AssistantUsageData;
 
 let mut events = session.subscribe();
 while let Ok(event) = events.recv().await {
@@ -293,14 +283,10 @@ The runtime emits a `session.usage_info` event whenever the context-window size 
 
 <!-- docs-validate: hidden -->
 ```typescript
-import { CopilotClient } from "@microsoft/copilot-sdk";
+import { CopilotClient } from "@github/copilot-sdk";
 
-const client = new CopilotClient({ mode: "coding-agent" });
-const session = await client.createSession({
-    events: {
-        streaming: true,
-    },
-});
+const client = new CopilotClient();
+const session = await client.createSession({ streaming: true });
 
 session.on("session.usage_info", (event) => {
     const { currentTokens, tokenLimit } = event.data;
@@ -328,16 +314,14 @@ session.on("session.usage_info", (event) => {
 from copilot import CopilotClient
 from copilot.session_events import SessionEventType
 
-client = CopilotClient(mode="coding-agent")
-session = await client.create_session(events={"streaming": True})
-
+client = CopilotClient()
+session = await client.create_session(streaming=True)
 
 def on_usage_info(event):
     if event.type == SessionEventType.SESSION_USAGE_INFO:
         data = event.data
         pct = round(data.current_tokens / data.token_limit * 100)
         print(f"Context: {data.current_tokens}/{data.token_limit} ({pct}%)")
-
 
 session.on(on_usage_info)
 ```
@@ -366,23 +350,19 @@ import (
 	"context"
 	"fmt"
 
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
-	"github.com/microsoft/copilot-sdk/go/v2/rpc"
+	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/rpc"
 )
 
 func main() {
 	ctx := context.Background()
-	client := copilot.NewClient(&copilot.ClientOptions{Mode: copilot.ModeCodingAgent})
+	client := copilot.NewClient(nil)
 	client.Start(ctx)
 
-	session, _ := client.CreateSession(ctx, &copilot.CreateSessionOptions{
-		Events: copilot.SessionEventOptions{
-			Streaming: copilot.Bool(true),
-		},
-		Permissions: copilot.SessionPermissionOptions{
-			OnRequest: func(req copilot.PermissionRequest, inv copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
-				return &rpc.PermissionDecisionApproveOnce{}, nil
-			},
+	session, _ := client.CreateSession(ctx, &copilot.SessionConfig{
+		Streaming: copilot.Bool(true),
+		OnPermissionRequest: func(req copilot.PermissionRequest, inv copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
+			return &rpc.PermissionDecisionApproveOnce{}, nil
 		},
 	})
 
@@ -430,8 +410,8 @@ session.On<SessionUsageInfoEvent>(evt =>
 
 <!-- docs-validate: hidden -->
 ```java
-import com.microsoft.copilot.CopilotSession;
-import com.microsoft.copilot.generated.SessionUsageInfoEvent;
+import com.github.copilot.CopilotSession;
+import com.github.copilot.generated.SessionUsageInfoEvent;
 
 public class ContextUtilizationExample {
     static void printContext(CopilotSession session) {
@@ -459,7 +439,7 @@ session.on(SessionUsageInfoEvent.class, event -> {
 <summary><strong>Rust</strong></summary>
 
 ```rust
-use copilot_sdk::session_events::SessionUsageInfoData;
+use github_copilot_sdk::session_events::SessionUsageInfoData;
 
 let mut events = session.subscribe();
 while let Ok(event) = events.recv().await {
@@ -485,9 +465,9 @@ The result's `contextInfo` is `null` until the session has been initialized (the
 
 <!-- docs-validate: hidden -->
 ```typescript
-import { CopilotClient } from "@microsoft/copilot-sdk";
+import { CopilotClient } from "@github/copilot-sdk";
 
-const client = new CopilotClient({ mode: "coding-agent" });
+const client = new CopilotClient();
 const session = await client.createSession({});
 
 const { contextInfo } = await session.rpc.metadata.contextInfo({
@@ -528,7 +508,7 @@ if (contextInfo) {
 from copilot import CopilotClient
 from copilot.rpc import MetadataContextInfoRequest
 
-client = CopilotClient(mode="coding-agent")
+client = CopilotClient()
 session = await client.create_session()
 
 result = await session.rpc.metadata.context_info(
@@ -570,16 +550,16 @@ import (
 	"context"
 	"fmt"
 
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
-	"github.com/microsoft/copilot-sdk/go/v2/rpc"
+	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/rpc"
 )
 
 func main() {
 	ctx := context.Background()
-	client := copilot.NewClient(&copilot.ClientOptions{Mode: copilot.ModeCodingAgent})
+	client := copilot.NewClient(nil)
 	client.Start(ctx)
 
-	session, _ := client.CreateSession(ctx, &copilot.CreateSessionOptions{})
+	session, _ := client.CreateSession(ctx, &copilot.SessionConfig{})
 
 	result, _ := session.RPC.Metadata.ContextInfo(ctx, &rpc.MetadataContextInfoRequest{
 		PromptTokenLimit: 0,
@@ -612,7 +592,7 @@ if info := result.ContextInfo; info != nil {
 <summary><strong>.NET</strong></summary>
 
 ```csharp
-#pragma warning disable MCPSDK001 // The context-info API is experimental.
+#pragma warning disable GHCP001 // The context-info API is experimental.
 var result = await session.Rpc.Metadata.ContextInfoAsync(promptTokenLimit: 0, outputTokenLimit: 0);
 var info = result.ContextInfo;
 
@@ -630,9 +610,9 @@ if (info is not null)
 <summary><strong>Java</strong></summary>
 
 ```java
-import com.microsoft.copilot.AllowCopilotExperimental;
-import com.microsoft.copilot.CopilotSession;
-import com.microsoft.copilot.generated.rpc.SessionMetadataContextInfoParams;
+import com.github.copilot.AllowCopilotExperimental;
+import com.github.copilot.CopilotSession;
+import com.github.copilot.generated.rpc.SessionMetadataContextInfoParams;
 
 @AllowCopilotExperimental
 class ContextInfoExample {
@@ -660,7 +640,7 @@ class ContextInfoExample {
 <summary><strong>Rust</strong></summary>
 
 ```rust
-use copilot_sdk::rpc::MetadataContextInfoRequest;
+use github_copilot_sdk::rpc::MetadataContextInfoRequest;
 
 let result = session
     .rpc()
@@ -702,9 +682,9 @@ The example uses the fields below. The generated `UsageGetMetricsResult` type is
 
 <!-- docs-validate: hidden -->
 ```typescript
-import { CopilotClient } from "@microsoft/copilot-sdk";
+import { CopilotClient } from "@github/copilot-sdk";
 
-const client = new CopilotClient({ mode: "coding-agent" });
+const client = new CopilotClient();
 const session = await client.createSession({});
 
 const metrics = await session.rpc.usage.getMetrics();
@@ -748,7 +728,7 @@ for (const [model, m] of Object.entries(metrics.modelMetrics)) {
 ```python
 from copilot import CopilotClient
 
-client = CopilotClient(mode="coding-agent")
+client = CopilotClient()
 session = await client.create_session()
 
 metrics = await session.rpc.usage.get_metrics()
@@ -786,15 +766,15 @@ import (
 	"context"
 	"fmt"
 
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
+	copilot "github.com/github/copilot-sdk/go"
 )
 
 func main() {
 	ctx := context.Background()
-	client := copilot.NewClient(&copilot.ClientOptions{Mode: copilot.ModeCodingAgent})
+	client := copilot.NewClient(nil)
 	client.Start(ctx)
 
-	session, _ := client.CreateSession(ctx, &copilot.CreateSessionOptions{})
+	session, _ := client.CreateSession(ctx, &copilot.SessionConfig{})
 
 	metrics, _ := session.RPC.Usage.GetMetrics(ctx)
 
@@ -841,7 +821,7 @@ for model, m := range metrics.ModelMetrics {
 <summary><strong>.NET</strong></summary>
 
 ```csharp
-#pragma warning disable MCPSDK001 // The accumulated usage metrics API is experimental.
+#pragma warning disable GHCP001 // The accumulated usage metrics API is experimental.
 var metrics = await session.Rpc.Usage.GetMetricsAsync();
 
 var aiCredits = (metrics.TotalNanoAiu ?? 0) / 1e9;
@@ -862,7 +842,7 @@ foreach (var (model, m) in metrics.ModelMetrics)
 
 <!-- docs-validate: hidden -->
 ```java
-import com.microsoft.copilot.CopilotSession;
+import com.github.copilot.CopilotSession;
 
 public class AccumulatedMetricsExample {
     static void printMetrics(CopilotSession session) {
@@ -921,7 +901,7 @@ for (model, m) in &metrics.model_metrics {
 
 ## Per-model AI credit pricing
 
-To estimate cost before you run a turn, read each model's token prices from `models.list`. This is a server-scoped call on the client, so it does not need a session. Prices are expressed in AI credits per billing batch of tokens. The generated `ModelBillingTokenPrices` type lists every field, including `cacheReadPrice`.
+To estimate cost before you run a turn, read each model's token prices from `models.list`. This is a server-scoped call on the client, so it does not need a session. Prices are expressed in AI credits per billing batch of tokens. The generated `ModelBillingTokenPrices` type lists every field, including `cachePrice`.
 
 | Field | Type | Description |
 |---|---|---|
@@ -938,9 +918,9 @@ To estimate cost before you run a turn, read each model's token prices from `mod
 
 <!-- docs-validate: hidden -->
 ```typescript
-import { CopilotClient } from "@microsoft/copilot-sdk";
+import { CopilotClient } from "@github/copilot-sdk";
 
-const client = new CopilotClient({ mode: "coding-agent" });
+const client = new CopilotClient();
 
 const { models } = await client.rpc.models.list({});
 
@@ -978,7 +958,7 @@ for (const model of models) {
 from copilot import CopilotClient
 from copilot.rpc import ModelsListRequest
 
-client = CopilotClient(mode="coding-agent")
+client = CopilotClient()
 
 result = await client.rpc.models.list(ModelsListRequest())
 
@@ -1021,13 +1001,13 @@ import (
 	"context"
 	"fmt"
 
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
-	"github.com/microsoft/copilot-sdk/go/v2/rpc"
+	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/rpc"
 )
 
 func main() {
 	ctx := context.Background()
-	client := copilot.NewClient(&copilot.ClientOptions{Mode: copilot.ModeCodingAgent})
+	client := copilot.NewClient(nil)
 	client.Start(ctx)
 
 	list, _ := client.RPC.Models.List(ctx, &rpc.ModelsListRequest{})
@@ -1092,9 +1072,9 @@ for _, model := range list.Models {
 
 <!-- docs-validate: hidden -->
 ```csharp
-using Microsoft.Copilot;
+using GitHub.Copilot;
 
-await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent });
+await using var client = new CopilotClient();
 
 var list = await client.Rpc.Models.ListAsync();
 
@@ -1129,7 +1109,7 @@ foreach (var model in list.Models)
 
 <!-- docs-validate: hidden -->
 ```java
-import com.microsoft.copilot.CopilotClient;
+import com.github.copilot.CopilotClient;
 
 public class ModelPricingExample {
     static void printPricing(CopilotClient client) {
@@ -1210,9 +1190,9 @@ The example uses the fields below; the generated `AccountQuotaSnapshot` type is 
 
 <!-- docs-validate: hidden -->
 ```typescript
-import { CopilotClient } from "@microsoft/copilot-sdk";
+import { CopilotClient } from "@github/copilot-sdk";
 
-const client = new CopilotClient({ mode: "coding-agent" });
+const client = new CopilotClient();
 
 const { quotaSnapshots } = await client.rpc.account.getQuota({});
 const premium = quotaSnapshots["premium_interactions"];
@@ -1248,7 +1228,7 @@ if (premium) {
 from copilot import CopilotClient
 from copilot.rpc import AccountGetQuotaRequest
 
-client = CopilotClient(mode="coding-agent")
+client = CopilotClient()
 
 result = await client.rpc.account.get_quota(AccountGetQuotaRequest())
 premium = result.quota_snapshots.get("premium_interactions")
@@ -1286,13 +1266,13 @@ import (
 	"fmt"
 	"time"
 
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
-	"github.com/microsoft/copilot-sdk/go/v2/rpc"
+	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/rpc"
 )
 
 func main() {
 	ctx := context.Background()
-	client := copilot.NewClient(&copilot.ClientOptions{Mode: copilot.ModeCodingAgent})
+	client := copilot.NewClient(nil)
 	client.Start(ctx)
 
 	result, _ := client.RPC.Account.GetQuota(ctx, &rpc.AccountGetQuotaRequest{})
@@ -1329,9 +1309,9 @@ if premium, ok := result.QuotaSnapshots["premium_interactions"]; ok {
 
 <!-- docs-validate: hidden -->
 ```csharp
-using Microsoft.Copilot;
+using GitHub.Copilot;
 
-await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent });
+await using var client = new CopilotClient();
 
 var result = await client.Rpc.Account.GetQuotaAsync();
 
@@ -1362,7 +1342,7 @@ if (result.QuotaSnapshots.TryGetValue("premium_interactions", out var premium))
 
 <!-- docs-validate: hidden -->
 ```java
-import com.microsoft.copilot.CopilotClient;
+import com.github.copilot.CopilotClient;
 
 public class AccountQuotaExample {
     static void printQuota(CopilotClient client) {

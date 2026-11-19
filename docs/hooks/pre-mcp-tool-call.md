@@ -74,16 +74,14 @@ Each example adds a tag to the `_meta` of calls to the `github` MCP server and l
 <!-- docs-validate: strict -->
 ```typescript
 const session = await client.createSession({
-    hooks: {
-        handlers: {
-            onPreMcpToolCall: async (input) => {
-                if (input.serverName !== "github") {
-                    return;
-                }
-                return { metaToUse: { ...input._meta, "app/request-source": "docs-example" } };
-            },
-        },
+  hooks: {
+    onPreMcpToolCall: async (input) => {
+      if (input.serverName !== "github") {
+        return;
+      }
+      return { metaToUse: { ...input._meta, "app/request-source": "docs-example" } };
     },
+  },
 });
 ```
 
@@ -96,7 +94,6 @@ const session = await client.createSession({
 ```python
 from copilot import CopilotClient
 
-
 async def main(client: CopilotClient):
     def tag_request(input_data, invocation):
         if input_data["serverName"] != "github":
@@ -105,9 +102,7 @@ async def main(client: CopilotClient):
         meta["app/request-source"] = "docs-example"
         return {"metaToUse": meta}
 
-    session = await client.create_session(
-        hooks={"handlers": {"on_pre_mcp_tool_call": tag_request}}
-    )
+    session = await client.create_session(hooks={"on_pre_mcp_tool_call": tag_request})
 ```
 <!-- /docs-validate: hidden -->
 ```python
@@ -118,10 +113,7 @@ def tag_request(input_data, invocation):
     meta["app/request-source"] = "docs-example"
     return {"metaToUse": meta}
 
-
-session = await client.create_session(
-    hooks={"handlers": {"on_pre_mcp_tool_call": tag_request}}
-)
+session = await client.create_session(hooks={"on_pre_mcp_tool_call": tag_request})
 ```
 
 </details>
@@ -136,39 +128,14 @@ package main
 import (
 	"context"
 
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
+	copilot "github.com/github/copilot-sdk/go"
 )
 
 func main() {
 	var client *copilot.Client
 	ctx := context.Background()
-	session, err := client.CreateSession(ctx, &copilot.CreateSessionOptions{
-		Hooks: copilot.SessionHookOptions{
-			Handlers: &copilot.SessionHooks{
-				OnPreMCPToolCall: func(input copilot.PreMCPToolCallHookInput, invocation copilot.HookInvocation) (*copilot.PreMCPToolCallHookOutput, error) {
-					if input.ServerName != "github" {
-						return nil, nil
-					}
-					meta := map[string]any{}
-					if existing, ok := input.Meta.(map[string]any); ok {
-						for key, value := range existing {
-							meta[key] = value
-						}
-					}
-					meta["app/request-source"] = "docs-example"
-					return &copilot.PreMCPToolCallHookOutput{MetaToUse: meta}, nil
-				},
-			},
-		},
-	})
-	_, _ = session, err
-}
-```
-<!-- /docs-validate: hidden -->
-```go
-session, err := client.CreateSession(ctx, &copilot.CreateSessionOptions{
-	Hooks: copilot.SessionHookOptions{
-		Handlers: &copilot.SessionHooks{
+	session, err := client.CreateSession(ctx, &copilot.SessionConfig{
+		Hooks: &copilot.SessionHooks{
 			OnPreMCPToolCall: func(input copilot.PreMCPToolCallHookInput, invocation copilot.HookInvocation) (*copilot.PreMCPToolCallHookOutput, error) {
 				if input.ServerName != "github" {
 					return nil, nil
@@ -183,9 +150,29 @@ session, err := client.CreateSession(ctx, &copilot.CreateSessionOptions{
 				return &copilot.PreMCPToolCallHookOutput{MetaToUse: meta}, nil
 			},
 		},
+	})
+	_, _ = session, err
+}
+```
+<!-- /docs-validate: hidden -->
+```go
+session, err := client.CreateSession(ctx, &copilot.SessionConfig{
+	Hooks: &copilot.SessionHooks{
+		OnPreMCPToolCall: func(input copilot.PreMCPToolCallHookInput, invocation copilot.HookInvocation) (*copilot.PreMCPToolCallHookOutput, error) {
+			if input.ServerName != "github" {
+				return nil, nil
+			}
+			meta := map[string]any{}
+			if existing, ok := input.Meta.(map[string]any); ok {
+				for key, value := range existing {
+					meta[key] = value
+				}
+			}
+			meta["app/request-source"] = "docs-example"
+			return &copilot.PreMCPToolCallHookOutput{MetaToUse: meta}, nil
+		},
 	},
 })
-
 ```
 
 </details>
@@ -196,63 +183,62 @@ session, err := client.CreateSession(ctx, &copilot.CreateSessionOptions{
 <!-- docs-validate: hidden -->
 ```csharp
 using System.Text.Json;
-using Microsoft.Copilot;
+using GitHub.Copilot;
 
-await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent });
-var session = await client.CreateSessionAsync(new CreateSessionOptions
+await using var client = new CopilotClient();
+
+var session = await client.CreateSessionAsync(new SessionConfig
 {
-    Hooks = new SessionHookOptions
+    Hooks = new SessionHooks
     {
-        Handlers = new SessionHooks
+        OnPreMcpToolCall = (input, invocation) =>
         {
-            OnPreMcpToolCall = (input, invocation) =>
+            if (input.ServerName != "github")
             {
-                if (input.ServerName != "github")
-                {
-                    return Task.FromResult<PreMcpToolCallHookOutput?>(null);
-                }
-                var meta = new Dictionary<string, object?>();
-                foreach (var (key, value) in input.Meta ?? new Dictionary<string, JsonElement>())
-                {
-                    meta[key] = value;
-                }
-                meta["app/request-source"] = "docs-example";
-                return Task.FromResult<PreMcpToolCallHookOutput?>(new()
-                {
-                    MetaToUse = JsonSerializer.SerializeToElement(meta),
-                });
-            },
-        }
-    }
+                return Task.FromResult<PreMcpToolCallHookOutput?>(null);
+            }
+
+            var meta = new Dictionary<string, object?>();
+            foreach (var (key, value) in input.Meta ?? new Dictionary<string, JsonElement>())
+            {
+                meta[key] = value;
+            }
+            meta["app/request-source"] = "docs-example";
+
+            return Task.FromResult<PreMcpToolCallHookOutput?>(new()
+            {
+                MetaToUse = JsonSerializer.SerializeToElement(meta),
+            });
+        },
+    },
 });
 ```
 <!-- /docs-validate: hidden -->
 ```csharp
-var session = await client.CreateSessionAsync(new CreateSessionOptions
+var session = await client.CreateSessionAsync(new SessionConfig
 {
-    Hooks = new SessionHookOptions
+    Hooks = new SessionHooks
     {
-        Handlers = new SessionHooks
+        OnPreMcpToolCall = (input, invocation) =>
         {
-            OnPreMcpToolCall = (input, invocation) =>
+            if (input.ServerName != "github")
             {
-                if (input.ServerName != "github")
-                {
-                    return Task.FromResult<PreMcpToolCallHookOutput?>(null);
-                }
-                var meta = new Dictionary<string, object?>();
-                foreach (var (key, value) in input.Meta ?? new Dictionary<string, JsonElement>())
-                {
-                    meta[key] = value;
-                }
-                meta["app/request-source"] = "docs-example";
-                return Task.FromResult<PreMcpToolCallHookOutput?>(new()
-                {
-                    MetaToUse = JsonSerializer.SerializeToElement(meta),
-                });
-            },
-        }
-    }
+                return Task.FromResult<PreMcpToolCallHookOutput?>(null);
+            }
+
+            var meta = new Dictionary<string, object?>();
+            foreach (var (key, value) in input.Meta ?? new Dictionary<string, JsonElement>())
+            {
+                meta[key] = value;
+            }
+            meta["app/request-source"] = "docs-example";
+
+            return Task.FromResult<PreMcpToolCallHookOutput?>(new()
+            {
+                MetaToUse = JsonSerializer.SerializeToElement(meta),
+            });
+        },
+    },
 });
 ```
 
@@ -264,79 +250,53 @@ var session = await client.CreateSessionAsync(new CreateSessionOptions
 <!-- docs-validate: hidden -->
 ```java
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.microsoft.copilot.CopilotClient;
-import com.microsoft.copilot.rpc.*;
+import com.github.copilot.CopilotClient;
+import com.github.copilot.rpc.*;
 import java.util.concurrent.CompletableFuture;
 
 public class PreMcpToolCallExample {
     public static void main(String[] args) throws Exception {
-        try (var client = new CopilotClient(new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT))) {
-            var hooks = new SessionHooks()
-                    .setOnPreMcpToolCall((input, invocation) -> {
-                        if (!"github"
-                                .equals(input
-                                        .getServerName())) {
-                            return CompletableFuture
-                                    .completedFuture(null);
-                        }
-                        var meta = new ObjectMapper()
-                                .createObjectNode();
-                        if (input
-                                .getMeta() != null) {
-                            input
-                                    .getMeta()
-                                    .forEach(meta::set);
-                        }
-                        meta
-                                .put("app/request-source", "docs-example");
-                        return CompletableFuture
-                                .completedFuture(PreMcpToolCallHookOutput
-                                        .withMeta(meta));
-                    });
+        try (var client = new CopilotClient()) {
+            var hooks = new SessionHooks().setOnPreMcpToolCall((input, invocation) -> {
+                if (!"github".equals(input.getServerName())) {
+                    return CompletableFuture.completedFuture(null);
+                }
+                var meta = new ObjectMapper().createObjectNode();
+                if (input.getMeta() != null) {
+                    input.getMeta().forEach(meta::set);
+                }
+                meta.put("app/request-source", "docs-example");
+                return CompletableFuture.completedFuture(PreMcpToolCallHookOutput.withMeta(meta));
+            });
 
-            var session = client
-                    .createSession(new CreateSessionOptions()
-                            .setPermissions(new SessionPermissionOptions()
-                                    .setOnRequest(PermissionHandler.APPROVE_ALL))
-                            .setHooks(new SessionHookOptions()
-                                    .setHandlers(hooks)))
-                    .get();
+            var session = client.createSession(
+                new SessionConfig()
+                    .setOnPermissionRequest(PermissionHandler.APPROVE_ALL)
+                    .setHooks(hooks)
+            ).get();
         }
     }
 }
 ```
 <!-- /docs-validate: hidden -->
 ```java
-var hooks = new SessionHooks()
-        .setOnPreMcpToolCall((input, invocation) -> {
-            if (!"github"
-                    .equals(input
-                            .getServerName())) {
-                return CompletableFuture
-                        .completedFuture(null);
-            }
-            var meta = new ObjectMapper()
-                    .createObjectNode();
-            if (input
-                    .getMeta() != null) {
-                input
-                        .getMeta()
-                        .forEach(meta::set);
-            }
-            meta
-                    .put("app/request-source", "docs-example");
-            return CompletableFuture
-                    .completedFuture(PreMcpToolCallHookOutput
-                            .withMeta(meta));
-        });
+var hooks = new SessionHooks().setOnPreMcpToolCall((input, invocation) -> {
+    if (!"github".equals(input.getServerName())) {
+        return CompletableFuture.completedFuture(null);
+    }
+    var meta = new ObjectMapper().createObjectNode();
+    if (input.getMeta() != null) {
+        input.getMeta().forEach(meta::set);
+    }
+    meta.put("app/request-source", "docs-example");
+    return CompletableFuture.completedFuture(PreMcpToolCallHookOutput.withMeta(meta));
+});
 
-var session = client
-        .createSession(new CreateSessionOptions()
-                .setPermissions(new SessionPermissionOptions()
-                        .setOnRequest(PermissionHandler.APPROVE_ALL))
-                .setHooks(new SessionHookOptions()
-                        .setHandlers(hooks)))
-        .get();
+var session = client.createSession(
+    new SessionConfig()
+        .setOnPermissionRequest(PermissionHandler.APPROVE_ALL)
+        .setHooks(hooks)
+).get();
 ```
 
 </details>
@@ -372,10 +332,7 @@ impl SessionHooks for MyHooks {
 }
 
 let session = client
-    .create_session(
-        CreateSessionOptions::default()
-            .with_hooks(|__sdk_group| __sdk_group.with_handlers(Arc::new(MyHooks))),
-    )
+    .create_session(SessionConfig::default().with_hooks(Arc::new(MyHooks)))
     .await?;
 ```
 <!-- /docs-validate: hidden -->
@@ -403,10 +360,7 @@ impl SessionHooks for MyHooks {
 }
 
 let session = client
-    .create_session(
-        CreateSessionOptions::default()
-            .with_hooks(|__sdk_group| __sdk_group.with_handlers(Arc::new(MyHooks))),
-    )
+    .create_session(SessionConfig::default().with_hooks(Arc::new(MyHooks)))
     .await?;
 ```
 

@@ -2,15 +2,14 @@
 
 import pytest
 
-from copilot import (
-    CopilotClient,
-    Model,
+from copilot import CopilotClient, RuntimeConnection
+from copilot.client import (
     ModelCapabilities,
-    ModelCapabilitiesLimits,
-    ModelCapabilitiesSupports,
-    RuntimeConnection,
+    ModelInfo,
+    ModelLimits,
+    ModelSupports,
+    StopError,
 )
-from copilot.client import StopError
 from copilot.session import PermissionHandler
 
 from .testharness import CLI_PATH, DEFAULT_GITHUB_TOKEN, E2ETestContext
@@ -19,9 +18,7 @@ from .testharness import CLI_PATH, DEFAULT_GITHUB_TOKEN, E2ETestContext
 class TestClient:
     @pytest.mark.asyncio
     async def test_should_start_and_connect_to_server_using_stdio(self):
-        client = CopilotClient(
-            mode="coding-agent", runtime=RuntimeConnection.for_spawned_stdio(path=CLI_PATH)
-        )
+        client = CopilotClient(connection=RuntimeConnection.for_stdio(path=CLI_PATH))
 
         try:
             await client.start()
@@ -36,9 +33,7 @@ class TestClient:
 
     @pytest.mark.asyncio
     async def test_should_start_and_connect_to_server_using_tcp(self):
-        client = CopilotClient(
-            mode="coding-agent", runtime=RuntimeConnection.for_spawned_tcp(path=CLI_PATH)
-        )
+        client = CopilotClient(connection=RuntimeConnection.for_tcp(path=CLI_PATH))
 
         try:
             await client.start()
@@ -55,12 +50,10 @@ class TestClient:
     async def test_should_raise_exception_group_on_failed_cleanup(self):
         import asyncio
 
-        client = CopilotClient(
-            mode="coding-agent", runtime=RuntimeConnection.for_spawned_stdio(path=CLI_PATH)
-        )
+        client = CopilotClient(connection=RuntimeConnection.for_stdio(path=CLI_PATH))
 
         try:
-            await client.create_session(permissions={"on_request": PermissionHandler.approve_all})
+            await client.create_session(on_permission_request=PermissionHandler.approve_all)
 
             # Kill the server process to force cleanup to fail
             process = client._process
@@ -79,18 +72,14 @@ class TestClient:
 
     @pytest.mark.asyncio
     async def test_should_force_stop_without_cleanup(self):
-        client = CopilotClient(
-            mode="coding-agent", runtime=RuntimeConnection.for_spawned_stdio(path=CLI_PATH)
-        )
+        client = CopilotClient(connection=RuntimeConnection.for_stdio(path=CLI_PATH))
 
-        await client.create_session(permissions={"on_request": PermissionHandler.approve_all})
+        await client.create_session(on_permission_request=PermissionHandler.approve_all)
         await client.force_stop()
 
     @pytest.mark.asyncio
     async def test_should_get_status_with_version_and_protocol_info(self):
-        client = CopilotClient(
-            mode="coding-agent", runtime=RuntimeConnection.for_spawned_stdio(path=CLI_PATH)
-        )
+        client = CopilotClient(connection=RuntimeConnection.for_stdio(path=CLI_PATH))
 
         try:
             await client.start()
@@ -108,19 +97,17 @@ class TestClient:
 
     @pytest.mark.asyncio
     async def test_should_get_auth_status(self):
-        client = CopilotClient(
-            mode="coding-agent", runtime=RuntimeConnection.for_spawned_stdio(path=CLI_PATH)
-        )
+        client = CopilotClient(connection=RuntimeConnection.for_stdio(path=CLI_PATH))
 
         try:
             await client.start()
 
             auth_status = await client.get_auth_status()
-            assert hasattr(auth_status, "is_authenticated")
-            assert isinstance(auth_status.is_authenticated, bool)
-            if auth_status.is_authenticated:
-                assert hasattr(auth_status, "auth_type")
-                assert hasattr(auth_status, "status_message")
+            assert hasattr(auth_status, "isAuthenticated")
+            assert isinstance(auth_status.isAuthenticated, bool)
+            if auth_status.isAuthenticated:
+                assert hasattr(auth_status, "authType")
+                assert hasattr(auth_status, "statusMessage")
 
             await client.stop()
         finally:
@@ -129,18 +116,17 @@ class TestClient:
     @pytest.mark.asyncio
     async def test_should_list_models_when_authenticated(self, ctx: E2ETestContext):
         client = CopilotClient(
-            mode="coding-agent",
-            runtime=RuntimeConnection.for_spawned_stdio(
-                path=CLI_PATH, env=ctx.get_env(), working_directory=ctx.work_dir
-            ),
-            github={"token": DEFAULT_GITHUB_TOKEN},
+            connection=RuntimeConnection.for_stdio(path=CLI_PATH),
+            env=ctx.get_env(),
+            working_directory=ctx.work_dir,
+            github_token=DEFAULT_GITHUB_TOKEN,
         )
 
         try:
             await client.start()
 
             auth_status = await client.get_auth_status()
-            assert auth_status.is_authenticated
+            assert auth_status.isAuthenticated
 
             models = await client.list_models()
             assert isinstance(models, list)
@@ -160,18 +146,17 @@ class TestClient:
     async def test_should_cache_models_list(self, ctx: E2ETestContext):
         """Test that list_models caches results to avoid rate limiting"""
         client = CopilotClient(
-            mode="coding-agent",
-            runtime=RuntimeConnection.for_spawned_stdio(
-                path=CLI_PATH, env=ctx.get_env(), working_directory=ctx.work_dir
-            ),
-            github={"token": DEFAULT_GITHUB_TOKEN},
+            connection=RuntimeConnection.for_stdio(path=CLI_PATH),
+            env=ctx.get_env(),
+            working_directory=ctx.work_dir,
+            github_token=DEFAULT_GITHUB_TOKEN,
         )
 
         try:
             await client.start()
 
             auth_status = await client.get_auth_status()
-            assert auth_status.is_authenticated
+            assert auth_status.isAuthenticated
 
             # First call should fetch from backend
             models1 = await client.list_models()
@@ -192,7 +177,7 @@ class TestClient:
 
             # Check authentication again after restart
             auth_status = await client.get_auth_status()
-            assert auth_status.is_authenticated
+            assert auth_status.isAuthenticated
 
             models3 = await client.list_models()
             assert models3 is not models1, "Cache should be cleared after disconnect"
@@ -205,10 +190,9 @@ class TestClient:
     async def test_should_report_error_with_stderr_when_cli_fails_to_start(self):
         """Test that CLI startup errors include stderr output in the error message."""
         client = CopilotClient(
-            mode="coding-agent",
-            runtime=RuntimeConnection.for_spawned_stdio(
+            connection=RuntimeConnection.for_stdio(
                 path=CLI_PATH, args=["--nonexistent-flag-for-testing"]
-            ),
+            )
         )
 
         try:
@@ -227,7 +211,7 @@ class TestClient:
             # Verify subsequent calls also fail (don't hang)
             with pytest.raises(Exception) as exc_info2:
                 session = await client.create_session(
-                    permissions={"on_request": PermissionHandler.approve_all}
+                    on_permission_request=PermissionHandler.approve_all
                 )
                 await session.send("test")
             # Retirement rejects new session admission; before it wins, process exit
@@ -248,14 +232,12 @@ class TestClient:
     @pytest.mark.asyncio
     async def test_should_not_throw_when_disposing_session_after_stopping_client(self):
         """Disconnecting a session after the client is stopped must not raise."""
-        client = CopilotClient(
-            mode="coding-agent", runtime=RuntimeConnection.for_spawned_stdio(path=CLI_PATH)
-        )
+        client = CopilotClient(connection=RuntimeConnection.for_stdio(path=CLI_PATH))
 
         try:
             await client.start()
             session = await client.create_session(
-                permissions={"on_request": PermissionHandler.approve_all}
+                on_permission_request=PermissionHandler.approve_all
             )
 
             # Stop the client first; subsequent session disconnect should be harmless.
@@ -269,9 +251,7 @@ class TestClient:
     @pytest.mark.asyncio
     async def test_should_create_session_without_permission_handler(self):
         """`create_session` allows omitting an `on_permission_request` handler."""
-        client = CopilotClient(
-            mode="coding-agent", runtime=RuntimeConnection.for_spawned_stdio(path=CLI_PATH)
-        )
+        client = CopilotClient(connection=RuntimeConnection.for_stdio(path=CLI_PATH))
 
         try:
             await client.start()
@@ -286,9 +266,7 @@ class TestClient:
     @pytest.mark.asyncio
     async def test_should_resume_session_without_permission_handler(self):
         """`resume_session` allows omitting an `on_permission_request` handler."""
-        client = CopilotClient(
-            mode="coding-agent", runtime=RuntimeConnection.for_spawned_stdio(path=CLI_PATH)
-        )
+        client = CopilotClient(connection=RuntimeConnection.for_stdio(path=CLI_PATH))
 
         try:
             await client.start()
@@ -305,12 +283,12 @@ class TestClient:
     async def test_list_models_with_custom_handler_calls_handler(self):
         """A custom `on_list_models` handler is invoked instead of the CLI RPC."""
         custom_models = [
-            Model(
+            ModelInfo(
                 id="my-custom-model",
                 name="My Custom Model",
                 capabilities=ModelCapabilities(
-                    supports=ModelCapabilitiesSupports(vision=False, reasoning_effort=False),
-                    limits=ModelCapabilitiesLimits(max_context_window_tokens=128000),
+                    supports=ModelSupports(vision=False, reasoning_effort=False),
+                    limits=ModelLimits(max_context_window_tokens=128000),
                 ),
             )
         ]
@@ -323,9 +301,8 @@ class TestClient:
             return custom_models
 
         client = CopilotClient(
-            mode="coding-agent",
-            runtime=RuntimeConnection.for_spawned_stdio(path=CLI_PATH),
-            models={"on_list_models": on_list_models},
+            connection=RuntimeConnection.for_stdio(path=CLI_PATH),
+            on_list_models=on_list_models,
         )
 
         try:
@@ -344,12 +321,12 @@ class TestClient:
     async def test_list_models_with_custom_handler_works_without_start(self):
         """The custom `on_list_models` handler is callable even before `start()`."""
         custom_models = [
-            Model(
+            ModelInfo(
                 id="no-start-model",
                 name="No Start Model",
                 capabilities=ModelCapabilities(
-                    supports=ModelCapabilitiesSupports(vision=False, reasoning_effort=False),
-                    limits=ModelCapabilitiesLimits(max_context_window_tokens=128000),
+                    supports=ModelSupports(vision=False, reasoning_effort=False),
+                    limits=ModelLimits(max_context_window_tokens=128000),
                 ),
             )
         ]
@@ -362,9 +339,8 @@ class TestClient:
             return custom_models
 
         client = CopilotClient(
-            mode="coding-agent",
-            runtime=RuntimeConnection.for_spawned_stdio(path=CLI_PATH),
-            models={"on_list_models": on_list_models},
+            connection=RuntimeConnection.for_stdio(path=CLI_PATH),
+            on_list_models=on_list_models,
         )
 
         try:

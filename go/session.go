@@ -13,8 +13,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/microsoft/copilot-sdk/go/v2/internal/jsonrpc2"
-	"github.com/microsoft/copilot-sdk/go/v2/rpc"
+	"github.com/github/copilot-sdk/go/internal/jsonrpc2"
+	"github.com/github/copilot-sdk/go/rpc"
 )
 
 // toolSearchToolName is the fixed name of the runtime's built-in tool-search
@@ -38,7 +38,7 @@ type sessionHandler struct {
 //
 // Example usage:
 //
-//	session, err := client.CreateSession(copilot.sessionOptions{
+//	session, err := client.CreateSession(copilot.SessionConfig{
 //	    Model: "gpt-5.4",
 //	})
 //	if err != nil {
@@ -91,7 +91,7 @@ type Session struct {
 	exitPlanModeHandler                AttributedExitPlanModeRequestHandler
 	exitPlanModeMu                     sync.RWMutex
 	autoModeSwitchHandler              AutoModeSwitchRequestHandler
-	autoModeRecoveryEnabled            bool
+	autoModeSwitchRecoveryHandler      AutoModeSwitchRequestHandlerWithAutoModeRecovery
 	autoModeSwitchMu                   sync.RWMutex
 	hooks                              *SessionHooks
 	hooksMux                           sync.RWMutex
@@ -116,6 +116,7 @@ type Session struct {
 	openCanvases                       []rpc.OpenCanvasInstance
 	openCanvasesMu                     sync.RWMutex
 	capabilities                       SessionCapabilities
+	autoModeRecoverySupported          bool
 	capabilitiesMu                     sync.RWMutex
 
 	// eventCh serializes user event handler dispatch. dispatchEvent enqueues;
@@ -435,7 +436,7 @@ func (a *canvasClientSessionAdapter) resolveHandler(sessionID string) (CanvasHan
 	if handler == nil {
 		return nil, canvasJSONRPCError(NewCanvasError(
 			"canvas_handler_unset",
-			"No CanvasHandler installed on this session; install one via sessionOptions.CanvasHandler before creating the session.",
+			"No CanvasHandler installed on this session; install one via SessionConfig.CanvasHandler before creating the session.",
 		))
 	}
 	return handler, nil
@@ -989,7 +990,23 @@ func (s *Session) OnWithPermissionEnvelope(handler SessionEventHandler) func() {
 }
 
 func (s *Session) onWithPermissionEnvelope(handler SessionEventHandler, prepend bool) func() {
-	return s.registerEventHandler(handler, prepend)
+	if handler == nil {
+		return s.registerEventHandler(nil, prepend)
+	}
+	return s.registerEventHandler(func(event SessionEvent) {
+		if data, ok := event.Data.(*CapabilitiesChangedDataWithAutoModeRecovery); ok {
+			legacy := data.Legacy()
+			event.Data = &legacy
+		}
+		handler(event)
+	}, prepend)
+}
+
+// OnWithAutoModeRecovery subscribes to recovery-aware events. Capability changes
+// use *CapabilitiesChangedDataWithAutoModeRecovery; On retains legacy data types.
+// Dispatch order and unsubscribe behavior are identical to On.
+func (s *Session) OnWithAutoModeRecovery(handler SessionEventHandler) func() {
+	return s.registerEventHandler(legacyPermissionEventHandler(handler), false)
 }
 
 func (s *Session) registerEventHandler(handler SessionEventHandler, prepend bool) func() {
@@ -1336,14 +1353,19 @@ func (s *Session) handleExitPlanModeRequest(request ExitPlanModeRequest) (Attrib
 	return handler(request, ExitPlanModeInvocation{SessionID: s.SessionID})
 }
 
-func (s *Session) registerAutoModeSwitchHandler(handler AutoModeSwitchRequestHandler, recovery bool) {
+func (s *Session) registerAutoModeSwitchHandler(handler AutoModeSwitchRequestHandler) {
 	s.autoModeSwitchMu.Lock()
 	defer s.autoModeSwitchMu.Unlock()
 	s.autoModeSwitchHandler = handler
-	s.autoModeRecoveryEnabled = recovery
 }
 
-func (s *Session) handleAutoModeSwitchRequest(request AutoModeSwitchRequest) (AutoModeSwitchResponse, error) {
+func (s *Session) registerAutoModeSwitchHandlerWithAutoModeRecovery(handler AutoModeSwitchRequestHandlerWithAutoModeRecovery) {
+	s.autoModeSwitchMu.Lock()
+	defer s.autoModeSwitchMu.Unlock()
+	s.autoModeSwitchRecoveryHandler = handler
+}
+
+func (s *Session) handleAutoModeSwitchRequest(request AutoModeSwitchRequestWithAutoModeRecovery) (AutoModeSwitchResponse, error) {
 	s.autoModeSwitchMu.RLock()
 	select {
 	case <-s.eventDone:
@@ -1352,16 +1374,19 @@ func (s *Session) handleAutoModeSwitchRequest(request AutoModeSwitchRequest) (Au
 	default:
 	}
 	handler := s.autoModeSwitchHandler
-	recoveryEnabled := s.autoModeRecoveryEnabled
+	recoveryHandler := s.autoModeSwitchRecoveryHandler
 	s.autoModeSwitchMu.RUnlock()
-	if request.AutoModeRecovery != nil && !recoveryEnabled {
+	if recoveryHandler != nil {
+		return recoveryHandler(request, AutoModeSwitchInvocation{SessionID: s.SessionID})
+	}
+	if request.AutoModeRecovery != nil {
 		return "", errors.New("no recovery-aware Auto switch handler registered")
 	}
 	if handler == nil {
 		return AutoModeSwitchResponseNo, nil
 	}
 
-	return handler(request, AutoModeSwitchInvocation{SessionID: s.SessionID})
+	return handler(request.AutoModeSwitchRequest, AutoModeSwitchInvocation{SessionID: s.SessionID})
 }
 
 // registerHooks registers hook handlers for this session.
@@ -1695,7 +1720,7 @@ func (s *Session) handleMCPAuthRequest(request MCPAuthRequest, runtimeRefreshSup
 	handler, refreshHandler := s.getMCPAuthHandlers()
 	if handler == nil && refreshHandler == nil {
 		log.Printf(
-			"Received MCP OAuth request without a registered MCP auth handler. SessionID=%s, RequestId=%s",
+			"Received MCP OAuth request without a registered MCP auth handler. SessionId=%s, RequestId=%s",
 			s.SessionID,
 			request.RequestID,
 		)
@@ -1714,7 +1739,7 @@ func (s *Session) handleMCPAuthRequest(request MCPAuthRequest, runtimeRefreshSup
 	}
 	if err != nil {
 		log.Printf(
-			"MCP OAuth handler failed. SessionID=%s, RequestId=%s, Error=%v",
+			"MCP OAuth handler failed. SessionId=%s, RequestId=%s, Error=%v",
 			s.SessionID,
 			request.RequestID,
 			err,
@@ -1786,7 +1811,7 @@ func (s *Session) handleElicitationRequest(elicitCtx ElicitationContext, request
 		}
 	}
 
-	s.RPC.UI.HandlePendingElicitation(ctx, &rpc.UIHandlePendingElicitationRequest{
+	s.RPC.UI.HandlePendingElicitationWithOptions(ctx, &rpc.UIHandlePendingElicitationOptions{
 		RequestID: requestID,
 		Result: rpc.UIElicitationResponse{
 			Action:  result.Action,
@@ -1871,20 +1896,36 @@ func (s *Session) Capabilities() SessionCapabilities {
 	return s.capabilities
 }
 
+// CapabilitiesWithAutoModeRecovery returns the UI snapshot and the runtime's
+// recovery enrollment acknowledgment. Capabilities retains its legacy shape.
+func (s *Session) CapabilitiesWithAutoModeRecovery() SessionCapabilitiesWithAutoModeRecovery {
+	s.capabilitiesMu.RLock()
+	defer s.capabilitiesMu.RUnlock()
+	if s.capabilities.UI == nil {
+		return SessionCapabilitiesWithAutoModeRecovery{}
+	}
+	return SessionCapabilitiesWithAutoModeRecovery{UI: &UICapabilitiesWithAutoModeRecovery{
+		UICapabilities:   *s.capabilities.UI,
+		AutoModeRecovery: s.autoModeRecoverySupported,
+	}}
+}
+
 // setCapabilities updates the session capabilities.
-func (s *Session) setCapabilities(caps *SessionCapabilities) {
+func (s *Session) setCapabilities(caps *SessionCapabilitiesWithAutoModeRecovery) {
 	s.capabilitiesMu.Lock()
 	defer s.capabilitiesMu.Unlock()
 	s.capabilities = SessionCapabilities{}
+	s.autoModeRecoverySupported = false
 	if caps != nil && caps.UI != nil {
-		ui := *caps.UI
+		ui := caps.UI.UICapabilities
 		s.capabilities.UI = &ui
+		s.autoModeRecoverySupported = caps.UI.AutoModeRecovery
 	}
 }
 
 // applyUICapabilitiesChange applies a capabilities.changed payload, which names
 // only the capabilities that changed: anything it leaves out keeps its value.
-func (s *Session) applyUICapabilitiesChange(changed *CapabilitiesChangedUI) {
+func (s *Session) applyUICapabilitiesChange(changed *CapabilitiesChangedUIWithAutoModeRecovery) {
 	if changed.Elicitation == nil && changed.MCPApps == nil && changed.AutoModeRecovery == nil {
 		return
 	}
@@ -1901,7 +1942,7 @@ func (s *Session) applyUICapabilitiesChange(changed *CapabilitiesChangedUI) {
 		ui.MCPApps = *changed.MCPApps
 	}
 	if changed.AutoModeRecovery != nil {
-		ui.AutoModeRecovery = *changed.AutoModeRecovery
+		s.autoModeRecoverySupported = *changed.AutoModeRecovery
 	}
 	s.capabilities.UI = &ui
 }
@@ -2167,6 +2208,15 @@ func (s *Session) dispatchEventWithPermissionEnvelope(event SessionEvent, envelo
 	case *CapabilitiesChangedData:
 		// Apply deltas in notification order before subscribers can observe them.
 		if data.UI != nil {
+			s.applyUICapabilitiesChange(&CapabilitiesChangedUIWithAutoModeRecovery{
+				Canvases:    data.UI.Canvases,
+				Elicitation: data.UI.Elicitation,
+				MCPApps:     data.UI.MCPApps,
+			})
+		}
+		broadcastHandled = true
+	case *CapabilitiesChangedDataWithAutoModeRecovery:
+		if data.UI != nil {
 			s.applyUICapabilitiesChange(data.UI)
 		}
 		broadcastHandled = true
@@ -2341,7 +2391,7 @@ func (s *Session) retireEventProcessing(graceful bool) {
 
 		s.autoModeSwitchMu.Lock()
 		s.autoModeSwitchHandler = nil
-		s.autoModeRecoveryEnabled = false
+		s.autoModeSwitchRecoveryHandler = nil
 		s.autoModeSwitchMu.Unlock()
 
 		s.hooksMux.Lock()

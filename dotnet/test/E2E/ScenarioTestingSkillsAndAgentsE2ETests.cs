@@ -2,12 +2,12 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
-using Microsoft.Copilot.Rpc;
+using GitHub.Copilot.Rpc;
 using System.Text.Json;
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Microsoft.Copilot.Test.E2E;
+namespace GitHub.Copilot.Test.E2E;
 
 public class ScenarioTestingSkillsAndAgentsE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
     : ScenarioTestingE2ETestBase(fixture, "scenario_testing_skills_and_agents", output)
@@ -23,8 +23,10 @@ public class ScenarioTestingSkillsAndAgentsE2ETests(E2ETestFixture fixture, ITes
             "Scenario skill version one.",
             "Use SCENARIO_SKILL_VERSION_ONE.");
 
-        await using var session1 = await CreateSessionAsync(new CreateSessionOptions
-        { Skills = new SessionSkillOptions { Directories = [skillsDirectory] } });
+        await using var session1 = await CreateSessionAsync(new SessionConfig
+        {
+            SkillDirectories = [skillsDirectory],
+        });
 
         AssertSkill(
             await session1.Rpc.Skills.ListAsync(),
@@ -51,8 +53,11 @@ public class ScenarioTestingSkillsAndAgentsE2ETests(E2ETestFixture fixture, ITes
         var sessionId = session1.SessionId;
         await SuspendAndUntrackSessionForResumeAsync(session1);
 
-        await using var session2 = await ResumeSessionAsync(sessionId, new ResumeSessionOptions
-        { ContinuePendingWork = false, Skills = new SessionSkillOptions { Directories = [skillsDirectory] } });
+        await using var session2 = await ResumeSessionAsync(sessionId, new ResumeSessionConfig
+        {
+            ContinuePendingWork = false,
+            SkillDirectories = [skillsDirectory],
+        });
 
         AssertSkill(
             await session2.Rpc.Skills.ListAsync(),
@@ -73,16 +78,20 @@ public class ScenarioTestingSkillsAndAgentsE2ETests(E2ETestFixture fixture, ITes
         {
             await using var client = Ctx.CreateClient(options: new CopilotClientOptions
             {
-                Mode = CopilotClientMode.CodingAgent,
-                Runtime = RuntimeConnection.ForSpawnedStdio(path: "node", args: [scriptPath])
+                Connection = RuntimeConnection.ForStdio(path: "node", args: [scriptPath]),
             });
-            await using var session = await Ctx.CreateSessionAsync(client, new CreateSessionOptions
-            { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
+            await using var session = await Ctx.CreateSessionAsync(client, new SessionConfig
+            {
+                OnPermissionRequest = PermissionHandler.ApproveAll,
+            });
 
-            var exception = await Assert.ThrowsAsync<RemoteRpcException>(() => session.Rpc.Agent.ReloadAsync());
+            var exception = await Assert.ThrowsAsync<IOException>(() => session.Rpc.Agent.ReloadAsync());
 
             Assert.Contains("Method not found: session.agent.reload", exception.Message, StringComparison.Ordinal);
-            Assert.Equal(-32601, exception.ErrorCode);
+            Assert.NotNull(exception.InnerException);
+            Assert.Equal("RemoteRpcException", exception.InnerException!.GetType().Name);
+            var errorCode = exception.InnerException.GetType().GetProperty("ErrorCode")!.GetValue(exception.InnerException);
+            Assert.Equal(-32601, Assert.IsType<int>(errorCode));
             Assert.DoesNotContain("Unhandled method", exception.ToString(), StringComparison.OrdinalIgnoreCase);
         }
         finally
@@ -159,11 +168,11 @@ public class ScenarioTestingSkillsAndAgentsE2ETests(E2ETestFixture fixture, ITes
         function handleMessage(message) {
           if (!Object.prototype.hasOwnProperty.call(message, "id")) return;
           if (message.method === "connect") {
-            writeResult(message.id, { ok: true, protocolVersion: 4, version: "fake" });
+            writeResult(message.id, { ok: true, protocolVersion: 3, version: "fake" });
             return;
           }
           if (message.method === "ping") {
-            writeResult(message.id, { message: "pong", protocolVersion: 4 });
+            writeResult(message.id, { message: "pong", protocolVersion: 3 });
             return;
           }
           if (message.method === "session.create") {

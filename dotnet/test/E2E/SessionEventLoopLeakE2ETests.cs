@@ -2,14 +2,14 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
-using Microsoft.Copilot.Test.Harness;
-using Microsoft.Copilot.Rpc;
+using GitHub.Copilot.Test.Harness;
+using GitHub.Copilot.Rpc;
 using System.Collections;
 using System.Reflection;
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Microsoft.Copilot.Test.E2E;
+namespace GitHub.Copilot.Test.E2E;
 
 /// <summary>
 /// Regression coverage for the goroutine/task leak fixed alongside
@@ -63,24 +63,21 @@ public class SessionEventLoopLeakE2ETests(E2ETestFixture fixture, ITestOutputHel
         // the real CLI reject session.create with a genuine RPC error (401 Unauthorized)
         // — the same failure path a real user would hit, not a mocked transport.
         var client = Ctx.CreateClient(
-            options: new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, SessionFs = CreateSessionFsConfig() },
+            options: new CopilotClientOptions { SessionFs = CreateSessionFsConfig() },
             autoInjectGitHubToken: false);
         var seen = new List<CopilotSession>();
 
         async Task CreateFailingAsync()
         {
-            var ex = await Assert.ThrowsAnyAsync<Exception>(() => Ctx.CreateSessionAsync(client, new CreateSessionOptions
+            var ex = await Assert.ThrowsAnyAsync<Exception>(() => Ctx.CreateSessionAsync(client, new SessionConfig
             {
-                GitHub = new SessionGitHubOptions { Token = "invalid-token" },
-                Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll },
-                State = new SessionStateOptions
+                GitHubToken = "invalid-token",
+                OnPermissionRequest = PermissionHandler.ApproveAll,
+                CreateSessionFsProvider = session =>
                 {
-                    CreateSessionFsProvider = session =>
-            {
-                seen.Add(session);
-                return new MissingSessionFsProvider();
-            }
-                }
+                    seen.Add(session);
+                    return new MissingSessionFsProvider();
+                },
             }));
             Assert.Contains("401", ex.ToString(), StringComparison.OrdinalIgnoreCase);
         }
@@ -116,24 +113,21 @@ public class SessionEventLoopLeakE2ETests(E2ETestFixture fixture, ITestOutputHel
         // pre-registered session would land in a different, short-lived client's dictionary
         // that we'd never get to observe. A single, reused client lets us watch one
         // dictionary across all 20 failed calls.
-        var client = Ctx.CreateClient(options: new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, SessionFs = CreateSessionFsConfig() });
+        var client = Ctx.CreateClient(options: new CopilotClientOptions { SessionFs = CreateSessionFsConfig() });
         var sessions = GetSessionsMap(client);
         var seen = new List<CopilotSession>();
 
         async Task ResumeNonExistentAsync()
         {
             var exception = await Assert.ThrowsAnyAsync<Exception>(() =>
-                Ctx.ResumeSessionAsync(client, "non-existent-leak-check-session", new ResumeSessionOptions
+                Ctx.ResumeSessionAsync(client, "non-existent-leak-check-session", new ResumeSessionConfig
                 {
-                    Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll },
-                    State = new SessionStateOptions
+                    OnPermissionRequest = PermissionHandler.ApproveAll,
+                    CreateSessionFsProvider = session =>
                     {
-                        CreateSessionFsProvider = session =>
-                {
-                    seen.Add(session);
-                    return new MissingSessionFsProvider();
-                }
-                    }
+                        seen.Add(session);
+                        return new MissingSessionFsProvider();
+                    },
                 }));
             Assert.Contains("not found", exception.ToString(), StringComparison.OrdinalIgnoreCase);
         }

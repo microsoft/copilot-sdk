@@ -28,13 +28,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         throw new Error("Usage: persist-discovered-model.ts <base-directory> [stdio|inprocess]");
     }
     const client = new CopilotClient({
-        mode: "coding-agent",
-        runtime: {
-            baseDirectory: baseDirectory,
-            ...(process.argv[3] === "inprocess"
+        baseDirectory,
+        connection:
+            process.argv[3] === "inprocess"
                 ? RuntimeConnection.forInProcess()
-                : RuntimeConnection.forSpawnedStdio()),
-        },
+                : RuntimeConnection.forStdio(),
     });
     try {
         await client.start();

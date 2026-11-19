@@ -487,9 +487,7 @@ class JsonRpcClient:
             # Stream closed - check if process exited
             pass
         except Exception:
-            # A read from a stream this client already closed (force_stop on a
-            # socket transport) is the end of the stream, not a malformed message.
-            if self._running and not getattr(self.process.stdout, "closed", False):
+            if self._running:
                 logger.warning("Failed to parse incoming JSON-RPC message", exc_info=True)
 
         # Process exited or read failed - fail all pending requests

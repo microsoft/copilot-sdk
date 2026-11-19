@@ -9,7 +9,7 @@ using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Threading.Channels;
 
-namespace Microsoft.Copilot;
+namespace GitHub.Copilot;
 
 /// <summary>
 /// Hosts the Copilot runtime in-process by loading the Rust cdylib (<c>runtime.node</c>)

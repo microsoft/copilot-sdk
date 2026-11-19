@@ -33,23 +33,21 @@ class TestExternalToolCancellation:
                 raise
 
         session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all},
-            tools={
-                "definitions": [
-                    Tool(
-                        name="slow_analysis",
-                        description="A slow analysis tool that blocks until released",
-                        parameters={
-                            "type": "object",
-                            "properties": {
-                                "value": {"type": "string", "description": "Value to analyze"}
-                            },
-                            "required": ["value"],
+            on_permission_request=PermissionHandler.approve_all,
+            tools=[
+                Tool(
+                    name="slow_analysis",
+                    description="A slow analysis tool that blocks until released",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "value": {"type": "string", "description": "Value to analyze"}
                         },
-                        handler=slow_tool_handler,
-                    )
-                ]
-            },
+                        "required": ["value"],
+                    },
+                    handler=slow_tool_handler,
+                )
+            ],
         )
 
         send_task = asyncio.create_task(

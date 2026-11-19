@@ -3,7 +3,7 @@ package copilot
 import (
 	"errors"
 
-	"github.com/microsoft/copilot-sdk/go/v2/rpc"
+	"github.com/github/copilot-sdk/go/rpc"
 )
 
 // AttributedPermissionResult pairs a permission decision with the context

@@ -21,7 +21,8 @@ class TestScenarioLifecycleRecovery:
         try:
             with pytest.raises(Exception) as exc_info:
                 await client.resume_session(
-                    "scenario-session", permissions={"on_request": PermissionHandler.approve_all}
+                    "scenario-session",
+                    on_permission_request=PermissionHandler.approve_all,
                 )
 
             assert getattr(exc_info.value, "code", None) == -32001
@@ -29,7 +30,8 @@ class TestScenarioLifecycleRecovery:
             assert getattr(exc_info.value, "data", None) == {"recoverable": True}
 
             session = await client.resume_session(
-                "scenario-session", permissions={"on_request": PermissionHandler.approve_all}
+                "scenario-session",
+                on_permission_request=PermissionHandler.approve_all,
             )
             try:
                 assert session.session_id == "scenario-session"
@@ -56,7 +58,8 @@ class TestScenarioLifecycleRecovery:
         failed_client, _failed_capture = create_scenario_client(ctx, "resume-fail")
         with pytest.raises(Exception) as exc_info:
             await failed_client.resume_session(
-                "scenario-session", permissions={"on_request": PermissionHandler.approve_all}
+                "scenario-session",
+                on_permission_request=PermissionHandler.approve_all,
             )
         assert getattr(exc_info.value, "data", None) == {"recoverable": True}
         await failed_client.stop()
@@ -64,7 +67,8 @@ class TestScenarioLifecycleRecovery:
         replacement_client, replacement_capture = create_scenario_client(ctx, "send")
         try:
             session = await replacement_client.resume_session(
-                "scenario-session", permissions={"on_request": PermissionHandler.approve_all}
+                "scenario-session",
+                on_permission_request=PermissionHandler.approve_all,
             )
             try:
                 assert await session.send("Replacement client recovered.") == "user-message"

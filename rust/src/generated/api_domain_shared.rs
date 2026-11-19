@@ -795,24 +795,12 @@ pub struct ProviderModelConfig {
     pub id: String,
     /// Maximum context window tokens for the model.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(
-        default,
-        deserialize_with = "ProviderModelConfig::deserialize_token_limit"
-    )]
     pub max_context_window_tokens: Option<i64>,
     /// Maximum output tokens for the model.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(
-        default,
-        deserialize_with = "ProviderModelConfig::deserialize_token_limit"
-    )]
     pub max_output_tokens: Option<i64>,
     /// Maximum prompt/input tokens for the model.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(
-        default,
-        deserialize_with = "ProviderModelConfig::deserialize_token_limit"
-    )]
     pub max_prompt_tokens: Option<i64>,
     /// Provider-published model metadata, preserved verbatim as the public Model.metadata object.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -833,30 +821,6 @@ pub struct ProviderModelConfig {
     pub wire_model: Option<String>,
 }
 
-impl ProviderModelConfig {
-    fn deserialize_token_limit<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let Some(number) = Option::<serde_json::Number>::deserialize(deserializer)? else {
-            return Ok(None);
-        };
-        if let Some(value) = number.as_i64() {
-            return Ok(Some(value));
-        }
-        if let Some(value) = number.as_f64()
-            && value.fract() == 0.0
-            // i64::MAX rounds up to 2^63 as f64, so the upper bound is exclusive.
-            && ((i64::MIN as f64)..-(i64::MIN as f64)).contains(&value)
-        {
-            return Ok(Some(value as i64));
-        }
-        Err(serde::de::Error::custom(
-            "expected an integer token limit in the i64 range",
-        ))
-    }
-}
-
 /// Azure-specific provider options.
 ///
 /// <div class="warning">
@@ -871,41 +835,6 @@ pub struct ProviderConfigAzure {
     /// API version. When set, uses the versioned deployment route. When omitted, uses the GA versionless v1 route.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_version: Option<String>,
-}
-
-/// Editable provider settings, without credential values or custom headers.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SavedProviderConfigurationProviderInput {
-    /// Safe Azure connection settings, including API version.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub azure: Option<ProviderConfigAzure>,
-    /// Provider endpoint.
-    pub base_url: String,
-    /// Non-secret local model runtime options, such as the WinML device.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub local_model: Option<serde_json::Value>,
-    /// Serving product used for attribution.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model_provider: Option<ProviderConfigModelProvider>,
-    /// Provider name used to qualify model selection ids.
-    pub name: String,
-    /// HTTP or WebSocket transport.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub transport: Option<ProviderConfigTransport>,
-    /// Provider protocol family.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub r#type: Option<SavedProviderConfigurationType>,
-    /// OpenAI-compatible wire API.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub wire_api: Option<ProviderConfigWireApi>,
 }
 
 /// Pointer to a GitHub repository.
@@ -1347,11 +1276,6 @@ pub struct NamedProviderConfig {
     /// Static API key used to authenticate provider requests.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
-    /// Command run before each request to acquire a fresh API key. Failure
-    /// fails the request without static-key or anonymous fallback. Bearer
-    /// authentication takes precedence.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub api_key_command: Option<String>,
     /// Azure authentication configuration for the provider.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub azure: Option<ProviderConfigAzure>,
@@ -1522,12 +1446,6 @@ pub struct CapiSessionOptions {
     /// Routing preference for sessions whose model is `auto`. On create or cold resume, this establishes the preference sent as `tier` on CAPI `/auto` requests; when omitted on cold resume, the runtime restores the last committed preference. On resident resume, a different value requests a safe switch after resume succeeds and cannot change an in-flight turn. Successful switches are persisted for later cold resume. When no preference is supplied or restored, CAPI default routing is used. `fast` is an integrator-only latency preset, not a first-party GitHub Copilot product preference. For Copilot Fusion, prefer `fusionTier`: the `balance`, `hydrafusion` and `hydrafusion-max` identifiers it replaces remain accepted but are deprecated.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto_tier: Option<AutoTier>,
-    /// Enables the session's built-in Copilot model catalog, authentication and
-    /// inference, including subagent and ancillary model work. Defaults to true
-    /// on create; omission on resume preserves the policy. Does not disable
-    /// GitHub identity, tools, MCP, managed settings or separate telemetry.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub enabled: Option<bool>,
     /// Whether to use WebSocket transport for the CAPI Responses API. Enabled by default when the model advertises `ws:/responses` support; set to `false` to force the HTTP Responses transport in environments where WebSockets are blocked (e.g. behind a proxy). Setting this to `false` is equivalent to the `COPILOT_CLI_DISABLE_WEBSOCKET_RESPONSES` environment variable.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enable_web_socket_responses: Option<bool>,
@@ -3775,6 +3693,11 @@ pub struct McpFailedServer {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpFilteredServer {
+    /// Deprecated. This field is no longer populated.
+    #[doc(hidden)]
+    #[deprecated]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enterprise_name: Option<String>,
     /// Filtered server name
     pub name: String,
     /// Human-readable filter reason
@@ -4351,6 +4274,11 @@ pub struct ModelBillingPromo {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelBillingTokenPricesLongContext {
+    /// Use cacheReadPrice instead. AI Credits cost per billing batch of cached tokens
+    #[doc(hidden)]
+    #[deprecated]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_price: Option<f64>,
     /// AI Credits cost per billing batch of cached (read) tokens
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cache_read_price: Option<f64>,
@@ -4360,6 +4288,11 @@ pub struct ModelBillingTokenPricesLongContext {
     /// AI Credits cost per billing batch of cache-write (cache creation) tokens.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cache_write_price: Option<f64>,
+    /// Use maxPromptTokens instead. Prompt token budget for the long context tier. The total context window is this value plus the model's max_output_tokens.
+    #[doc(hidden)]
+    #[deprecated]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_max: Option<i64>,
     /// AI Credits cost per billing batch of input tokens
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_price: Option<f64>,
@@ -4385,7 +4318,12 @@ pub struct ModelBillingTokenPrices {
     /// Number of tokens per standard billing batch
     #[serde(skip_serializing_if = "Option::is_none")]
     pub batch_size: Option<i64>,
-    /// Cost per billing batch of cached (read) tokens. The unit is reported by models.listTokenPriceUnits.
+    /// Use cacheReadPrice when available. Cost per billing batch of cached tokens in the unit reported by models.listTokenPriceUnits.
+    #[doc(hidden)]
+    #[deprecated]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_price: Option<f64>,
+    /// AI Credits cost per billing batch of cached (read) tokens
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cache_read_price: Option<f64>,
     /// AI Credits cost per billing batch of 1-hour cache-write (cache creation) tokens.
@@ -4394,6 +4332,11 @@ pub struct ModelBillingTokenPrices {
     /// AI Credits cost per billing batch of cache-write (cache creation) tokens.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cache_write_price: Option<f64>,
+    /// Use maxPromptTokens instead. Prompt token budget for the default tier. The total context window is this value plus the model's max_output_tokens.
+    #[doc(hidden)]
+    #[deprecated]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_max: Option<i64>,
     /// Cost per billing batch of input tokens. The unit is reported by models.listTokenPriceUnits.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_price: Option<f64>,
@@ -5067,6 +5010,38 @@ pub struct SandboxCredentialsConfig {
     pub env_vars: HashMap<String, SandboxMaskedEnvVar>,
 }
 
+/// macOS seatbelt experimental options.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SandboxConfigUserPolicyExperimentalSeatbelt {
+    /// Whether the macOS seatbelt profile may access the keychain.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keychain_access: Option<bool>,
+}
+
+/// Platform-specific experimental policy fields.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SandboxConfigUserPolicyExperimental {
+    /// macOS seatbelt experimental options.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seatbelt: Option<SandboxConfigUserPolicyExperimentalSeatbelt>,
+}
+
 /// Filesystem rules to merge into the base policy.
 ///
 /// <div class="warning">
@@ -5168,6 +5143,9 @@ pub struct SandboxConfigUserPolicySeatbelt {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SandboxConfigUserPolicy {
+    /// Deprecated legacy location for `seatbelt`; read only when the top-level `seatbelt` is absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub experimental: Option<SandboxConfigUserPolicyExperimental>,
     /// Filesystem rules to merge into the base policy.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub filesystem: Option<SandboxConfigUserPolicyFilesystem>,
@@ -5248,23 +5226,6 @@ pub struct SandboxCredentialSuggestion {
     pub name: String,
     /// HTTPS hostnames suggested by a local known-provider mapping. An empty list requires the user to supply injection hosts before adding a masking entry. These suggestions do not allow network access.
     pub suggested_inject_hosts: Vec<String>,
-}
-
-/// A saved provider's editable settings and credential status, never secret values.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SavedProviderConfigurationProvider {
-    /// Credential availability without disclosing its value.
-    pub credential_status: SavedProviderCredentialStatus,
-    /// Safe connection settings; commands, headers, credentials, and internal storage metadata are omitted.
-    pub provider: SavedProviderConfigurationProviderInput,
 }
 
 /// Scheduled prompt entry with ID, timing (`intervalMs`, `cron`, or `at`), prompt text, recurrence, and next run time.
@@ -5681,6 +5642,16 @@ pub struct WorkflowAgentSummary {
     /// Requested and resolved reasoning-effort observations, when available.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<WorkflowAgentReasoningEffortObservation>,
+    /// Deprecated compatibility alias for model.requested.
+    #[doc(hidden)]
+    #[deprecated]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requested_model: Option<String>,
+    /// Deprecated compatibility alias for model.resolved.
+    #[doc(hidden)]
+    #[deprecated]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_model: Option<String>,
     /// Owning workflow run identifier.
     pub run_id: String,
     /// Epoch milliseconds when the agent started.
@@ -6373,40 +6344,6 @@ pub enum ProviderConfigTransport {
     /// WebSocket transport.
     #[serde(rename = "websockets")]
     Websockets,
-    /// Unknown variant for forward compatibility.
-    #[default]
-    #[serde(other)]
-    Unknown,
-}
-
-/// Provider families supported by saved configuration, including managed local models.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SavedProviderConfigurationType {
-    /// Generic OpenAI-compatible API.
-    #[serde(rename = "openai")]
-    Openai,
-    /// Azure OpenAI Service endpoint.
-    #[serde(rename = "azure")]
-    Azure,
-    /// Anthropic API endpoint.
-    #[serde(rename = "anthropic")]
-    Anthropic,
-    /// Experimental: Google Gemini API endpoint, served over the native Gemini Interactions API.
-    #[serde(rename = "google")]
-    Google,
-    /// Runtime-managed local model server.
-    #[serde(rename = "local_model")]
-    LocalModel,
-    /// Windows ML local model provider.
-    #[serde(rename = "winml")]
-    Winml,
     /// Unknown variant for forward compatibility.
     #[default]
     #[serde(other)]
@@ -8881,31 +8818,6 @@ pub(crate) enum SettingsEditOperation {
     /// Remove the setting without supplying a value.
     #[serde(rename = "remove")]
     Remove,
-    /// Unknown variant for forward compatibility.
-    #[default]
-    #[serde(other)]
-    Unknown,
-}
-
-/// Credential availability, not provider authentication or health.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SavedProviderCredentialStatus {
-    /// A secure or legacy credential source is configured.
-    #[serde(rename = "present")]
-    Present,
-    /// No credential source is configured.
-    #[serde(rename = "absent")]
-    Absent,
-    /// Secure credential storage could not be queried.
-    #[serde(rename = "unavailable")]
-    Unavailable,
     /// Unknown variant for forward compatibility.
     #[default]
     #[serde(other)]

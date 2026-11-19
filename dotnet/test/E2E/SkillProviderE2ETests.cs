@@ -4,11 +4,11 @@
 
 using System.Collections.Concurrent;
 using System.Reflection;
-using Microsoft.Copilot.Rpc;
+using GitHub.Copilot.Rpc;
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Microsoft.Copilot.Test.E2E;
+namespace GitHub.Copilot.Test.E2E;
 
 public class SkillProviderE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
     : E2ETestBase(fixture, "skill_provider", output)
@@ -24,8 +24,10 @@ public class SkillProviderE2ETests(E2ETestFixture fixture, ITestOutputHelper out
                 "Reports the provider lookup verification word.",
                 "# Provider lookup\n\nThe verification word is TANGERINE_QUARTZ_19. Reply with it.\n")
         ]);
-        await using var session = await CreateSessionAsync(new CreateSessionOptions
-        { Skills = new SessionSkillOptions { Provider = provider } });
+        await using var session = await CreateSessionAsync(new SessionConfig
+        {
+            SkillProvider = provider
+        });
 
         var listedSkills = await session.Rpc.Skills.ListAsync();
         var listed = Assert.Single(listedSkills.Skills, skill => skill.Name == "provider-lookup");
@@ -67,8 +69,11 @@ public class SkillProviderE2ETests(E2ETestFixture fixture, ITestOutputHelper out
                 "Reports the provider audit verification word.",
                 "---\nname: provider-audit\nallowed-tools: view\n---\n\nThe provider audit verification word is COBALT_HERON_58.\n")
         ]);
-        await using var session = await CreateSessionAsync(new CreateSessionOptions
-        { Skills = new SessionSkillOptions { Directories = [skillsDir], Provider = provider } });
+        await using var session = await CreateSessionAsync(new SessionConfig
+        {
+            SkillDirectories = [skillsDir],
+            SkillProvider = provider
+        });
 
         var listedSkills = await session.Rpc.Skills.ListAsync();
         var fileSkill = Assert.Single(listedSkills.Skills, skill => skill.Name == "file-notes");
@@ -106,8 +111,10 @@ public class SkillProviderE2ETests(E2ETestFixture fixture, ITestOutputHelper out
                 "Reports the rebind verification word.",
                 "The rebind verification word is BRONZE_BETA_22.\n")
         ]);
-        var first = await CreateSessionAsync(new CreateSessionOptions
-        { Skills = new SessionSkillOptions { Provider = original } });
+        var first = await CreateSessionAsync(new SessionConfig
+        {
+            SkillProvider = original
+        });
         var sessionId = first.SessionId;
         var ready = await first.SendAndWaitAsync(new MessageOptions
         {
@@ -120,8 +127,10 @@ public class SkillProviderE2ETests(E2ETestFixture fixture, ITestOutputHelper out
         Assert.Empty(original.Reads);
         var originalCallsBeforeResume = original.Calls.Count;
 
-        await using var session = await ResumeSessionAsync(sessionId, new ResumeSessionOptions
-        { Skills = new SessionSkillOptions { Provider = replacement } });
+        await using var session = await ResumeSessionAsync(sessionId, new ResumeSessionConfig
+        {
+            SkillProvider = replacement
+        });
 
         var message = await session.SendAndWaitAsync(new MessageOptions
         {
@@ -151,8 +160,11 @@ public class SkillProviderE2ETests(E2ETestFixture fixture, ITestOutputHelper out
                 () => throw new InvalidOperationException($"database unavailable: {secret}"))
         ]);
         var events = new ConcurrentQueue<SessionEvent>();
-        await using var session = await CreateSessionAsync(new CreateSessionOptions
-        { Skills = new SessionSkillOptions { Provider = provider }, Events = new SessionEventOptions { OnEvent = events.Enqueue } });
+        await using var session = await CreateSessionAsync(new SessionConfig
+        {
+            SkillProvider = provider,
+            OnEvent = events.Enqueue
+        });
 
         var message = await session.SendAndWaitAsync(new MessageOptions
         {
@@ -186,8 +198,11 @@ public class SkillProviderE2ETests(E2ETestFixture fixture, ITestOutputHelper out
                 () => null)
         ]);
         var events = new ConcurrentQueue<SessionEvent>();
-        await using var session = await CreateSessionAsync(new CreateSessionOptions
-        { Skills = new SessionSkillOptions { Provider = provider }, Events = new SessionEventOptions { OnEvent = events.Enqueue } });
+        await using var session = await CreateSessionAsync(new SessionConfig
+        {
+            SkillProvider = provider,
+            OnEvent = events.Enqueue
+        });
 
         var message = await session.SendAndWaitAsync(new MessageOptions
         {
@@ -213,8 +228,11 @@ public class SkillProviderE2ETests(E2ETestFixture fixture, ITestOutputHelper out
         [
             Skill("dormant-lookup", "Never listed.", "Never read.\n")
         ]);
-        await using var session = await CreateSessionAsync(new CreateSessionOptions
-        { Skills = new SessionSkillOptions { Enabled = false, Provider = provider } });
+        await using var session = await CreateSessionAsync(new SessionConfig
+        {
+            EnableSkills = false,
+            SkillProvider = provider
+        });
 
         await session.Rpc.Skills.EnsureLoadedAsync();
         var listedSkills = await session.Rpc.Skills.ListAsync();
@@ -230,8 +248,10 @@ public class SkillProviderE2ETests(E2ETestFixture fixture, ITestOutputHelper out
         [
             Skill("unbound-lookup", "Reports the unbound lookup word.", "Unbound.\n")
         ]);
-        var first = await CreateSessionAsync(new CreateSessionOptions
-        { Skills = new SessionSkillOptions { Provider = provider } });
+        var first = await CreateSessionAsync(new SessionConfig
+        {
+            SkillProvider = provider
+        });
         var before = await first.Rpc.Skills.ListAsync();
         Assert.Contains(before.Skills, skill => skill.Name == "unbound-lookup");
         var callsBeforeResume = provider.Calls.Count;
@@ -241,8 +261,10 @@ public class SkillProviderE2ETests(E2ETestFixture fixture, ITestOutputHelper out
         CopilotSession? session = null;
         try
         {
-            session = await Ctx.ResumeSessionAsync(Client, first.SessionId, new ResumeSessionOptions
-            { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
+            session = await Ctx.ResumeSessionAsync(Client, first.SessionId, new ResumeSessionConfig
+            {
+                OnPermissionRequest = PermissionHandler.ApproveAll,
+            });
 
             await session.Rpc.Skills.ReloadAsync();
             var listedSkills = await session.Rpc.Skills.ListAsync();
@@ -265,8 +287,10 @@ public class SkillProviderE2ETests(E2ETestFixture fixture, ITestOutputHelper out
     public async Task Should_Cancel_A_Blocked_Provider_Call_When_The_Session_Is_Disposed()
     {
         var provider = new BlockingSkillProvider();
-        var session = await CreateSessionAsync(new CreateSessionOptions
-        { Skills = new SessionSkillOptions { Provider = provider } });
+        var session = await CreateSessionAsync(new SessionConfig
+        {
+            SkillProvider = provider
+        });
 
         // The list RPC may fail or omit provider skills once the binding is removed;
         // only the provider's cancellation matters here.
@@ -288,8 +312,11 @@ public class SkillProviderE2ETests(E2ETestFixture fixture, ITestOutputHelper out
         ]);
 
         var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
-            Client.CreateSessionAsync(new CreateSessionOptions
-            { Cloud = new CloudSessionOptions(), Skills = new SessionSkillOptions { Provider = provider } }));
+            Client.CreateSessionAsync(new SessionConfig
+            {
+                Cloud = new CloudSessionOptions(),
+                SkillProvider = provider,
+            }));
 
         Assert.Equal("Skill providers are not supported for cloud sessions.", exception.Message);
         Assert.Empty(provider.Calls);

@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable
 
-from ._generated.rpc import (
+from .generated.rpc import (
     SessionFSError,
     SessionFSErrorCode,
     SessionFSExistsResult,
@@ -41,13 +41,13 @@ from ._generated.rpc import (
     SessionFSSqliteTransactionStatement,
     SessionFSStatResult,
 )
-from ._generated.rpc import (
+from .generated.rpc import (
     SessionFSSqliteQueryResult as _GeneratedSqliteQueryResult,
 )
-from ._generated.rpc import (
+from .generated.rpc import (
     SessionFSSqliteTransactionError as _GeneratedSqliteTransactionError,
 )
-from ._generated.rpc import (
+from .generated.rpc import (
     SessionFSSqliteTransactionResult as _GeneratedSqliteTransactionResult,
 )
 

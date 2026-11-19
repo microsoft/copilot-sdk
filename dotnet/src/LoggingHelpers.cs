@@ -5,7 +5,7 @@
 using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 
-namespace Microsoft.Copilot;
+namespace GitHub.Copilot;
 
 internal static class LoggingHelpers
 {

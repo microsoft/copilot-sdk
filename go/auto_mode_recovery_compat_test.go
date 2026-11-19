@@ -6,26 +6,38 @@ import (
 	"encoding/json"
 	"testing"
 
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
+	copilot "github.com/github/copilot-sdk/go"
+	_ "github.com/github/copilot-sdk/go/testdata/auto_mode_recovery_legacy"
 )
 
-func TestAutoModeRecoveryCanonicalEventFields(t *testing.T) {
+func TestAutoModeRecoveryLegacyEventTypes(t *testing.T) {
 	wire := []byte(`{"id":"capabilities","timestamp":"2026-11-05T00:00:00Z","type":"capabilities.changed","data":{"ui":{"autoModeRecovery":true,"canvases":true,"elicitation":false,"mcpApps":true}}}`)
-	var event copilot.SessionEvent
-	if err := json.Unmarshal(wire, &event); err != nil {
+	var legacy copilot.SessionEvent
+	if err := json.Unmarshal(wire, &legacy); err != nil {
 		t.Fatal(err)
 	}
-	data, ok := event.Data.(*copilot.CapabilitiesChangedData)
+	data, ok := legacy.Data.(*copilot.CapabilitiesChangedData)
 	if !ok {
-		t.Fatalf("capability payload type = %T", event.Data)
+		t.Fatalf("legacy payload type = %T", legacy.Data)
 	}
 	if data.UI == nil || data.UI.Canvases == nil || !*data.UI.Canvases ||
 		data.UI.Elicitation == nil || *data.UI.Elicitation ||
-		data.UI.MCPApps == nil || !*data.UI.MCPApps ||
-		data.UI.AutoModeRecovery == nil || !*data.UI.AutoModeRecovery {
-		t.Fatalf("capability values = %#v", data.UI)
+		data.UI.MCPApps == nil || !*data.UI.MCPApps {
+		t.Fatalf("legacy capability values = %#v", data.UI)
 	}
-	roundTrip, err := json.Marshal(event)
+	var aware copilot.SessionEventWithAutoModeRecovery
+	if err := json.Unmarshal(wire, &aware); err != nil {
+		t.Fatal(err)
+	}
+	extended, ok := aware.Data.(*copilot.CapabilitiesChangedDataWithAutoModeRecovery)
+	if !ok || extended.UI == nil || extended.UI.AutoModeRecovery == nil || !*extended.UI.AutoModeRecovery {
+		t.Fatalf("recovery-aware payload = %#v", aware.Data)
+	}
+	projected := extended.Legacy()
+	if projected.UI == nil || projected.UI.MCPApps == nil || !*projected.UI.MCPApps {
+		t.Fatalf("legacy projection = %#v", projected)
+	}
+	roundTrip, err := json.Marshal(aware)
 	if err != nil {
 		t.Fatal(err)
 	}

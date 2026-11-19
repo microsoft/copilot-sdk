@@ -708,35 +708,6 @@ func (r ProtocolMarkerSectionOverrideTransform) MarshalJSON() ([]byte, error) {
 	})
 }
 
-func matchesProtocolSectionOverrideProtocolStaticSectionOverride(data []byte) bool {
-	var rawObject map[string]json.RawMessage
-	if err := json.Unmarshal(data, &rawObject); err != nil {
-		return false
-	}
-	if _, ok := rawObject["action"]; !ok {
-		return false
-	}
-	for key := range rawObject {
-		switch key {
-		case "action", "content":
-		default:
-			return false
-		}
-	}
-	if rawAction, ok := rawObject["action"]; ok {
-		var rawActionString string
-		if err := json.Unmarshal(rawAction, &rawActionString); err != nil {
-			return false
-		}
-		switch rawActionString {
-		case "append", "prepend", "remove", "replace":
-		default:
-			return false
-		}
-	}
-	return true
-}
-
 func (r ProtocolSectionOverride) MarshalJSON() ([]byte, error) {
 	if r.ProtocolMarkerSectionOverride != nil {
 		return json.Marshal(r.ProtocolMarkerSectionOverride)
@@ -752,18 +723,17 @@ func (r *ProtocolSectionOverride) UnmarshalJSON(data []byte) error {
 		*r = ProtocolSectionOverride{}
 		return nil
 	}
-	if matchesProtocolSectionOverrideProtocolStaticSectionOverride(data) {
-		var value ProtocolStaticSectionOverride
-		if err := json.Unmarshal(data, &value); err != nil {
-			return err
-		}
-		*r = ProtocolSectionOverride{ProtocolStaticSectionOverride: &value}
-		return nil
-	}
 	{
 		value, err := unmarshalProtocolMarkerSectionOverride(data)
 		if err == nil {
 			*r = ProtocolSectionOverride{ProtocolMarkerSectionOverride: value}
+			return nil
+		}
+	}
+	{
+		var value ProtocolStaticSectionOverride
+		if err := json.Unmarshal(data, &value); err == nil {
+			*r = ProtocolSectionOverride{ProtocolStaticSectionOverride: &value}
 			return nil
 		}
 	}
@@ -11606,19 +11576,108 @@ func (r *SessionMCPOauthTryRefreshTokensRequest) UnmarshalJSON(data []byte) erro
 	return nil
 }
 
-func (r *SessionOpenGitHubOptions) UnmarshalJSON(data []byte) error {
-	type rawSessionOpenGitHubOptions struct {
-		AuthInfo             json.RawMessage     `json:"authInfo,omitempty"`
-		AutoTierIsExplicit   *bool               `json:"autoTierIsExplicit,omitempty"`
-		Capi                 *CapiSessionOptions `json:"capi,omitempty"`
-		CopilotURL           *string             `json:"copilotUrl,omitempty"`
-		FetchManagedSettings *bool               `json:"fetchManagedSettings,omitempty"`
-		InteractiveUser      *bool               `json:"interactiveUser,omitempty"`
+func (r *SessionOpenOptions) UnmarshalJSON(data []byte) error {
+	type rawSessionOpenOptions struct {
+		AdditionalContentExclusionPolicies     []SessionOpenOptionsAdditionalContentExclusionPolicy `json:"additionalContentExclusionPolicies,omitzero"`
+		AdditionalDirectories                  []string                                             `json:"additionalDirectories,omitzero"`
+		AgentContext                           *string                                              `json:"agentContext,omitempty"`
+		AgentDirectories                       []string                                             `json:"agentDirectories,omitzero"`
+		AllowAllMCPServerInstructions          *bool                                                `json:"allowAllMcpServerInstructions,omitempty"`
+		AllowMultipleToolCalls                 *bool                                                `json:"allowMultipleToolCalls,omitempty"`
+		AskUserDisabled                        *bool                                                `json:"askUserDisabled,omitempty"`
+		AuthClientIDMetadataURL                *string                                              `json:"authClientIdMetadataUrl,omitempty"`
+		AuthInfo                               json.RawMessage                                      `json:"authInfo,omitempty"`
+		Autopilot                              *AutopilotOptions                                    `json:"autopilot,omitempty"`
+		AutoTierIsExplicit                     *bool                                                `json:"autoTierIsExplicit,omitempty"`
+		AvailableTools                         []string                                             `json:"availableTools,omitzero"`
+		Capi                                   *CapiSessionOptions                                  `json:"capi,omitempty"`
+		ClientKind                             *string                                              `json:"clientKind,omitempty"`
+		ClientName                             *string                                              `json:"clientName,omitempty"`
+		CoauthorEnabled                        *bool                                                `json:"coauthorEnabled,omitempty"`
+		ConfigDir                              *string                                              `json:"configDir,omitempty"`
+		ContinueOnAutoMode                     *bool                                                `json:"continueOnAutoMode,omitempty"`
+		CopilotURL                             *string                                              `json:"copilotUrl,omitempty"`
+		CustomAgentsLocalOnly                  *bool                                                `json:"customAgentsLocalOnly,omitempty"`
+		DetachedFromSpawningParentEngagementID *string                                              `json:"detachedFromSpawningParentEngagementId,omitempty"`
+		DetachedFromSpawningParentSessionID    *string                                              `json:"detachedFromSpawningParentSessionId,omitempty"`
+		DisabledInstructionSources             []string                                             `json:"disabledInstructionSources,omitzero"`
+		DisabledMCPServers                     []string                                             `json:"disabledMcpServers,omitzero"`
+		DisabledSkills                         []string                                             `json:"disabledSkills,omitzero"`
+		EnableCitations                        *bool                                                `json:"enableCitations,omitempty"`
+		EnableFileChangeTracking               *bool                                                `json:"enableFileChangeTracking,omitempty"`
+		EnableFileHooks                        *bool                                                `json:"enableFileHooks,omitempty"`
+		EnableManagedSettings                  *bool                                                `json:"enableManagedSettings,omitempty"`
+		EnableOnDemandInstructionDiscovery     *bool                                                `json:"enableOnDemandInstructionDiscovery,omitempty"`
+		EnableScriptSafety                     *bool                                                `json:"enableScriptSafety,omitempty"`
+		EnableSkills                           *bool                                                `json:"enableSkills,omitempty"`
+		EnableStreaming                        *bool                                                `json:"enableStreaming,omitempty"`
+		EnforceManagedModelDefaults            *bool                                                `json:"enforceManagedModelDefaults,omitempty"`
+		EnvValueMode                           *SessionOpenOptionsEnvValueMode                      `json:"envValueMode,omitempty"`
+		EventsLogDirectory                     *string                                              `json:"eventsLogDirectory,omitempty"`
+		EventsLogIncludesSubagents             *bool                                                `json:"eventsLogIncludesSubagents,omitempty"`
+		ExcludedBuiltinAgents                  []string                                             `json:"excludedBuiltinAgents,omitzero"`
+		ExcludedManagedSettings                []string                                             `json:"excludedManagedSettings,omitzero"`
+		ExcludedTools                          []string                                             `json:"excludedTools,omitzero"`
+		ExpAssignments                         any                                                  `json:"expAssignments,omitempty"`
+		FeatureFlagConfiguration               *SessionFeatureFlagConfiguration                     `json:"featureFlagConfiguration,omitempty"`
+		FeatureFlags                           map[string]bool                                      `json:"featureFlags,omitzero"`
+		HasSkillProvider                       *bool                                                `json:"hasSkillProvider,omitempty"`
+		HookDirectories                        []string                                             `json:"hookDirectories,omitzero"`
+		IgnoredSkillsLocations                 []string                                             `json:"ignoredSkillsLocations,omitzero"`
+		IncludedBuiltinAgents                  []string                                             `json:"includedBuiltinAgents,omitzero"`
+		IncludedBuiltinSkills                  []string                                             `json:"includedBuiltinSkills,omitzero"`
+		InstalledPlugins                       []InstalledPlugin                                    `json:"installedPlugins,omitzero"`
+		InstructionDirectories                 []string                                             `json:"instructionDirectories,omitzero"`
+		IntegrationID                          *string                                              `json:"integrationId,omitempty"`
+		InteractiveUser                        *bool                                                `json:"interactiveUser,omitempty"`
+		IsExperimentalMode                     *bool                                                `json:"isExperimentalMode,omitempty"`
+		LifecycleDiagnostics                   *LifecycleDiagnosticsConfiguration                   `json:"lifecycleDiagnostics,omitempty"`
+		LogInteractiveShells                   *bool                                                `json:"logInteractiveShells,omitempty"`
+		LspClientName                          *string                                              `json:"lspClientName,omitempty"`
+		ManagedMCPServers                      map[string]ManagedMCPServerConfig                    `json:"managedMcpServers,omitzero"`
+		ManagedSettings                        *SessionManagedSettings                              `json:"managedSettings,omitempty"`
+		MaxInlineBinaryBytes                   *int64                                               `json:"maxInlineBinaryBytes,omitempty"`
+		Memory                                 *MemoryConfiguration                                 `json:"memory,omitempty"`
+		Model                                  *string                                              `json:"model,omitempty"`
+		ModelCapabilitiesOverrides             *ModelCapabilitiesOverride                           `json:"modelCapabilitiesOverrides,omitempty"`
+		Models                                 []ProviderModelConfig                                `json:"models,omitzero"`
+		Name                                   *string                                              `json:"name,omitempty"`
+		Provider                               *ProviderConfig                                      `json:"provider,omitempty"`
+		Providers                              []NamedProviderConfig                                `json:"providers,omitzero"`
+		ReasoningEffort                        *string                                              `json:"reasoningEffort,omitempty"`
+		ReasoningSummary                       *SessionOpenOptionsReasoningSummary                  `json:"reasoningSummary,omitempty"`
+		RefreshCustomInstructions              *bool                                                `json:"refreshCustomInstructions,omitempty"`
+		RemoteDefaultedOn                      *bool                                                `json:"remoteDefaultedOn,omitempty"`
+		RemoteExporting                        *bool                                                `json:"remoteExporting,omitempty"`
+		RemoteSteerable                        *bool                                                `json:"remoteSteerable,omitempty"`
+		RunningInInteractiveMode               *bool                                                `json:"runningInInteractiveMode,omitempty"`
+		SandboxConfig                          *SandboxConfig                                       `json:"sandboxConfig,omitempty"`
+		SandboxConfigSource                    *SandboxConfigSource                                 `json:"sandboxConfigSource,omitempty"`
+		SessionCapabilities                    []SessionCapability                                  `json:"sessionCapabilities,omitzero"`
+		SessionID                              *string                                              `json:"sessionId,omitempty"`
+		SessionLimits                          *SessionLimitsConfig                                 `json:"sessionLimits,omitempty"`
+		Shell                                  *ShellOptions                                        `json:"shell,omitempty"`
+		ShellInitProfile                       *string                                              `json:"shellInitProfile,omitempty"`
+		ShellProcessFlags                      []string                                             `json:"shellProcessFlags,omitzero"`
+		SkillDirectories                       []string                                             `json:"skillDirectories,omitzero"`
+		SkipCustomInstructions                 *bool                                                `json:"skipCustomInstructions,omitempty"`
+		TrajectoryFile                         *string                                              `json:"trajectoryFile,omitempty"`
+		Verbosity                              *Verbosity                                           `json:"verbosity,omitempty"`
+		WorkingDirectory                       *string                                              `json:"workingDirectory,omitempty"`
+		WorkingDirectoryContext                *SessionContext                                      `json:"workingDirectoryContext,omitempty"`
 	}
-	var raw rawSessionOpenGitHubOptions
+	var raw rawSessionOpenOptions
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
+	r.AdditionalContentExclusionPolicies = raw.AdditionalContentExclusionPolicies
+	r.AdditionalDirectories = raw.AdditionalDirectories
+	r.AgentContext = raw.AgentContext
+	r.AgentDirectories = raw.AgentDirectories
+	r.AllowAllMCPServerInstructions = raw.AllowAllMCPServerInstructions
+	r.AllowMultipleToolCalls = raw.AllowMultipleToolCalls
+	r.AskUserDisabled = raw.AskUserDisabled
+	r.AuthClientIDMetadataURL = raw.AuthClientIDMetadataURL
 	if raw.AuthInfo != nil {
 		value, err := unmarshalAuthInfo(raw.AuthInfo)
 		if err != nil {
@@ -11626,53 +11685,84 @@ func (r *SessionOpenGitHubOptions) UnmarshalJSON(data []byte) error {
 		}
 		r.AuthInfo = value
 	}
+	r.Autopilot = raw.Autopilot
 	r.AutoTierIsExplicit = raw.AutoTierIsExplicit
+	r.AvailableTools = raw.AvailableTools
 	r.Capi = raw.Capi
+	r.ClientKind = raw.ClientKind
+	r.ClientName = raw.ClientName
+	r.CoauthorEnabled = raw.CoauthorEnabled
+	r.ConfigDir = raw.ConfigDir
+	r.ContinueOnAutoMode = raw.ContinueOnAutoMode
 	r.CopilotURL = raw.CopilotURL
-	r.FetchManagedSettings = raw.FetchManagedSettings
-	r.InteractiveUser = raw.InteractiveUser
-	return nil
-}
-
-func (r *SessionOpenInferenceOptions) UnmarshalJSON(data []byte) error {
-	type rawSessionOpenInferenceOptions struct {
-		AllowMultipleToolCalls *bool                               `json:"allowMultipleToolCalls,omitempty"`
-		Capabilities           *ModelCapabilitiesOverride          `json:"capabilities,omitempty"`
-		DefaultProvider        json.RawMessage                     `json:"defaultProvider,omitempty"`
-		EnableCitations        *bool                               `json:"enableCitations,omitempty"`
-		Models                 []ProviderModelConfig               `json:"models,omitzero"`
-		Providers              []NamedProviderConfig               `json:"providers,omitzero"`
-		ReasoningEffort        *string                             `json:"reasoningEffort,omitempty"`
-		ReasoningSummary       *SessionOpenOptionsReasoningSummary `json:"reasoningSummary,omitempty"`
-		Verbosity              *Verbosity                          `json:"verbosity,omitempty"`
-	}
-	var raw rawSessionOpenInferenceOptions
-	raw.AllowMultipleToolCalls = r.AllowMultipleToolCalls
-	raw.Capabilities = r.Capabilities
-	raw.EnableCitations = r.EnableCitations
-	raw.Models = r.Models
-	raw.Providers = r.Providers
-	raw.ReasoningEffort = r.ReasoningEffort
-	raw.ReasoningSummary = r.ReasoningSummary
-	raw.Verbosity = r.Verbosity
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-	r.AllowMultipleToolCalls = raw.AllowMultipleToolCalls
-	r.Capabilities = raw.Capabilities
-	if raw.DefaultProvider != nil {
-		var value *string
-		if err := json.Unmarshal(raw.DefaultProvider, &value); err != nil {
-			return err
-		}
-		r.DefaultProvider = &value
-	}
+	r.CustomAgentsLocalOnly = raw.CustomAgentsLocalOnly
+	r.DetachedFromSpawningParentEngagementID = raw.DetachedFromSpawningParentEngagementID
+	r.DetachedFromSpawningParentSessionID = raw.DetachedFromSpawningParentSessionID
+	r.DisabledInstructionSources = raw.DisabledInstructionSources
+	r.DisabledMCPServers = raw.DisabledMCPServers
+	r.DisabledSkills = raw.DisabledSkills
 	r.EnableCitations = raw.EnableCitations
+	r.EnableFileChangeTracking = raw.EnableFileChangeTracking
+	r.EnableFileHooks = raw.EnableFileHooks
+	r.EnableManagedSettings = raw.EnableManagedSettings
+	r.EnableOnDemandInstructionDiscovery = raw.EnableOnDemandInstructionDiscovery
+	r.EnableScriptSafety = raw.EnableScriptSafety
+	r.EnableSkills = raw.EnableSkills
+	r.EnableStreaming = raw.EnableStreaming
+	r.EnforceManagedModelDefaults = raw.EnforceManagedModelDefaults
+	r.EnvValueMode = raw.EnvValueMode
+	r.EventsLogDirectory = raw.EventsLogDirectory
+	r.EventsLogIncludesSubagents = raw.EventsLogIncludesSubagents
+	r.ExcludedBuiltinAgents = raw.ExcludedBuiltinAgents
+	r.ExcludedManagedSettings = raw.ExcludedManagedSettings
+	r.ExcludedTools = raw.ExcludedTools
+	r.ExpAssignments = raw.ExpAssignments
+	r.FeatureFlagConfiguration = raw.FeatureFlagConfiguration
+	r.FeatureFlags = raw.FeatureFlags
+	r.HasSkillProvider = raw.HasSkillProvider
+	r.HookDirectories = raw.HookDirectories
+	r.IgnoredSkillsLocations = raw.IgnoredSkillsLocations
+	r.IncludedBuiltinAgents = raw.IncludedBuiltinAgents
+	r.IncludedBuiltinSkills = raw.IncludedBuiltinSkills
+	r.InstalledPlugins = raw.InstalledPlugins
+	r.InstructionDirectories = raw.InstructionDirectories
+	r.IntegrationID = raw.IntegrationID
+	r.InteractiveUser = raw.InteractiveUser
+	r.IsExperimentalMode = raw.IsExperimentalMode
+	r.LifecycleDiagnostics = raw.LifecycleDiagnostics
+	r.LogInteractiveShells = raw.LogInteractiveShells
+	r.LspClientName = raw.LspClientName
+	r.ManagedMCPServers = raw.ManagedMCPServers
+	r.ManagedSettings = raw.ManagedSettings
+	r.MaxInlineBinaryBytes = raw.MaxInlineBinaryBytes
+	r.Memory = raw.Memory
+	r.Model = raw.Model
+	r.ModelCapabilitiesOverrides = raw.ModelCapabilitiesOverrides
 	r.Models = raw.Models
+	r.Name = raw.Name
+	r.Provider = raw.Provider
 	r.Providers = raw.Providers
 	r.ReasoningEffort = raw.ReasoningEffort
 	r.ReasoningSummary = raw.ReasoningSummary
+	r.RefreshCustomInstructions = raw.RefreshCustomInstructions
+	r.RemoteDefaultedOn = raw.RemoteDefaultedOn
+	r.RemoteExporting = raw.RemoteExporting
+	r.RemoteSteerable = raw.RemoteSteerable
+	r.RunningInInteractiveMode = raw.RunningInInteractiveMode
+	r.SandboxConfig = raw.SandboxConfig
+	r.SandboxConfigSource = raw.SandboxConfigSource
+	r.SessionCapabilities = raw.SessionCapabilities
+	r.SessionID = raw.SessionID
+	r.SessionLimits = raw.SessionLimits
+	r.Shell = raw.Shell
+	r.ShellInitProfile = raw.ShellInitProfile
+	r.ShellProcessFlags = raw.ShellProcessFlags
+	r.SkillDirectories = raw.SkillDirectories
+	r.SkipCustomInstructions = raw.SkipCustomInstructions
+	r.TrajectoryFile = raw.TrajectoryFile
 	r.Verbosity = raw.Verbosity
+	r.WorkingDirectory = raw.WorkingDirectory
+	r.WorkingDirectoryContext = raw.WorkingDirectoryContext
 	return nil
 }
 
@@ -12041,42 +12131,6 @@ func (r *SessionSetCredentialsParams) UnmarshalJSON(data []byte) error {
 		}
 		r.Credentials = value
 	}
-	return nil
-}
-
-func (r *SessionUpdateInferenceOptions) UnmarshalJSON(data []byte) error {
-	type rawSessionUpdateInferenceOptions struct {
-		Capabilities             *ModelCapabilitiesOverride     `json:"capabilities,omitempty"`
-		ContextTier              *OptionsUpdateContextTier      `json:"contextTier,omitempty"`
-		DefaultProvider          json.RawMessage                `json:"defaultProvider,omitempty"`
-		EnableReasoningSummaries *bool                          `json:"enableReasoningSummaries,omitempty"`
-		ReasoningEffort          *string                        `json:"reasoningEffort,omitempty"`
-		ReasoningSummary         *OptionsUpdateReasoningSummary `json:"reasoningSummary,omitempty"`
-		Verbosity                *Verbosity                     `json:"verbosity,omitempty"`
-	}
-	var raw rawSessionUpdateInferenceOptions
-	raw.Capabilities = r.Capabilities
-	raw.ContextTier = r.ContextTier
-	raw.EnableReasoningSummaries = r.EnableReasoningSummaries
-	raw.ReasoningEffort = r.ReasoningEffort
-	raw.ReasoningSummary = r.ReasoningSummary
-	raw.Verbosity = r.Verbosity
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-	r.Capabilities = raw.Capabilities
-	r.ContextTier = raw.ContextTier
-	if raw.DefaultProvider != nil {
-		var value *string
-		if err := json.Unmarshal(raw.DefaultProvider, &value); err != nil {
-			return err
-		}
-		r.DefaultProvider = &value
-	}
-	r.EnableReasoningSummaries = raw.EnableReasoningSummaries
-	r.ReasoningEffort = raw.ReasoningEffort
-	r.ReasoningSummary = raw.ReasoningSummary
-	r.Verbosity = raw.Verbosity
 	return nil
 }
 

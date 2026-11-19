@@ -23,39 +23,35 @@ Set the handler in the session configuration. In these examples, the text and ye
 <summary><strong>TypeScript</strong></summary>
 
 ```typescript
-import { CopilotClient } from "@microsoft/copilot-sdk";
+import { CopilotClient } from "@github/copilot-sdk";
 
 // Your app's own dialogs. Each closes when `signal` aborts.
 declare function askForText(options: {
-    message: string;
-    masked: boolean;
-    signal: AbortSignal;
+  message: string;
+  masked: boolean;
+  signal: AbortSignal;
 }): Promise<string | undefined>;
 declare function askYesNo(message: string, signal: AbortSignal): Promise<boolean>;
 
-const client = new CopilotClient({ mode: "coding-agent" });
+const client = new CopilotClient();
 await client.start();
 
 const session = await client.createSession({
-    permissions: {
-        onRequest: async () => ({ kind: "approve-once" }),
-    },
-    interaction: {
-        onShellAuthenticationRequest: async (request, { signal }) => {
-            const message = `${request.program} asks: ${request.prompt}`;
-            if (request.inputKind === "confirm") {
-                return (await askYesNo(message, signal))
-                    ? { action: "accept", value: "yes" }
-                    : { action: "cancel" };
-            }
-            const value = await askForText({
-                message,
-                masked: request.inputKind === "secret",
-                signal,
-            });
-            return value === undefined ? { action: "cancel" } : { action: "accept", value };
-        },
-    },
+  onPermissionRequest: async () => ({ kind: "approve-once" }),
+  onShellAuthenticationRequest: async (request, { signal }) => {
+    const message = `${request.program} asks: ${request.prompt}`;
+    if (request.inputKind === "confirm") {
+      return (await askYesNo(message, signal))
+        ? { action: "accept", value: "yes" }
+        : { action: "cancel" };
+    }
+    const value = await askForText({
+      message,
+      masked: request.inputKind === "secret",
+      signal,
+    });
+    return value === undefined ? { action: "cancel" } : { action: "accept", value };
+  },
 });
 ```
 
@@ -106,13 +102,11 @@ async def on_shell_authentication_request(
 
 
 async def main():
-    client = CopilotClient(mode="coding-agent")
+    client = CopilotClient()
     await client.start()
     session = await client.create_session(
-        permissions={"on_request": PermissionHandler.approve_all},
-        interaction={
-            "on_shell_authentication_request": on_shell_authentication_request
-        },
+        on_permission_request=PermissionHandler.approve_all,
+        on_shell_authentication_request=on_shell_authentication_request,
     )
 
 
@@ -130,7 +124,7 @@ import (
 	"context"
 	"fmt"
 
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
+	copilot "github.com/github/copilot-sdk/go"
 )
 
 // Your app's own dialogs. Each closes when ctx is done.
@@ -164,19 +158,15 @@ func onShellAuthenticationRequest(
 
 func main() {
 	ctx := context.Background()
-	client := copilot.NewClient(&copilot.ClientOptions{Mode: copilot.ModeCodingAgent})
+	client := copilot.NewClient(nil)
 	if err := client.Start(ctx); err != nil {
 		panic(err)
 	}
 	defer client.Stop()
 
-	session, err := client.CreateSession(ctx, &copilot.CreateSessionOptions{
-		Permissions: copilot.SessionPermissionOptions{
-			OnRequest: copilot.PermissionHandler.ApproveAll,
-		},
-		Interaction: copilot.SessionInteractionOptions{
-			OnShellAuthenticationRequest: onShellAuthenticationRequest,
-		},
+	session, err := client.CreateSession(ctx, &copilot.SessionConfig{
+		OnPermissionRequest:  copilot.PermissionHandler.ApproveAll,
+		OnShellAuthenticationRequest: onShellAuthenticationRequest,
 	})
 	if err != nil {
 		panic(err)
@@ -190,33 +180,39 @@ func main() {
 <summary><strong>.NET</strong></summary>
 
 ```csharp
-using Microsoft.Copilot;
+using GitHub.Copilot;
 
-await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent });
+await using var client = new CopilotClient();
 await client.StartAsync();
-await using var session = await client.CreateSessionAsync(new CreateSessionOptions
+
+await using var session = await client.CreateSessionAsync(new SessionConfig
 {
-    Permissions = new SessionPermissionOptions
+    OnPermissionRequest = PermissionHandler.ApproveAll,
+    OnShellAuthenticationRequest = async (request, cancellationToken) =>
     {
-        OnRequest = PermissionHandler.ApproveAll
-    },
-    Interaction = new SessionInteractionOptions
-    {
-        OnShellAuthenticationRequest = async (request, cancellationToken) =>
+        var message = $"{request.Program} asks: {request.Prompt}";
+        if (request.InputKind == ShellAuthenticationInputKind.Confirm)
         {
-            var message = $"{request.Program} asks: {request.Prompt}";
-            if (request.InputKind == ShellAuthenticationInputKind.Confirm)
-            {
-                return await AskYesNoAsync(message, cancellationToken) ? ShellAuthenticationResponse.Accept("yes") : ShellAuthenticationResponse.Cancel();
-            }
-            var value = await AskForTextAsync(message, masked: request.InputKind == ShellAuthenticationInputKind.Secret, cancellationToken);
-            return value is null ? ShellAuthenticationResponse.Cancel() : ShellAuthenticationResponse.Accept(value);
+            return await AskYesNoAsync(message, cancellationToken)
+                ? ShellAuthenticationResponse.Accept("yes")
+                : ShellAuthenticationResponse.Cancel();
         }
-    }
+
+        var value = await AskForTextAsync(
+            message,
+            masked: request.InputKind == ShellAuthenticationInputKind.Secret,
+            cancellationToken);
+        return value is null ? ShellAuthenticationResponse.Cancel() : ShellAuthenticationResponse.Accept(value);
+    },
 });
+
 // Your app's own dialogs. Each closes when the token is cancelled.
-static Task<string?> AskForTextAsync(string message, bool masked, CancellationToken cancellationToken) => throw new NotImplementedException();
-static Task<bool> AskYesNoAsync(string message, CancellationToken cancellationToken) => throw new NotImplementedException();
+static Task<string?> AskForTextAsync(
+    string message, bool masked, CancellationToken cancellationToken) =>
+    throw new NotImplementedException();
+
+static Task<bool> AskYesNoAsync(string message, CancellationToken cancellationToken) =>
+    throw new NotImplementedException();
 ```
 
 </details>
@@ -224,60 +220,42 @@ static Task<bool> AskYesNoAsync(string message, CancellationToken cancellationTo
 <summary><strong>Java</strong></summary>
 
 ```java
-import com.microsoft.copilot.CopilotClient;
-import com.microsoft.copilot.rpc.CopilotClientOptions;
-import com.microsoft.copilot.rpc.CopilotClientMode;
-import com.microsoft.copilot.rpc.PermissionHandler;
-import com.microsoft.copilot.rpc.ShellAuthenticationResponse;
-import com.microsoft.copilot.rpc.CreateSessionOptions;
+import com.github.copilot.CopilotClient;
+import com.github.copilot.rpc.PermissionHandler;
+import com.github.copilot.rpc.ShellAuthenticationResponse;
+import com.github.copilot.rpc.SessionConfig;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
-import com.microsoft.copilot.rpc.SessionInteractionOptions;
-import com.microsoft.copilot.rpc.SessionPermissionOptions;
 
 public class ShellPasswordPromptsExample {
     public static void main(String[] args) throws Exception {
-        try (var client = new CopilotClient(new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT))) {
-            client
-                    .start()
-                    .get();
+        try (var client = new CopilotClient()) {
+            client.start().get();
 
-            var session = client
-                    .createSession(new CreateSessionOptions()
-                            .setPermissions(new SessionPermissionOptions()
-                                    .setOnRequest(PermissionHandler.APPROVE_ALL))
-                            .setInteraction(new SessionInteractionOptions()
-                                    .setOnShellAuthenticationRequest((request, invocation) -> {
-                                        var message = request
-                                                .getProgram() + " asks: "
-                                                + request
-                                                        .getPrompt();
-                                        if ("confirm"
-                                                .equals(request
-                                                        .getInputKind())) {
-                                            return askYesNo(message, invocation
-                                                    .getCancellation())
-                                                    .thenApply(yes -> yes ? ShellAuthenticationResponse
-                                                            .accept("yes")
-                                                            : ShellAuthenticationResponse
-                                                                    .cancel());
-                                        }
-                                        var masked = "secret"
-                                                .equals(request
-                                                        .getInputKind());
-                                        return askForText(message, masked, invocation
-                                                .getCancellation())
-                                                .thenApply(value -> value
-                                                        .map(ShellAuthenticationResponse::accept)
-                                                        .orElseGet(ShellAuthenticationResponse::cancel));
-                                    })))
+            var session = client.createSession(new SessionConfig()
+                    .setOnPermissionRequest(PermissionHandler.APPROVE_ALL)
+                    .setOnShellAuthenticationRequest((request, invocation) -> {
+                        var message = request.getProgram() + " asks: " + request.getPrompt();
+                        if ("confirm".equals(request.getInputKind())) {
+                            return askYesNo(message, invocation.getCancellation())
+                                    .thenApply(yes -> yes
+                                            ? ShellAuthenticationResponse.accept("yes")
+                                            : ShellAuthenticationResponse.cancel());
+                        }
+                        var masked = "secret".equals(request.getInputKind());
+                        return askForText(message, masked, invocation.getCancellation())
+                                .thenApply(value -> value
+                                        .map(ShellAuthenticationResponse::accept)
+                                        .orElseGet(ShellAuthenticationResponse::cancel));
+                    }))
                     .get();
         }
     }
 
     // Your app's own dialogs. Each closes when `cancellation` completes.
-    static CompletableFuture<Optional<String>> askForText(String message, boolean masked, CompletionStage<Void> cancellation) {
+    static CompletableFuture<Optional<String>> askForText(
+            String message, boolean masked, CompletionStage<Void> cancellation) {
         throw new UnsupportedOperationException();
     }
 
@@ -297,11 +275,10 @@ public class ShellPasswordPromptsExample {
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use copilot_sdk::handler::{
-    ShellAuthenticationHandler, ShellAuthenticationInputKind, ShellAuthenticationRequest,
-    ShellAuthenticationResponse,
+use github_copilot_sdk::handler::{
+    ShellAuthenticationHandler, ShellAuthenticationInputKind, ShellAuthenticationRequest, ShellAuthenticationResponse,
 };
-use copilot_sdk::types::{CreateSessionOptions, SessionId};
+use github_copilot_sdk::types::{SessionConfig, SessionId};
 use tokio_util::sync::CancellationToken;
 
 // Your app's own dialogs. Each closes when `cancellation` fires.
@@ -345,11 +322,9 @@ impl ShellAuthenticationHandler for PasswordPrompts {
 
 let session = client
     .create_session(
-        CreateSessionOptions::default()
-            .with_permissions(|__sdk_group| __sdk_group.approve_all_permissions())
-            .with_interaction(|__sdk_group| {
-                __sdk_group.with_on_shell_authentication_request(Arc::new(PasswordPrompts))
-            }),
+        SessionConfig::default()
+            .approve_all_permissions()
+            .with_shell_authentication_handler(Arc::new(PasswordPrompts)),
     )
     .await?;
 ```
@@ -370,7 +345,7 @@ The handler's cancellation signal fires when the answer is no longer needed, for
 
 ## When prompts are shown
 
-A command asks the user only when someone can answer. Sessions without a shell authentication handler, and sessions in autopilot, never wait for input: a command that needs a password fails as it would without this feature. On macOS and Linux, the agent in a session that can show these prompts is told to run commands that need `sudo` with `sudo -A`, so sudo asks through your handler instead of failing. The handler is called when the SDK is connected to the Copilot runtime, whether the SDK hosts it [in process](../setup/in-process-runtime.md), as every SDK does by default, or runs `copilot-runtime` as a separate process. In the interactive Copilot CLI, this is experimental: after `/experimental on`, the session you're viewing shows these prompts in a dialog that masks passwords. Non-interactive `copilot -p` runs never show them.
+A command asks the user only when someone can answer. Sessions without a shell authentication handler, and sessions in autopilot, never wait for input: a command that needs a password fails as it would without this feature. On macOS and Linux, the agent in a session that can show these prompts is told to run commands that need `sudo` with `sudo -A`, so sudo asks through your handler instead of failing. The handler is called when the SDK runs the Copilot runtime, `copilot-runtime`, as every SDK does by default, whether as a process or [in-process](../setup/in-process-runtime.md). A Copilot CLI server, which `copilot --headless` starts, doesn't forward these prompts: not when `cliPath` points the SDK at the `copilot` CLI, as in the [local CLI setup](../setup/local-cli.md), and not when the SDK connects to one through `cliUrl`. Its commands fail as they would without a handler. In the interactive Copilot CLI, this is experimental: after `/experimental on`, the session you're viewing shows these prompts in a dialog that masks passwords. Non-interactive `copilot -p` runs never show them.
 
 ## SDK support
 

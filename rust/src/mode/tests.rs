@@ -17,7 +17,7 @@ fn custom_agents_local_only_respects_mode_and_caller_value() {
         Some(false)
     );
     assert_eq!(
-        resolve_custom_agents_local_only(ClientMode::CodingAgent, None),
+        resolve_custom_agents_local_only(ClientMode::CopilotCli, None),
         None
     );
 }
@@ -79,13 +79,23 @@ fn validate_tool_filter_list_accepts_only_qualified_wildcards() {
 }
 
 #[test]
+fn builtin_tools_isolated_contents() {
+    assert!(BUILTIN_TOOLS_ISOLATED.contains(&"ask_user"));
+    assert!(BUILTIN_TOOLS_ISOLATED.contains(&"task_complete"));
+    assert!(BUILTIN_TOOLS_ISOLATED.contains(&"skill"));
+    assert!(!BUILTIN_TOOLS_ISOLATED.contains(&"bash"));
+    assert!(!BUILTIN_TOOLS_ISOLATED.contains(&"edit"));
+    assert!(!BUILTIN_TOOLS_ISOLATED.contains(&"web_fetch"));
+}
+
+#[test]
 fn system_message_copilot_cli_passes_through_unchanged() {
     let cfg = SystemMessageConfig {
         mode: Some("append".to_string()),
         content: Some("hello".to_string()),
         sections: None,
     };
-    let out = system_message_for_mode(ClientMode::CodingAgent, Some(cfg.clone()));
+    let out = system_message_for_mode(ClientMode::CopilotCli, Some(cfg.clone()));
     let out = out.unwrap();
     assert_eq!(out.mode.as_deref(), Some("append"));
     assert_eq!(out.content.as_deref(), Some("hello"));
@@ -172,7 +182,7 @@ fn system_message_empty_customize_without_env_context_gets_strip() {
 
 #[test]
 fn memory_defaults_follow_mode_and_preserve_explicit_values() {
-    for mode in [ClientMode::CodingAgent, ClientMode::Empty] {
+    for mode in [ClientMode::CopilotCli, ClientMode::Empty] {
         assert_eq!(
             memory_for_mode(mode, None),
             (mode == ClientMode::Empty).then(MemoryConfiguration::disabled),
@@ -210,7 +220,7 @@ fn experimental_mode_defaults_false_in_empty_mode() {
 #[test]
 fn experimental_mode_remains_runtime_controlled_in_copilot_cli_mode() {
     assert_eq!(
-        experimental_mode_for_mode(ClientMode::CodingAgent, None),
+        experimental_mode_for_mode(ClientMode::CopilotCli, None),
         None
     );
 }

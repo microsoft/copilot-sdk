@@ -1,4 +1,4 @@
-# Using MCP servers with the Microsoft Copilot SDK
+# Using MCP servers with the GitHub Copilot SDK
 
 The Copilot SDK can integrate with **MCP servers** (Model Context Protocol) to extend the assistant's capabilities with external tools. MCP servers run as separate processes and expose tools (functions) that Copilot can invoke during conversations.
 
@@ -68,30 +68,28 @@ or configuration-source precedence.
 
 <!-- docs-validate: strict -->
 ```typescript
-import { CopilotClient } from "@microsoft/copilot-sdk";
+import { CopilotClient } from "@github/copilot-sdk";
 
-const client = new CopilotClient({ mode: "coding-agent" });
+const client = new CopilotClient();
 const session = await client.createSession({
     model: "gpt-5",
-    mcp: {
-        servers: {
-            // Local MCP server (stdio)
-            "my-local-server": {
-                type: "local",
-                command: "node",
-                args: ["./mcp-server.js"],
-                env: { DEBUG: "true" },
-                workingDirectory: "./servers",
-                tools: ["*"], // "*" = all tools, [] = none, or list specific tools
-                timeout: 30000,
-            },
-            // Remote MCP server (HTTP)
-            github: {
-                type: "http",
-                url: "https://api.githubcopilot.com/mcp/",
-                headers: { Authorization: "Bearer ${TOKEN}" },
-                tools: ["*"],
-            },
+    mcpServers: {
+        // Local MCP server (stdio)
+        "my-local-server": {
+            type: "local",
+            command: "node",
+            args: ["./mcp-server.js"],
+            env: { DEBUG: "true" },
+            workingDirectory: "./servers",
+            tools: ["*"],  // "*" = all tools, [] = none, or list specific tools
+            timeout: 30000,
+        },
+        // Remote MCP server (HTTP)
+        "github": {
+            type: "http",
+            url: "https://api.githubcopilot.com/mcp/",
+            headers: { "Authorization": "Bearer ${TOKEN}" },
+            tools: ["*"],
         },
     },
 });
@@ -105,43 +103,35 @@ from copilot import CopilotClient
 from copilot.session import PermissionHandler
 from copilot.session_events import AssistantMessageData
 
-
 async def main():
-    client = CopilotClient(mode="coding-agent")
+    client = CopilotClient()
     await client.start()
 
-    session = await client.create_session(
-        model="gpt-5",
-        permissions={"on_request": PermissionHandler.approve_all},
-        mcp={
-            "servers": {
-                # Local MCP server (stdio)
-                "my-local-server": {
-                    "type": "local",
-                    "command": "python",
-                    "args": ["./mcp_server.py"],
-                    "env": {"DEBUG": "true"},
-                    "working_directory": "./servers",
-                    "tools": ["*"],
-                    "timeout": 30000,
-                },
-                # Remote MCP server (HTTP)
-                "github": {
-                    "type": "http",
-                    "url": "https://api.githubcopilot.com/mcp/",
-                    "headers": {"Authorization": "Bearer ${TOKEN}"},
-                    "tools": ["*"],
-                },
-            }
+    session = await client.create_session(on_permission_request=PermissionHandler.approve_all, model="gpt-5", mcp_servers={
+        # Local MCP server (stdio)
+        "my-local-server": {
+            "type": "local",
+            "command": "python",
+            "args": ["./mcp_server.py"],
+            "env": {"DEBUG": "true"},
+            "working_directory": "./servers",
+            "tools": ["*"],
+            "timeout": 30000,
         },
-    )
+        # Remote MCP server (HTTP)
+        "github": {
+            "type": "http",
+            "url": "https://api.githubcopilot.com/mcp/",
+            "headers": {"Authorization": "Bearer ${TOKEN}"},
+            "tools": ["*"],
+        },
+    })
 
     response = await session.send_and_wait("List my recent GitHub notifications")
     if response and isinstance(response.data, AssistantMessageData):
         print(response.data.content)
 
     await client.stop()
-
 
 asyncio.run(main())
 ```
@@ -152,67 +142,56 @@ asyncio.run(main())
 package main
 
 import (
-	"context"
-	copilot "github.com/microsoft/copilot-sdk/go/v2"
-	"log"
+    "context"
+    "log"
+    copilot "github.com/github/copilot-sdk/go"
 )
 
 func main() {
-	ctx := context.Background()
-	client := copilot.NewClient(&copilot.ClientOptions{Mode: copilot.ModeCodingAgent})
-	if err := client.Start(ctx); err != nil {
-		log.Fatal(err)
-	}
-	defer client.Stop()
+    ctx := context.Background()
+    client := copilot.NewClient(nil)
+    if err := client.Start(ctx); err != nil {
+        log.Fatal(err)
+    }
+    defer client.Stop()
 
-	session, err := client.CreateSession(ctx, &copilot.CreateSessionOptions{
-		Model: "gpt-5",
-		MCP: copilot.SessionMCPOptions{
-			Servers: map[string]copilot.MCPServerConfig{
-				"my-local-server": copilot.MCPStdioServerConfig{
-					Command: "node",
-					Args:    []string{"./mcp-server.js"},
-					Tools:   []string{"*"},
-				},
-			},
-		},
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer session.Disconnect()
+    session, err := client.CreateSession(ctx, &copilot.SessionConfig{
+        Model: "gpt-5",
+        MCPServers: map[string]copilot.MCPServerConfig{
+            "my-local-server": copilot.MCPStdioServerConfig{
+                Command: "node",
+                Args:    []string{"./mcp-server.js"},
+                Tools:   []string{"*"},
+            },
+        },
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer session.Disconnect()
 
-	// Use the session...
+    // Use the session...
 }
 ```
 
 ### .NET
 
 ```csharp
-using Microsoft.Copilot;
+using GitHub.Copilot;
 
-await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent });
-await using var session = await client.CreateSessionAsync(new CreateSessionOptions
+await using var client = new CopilotClient();
+await using var session = await client.CreateSessionAsync(new SessionConfig
 {
     Model = "gpt-5",
-    Mcp = new SessionMcpOptions
+    McpServers = new Dictionary<string, McpServerConfig>
     {
-        Servers = new Dictionary<string, McpServerConfig>
+        ["my-local-server"] = new McpStdioServerConfig
         {
-            ["my-local-server"] = new McpStdioServerConfig
-            {
-                Command = "node",
-                Args = new List<string>
-                {
-                    "./mcp-server.js"
-                },
-                Tools = new List<string>
-                {
-                    "*"
-                },
-            },
-        }
-    }
+            Command = "node",
+            Args = new List<string> { "./mcp-server.js" },
+            Tools = new List<string> { "*" },
+        },
+    },
 });
 ```
 
@@ -225,17 +204,11 @@ modify global MCP settings or the server configuration.
 <!-- docs-validate: strict -->
 ```typescript
 const session = await client.createSession({
-    mcp: {
-        servers: {
-            filesystem: {
-                type: "local",
-                command: "npx",
-                args: ["-y", "@modelcontextprotocol/server-filesystem", "."],
-            },
-            github: { type: "http", url: "https://api.githubcopilot.com/mcp/" },
-        },
-        disabledServers: ["github"],
+    mcpServers: {
+        filesystem: { type: "local", command: "npx", args: ["-y", "@modelcontextprotocol/server-filesystem", "."] },
+        github: { type: "http", url: "https://api.githubcopilot.com/mcp/" },
     },
+    disabledMcpServers: ["github"],
 });
 ```
 
@@ -317,10 +290,8 @@ const sandboxConfig = {
     userPolicy: { network: { allowOutbound: false } },
 };
 const session = await client.createSession({
-    permissions: {
-        onRequest: approveAll,
-        sandbox: sandboxConfig,
-    },
+    onPermissionRequest: approveAll,
+    sandboxConfig,
 });
 ```
 
@@ -385,21 +356,19 @@ tools: []
 Here's a complete working example using the official [`@modelcontextprotocol/server-filesystem`](https://www.npmjs.com/package/@modelcontextprotocol/server-filesystem) MCP server:
 
 ```typescript
-import { CopilotClient } from "@microsoft/copilot-sdk";
+import { CopilotClient } from "@github/copilot-sdk";
 
 async function main() {
-    const client = new CopilotClient({ mode: "coding-agent" });
+    const client = new CopilotClient();
 
     // Create session with filesystem MCP server
     const session = await client.createSession({
-        mcp: {
-            servers: {
-                filesystem: {
-                    type: "local",
-                    command: "npx",
-                    args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
-                    tools: ["*"],
-                },
+        mcpServers: {
+            filesystem: {
+                type: "local",
+                command: "npx",
+                args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+                tools: ["*"],
             },
         },
     });
@@ -601,17 +570,15 @@ and wakeups.
 
 <!-- docs-validate: strict -->
 ```ts
-import { approveAll, CopilotClient } from "@microsoft/copilot-sdk";
+import { approveAll, CopilotClient } from "@github/copilot-sdk";
 
-const client = new CopilotClient({ mode: "coding-agent" });
+const client = new CopilotClient();
 const stop = new AbortController();
 const appendLine = (line: string) => console.log(line);
 
 await client.start();
 const session = await client.createSession({
-    permissions: {
-        onRequest: approveAll,
-    },
+    onPermissionRequest: approveAll,
     diagnostics: { sources: { mcp: { level: "debug" } } },
 });
 

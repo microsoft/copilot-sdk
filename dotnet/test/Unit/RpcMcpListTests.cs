@@ -4,10 +4,10 @@
 
 #if NET8_0_OR_GREATER
 using System.Text.Json;
-using Microsoft.Copilot.Rpc;
+using GitHub.Copilot.Rpc;
 using Xunit;
 
-namespace Microsoft.Copilot.Test.Unit;
+namespace GitHub.Copilot.Test.Unit;
 
 public sealed partial class ClientSessionLifetimeTests
 {
@@ -31,10 +31,9 @@ public sealed partial class ClientSessionLifetimeTests
         server.ResponseFactory = _ => response.RootElement;
         await using var client = new CopilotClient(new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForTcp(server.Host, server.Port)
+            Connection = RuntimeConnection.ForUri(server.Url)
         });
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions());
+        await using var session = await client.CreateSessionAsync(new SessionConfig());
         server.ClearRequests();
 
         var inventory = await session.Rpc.Mcp.ListConfiguredAsync();
@@ -53,10 +52,9 @@ public sealed partial class ClientSessionLifetimeTests
         server.ResponseFactory = _ => new Dictionary<string, object?> { ["servers"] = Array.Empty<object>() };
         await using var client = new CopilotClient(new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForTcp(server.Host, server.Port)
+            Connection = RuntimeConnection.ForUri(server.Url)
         });
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions());
+        await using var session = await client.CreateSessionAsync(new SessionConfig());
         server.ClearRequests();
 
         var mcp = session.Rpc.Mcp;

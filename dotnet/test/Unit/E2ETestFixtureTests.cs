@@ -9,43 +9,43 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Reflection;
 using System.Text.Json;
-using Microsoft.Copilot.Rpc;
-using Microsoft.Copilot.Test.E2E;
-using Microsoft.Copilot.Test.Harness;
+using GitHub.Copilot.Rpc;
+using GitHub.Copilot.Test.E2E;
+using GitHub.Copilot.Test.Harness;
 using Xunit;
 
-namespace Microsoft.Copilot.Test.Unit;
+namespace GitHub.Copilot.Test.Unit;
 
 public class E2ETestFixtureTests
 {
     [Theory]
     [InlineData("default", true)]
-    [InlineData("spawned-stdio", true)]
-    [InlineData("spawned-tcp", true)]
+    [InlineData("stdio", true)]
+    [InlineData("tcp", true)]
     [InlineData("inprocess", true)]
-    [InlineData("tcp", false)]
+    [InlineData("uri", false)]
     public void Extension_Launch_Provider_Respects_Runtime_Ownership_And_Caller_Provider(string transport, bool expected)
     {
-        var options = new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = ConnectionFor(transport) };
+        var options = new CopilotClientOptions { Connection = ConnectionFor(transport) };
 
         E2ETestContext.ConfigureExtensionLaunchProvider(options, true, Path.Join("cli", "copilot-sdk"));
 
-        Assert.Equal(expected, options.Extensions.LaunchProvider is not null);
+        Assert.Equal(expected, options.ExtensionLaunchProvider is not null);
         var provider = new CallerExtensionLaunchProvider();
-        options.Extensions.LaunchProvider = provider;
+        options.ExtensionLaunchProvider = provider;
 
         E2ETestContext.ConfigureExtensionLaunchProvider(options, true, Path.Join("cli", "copilot-sdk"));
 
-        Assert.Same(provider, options.Extensions.LaunchProvider);
+        Assert.Same(provider, options.ExtensionLaunchProvider);
     }
 
     private static RuntimeConnection? ConnectionFor(string transport) => transport switch
     {
         "default" => null,
-        "spawned-stdio" => RuntimeConnection.ForSpawnedStdio(),
-        "spawned-tcp" => RuntimeConnection.ForSpawnedTcp(),
+        "stdio" => RuntimeConnection.ForStdio(),
+        "tcp" => RuntimeConnection.ForTcp(),
         "inprocess" => RuntimeConnection.ForInProcess(),
-        "tcp" => RuntimeConnection.ForTcp("localhost", 12345),
+        "uri" => RuntimeConnection.ForUri("localhost:12345"),
         _ => throw new ArgumentException("Unknown transport.", nameof(transport)),
     };
 
@@ -69,13 +69,11 @@ public class E2ETestFixtureTests
         await using var second = await E2ETestContext.CreateAsync();
         using var firstClient = first.CreateClient(new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = inProcess ? RuntimeConnection.ForInProcess() : RuntimeConnection.ForSpawnedStdio()
+            Connection = inProcess ? RuntimeConnection.ForInProcess() : RuntimeConnection.ForStdio(),
         });
         using var secondClient = second.CreateClient(new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = inProcess ? RuntimeConnection.ForInProcess() : RuntimeConnection.ForSpawnedStdio()
+            Connection = inProcess ? RuntimeConnection.ForInProcess() : RuntimeConnection.ForStdio(),
         });
 
         Assert.NotEqual(first.HomeDir, second.HomeDir);
@@ -91,9 +89,9 @@ public class E2ETestFixtureTests
     {
         await using var context = await E2ETestContext.CreateAsync();
         var error = Assert.Throws<ArgumentException>(() => context.CreateClient(
-            new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForInProcess() },
+            new CopilotClientOptions { Connection = RuntimeConnection.ForInProcess() },
             environment: new Dictionary<string, string> { ["EXPLICIT_FIXTURE_ENV"] = "value" }));
-        Assert.Contains("Process environment overrides require a spawned connection.", error.Message);
+        Assert.Contains("Environment", error.Message);
     }
 
     [Fact]
@@ -218,7 +216,7 @@ public class E2ETestFixtureTests
     [Fact]
     public void Shared_Client_Preserves_Tcp_Connection_For_OutOfProcess_Tests()
     {
-        var connection = Assert.IsType<SpawnedTcpRuntimeConnection>(
+        var connection = Assert.IsType<TcpRuntimeConnection>(
             E2ETestFixture.CreateSharedConnection(useInProcessTransport: false));
 
         Assert.Equal(E2ETestFixture.SharedTcpConnectionToken, connection.ConnectionToken);

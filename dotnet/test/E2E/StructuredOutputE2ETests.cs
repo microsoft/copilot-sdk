@@ -2,48 +2,41 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
-using Microsoft.Copilot.Rpc;
-using Microsoft.Copilot.Test.Harness;
+using GitHub.Copilot.Rpc;
+using GitHub.Copilot.Test.Harness;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Microsoft.Copilot.Test.E2E;
+namespace GitHub.Copilot.Test.E2E;
 
 public partial class StructuredOutputE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
     : E2ETestBase(fixture, "structured_output", output)
 {
-    private CreateSessionOptions StructuredSessionConfig() => E2ETestBackendConfiguration.Current != E2ETestBackend.Capi
-        ? new()
-        {
-            Tools = new SessionToolOptions
-            {
-                AvailableTools = ["custom:*"]
-            }
-        } : new()
+    private SessionConfig StructuredSessionConfig() => E2ETestBackendConfiguration.Current != E2ETestBackend.Capi
+        ? new() { AvailableTools = ["custom:*"] }
+        : new()
         {
             Model = "gpt-4.1",
-            GitHub = new SessionGitHubOptions { Capi = new CapiSessionOptions { Enabled = false } },
-            Tools = new SessionToolOptions
-            {
-                AvailableTools = ["custom:*"]
-            },
-            Inference = ByokTestOptions.Inference(new ProviderConfig
+            AvailableTools = ["custom:*"],
+            Provider = new ProviderConfig
             {
                 Type = "openai",
                 WireApi = "completions",
                 BaseUrl = Ctx.ProxyUrl,
                 ModelId = "gpt-4.1",
                 WireModel = "gpt-4.1",
-                ApiKey = System.Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true" ? "fake-token-for-e2e-tests" : System.Environment.GetEnvironmentVariable("GITHUB_TOKEN") ?? "fake-token-for-e2e-tests",
+                ApiKey = System.Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true"
+                ? "fake-token-for-e2e-tests"
+                : System.Environment.GetEnvironmentVariable("GITHUB_TOKEN") ?? "fake-token-for-e2e-tests",
                 Headers = new Dictionary<string, string>
                 {
                     ["Copilot-Integration-Id"] = "copilot-developer-cli",
                     ["Copilot-Harness-Id"] = "copilot-sdk",
                     ["X-GitHub-Api-Version"] = "2026-08-01",
                 },
-            }, new SessionInferenceOptions { })
+            },
         };
 
     [Fact]
@@ -51,8 +44,8 @@ public partial class StructuredOutputE2ETests(E2ETestFixture fixture, ITestOutpu
     {
         var calls = 0;
         var config = StructuredSessionConfig();
-        config.Events.Streaming = true;
-        config.Tools.Definitions =
+        config.Streaming = true;
+        config.Tools =
         [
             CopilotTool.DefineTool(() =>
             {
@@ -168,12 +161,12 @@ public partial class StructuredOutputE2ETests(E2ETestFixture fixture, ITestOutpu
         var hookEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseHook = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var config = StructuredSessionConfig();
-        config.Tools.Definitions =
+        config.Tools =
         [
             CopilotTool.DefineTool(() => "The inventory contains 42 red widgets.",
                 factoryOptions: new() { Name = "read_inventory", Description = "Read the current widget count and color." }),
         ];
-        config.Hooks.Handlers = new SessionHooks
+        config.Hooks = new SessionHooks
         {
             OnAgentStop = async (_, _) =>
             {
@@ -236,7 +229,7 @@ public partial class StructuredOutputE2ETests(E2ETestFixture fixture, ITestOutpu
     {
         var stops = 0;
         var config = StructuredSessionConfig();
-        config.Hooks.Handlers = new SessionHooks
+        config.Hooks = new SessionHooks
         {
             OnAgentStop = (_, _) => Task.FromResult<AgentStopHookOutput?>(
                 Interlocked.Increment(ref stops) == 1
@@ -269,7 +262,7 @@ public partial class StructuredOutputE2ETests(E2ETestFixture fixture, ITestOutpu
         string? steeringId = null;
         CopilotSession? session = null;
         var config = StructuredSessionConfig();
-        config.Hooks.Handlers = new SessionHooks
+        config.Hooks = new SessionHooks
         {
             OnAgentStop = async (_, _) =>
             {
@@ -312,7 +305,7 @@ public partial class StructuredOutputE2ETests(E2ETestFixture fixture, ITestOutpu
         var calls = 0;
         var stops = 0;
         var config = StructuredSessionConfig();
-        config.Tools.Definitions =
+        config.Tools =
         [
             CopilotTool.DefineTool(() =>
             {
@@ -321,7 +314,7 @@ public partial class StructuredOutputE2ETests(E2ETestFixture fixture, ITestOutpu
             }, new CopilotToolOptions { IsTerminal = true, SkipPermission = true },
                 new() { Name = "lookup_number", Description = "Return the number needed for the calculation." }),
         ];
-        config.Hooks.Handlers = new SessionHooks
+        config.Hooks = new SessionHooks
         {
             OnAgentStop = (_, _) => Task.FromResult<AgentStopHookOutput?>(
                 Interlocked.Increment(ref stops) == 1
@@ -357,7 +350,7 @@ public partial class StructuredOutputE2ETests(E2ETestFixture fixture, ITestOutpu
         var calls = 0;
         CopilotSession? session = null;
         var config = StructuredSessionConfig();
-        config.Tools.Definitions =
+        config.Tools =
         [
             CopilotTool.DefineTool(async () =>
             {
@@ -397,19 +390,16 @@ public partial class StructuredOutputE2ETests(E2ETestFixture fixture, ITestOutpu
         {
             var config = StructuredSessionConfig();
             config.Model = model;
-            config.Experiments.EnableExperimentalMode = model == "hydrafusion";
+            config.EnableExperimentalMode = model == "hydrafusion";
             if (model == "hydrafusion")
             {
-                // Select the built-in mode rather than a default-provider alias.
-                config.Inference = new SessionInferenceOptions { Providers = [], Models = [] };
-                config.GitHub.Capi = new CapiSessionOptions { Enabled = true };
-                config.Experiments.Flags = new Dictionary<string, bool>
+                config.FeatureFlags = new Dictionary<string, bool>
                 {
                     ["HYDRAFUSION"] = true,
                     ["HYDRAFUSION_ROLLOUT"] = true,
                 };
             }
-            config.Permissions.OnRequest = PermissionHandler.ApproveAll;
+            config.OnPermissionRequest = PermissionHandler.ApproveAll;
             await using var session = await Ctx.CreateSessionAsync(client, config);
             await Assert.ThrowsAsync<ArgumentException>(() => session.SendAndWaitAsync<CorrectionResult>(
                 new MessageOptions { Prompt = "Must not be admitted", Mode = "immediate" },
@@ -444,7 +434,7 @@ public partial class StructuredOutputE2ETests(E2ETestFixture fixture, ITestOutpu
         var toolEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseTool = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var config = StructuredSessionConfig();
-        config.Tools.Definitions =
+        config.Tools =
         [
             CopilotTool.DefineTool(async () =>
             {

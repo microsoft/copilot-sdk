@@ -181,7 +181,8 @@ pub enum SessionErrorKind {
 
     /// The client was started with [`crate::ClientOptions::session_fs`] but this
     /// session was created without a [`crate::session_fs::SessionFsProvider`]. Set one via
-    /// [`crate::SessionStateOptions::with_session_fs_provider`].
+    /// [`crate::SessionConfig::with_session_fs_provider`] (or
+    /// [`crate::ResumeSessionConfig::with_session_fs_provider`]).
     SessionFsProviderRequired,
 
     /// [`crate::ClientOptions::session_fs`] was provided with empty or invalid

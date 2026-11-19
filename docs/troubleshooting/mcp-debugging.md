@@ -29,20 +29,18 @@ Add environment variables to your MCP server config:
 <!-- docs-validate: strict -->
 ```typescript
 const session = await client.createSession({
-    mcp: {
-        servers: {
-            "my-server": {
-                type: "local",
-                command: "/path/to/server",
-                args: [],
-                env: {
-                    MCP_DEBUG: "1",
-                    DEBUG: "*",
-                    NODE_DEBUG: "mcp", // For Node.js MCP servers
-                },
-            },
-        },
+  mcpServers: {
+    "my-server": {
+      type: "local",
+      command: "/path/to/server",
+      args: [],
+      env: {
+        MCP_DEBUG: "1",
+        DEBUG: "*",
+        NODE_DEBUG: "mcp",  // For Node.js MCP servers
+      },
     },
+  },
 });
 ```
 
@@ -241,7 +239,7 @@ cd /expected/working/dir
 
 <!-- docs-validate: hidden -->
 ```csharp
-using Microsoft.Copilot;
+using GitHub.Copilot;
 
 public static class McpDotnetConfigExample
 {
@@ -292,7 +290,7 @@ public static class McpDotnetConfigExample
 
 <!-- docs-validate: hidden -->
 ```csharp
-using Microsoft.Copilot;
+using GitHub.Copilot;
 
 public static class McpNpxConfigExample
 {
@@ -350,14 +348,12 @@ xattr -d com.apple.quarantine /path/to/mcp-server
 ```typescript
 // GUI apps may not have /opt/homebrew in PATH
 const session = await client.createSession({
-    mcp: {
-        servers: {
-            "my-server": {
-                command: "/opt/homebrew/bin/node", // Full path
-                args: ["/path/to/server.js"],
-            },
-        },
+  mcpServers: {
+    "my-server": {
+      command: "/opt/homebrew/bin/node",  // Full path
+      args: ["/path/to/server.js"],
     },
+  },
 });
 ```
 
@@ -408,14 +404,12 @@ Use it:
 <!-- docs-validate: strict -->
 ```typescript
 const session = await client.createSession({
-    mcp: {
-        servers: {
-            "debug-server": {
-                command: "/path/to/mcp-debug-wrapper.sh",
-                args: ["/actual/server/path", "arg1", "arg2"],
-            },
-        },
+  mcpServers: {
+    "debug-server": {
+      command: "/path/to/mcp-debug-wrapper.sh",
+      args: ["/actual/server/path", "arg1", "arg2"],
     },
+  },
 });
 ```
 
@@ -448,7 +442,7 @@ If versions don't match, update your MCP server library.
 When opening an issue or asking for help, collect:
 
 * [ ] SDK language and version
-* [ ] Runtime version (`version` from `client.getStatus()`)
+* [ ] CLI version (`copilot --version`)
 * [ ] MCP server type (Node.js, Python, .NET, Go, Rust, and more)
 * [ ] Full MCP server configuration (redact secrets)
 * [ ] Result of manual `initialize` test

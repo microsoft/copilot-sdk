@@ -24,8 +24,8 @@ from copilot import (
     NetworkScope,
     RuntimeConnection,
 )
-from copilot._generated.rpc import ServerRpc
 from copilot._jsonrpc import JsonRpcClient
+from copilot.generated.rpc import ServerRpc
 
 
 class FakeJsonRpcClient:
@@ -71,9 +71,7 @@ class FakeJsonRpcClient:
 def make_client(
     fake: FakeJsonRpcClient, verify: Callable[[], Awaitable[None]] | None = None, **options: Any
 ) -> CopilotClient:
-    client = CopilotClient(
-        mode="coding-agent", runtime=RuntimeConnection.for_tcp("localhost", 1234), **options
-    )
+    client = CopilotClient(connection=RuntimeConnection.for_uri("localhost:1234"), **options)
 
     async def connect() -> None:
         client._process = fake.socket
@@ -234,10 +232,10 @@ async def test_cancelled_registration_closes_connection_and_propagates() -> None
 @pytest.mark.parametrize(
     ("options", "method"),
     [
-        ({"extensions": {"launch_provider": Mock()}}, "registerExtensionLaunchProvider"),
-        ({"plugins": {"builtin_directories": [os.path.abspath("plugins")]}}, "plugins.builtin.set"),
+        ({"extension_launch_provider": Mock()}, "registerExtensionLaunchProvider"),
+        ({"builtin_plugin_directories": [os.path.abspath("plugins")]}, "plugins.builtin.set"),
         ({"session_fs": SESSION_FS}, "sessionFs.setProvider"),
-        ({"models": {"request_handler": CopilotRequestHandler()}}, "llmInference.setProvider"),
+        ({"request_handler": CopilotRequestHandler()}, "llmInference.setProvider"),
     ],
 )
 async def test_later_startup_failure_closes_registered_connection(options, method, outcome) -> None:
@@ -356,13 +354,12 @@ async def test_answers_concurrent_lookups_missing_values_and_failures(monkeypatc
 
     monkeypatch.setattr(rpc, "_send_message", send)
     client = CopilotClient(
-        mode="coding-agent",
+        connection=RuntimeConnection.for_uri("localhost:1234"),
         network={
             "resolve_proxy": adapt(resolve_proxy),
             "authenticate_negotiate": adapt(authenticate_negotiate),
             "authenticate_basic": adapt(authenticate_basic),
         },
-        runtime=RuntimeConnection.for_tcp("localhost", 1234),
     )
     client._client = rpc
     client._register_client_global_handlers()
@@ -408,11 +405,8 @@ async def test_answers_concurrent_lookups_missing_values_and_failures(monkeypatc
 
     assert (sorted(calls, key=repr), sorted(sent, key=lambda message: message["id"])) == (
         sorted(
-            [NetworkResolveProxyRequest(url=params["url"]) for _, params in requests[:3]]
-            + [
-                NetworkAuthenticateNegotiateRequest(spn=params["spn"])
-                for _, params in requests[3:7]
-            ]
+            [NetworkResolveProxyRequest(params["url"]) for _, params in requests[:3]]
+            + [NetworkAuthenticateNegotiateRequest(params["spn"]) for _, params in requests[3:7]]
             + [
                 NetworkAuthenticateBasicRequest(
                     previous_rejected=params["previousRejected"],
@@ -467,11 +461,7 @@ def _wire_network_client(
 
     monkeypatch.setattr(rpc, "_send_message", send)
     monkeypatch.setattr(rpc, "_dispatch_request", dispatch_request)
-    client = CopilotClient(
-        mode="coding-agent",
-        runtime=RuntimeConnection.for_tcp("localhost", 1234),
-        network=network,
-    )
+    client = CopilotClient(connection=RuntimeConnection.for_uri("localhost:1234"), network=network)
     client._client = rpc
     client._register_client_global_handlers()
     return client, rpc, sent, finished
@@ -816,9 +806,9 @@ async def test_stale_connection_close_keeps_replacement_adapter_open(monkeypatch
         if old_adapter._closed:
             break
         await asyncio.sleep(0)
-    proxy = await replacement.resolve_proxy(NetworkResolveProxyRequest(url="https://a.example/"))
+    proxy = await replacement.resolve_proxy(NetworkResolveProxyRequest("https://a.example/"))
     token = await replacement.authenticate_negotiate(
-        NetworkAuthenticateNegotiateRequest(spn="HTTP/proxy.example")
+        NetworkAuthenticateNegotiateRequest("HTTP/proxy.example")
     )
 
     assert (old_adapter._closed, replacement._closed, proxy.proxy, token.token) == (
@@ -844,7 +834,6 @@ async def test_stale_connection_close_keeps_replacement_adapter_open(monkeypatch
 def test_rejects_invalid_config(config, message) -> None:
     with pytest.raises(ValueError, match=message):
         CopilotClient(
-            mode="coding-agent",
+            connection=RuntimeConnection.for_uri("localhost:1234"),
             network=cast(NetworkConfig, config),
-            runtime=RuntimeConnection.for_tcp("localhost", 1234),
         )

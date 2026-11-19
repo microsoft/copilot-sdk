@@ -2,13 +2,13 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
-using Microsoft.Copilot.Test.Harness;
+using GitHub.Copilot.Test.Harness;
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Microsoft.Copilot.Test.E2E;
+namespace GitHub.Copilot.Test.E2E;
 
-#pragma warning disable MCPSDK001 // The LLM inference surface is intentionally experimental.
+#pragma warning disable GHCP001 // The LLM inference surface is intentionally experimental.
 
 /// <summary>
 /// Asserts the runtime threads its session id into the LLM inference callback
@@ -23,9 +23,8 @@ public class CopilotRequestSessionIdE2ETests(E2ETestFixture fixture, ITestOutput
     private CopilotClient CreateClientWith(RecordingRequestHandler provider) =>
         Ctx.CreateClient(options: new CopilotClientOptions
         {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForSpawnedStdio(),
-            Models = new ClientModelOptions { RequestHandler = provider }
+            Connection = RuntimeConnection.ForStdio(),
+            RequestHandler = provider,
         });
 
     [Fact]
@@ -36,8 +35,10 @@ public class CopilotRequestSessionIdE2ETests(E2ETestFixture fixture, ITestOutput
         await using var client = CreateClientWith(provider);
         await client.StartAsync();
 
-        var session = await Ctx.CreateSessionAsync(client, new CreateSessionOptions
-        { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
+        var session = await Ctx.CreateSessionAsync(client, new SessionConfig
+        {
+            OnPermissionRequest = PermissionHandler.ApproveAll,
+        });
         var capiSessionId = session.SessionId;
 
         string content;
@@ -71,12 +72,20 @@ public class CopilotRequestSessionIdE2ETests(E2ETestFixture fixture, ITestOutput
         await using var client = CreateClientWith(provider);
         await client.StartAsync();
 
-        var session = await Ctx.CreateSessionAsync(client, new CreateSessionOptions
+        var session = await Ctx.CreateSessionAsync(client, new SessionConfig
         {
-            GitHub = new SessionGitHubOptions { Capi = new CapiSessionOptions { Enabled = false } },  // BYOK providers require an explicit model id.
+            OnPermissionRequest = PermissionHandler.ApproveAll,
+            // BYOK providers require an explicit model id.
             Model = "claude-sonnet-5",
-            Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll },
-            Inference = ByokTestOptions.Inference(new ProviderConfig { Type = "openai", WireApi = "responses", BaseUrl = "https://byok.invalid/v1", ApiKey = "byok-secret", ModelId = "claude-sonnet-5", WireModel = "claude-sonnet-5", }, new SessionInferenceOptions { })
+            Provider = new ProviderConfig
+            {
+                Type = "openai",
+                WireApi = "responses",
+                BaseUrl = "https://byok.invalid/v1",
+                ApiKey = "byok-secret",
+                ModelId = "claude-sonnet-5",
+                WireModel = "claude-sonnet-5",
+            },
         });
         var byokSessionId = session.SessionId;
 

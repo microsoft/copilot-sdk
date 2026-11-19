@@ -7,10 +7,10 @@ using System.Text.Json.Serialization;
 using System.Text.Json.Nodes;
 using System.Net.Http;
 using System.Text;
-using Microsoft.Copilot.Test.Harness;
+using GitHub.Copilot.Test.Harness;
 using Xunit;
 
-namespace Microsoft.Copilot.Test.Unit;
+namespace GitHub.Copilot.Test.Unit;
 
 public partial class ReplayProxyTests
 {

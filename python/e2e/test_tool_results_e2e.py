@@ -29,8 +29,7 @@ class TestToolResults:
             )
 
         session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all},
-            tools={"definitions": [get_weather]},
+            on_permission_request=PermissionHandler.approve_all, tools=[get_weather]
         )
 
         try:
@@ -55,8 +54,7 @@ class TestToolResults:
             )
 
         session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all},
-            tools={"definitions": [check_status]},
+            on_permission_request=PermissionHandler.approve_all, tools=[check_status]
         )
 
         try:
@@ -87,8 +85,7 @@ class TestToolResults:
             )
 
         session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all},
-            tools={"definitions": [analyze_code]},
+            on_permission_request=PermissionHandler.approve_all, tools=[analyze_code]
         )
 
         try:
@@ -129,8 +126,7 @@ class TestToolResults:
             )
 
         session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all},
-            tools={"definitions": [deploy_service]},
+            on_permission_request=PermissionHandler.approve_all, tools=[deploy_service]
         )
 
         def on_event(event):
@@ -183,8 +179,7 @@ class TestToolResults:
             )
 
         session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all},
-            tools={"definitions": [access_secret]},
+            on_permission_request=PermissionHandler.approve_all, tools=[access_secret]
         )
 
         def on_event(event):

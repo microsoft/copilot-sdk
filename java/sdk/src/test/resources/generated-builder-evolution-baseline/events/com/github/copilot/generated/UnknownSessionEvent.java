@@ -5,7 +5,7 @@
 // AUTO-GENERATED FILE - DO NOT EDIT
 // Generated from: session-events.schema.json
 
-package com.microsoft.copilot.generated;
+package com.github.copilot.generated;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;

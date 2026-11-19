@@ -10,7 +10,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/microsoft/copilot-sdk/go/v2/rpc"
+	"github.com/github/copilot-sdk/go/rpc"
 )
 
 const maxSessionFSBinaryBytes = (64*1024*1024 - 1024) / 4 * 3

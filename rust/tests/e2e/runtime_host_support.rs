@@ -1,4 +1,3 @@
-use copilot_sdk::{RuntimeConnection, SpawnedTcpRuntimeOptions};
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -10,10 +9,11 @@ use ahp::{Client as AhpClient, ClientConfig, SessionSubscription, SubscriptionEv
 use ahp_ws::WebSocketTransport;
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
-use copilot_sdk::{
-    AhpHost, AhpHostAuthentication, AhpHostExit, AhpHostOptions, CliProgram, Client, ClientOptions,
-};
 use futures_util::FutureExt;
+use github_copilot_sdk::{
+    AhpHost, AhpHostAuthentication, AhpHostExit, AhpHostOptions, CliProgram, Client, ClientOptions,
+    Transport,
+};
 use hpke::rand_core::SeedableRng;
 use hpke::{Deserializable, Serializable};
 use rand_chacha::ChaCha20Rng;
@@ -118,36 +118,22 @@ where
 }
 
 pub fn options(ctx: &E2eContext) -> ClientOptions {
-    let mut options =
-        ctx.client_options_with_transport(RuntimeConnection::SpawnedStdio(Default::default()));
-    let Some(RuntimeConnection::SpawnedStdio(process)) = &mut options.runtime else {
-        panic!("expected spawned stdio transport");
-    };
-    process.program = CliProgram::Path(ARTIFACTS.runtime_path.clone());
-    process.args.clear();
+    let mut options = ctx
+        .client_options()
+        .with_program(CliProgram::Path(ARTIFACTS.runtime_path.clone()))
+        .with_transport(Transport::Stdio);
     if ARTIFACTS.bundled {
-        process
-            .env
-            .as_mut()
-            .expect("harness replacement environment")
-            .retain(|(name, _)| {
-                !["COPILOT_CLI_PATH", "COPILOT_RUNTIME_PROVIDER_LIB"]
-                    .iter()
-                    .any(|key| name == key)
-            });
-        process.env_remove.extend([
-            "COPILOT_CLI_PATH".into(),
-            "COPILOT_RUNTIME_PROVIDER_LIB".into(),
-        ]);
+        options.env.retain(|(name, _)| {
+            !["COPILOT_CLI_PATH", "COPILOT_RUNTIME_PROVIDER_LIB"]
+                .iter()
+                .any(|key| name == key)
+        });
+        options = options.with_env_remove(["COPILOT_CLI_PATH", "COPILOT_RUNTIME_PROVIDER_LIB"]);
     } else {
-        process
-            .env
-            .as_mut()
-            .expect("harness replacement environment")
-            .extend([(
-                "COPILOT_RUNTIME_PROVIDER_LIB".into(),
-                ARTIFACTS.provider_path.as_os_str().to_owned(),
-            )]);
+        options.env.extend([(
+            "COPILOT_RUNTIME_PROVIDER_LIB".into(),
+            ARTIFACTS.provider_path.as_os_str().to_owned(),
+        )]);
     }
     options
 }
@@ -159,18 +145,12 @@ pub async fn start(ctx: &E2eContext) -> Client {
 }
 
 pub async fn tcp_owner(ctx: &E2eContext) -> (Client, u16) {
-    let mut options = options(ctx);
-    let Some(RuntimeConnection::SpawnedStdio(process)) = options.runtime.take() else {
-        panic!("stdio fixture")
-    };
-    options.runtime = Some(RuntimeConnection::SpawnedTcp(SpawnedTcpRuntimeOptions {
-        process,
+    let owner = Client::start(options(ctx).with_transport(Transport::Tcp {
         port: 0,
         connection_token: Some(RUNTIME_TOKEN.into()),
-    }));
-    let owner = Client::start(options)
-        .await
-        .expect("start owned TCP runtime");
+    }))
+    .await
+    .expect("start owned TCP runtime");
     let ports = owned_listening_ports(&owner);
     assert_eq!(ports.len(), 1, "fresh TCP runtime listeners: {ports:?}");
     let port = *ports.first().expect("owned runtime listener");
@@ -178,19 +158,20 @@ pub async fn tcp_owner(ctx: &E2eContext) -> (Client, u16) {
 }
 
 pub fn options_with_base_directory(ctx: &E2eContext, base: &Path) -> ClientOptions {
-    let mut options = options(ctx);
-    let process = options
-        .runtime
-        .as_mut()
-        .unwrap()
-        .child_process_options_mut()
-        .unwrap();
-    process.owned.base_directory = Some(base.to_owned());
+    let mut options = options(ctx).with_base_directory(base);
+    // The shared harness sets COPILOT_HOME explicitly; Rust's explicit env
+    // overrides typed defaults. Remove that conflict to exercise base_directory.
+    options.env.retain(|(name, _)| name != "COPILOT_HOME");
     options
 }
 
 pub fn home(ctx: &E2eContext) -> PathBuf {
-    ctx.home_dir()
+    ctx.client_options()
+        .env
+        .iter()
+        .find(|(key, _)| key == "COPILOT_HOME")
+        .map(|(_, value)| PathBuf::from(value))
+        .unwrap()
 }
 
 pub fn local_options() -> AhpHostOptions {

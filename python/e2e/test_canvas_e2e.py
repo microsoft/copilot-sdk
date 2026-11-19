@@ -74,8 +74,9 @@ async def _create_counter_session(
 ) -> tuple[_CounterCanvasHandler, CopilotSession]:
     handler = _CounterCanvasHandler()
     session = await ctx.client.create_session(
-        permissions={"on_request": PermissionHandler.approve_all},
-        canvases={"definitions": [_counter_canvas()], "handler": handler},
+        on_permission_request=PermissionHandler.approve_all,
+        canvases=[_counter_canvas()],
+        canvas_handler=handler,
     )
     return handler, session
 

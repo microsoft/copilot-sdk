@@ -28,7 +28,7 @@
 //! ```no_run
 //! use std::sync::Arc;
 //! use async_trait::async_trait;
-//! use copilot_sdk::types::{SessionFsProvider, FsError, FileInfo, DirEntry};
+//! use github_copilot_sdk::types::{SessionFsProvider, FsError, FileInfo, DirEntry};
 //!
 //! struct MyProvider;
 //!

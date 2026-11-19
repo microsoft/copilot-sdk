@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 
-from ._generated.rpc import (
+from .generated.rpc import (
     NamedProviderConfig,
     SavedProviderConfigurationProviderInput,
     SavedProviderConfigurationType,

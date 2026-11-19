@@ -1,9 +1,9 @@
 #![allow(clippy::unwrap_used)]
 
-use copilot_sdk::rpc::{
+use github_copilot_sdk::rpc::{
     CatalogCapability, CatalogClientContract, CatalogRecommendRequest, CatalogSearchResult,
 };
-use copilot_sdk::{Client, Error};
+use github_copilot_sdk::{Client, Error, ErrorKind};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, duplex};
 
@@ -59,13 +59,7 @@ fn recommend_request_has_only_required_fields_and_preserves_text() {
 async fn exchange(response_payload: Value) -> Result<CatalogSearchResult, Error> {
     let (client_write, server_read) = duplex(8192);
     let (mut server_write, client_read) = duplex(8192);
-    let client = Client::from_streams(
-        copilot_sdk::ClientMode::CodingAgent,
-        client_read,
-        client_write,
-        std::env::temp_dir(),
-    )
-    .unwrap();
+    let client = Client::from_streams(client_read, client_write, std::env::temp_dir()).unwrap();
     let server = tokio::spawn(async move {
         let mut reader = BufReader::new(server_read);
         let mut header = String::new();
@@ -145,4 +139,14 @@ async fn recommend_preserves_typed_refusals() {
         assert!(!matches!(result, CatalogSearchResult::Succeeded(_)));
         assert_eq!(serde_json::to_value(result).unwrap(), wire);
     }
+}
+
+#[tokio::test]
+async fn recommend_surfaces_unsupported_runtime_without_search_fallback() {
+    let error = exchange(json!({
+        "error": {"code": -32601, "message": "Method not found"}
+    }))
+    .await
+    .unwrap_err();
+    assert_eq!(error.kind(), &ErrorKind::Rpc { code: -32601 });
 }
