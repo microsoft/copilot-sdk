@@ -2,7 +2,7 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
-#if NET
+#if NET8_0_OR_GREATER
 using System.Text.Json;
 using Microsoft.Copilot.Rpc;
 using Xunit;

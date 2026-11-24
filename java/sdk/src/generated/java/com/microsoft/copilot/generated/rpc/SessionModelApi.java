@@ -31,22 +31,6 @@ public final class SessionModelApi {
     }
 
     /**
-     * Generates a branch slug with the original session's model policy and renewable credentials, including its established derived-name fallback.
-     * <p>
-     * Note: the {@code sessionId} field in the params record is overridden
-     * by the session-scoped wrapper; any value provided is ignored.
-     *
-     * @apiNote This method is experimental and may change in a future version.
-     * @since 1.0.0
-     */
-    @CopilotExperimental
-    CompletableFuture<ModelGenerateBranchSlugResult> generateBranchSlug(SessionModelGenerateBranchSlugParams params) {
-        com.fasterxml.jackson.databind.node.ObjectNode _p = MAPPER.valueToTree(params);
-        _p.put("sessionId", this.sessionId);
-        return caller.invoke("session.model.generateBranchSlug", _p, ModelGenerateBranchSlugResult.class);
-    }
-
-    /**
      * Gets the session's authoritative model snapshot, including the committed Auto preference and any newer unclaimed Auto preference waiting for a future user turn.
      *
      * @apiNote This method is experimental and may change in a future version.
@@ -71,22 +55,6 @@ public final class SessionModelApi {
         com.fasterxml.jackson.databind.node.ObjectNode _p = MAPPER.valueToTree(params);
         _p.put("sessionId", this.sessionId);
         return caller.invoke("session.model.startupAdmission", _p, SessionModelStartupAdmissionResult.class);
-    }
-
-    /**
-     * Classifies a serialized model-catalog error and returns request identifiers, authorization details, and the bound account's Copilot settings URL. Hosts use these facts to present catalog failures without parsing provider errors or deriving enterprise URLs themselves. Does not resolve credentials or fetch models.
-     * <p>
-     * Note: the {@code sessionId} field in the params record is overridden
-     * by the session-scoped wrapper; any value provided is ignored.
-     *
-     * @apiNote This method is experimental and may change in a future version.
-     * @since 1.0.0
-     */
-    @CopilotExperimental
-    CompletableFuture<ModelLoadErrorDetails> describeLoadError(SessionModelDescribeLoadErrorParams params) {
-        com.fasterxml.jackson.databind.node.ObjectNode _p = MAPPER.valueToTree(params);
-        _p.put("sessionId", this.sessionId);
-        return caller.invoke("session.model.describeLoadError", _p, ModelLoadErrorDetails.class);
     }
 
     /**
@@ -215,22 +183,6 @@ public final class SessionModelApi {
         com.fasterxml.jackson.databind.node.ObjectNode _p = MAPPER.valueToTree(params);
         _p.put("sessionId", this.sessionId);
         return caller.invoke("session.model.getReasoningSummaries", _p, SessionModelGetReasoningSummariesResult.class);
-    }
-
-    /**
-     * Describes this client's Copilot model catalog using the session's original authentication and integration. Remote clients can enrich host models without forwarding this request to that host or changing its advertised membership. The result preserves raw CAPI descriptions, including billing.token_prices, capability flags, and snake_case limits. Unlike models.list and session.model.list, it does not normalize model fields. Sessions without Copilot authentication or with a custom provider return an empty list. Omitted skipCache preserves existing cache behavior.
-     * <p>
-     * Note: the {@code sessionId} field in the params record is overridden
-     * by the session-scoped wrapper; any value provided is ignored.
-     *
-     * @apiNote This method is experimental and may change in a future version.
-     * @since 1.0.0
-     */
-    @CopilotExperimental
-    CompletableFuture<ModelDescribeClientCatalogResult> describeClientCatalog(SessionModelDescribeClientCatalogParams params) {
-        com.fasterxml.jackson.databind.node.ObjectNode _p = MAPPER.valueToTree(params);
-        _p.put("sessionId", this.sessionId);
-        return caller.invoke("session.model.describeClientCatalog", _p, ModelDescribeClientCatalogResult.class);
     }
 
     /**

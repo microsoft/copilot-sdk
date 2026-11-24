@@ -746,7 +746,6 @@ public sealed class ToolBinaryResult
     /// Optional human-readable description of the binary result.
     /// </summary>
     [JsonPropertyName("description")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Description { get; set; }
 }
 
@@ -831,7 +830,6 @@ public sealed class ToolResultObject
     /// Binary results (e.g., images) to be consumed by the language model.
     /// </summary>
     [JsonPropertyName("binaryResultsForLlm")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IList<ToolBinaryResult>? BinaryResultsForLlm { get; set; }
 
     /// <summary>
@@ -850,36 +848,24 @@ public sealed class ToolResultObject
     /// Error message if the tool execution failed.
     /// </summary>
     [JsonPropertyName("error")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Error { get; set; }
 
     /// <summary>
     /// Log entry for the session history.
     /// </summary>
     [JsonPropertyName("sessionLog")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SessionLog { get; set; }
 
     /// <summary>
     /// Custom telemetry data associated with the tool execution.
     /// </summary>
     [JsonPropertyName("toolTelemetry")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IDictionary<string, object>? ToolTelemetry { get; set; }
-
-    /// <summary>
-    /// When true, bypasses spill-to-file processing for this result.
-    /// False or null uses the session's normal large-output policy.
-    /// </summary>
-    [JsonPropertyName("skipLargeOutputProcessing")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public bool? SkipLargeOutputProcessing { get; set; }
 
     /// <summary>
     /// Names of tools returned by a tool-search tool.
     /// </summary>
     [JsonPropertyName("toolReferences")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IList<string>? ToolReferences { get; set; }
 
     /// <summary>
@@ -6077,10 +6063,7 @@ public class SessionMcpOptions
 
     /// <summary>
     /// Controls how MCP OAuth tokens are stored for this session.
-    /// When <see langword="null"/>, the client sends <see cref="McpOAuthTokenStorageMode.InMemory"/>
-    /// in <see cref="CopilotClientMode.Empty"/> mode for safe multitenant behavior. In other modes
-    /// nothing is sent and tokens are stored persistently, except that resuming a resident session
-    /// keeps its current storage.
+    /// Default: <see cref = "McpOAuthTokenStorageMode.InMemory"/> for safe multitenant behavior.
     /// </summary>
     [JsonPropertyName("oauthTokenStorage")]
     public McpOAuthTokenStorageMode? OauthTokenStorage { get; set; }

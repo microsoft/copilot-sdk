@@ -23,9 +23,7 @@ import javax.annotation.processing.Generated;
 record UserSettingsUpdateResult(
     /** The key's stored value after the write: the merged object when both the stored value and the supplied value are objects, otherwise the supplied value. */
     @JsonInclude(JsonInclude.Include.ALWAYS)
-    @JsonProperty("value") Object value,
-    /** Whether a conditional update was applied. False means its precondition did not match and value contains the unchanged stored value. Omitted for an unconditional update. */
-    @JsonProperty("applied") Boolean applied
+    @JsonProperty("value") Object value
 ) {
 
     /**
@@ -49,7 +47,6 @@ record UserSettingsUpdateResult(
         private Builder() {}
         private Object value;
         private boolean $presence0;
-        private Boolean applied;
 
         /**
          * Sets the {@code value} property.
@@ -64,17 +61,6 @@ record UserSettingsUpdateResult(
         }
 
         /**
-         * Sets the {@code applied} property.
-         * @param value the property value
-         * @return this builder
-         * @since 2.0.0
-         */
-        public Builder applied(Boolean value) {
-            this.applied = value;
-            return this;
-        }
-
-        /**
          * Builds a record after checking required property presence.
          * @return a new record
          * @throws IllegalStateException if a required property is missing
@@ -82,7 +68,7 @@ record UserSettingsUpdateResult(
          */
         public UserSettingsUpdateResult build() {
             if (!$presence0) throw new IllegalStateException("Missing required property: value");
-            return new UserSettingsUpdateResult(value, applied);
+            return new UserSettingsUpdateResult(value);
         }
     }
 }

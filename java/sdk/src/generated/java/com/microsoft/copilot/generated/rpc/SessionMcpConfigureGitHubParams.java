@@ -26,7 +26,7 @@ import javax.annotation.processing.Generated;
 record SessionMcpConfigureGitHubParams(
     /** Target session identifier */
     @JsonProperty("sessionId") String sessionId,
-    /** Credential-free authentication identity for GitHub MCP configuration. The field retains its legacy opaque schema for compatibility. */
+    /** Opaque runtime auth info for GitHub MCP configuration. Marked internal: an in-process runtime shape (configureGitHubMcp is a no-op over the wire). */
     @JsonProperty("authInfo") Object authInfo
 ) {
 

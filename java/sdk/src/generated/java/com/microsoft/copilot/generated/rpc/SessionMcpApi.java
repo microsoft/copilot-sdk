@@ -25,8 +25,6 @@ public final class SessionMcpApi {
     private final RpcCaller caller;
     private final String sessionId;
 
-    /** API methods for the {@code mcp.externalClient} sub-namespace. */
-    final SessionMcpExternalClientApi externalClient;
     /** API methods for the {@code mcp.ide} sub-namespace. */
     public final SessionMcpIdeApi ide;
     /** API methods for the {@code mcp.oauth} sub-namespace. */
@@ -44,7 +42,6 @@ public final class SessionMcpApi {
     SessionMcpApi(RpcCaller caller, String sessionId) {
         this.caller = caller;
         this.sessionId = sessionId;
-        this.externalClient = new SessionMcpExternalClientApi(caller, sessionId);
         this.ide = new SessionMcpIdeApi(caller, sessionId);
         this.oauth = new SessionMcpOauthApi(caller, sessionId);
         this.headers = new SessionMcpHeadersApi(caller, sessionId);
@@ -157,22 +154,6 @@ public final class SessionMcpApi {
         com.fasterxml.jackson.databind.node.ObjectNode _p = MAPPER.valueToTree(params);
         _p.put("sessionId", this.sessionId);
         return caller.invoke("session.mcp.disable", _p, Void.class);
-    }
-
-    /**
-     * Releases a session-only MCP disable after the host saves that choice in its settings. The live server stays disabled. Later reloads use the saved settings instead of the released override.
-     * <p>
-     * Note: the {@code sessionId} field in the params record is overridden
-     * by the session-scoped wrapper; any value provided is ignored.
-     *
-     * @apiNote This method is experimental and may change in a future version.
-     * @since 1.0.0
-     */
-    @CopilotExperimental
-    CompletableFuture<Void> releaseSessionDisable(SessionMcpReleaseSessionDisableParams params) {
-        com.fasterxml.jackson.databind.node.ObjectNode _p = MAPPER.valueToTree(params);
-        _p.put("sessionId", this.sessionId);
-        return caller.invoke("session.mcp.releaseSessionDisable", _p, Void.class);
     }
 
     /**
@@ -337,22 +318,6 @@ public final class SessionMcpApi {
     }
 
     /**
-     * Stops the session's MCP servers owned by one plugin. Only the original embedding host may perform this control.
-     * <p>
-     * Note: the {@code sessionId} field in the params record is overridden
-     * by the session-scoped wrapper; any value provided is ignored.
-     *
-     * @apiNote This method is experimental and may change in a future version.
-     * @since 1.0.0
-     */
-    @CopilotExperimental
-    CompletableFuture<Void> stopPluginServers(SessionMcpStopPluginServersParams params) {
-        com.fasterxml.jackson.databind.node.ObjectNode _p = MAPPER.valueToTree(params);
-        _p.put("sessionId", this.sessionId);
-        return caller.invoke("session.mcp.stopPluginServers", _p, Void.class);
-    }
-
-    /**
      * Registers a pre-connected external MCP client (e.g. IDE) on the session's host. The caller retains lifecycle ownership of the client and transport. Marked internal because the `client` and `transport` arguments are in-process MCP SDK instances that cannot be serialized across the JSON-RPC boundary; once the CLI moves on top of the SDK, external clients will be expressed as transport configs the runtime can construct itself.
      * <p>
      * Note: the {@code sessionId} field in the params record is overridden
@@ -409,22 +374,6 @@ public final class SessionMcpApi {
     @CopilotExperimental
     public CompletableFuture<SessionMcpGetToolTokenBreakdownResult> getToolTokenBreakdown() {
         return caller.invoke("session.mcp.getToolTokenBreakdown", java.util.Map.of("sessionId", this.sessionId), SessionMcpGetToolTokenBreakdownResult.class);
-    }
-
-    /**
-     * Inspects source configuration without starting servers or resolving credentials. Workspace trust comes from the bound session and only a matching activation snapshot can attest the requested directory.
-     * <p>
-     * Note: the {@code sessionId} field in the params record is overridden
-     * by the session-scoped wrapper; any value provided is ignored.
-     *
-     * @apiNote This method is experimental and may change in a future version.
-     * @since 1.0.0
-     */
-    @CopilotExperimental
-    CompletableFuture<McpConfigMergeSourcesResult> inspectConfiguration(SessionMcpInspectConfigurationParams params) {
-        com.fasterxml.jackson.databind.node.ObjectNode _p = MAPPER.valueToTree(params);
-        _p.put("sessionId", this.sessionId);
-        return caller.invoke("session.mcp.inspectConfiguration", _p, McpConfigMergeSourcesResult.class);
     }
 
 }

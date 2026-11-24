@@ -22,24 +22,9 @@ public final class ServerAccountApi {
 
     private final RpcCaller caller;
 
-    /** API methods for the {@code account.deviceCodeLogin} sub-namespace. */
-    final ServerAccountDeviceCodeLoginApi deviceCodeLogin;
-
     /** @param caller the RPC transport function */
     ServerAccountApi(RpcCaller caller) {
         this.caller = caller;
-        this.deviceCodeLogin = new ServerAccountDeviceCodeLoginApi(caller);
-    }
-
-    /**
-     * Runs a connection-owned interactive account login through the original process authentication handle, preserving device and browser flows, policy, persistence, and cancellation.
-     *
-     * @apiNote This method is experimental and may change in a future version.
-     * @since 1.0.0
-     */
-    @CopilotExperimental
-    CompletableFuture<AccountLoginProcessResult> loginProcess(AccountLoginProcessParams params) {
-        return caller.invoke("account.loginProcess", params, AccountLoginProcessResult.class);
     }
 
     /**
@@ -111,28 +96,6 @@ public final class ServerAccountApi {
     }
 
     /**
-     * Resolves relay endpoints through the original account owner before any session exists. Requires a usable GitHub credential and preserves the owner's captured environment.
-     *
-     * @apiNote This method is experimental and may change in a future version.
-     * @since 1.0.0
-     */
-    @CopilotExperimental
-    CompletableFuture<AccountRelayBootstrapConfig> getRelayBootstrapConfig() {
-        return caller.invoke("account.getRelayBootstrapConfig", java.util.Map.of(), AccountRelayBootstrapConfig.class);
-    }
-
-    /**
-     * Returns the active account's GitHub API URL when its current credential is usable, or null when no authenticated credential exists. Resolves credentials through the original account owner.
-     *
-     * @apiNote This method is experimental and may change in a future version.
-     * @since 1.0.0
-     */
-    @CopilotExperimental
-    CompletableFuture<String> getGitHubApiUrlIfAuthenticated() {
-        return caller.invoke("account.getGitHubApiUrlIfAuthenticated", java.util.Map.of(), String.class);
-    }
-
-    /**
      * Renders the sign-in banner and the one-line account description the runtime uses for an authentication identity. The runtime words these in several places for its own callers, so a host that announces a sign-in or an account switch should render them from here rather than composing its own, which would let the two spellings drift apart.
      *
      * @apiNote This method is experimental and may change in a future version.
@@ -155,7 +118,7 @@ public final class ServerAccountApi {
     }
 
     /**
-     * Resolves a path on the identity's GitHub host into an absolute URL. A bound host can instead select its live credential owner with authOwnerId; this form rejects extensions, foreign owners, and a simultaneous identity. Falls back to the public host only when neither identity nor authOwnerId is supplied.
+     * Resolves a path on the identity's GitHub host into an absolute URL, so a host can link to settings or documentation on the enterprise instance the user is signed in to rather than to github.com. Falls back to the public host when no identity is supplied.
      *
      * @apiNote This method is experimental and may change in a future version.
      * @since 1.0.0

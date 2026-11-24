@@ -213,29 +213,6 @@ function groupHostSessionSettings(
     return { ...root, ...groups };
 }
 
-/**
- * Most session events held for IDs that are not registered here. Events for a
- * session that never registers (one joined with a raw `sessions.connect` and
- * never resumed, or trailing events after a disconnect) wait only up to this
- * bound. Past it, every event held for the ID seen first is dropped with a
- * warning naming the requests among them. Registered sessions never wait on it.
- */
-const MAX_HELD_SESSION_EVENTS = 8192;
-
-/** Session events that ask a handler for an answer, with the event that settles them. */
-const SETTLED_BY: Record<string, string> = {
-    "permission.requested": "permission.completed",
-    "external_tool.requested": "external_tool.completed",
-    "elicitation.requested": "elicitation.completed",
-    "mcp.oauth_required": "mcp.oauth_completed",
-    "command.execute": "command.completed",
-};
-
-function eventRequestId(event: SessionEvent): string | undefined {
-    const requestId = (event.data as { requestId?: unknown } | undefined)?.requestId;
-    return typeof requestId === "string" ? requestId : undefined;
-}
-
 function sessionIdsOverlap(left: string, right: string): boolean {
     if (left === right) return true;
     if (!isUuidSessionId(left) || !isUuidSessionId(right)) return false;
@@ -255,14 +232,7 @@ function isUuidSessionId(sessionId: string): boolean {
     );
 }
 
-type DrainingMessageConnection = MessageConnection & {
-    drain: () => Promise<void>;
-    /**
-     * Run `reached` once every message parsed so far has been dispatched, or
-     * when the connection is disposed.
-     */
-    fence: (reached: () => void) => void;
-};
+type DrainingMessageConnection = MessageConnection & { drain: () => Promise<void> };
 
 interface SessionInitializationContext {
     sessionId: string;
@@ -303,12 +273,6 @@ function createMessageConnection(
     let disposed = false;
     const callbacks = new Map<string | number | null, SessionInitializationContext>();
     const barrier = { jsonrpc: "2.0", method: "$/sdkDrain" };
-    const fences = new Map<object, () => void>();
-    const reachFences = () => {
-        const reached = [...fences.values()];
-        fences.clear();
-        for (const fenceReached of reached) fenceReached();
-    };
     const connection = createRpcMessageConnection(
         {
             onError: reader.onError,
@@ -340,20 +304,8 @@ function createMessageConnection(
         {
             messageStrategy: {
                 handleMessage: (message, next) => {
-                    const fenceReached = fences.get(message);
-                    if (message === barrier && fences.size > 0) {
-                        // A fence queued behind the barrier (say, by a rollback
-                        // the close itself caused) still holds events. Pass the
-                        // barrier again behind it, so fences settle in their
-                        // own order, before teardown, and what they deliver
-                        // (such as a turn's terminal event) settles its waiters
-                        // first.
-                        dispatch?.(barrier);
-                    } else if (message === barrier) {
+                    if (message === barrier) {
                         finishDrain?.();
-                    } else if (fenceReached) {
-                        fences.delete(message);
-                        fenceReached();
                     } else {
                         const request = Message.isRequest(message) ? message : undefined;
                         const params = request?.params;
@@ -383,7 +335,6 @@ function createMessageConnection(
         }
         callbacks.clear();
         finishDrain?.();
-        reachFences();
     });
     return Object.assign(connection, {
         drain: () => {
@@ -400,17 +351,6 @@ function createMessageConnection(
                 });
             }
             return drained;
-        },
-        fence: (reached: () => void) => {
-            if (disposed || !dispatch) {
-                reached();
-                return;
-            }
-            // Like the drain barrier, a local queue entry that follows every
-            // message already parsed and is never sent or seen by handlers.
-            const marker = { jsonrpc: "2.0", method: "$/sdkFence" };
-            fences.set(marker, reached);
-            dispatch(marker);
         },
     });
 }
@@ -788,52 +728,6 @@ function getBundledRuntimePath(): Promise<string> {
     return ensureRuntimeBundle(COPILOT_CLI_VERSION);
 }
 
-/** @internal Shared with native coverage preloading. */
-export async function resolveInProcessRuntimeLibraryPath(
-    explicitEntrypoint?: string
-): Promise<string> {
-    if (!explicitEntrypoint) {
-        return join(dirname(await getBundledRuntimePath()), "runtime.node");
-    }
-    const entrypointDirectory = dirname(resolve(explicitEntrypoint));
-    const adjacentRuntime = join(entrypointDirectory, "runtime.node");
-    return existsSync(adjacentRuntime)
-        ? adjacentRuntime
-        : join(
-              entrypointDirectory,
-              "prebuilds",
-              getNapiPrebuildsFolder(explicitEntrypoint),
-              "runtime.node"
-          );
-}
-
-function getNapiPrebuildsFolder(entrypoint: string): string {
-    const arch = process.arch;
-    if (arch !== "x64" && arch !== "arm64") {
-        throw new Error(`Unsupported architecture '${arch}' for in-process FFI hosting.`);
-    }
-    let platform: string = process.platform;
-    if (platform === "linux" && isMusl(entrypoint)) {
-        platform = "linuxmusl";
-    }
-    return `${platform}-${arch}`;
-}
-
-function isMusl(entrypoint: string): boolean {
-    if (entrypoint.includes(`copilot-linuxmusl-${process.arch}`)) {
-        return true;
-    }
-    if (entrypoint.includes(`copilot-linux-${process.arch}`)) {
-        return false;
-    }
-    const report = process.report?.getReport();
-    const header =
-        report && "header" in report
-            ? (report.header as { glibcVersionRuntime?: string })
-            : undefined;
-    return header !== undefined && header.glibcVersionRuntime === undefined;
-}
-
 /**
  * The bundled runtime's path in a form `spawn` can start. Windows cannot start an
  * executable named by an ordinary path of MAX_PATH or more characters, which a nested
@@ -937,9 +831,7 @@ function physicalDirectory(directory: string): string {
     try {
         return realpathSync.native(directory);
     } catch {
-        return walkPhysicalPath(
-            isAbsolute(directory) ? directory : `${process.cwd()}${sep}${directory}`
-        );
+        return walkPhysicalPath(resolve(directory));
     }
 }
 
@@ -978,9 +870,6 @@ function walkPhysicalPath(absolutePath: string): string {
 export class CopilotClient {
     private cliStartTimeout: ReturnType<typeof setTimeout> | null = null;
     private cliProcess: ChildProcess | null = null;
-    // An owned CLI process that did not exit within stop()'s shutdown timeout. It is no
-    // longer the client's process, but forceStop() and start() still kill it.
-    private unexitedCliProcess: ChildProcess | null = null;
     private ffiHost: FfiRuntimeHost | null = null;
     private connection: DrainingMessageConnection | null = null;
     private requestAdapter: ReturnType<typeof createCopilotRequestAdapter> | null = null;
@@ -997,22 +886,9 @@ export class CopilotClient {
     /** Shared in-flight start; concurrent callers await the same runtime startup. */
     private startPromise: Promise<void> | null = null;
     private shutdownCanceledStartup: Promise<void> | null = null;
-    /** Replacement start() waiters by initialization generation; shutdown cancels older waiters. */
-    private pendingReplacementStarts = new Map<number, number>();
     private stopPromise: Promise<Error[]> | null = null;
     private forceStopPromise: Promise<void> | null = null;
     private sessions: Map<string, CopilotSession> = new Map();
-    /** Events for session IDs not registered yet, in arrival order, keyed in first-seen order. */
-    private heldSessionEvents = new Map<string, SessionEvent[]>();
-    private heldSessionEventCount = 0;
-    /** The connection whose events are held; none while it is torn down. */
-    private heldSessionEventsConnection: MessageConnection | null = null;
-    /**
-     * Registered sessions whose held events wait for a connection fence, so
-     * that every event parsed before registration, such as a request's
-     * completion, is reconciled before any handler runs. Counts fences.
-     */
-    private claimingSessions = new Map<CopilotSession, number>();
     /**
      * Open secret prompts by session ID, then request ID. Tracked here rather
      * than on a session object, which a resume can replace while a prompt is open.
@@ -1023,7 +899,6 @@ export class CopilotClient {
         {
             session: CopilotSession;
             connection: MessageConnection;
-            skillProviderSession?: CopilotSession;
             gitHubTokenProviderRegistrationId?: string;
             resolveAliases: boolean;
         }
@@ -1216,7 +1091,6 @@ export class CopilotClient {
                 "runtime.baseDirectory": "baseDirectory" in conn ? conn.baseDirectory : undefined,
                 "github.token": options.github?.token,
                 "github.useLoggedInUser": options.github?.useLoggedInUser,
-                "observability.logLevel": options.observability?.logLevel,
                 "observability.telemetry": options.observability?.telemetry,
                 "runtime.sessionIdleTimeoutSeconds":
                     "sessionIdleTimeoutSeconds" in conn
@@ -1550,20 +1424,7 @@ export class CopilotClient {
         if (startup && startup === this.shutdownCanceledStartup) {
             const generation = this.sessionInitializationGeneration;
             // Forced shutdown must return without native startup; reuse still waits for its cleanup.
-            this.pendingReplacementStarts.set(
-                generation,
-                (this.pendingReplacementStarts.get(generation) ?? 0) + 1
-            );
-            try {
-                await Promise.allSettled([startup, this.stopPromise]);
-            } finally {
-                const remaining = this.pendingReplacementStarts.get(generation)! - 1;
-                if (remaining === 0) {
-                    this.pendingReplacementStarts.delete(generation);
-                } else {
-                    this.pendingReplacementStarts.set(generation, remaining);
-                }
-            }
+            await Promise.allSettled([startup, this.stopPromise]);
             if (generation !== this.sessionInitializationGeneration) {
                 throw new Error("Client disconnected during session initialization");
             }
@@ -1624,7 +1485,7 @@ export class CopilotClient {
             // A lost connection (such as a dropped TCP socket) can leave the previous
             // runtime running; replacing its reference below would orphan it. Without
             // one, startup still reaches the spawn without yielding.
-            if (this.cliProcess || this.unexitedCliProcess) {
+            if (this.cliProcess) {
                 await this.killCliProcess();
                 // forceStop() can run while the old process is being retired and finds no child.
                 signal.throwIfAborted();
@@ -1697,11 +1558,8 @@ export class CopilotClient {
             if (!signal.aborted) {
                 this.invalidateSessionInitializations();
             }
-            // Graceful stop owns cleanup until it joins this startup. Do not
-            // dispose its pending shutdown response from this cancellation path.
-            if (!this.stopPromise || this.forceStopping) {
-                await this.doForceStop();
-            }
+            // Startup retains cleanup ownership even after forceStop has returned.
+            await this.doForceStop();
             this.state = "error";
             throw startupError;
         }
@@ -1717,9 +1575,6 @@ export class CopilotClient {
      * 3. Closes the JSON-RPC connection
      * 4. Signals EOF to an owned stdio process and waits for host cleanup, then
      *    terminates the process if it does not exit within the shutdown timeout
-     *
-     * A pending {@link start} rejects when shutdown cancels it. Cleanup includes
-     * resources acquired before that startup settles.
      *
      * Note: session data on disk is preserved, so sessions can be resumed later.
      * To permanently remove session data before stopping, call
@@ -1820,7 +1675,7 @@ export class CopilotClient {
         for (const session of new Set([...activeSessions, ...this.sessions.values()])) {
             session._markDisconnected();
         }
-        this.clearSessionRoutes();
+        this.sessions.clear();
         this.abortPendingShellAuthenticationRequests();
         this.githubTokenProviders.clear();
         this.requestAdapter?.cancelPending();
@@ -1923,7 +1778,6 @@ export class CopilotClient {
 
         if (this.cliProcess && !this.isExternalServer) {
             const child = this.cliProcess;
-            let exitTimedOut = false;
             if (
                 this.connectionConfig.kind === "spawned-stdio" &&
                 child.stdin &&
@@ -1953,7 +1807,6 @@ export class CopilotClient {
                 if (child.exitCode == null && child.signalCode == null) {
                     child.kill();
                     if (!(await waitForChildExit(child, RUNTIME_SHUTDOWN_TIMEOUT_MS))) {
-                        exitTimedOut = true;
                         errors.push(
                             new Error(
                                 `Timed out waiting for CLI process to exit after kill: ${RUNTIME_SHUTDOWN_TIMEOUT_MS}ms`
@@ -1970,9 +1823,6 @@ export class CopilotClient {
             } finally {
                 if (this.cliProcess === child) {
                     this.cliProcess = null;
-                    if (exitTimedOut) {
-                        this.unexitedCliProcess = child;
-                    }
                 }
             }
         }
@@ -1999,10 +1849,6 @@ export class CopilotClient {
         // Startup owns its rejection; shutdown waits for any late startup resources to be released.
         if (startup) {
             await Promise.allSettled([startup]);
-            if (this.connection || this.socket || this.cliProcess || this.ffiHost) {
-                // Startup can acquire resources after their first cleanup pass.
-                errors.push(...(await this.doStop(null)));
-            }
         }
         this.state = "disconnected";
         this.runtimePort = null;
@@ -2086,7 +1932,7 @@ export class CopilotClient {
         for (const session of this.sessions.values()) {
             session._markDisconnected();
         }
-        this.clearSessionRoutes();
+        this.sessions.clear();
         this.abortPendingShellAuthenticationRequests();
         this.githubTokenProviders.clear();
         this.requestAdapter?.cancelPending();
@@ -2147,10 +1993,10 @@ export class CopilotClient {
 
     /** Sends SIGKILL to the spawned CLI process, if it is still running, and waits for it to exit. */
     private async killCliProcess(): Promise<void> {
-        const child = this.cliProcess ?? this.unexitedCliProcess;
-        if (!child || this.isExternalServer) {
+        if (!this.cliProcess || this.isExternalServer) {
             return;
         }
+        const child = this.cliProcess;
         if (child.exitCode == null && child.signalCode == null) {
             child.kill("SIGKILL");
             // SIGKILL requests termination; Windows file mappings can outlive that request.
@@ -2162,9 +2008,6 @@ export class CopilotClient {
         }
         if (this.cliProcess === child) {
             this.cliProcess = null;
-        }
-        if (this.unexitedCliProcess === child) {
-            this.unexitedCliProcess = null;
         }
     }
 
@@ -2272,16 +2115,6 @@ export class CopilotClient {
 
     private applyModeDefaults<T extends SessionOptionsBase>(config: T): T {
         const defaults = this.configDefaultsForMode();
-        // Explicit null/undefined options remain unset, including within a feature group.
-        const mergeDefaults = <G extends object>(
-            defaults: G | undefined,
-            supplied: G | undefined
-        ) => ({
-            ...supplied,
-            ...Object.fromEntries(
-                Object.entries(defaults ?? {}).filter(([key]) => supplied?.[key as keyof G] == null)
-            ),
-        });
         return {
             ...config,
             inference: { ...config.inference },
@@ -2296,14 +2129,19 @@ export class CopilotClient {
             policy: { ...config.policy },
             canvases: { ...config.canvases },
             extensions: { ...config.extensions },
-            github: mergeDefaults(defaults.github, config.github),
-            mcp: mergeDefaults(defaults.mcp, config.mcp),
-            state: mergeDefaults(defaults.state, config.state),
-            instructions: mergeDefaults(defaults.instructions, config.instructions),
-            hooks: mergeDefaults(defaults.hooks, config.hooks),
-            git: mergeDefaults(defaults.git, config.git),
-            skills: mergeDefaults(defaults.skills, config.skills),
-            agents: mergeDefaults(defaults.agents, config.agents),
+            github: { ...defaults.github, ...config.github },
+            mcp: { ...defaults.mcp, ...config.mcp },
+            state: { ...defaults.state, ...config.state },
+            instructions: { ...defaults.instructions, ...config.instructions },
+            hooks: { ...defaults.hooks, ...config.hooks },
+            git: { ...defaults.git, ...config.git },
+            skills: { ...defaults.skills, ...config.skills },
+            agents: {
+                ...defaults.agents,
+                ...config.agents,
+                localDiscoveryOnly:
+                    config.agents?.localDiscoveryOnly ?? defaults.agents?.localDiscoveryOnly,
+            },
             systemMessage: this.getSystemMessageConfigForMode(config.systemMessage),
         };
     }
@@ -2642,7 +2480,7 @@ export class CopilotClient {
             this.setupSessionFs(s, config);
             signal.throwIfAborted();
             replacedSession = this.sessions.get(sessionId);
-            this.routeSession(sessionId, s);
+            this.sessions.set(sessionId, s);
             return s;
         };
 
@@ -2923,9 +2761,9 @@ export class CopilotClient {
                 const current = this.sessions.get(registeredId);
                 if (current === session) {
                     if (replacedSession && !replacedSession._isDisconnected()) {
-                        this.routeSession(registeredId, replacedSession);
+                        this.sessions.set(registeredId, replacedSession);
                     } else {
-                        this.unrouteSession(registeredId);
+                        this.sessions.delete(registeredId);
                     }
                 } else if (current === undefined) {
                     replacedSession?._markDisconnected();
@@ -3183,15 +3021,13 @@ export class CopilotClient {
             signal.throwIfAborted();
             replacedRequestedSession = this.sessions.get(sessionId);
             replacedSession = replacedRequestedSession;
-            this.routeSession(sessionId, session);
+            this.sessions.set(sessionId, session);
             this.pendingSessionResumes.set(requestedSessionId, {
                 session,
                 connection,
-                skillProviderSession: config.skills?.provider ? session : replacedRequestedSession,
                 gitHubTokenProviderRegistrationId,
                 resolveAliases,
             });
-            this.deliverHeldSessionEvents();
             const response = await connection.sendRequest("session.resume", {
                 policy: {
                     allowedModels: config.policy?.allowedModels,
@@ -3405,14 +3241,14 @@ export class CopilotClient {
                 replacedSession = this.sessions.get(returnedSessionId);
                 if (this.sessions.get(requestedSessionId) === session) {
                     if (replacedRequestedSession) {
-                        this.routeSession(requestedSessionId, replacedRequestedSession);
+                        this.sessions.set(requestedSessionId, replacedRequestedSession);
                     } else {
-                        this.unrouteSession(requestedSessionId);
+                        this.sessions.delete(requestedSessionId);
                     }
                 }
                 session._setSessionId(returnedSessionId);
                 sessionId = returnedSessionId;
-                this.routeSession(sessionId, session);
+                this.sessions.set(sessionId, session);
                 this.assignGitHubTokenProvider(gitHubTokenProviderRegistrationId, sessionId);
             }
             signal.throwIfAborted();
@@ -3485,9 +3321,9 @@ export class CopilotClient {
                     !replacedSession._isDisconnected() &&
                     !keepResumedSessionOnRecoveryRejection
                 ) {
-                    this.routeSession(sessionId, replacedSession);
+                    this.sessions.set(sessionId, replacedSession);
                 } else if (!keepResumedSessionOnRecoveryRejection) {
-                    this.unrouteSession(sessionId);
+                    this.sessions.delete(sessionId);
                 }
             } else if (current === undefined) {
                 replacedSession?._markDisconnected();
@@ -4161,8 +3997,7 @@ export class CopilotClient {
      * was not stored.
      *
      * @returns A promise that resolves with the session ID, or undefined if no sessions exist
-     * @throws Error if the client is not connected, or if a {@link start} in progress when
-     *     this was called fails
+     * @throws Error if the client is not connected
      *
      * @example
      * ```typescript
@@ -4192,8 +4027,7 @@ export class CopilotClient {
      *
      * @param sessionId - The ID of the session to delete
      * @returns A promise that resolves when the session is deleted
-     * @throws Error if the client is not connected, if a {@link start} in progress when
-     *     this was called fails, if the session does not exist or if deletion fails
+     * @throws Error if the session does not exist or deletion fails
      *
      * @example
      * ```typescript
@@ -4211,13 +4045,9 @@ export class CopilotClient {
             await this.requestSessionDeletion(connection, sessionId);
             signal.throwIfAborted();
             if (this.sessions.get(sessionId) === session) {
-                this.unrouteSession(sessionId);
+                this.sessions.delete(sessionId);
                 session?._markDisconnected();
             }
-            // The deleted conversation's events must not reach a new session
-            // created with the same ID. Responses dispatch in arrival order, so
-            // every event read before this reply has been held already.
-            this.discardHeldSessionEvents(sessionId);
         } finally {
             release();
         }
@@ -4243,7 +4073,7 @@ export class CopilotClient {
     /** Stops tracking a disconnected session unless a later create or resume replaced it. */
     private forgetSession(session: CopilotSession): void {
         if (this.sessions.get(session.sessionId) === session) {
-            this.unrouteSession(session.sessionId);
+            this.sessions.delete(session.sessionId);
         }
     }
 
@@ -4297,8 +4127,7 @@ export class CopilotClient {
      *
      * @param sessionId - The ID of the session to look up
      * @returns A promise that resolves with the session metadata, or undefined if not found
-     * @throws Error if the client is not connected, or if a {@link start} in progress when
-     *     this was called fails
+     * @throws Error if the client is not connected
      *
      * @example
      * ```typescript
@@ -4368,8 +4197,7 @@ export class CopilotClient {
      * Only available when connecting to a server running in TUI+server mode (--ui-server).
      *
      * @returns A promise that resolves with the foreground session ID, or undefined if none
-     * @throws Error if the client is not connected, or if a {@link start} in progress when
-     *     this was called fails
+     * @throws Error if the client is not connected
      *
      * @example
      * ```typescript
@@ -4393,8 +4221,7 @@ export class CopilotClient {
      *
      * @param sessionId - The ID of the session to display in the TUI
      * @returns A promise that resolves when the session is switched
-     * @throws Error if the client is not connected, if a {@link start} in progress when
-     *     this was called fails, or if the operation fails
+     * @throws Error if the client is not connected or if the operation fails
      *
      * @example
      * ```typescript
@@ -4834,7 +4661,22 @@ export class CopilotClient {
         const explicitEntrypoint = this.resolvedEnv.COPILOT_CLI_PATH;
         const cliLoginSyncIntegrationId =
             this.resolvedEnv.GITHUB_COPILOT_INTEGRATION_ID?.trim() || undefined;
-        const runtimeLibrary = await resolveInProcessRuntimeLibraryPath(explicitEntrypoint);
+        let runtimeLibrary: string;
+        if (explicitEntrypoint) {
+            const entrypointDirectory = dirname(resolve(explicitEntrypoint));
+            const adjacentRuntime = join(entrypointDirectory, "runtime.node");
+            runtimeLibrary = existsSync(adjacentRuntime)
+                ? adjacentRuntime
+                : join(
+                      entrypointDirectory,
+                      "prebuilds",
+                      CopilotClient.getNapiPrebuildsFolder(explicitEntrypoint),
+                      "runtime.node"
+                  );
+        } else {
+            const bundledRuntimePath = await getBundledRuntimePath();
+            runtimeLibrary = join(dirname(bundledRuntimePath), "runtime.node");
+        }
         // Load the FFI host lazily so the native `koffi` addon (and its
         // platform-specific `koffi.node`) is only loaded on the in-process path;
         // out-of-process (stdio/tcp) consumers never touch the native dependency.
@@ -4896,6 +4738,33 @@ export class CopilotClient {
             this.connectionConfig.kind === "inprocess" &&
                 this.connectionConfig.runOnUiThread !== undefined
         );
+    }
+
+    private static getNapiPrebuildsFolder(entrypoint: string): string {
+        const arch = process.arch;
+        if (arch !== "x64" && arch !== "arm64") {
+            throw new Error(`Unsupported architecture '${arch}' for in-process FFI hosting.`);
+        }
+        let platform: string = process.platform;
+        if (platform === "linux" && CopilotClient.isMusl(entrypoint)) {
+            platform = "linuxmusl";
+        }
+        return `${platform}-${arch}`;
+    }
+
+    private static isMusl(entrypoint: string): boolean {
+        if (entrypoint.includes(`copilot-linuxmusl-${process.arch}`)) {
+            return true;
+        }
+        if (entrypoint.includes(`copilot-linux-${process.arch}`)) {
+            return false;
+        }
+        const report = process.report?.getReport();
+        const header =
+            report && "header" in report
+                ? (report.header as { glibcVersionRuntime?: string })
+                : undefined;
+        return header !== undefined && header.glibcVersionRuntime === undefined;
     }
 
     /**
@@ -5043,12 +4912,9 @@ export class CopilotClient {
         if (!this.connection) {
             return;
         }
-        const connection = this.connection;
 
-        const eventConnection = this.connection;
-        this.heldSessionEventsConnection = eventConnection;
         this.connection.onNotification("session.event", (notification: unknown) => {
-            this.handleSessionEventNotification(notification, eventConnection);
+            this.handleSessionEventNotification(notification);
         });
 
         this.connection.onNotification("session.lifecycle", (notification: unknown) => {
@@ -5116,7 +4982,7 @@ export class CopilotClient {
         // Register client *global* API handlers (e.g. LLM inference) on the
         // same connection. These methods carry no implicit sessionId dispatch
         // — the runtime calls into a single handler for the whole connection.
-        registerClientGlobalApiHandlers(connection, this.clientGlobalHandlers);
+        registerClientGlobalApiHandlers(this.connection, this.clientGlobalHandlers);
         if (this.options.entra?.tokenProvider) {
             registerEntraTokenProvider(this.connection, this.options.entra.tokenProvider);
         }
@@ -5279,6 +5145,7 @@ export class CopilotClient {
             }
         );
 
+        const connection = this.connection;
         const messageWriter = this.messageWriter;
         const cliProcess = this.isExternalServer ? null : this.cliProcess;
         const connectionEpoch = this.connectionEpoch;
@@ -5299,7 +5166,7 @@ export class CopilotClient {
             for (const session of this.sessions.values()) {
                 session._markDisconnected();
             }
-            this.clearSessionRoutes();
+            this.sessions.clear();
             this.abortPendingShellAuthenticationRequests();
             this.githubTokenProviders.clear();
             this.requestAdapter?.cancelPending();
@@ -5341,13 +5208,12 @@ export class CopilotClient {
                     return;
                 }
                 if (disconnected) return;
-                if (this.socket && !this.stopPromise) {
+                if (this.socket) {
                     disconnectAfterDrain();
                     return;
                 }
                 this.connectionClosed = true;
                 if (messageWriter) messageWriter.suppressWriteErrors = true;
-                // During graceful TCP shutdown, process exit can precede the final response.
                 // Reader EOF is authoritative for messages still buffered after process exit.
                 // A descendant can keep stdout open, so bound the fallback.
                 exitFallback = setTimeout(disconnectAfterDrain, RUNTIME_SHUTDOWN_TIMEOUT_MS);
@@ -5395,10 +5261,7 @@ export class CopilotClient {
         return selected ?? this.sessions.get(sessionId);
     }
 
-    private handleSessionEventNotification(
-        notification: unknown,
-        connection: MessageConnection
-    ): void {
+    private handleSessionEventNotification(notification: unknown): void {
         if (
             typeof notification !== "object" ||
             !notification ||
@@ -5409,128 +5272,13 @@ export class CopilotClient {
             return;
         }
 
-        const sessionId = (notification as { sessionId: string }).sessionId;
+        const session = this.resolveSessionCallback(
+            (notification as { sessionId: string }).sessionId
+        );
         const event = (notification as { event: SessionEvent }).event;
-        const session = this.resolveSessionCallback(sessionId);
-        if (session && !this.claimingSessions.has(session)) {
+        if (session) {
             session._dispatchEvent(event);
-        } else if (connection === this.heldSessionEventsConnection) {
-            this.holdSessionEvent(sessionId, event);
         }
-        // Otherwise the connection is being torn down: its events belong to no
-        // later session.
-    }
-
-    /**
-     * Hold an event for a session that is not registered here, such as one
-     * subscribed with a raw `sessions.connect` before `resumeSession` (including
-     * a rejoin after an earlier disconnect), or a cloud session whose ID the
-     * server assigns in the create response.
-     */
-    private holdSessionEvent(sessionId: string, event: SessionEvent): void {
-        while (this.heldSessionEventCount >= MAX_HELD_SESSION_EVENTS) {
-            // A registered session waiting for its claim fence will take its
-            // events; only unregistered IDs give theirs up.
-            let oldest: [string, SessionEvent[]] | undefined;
-            for (const entry of this.heldSessionEvents) {
-                const owner = this.resolveSessionCallback(entry[0]);
-                if (!owner || !this.claimingSessions.has(owner)) {
-                    oldest = entry;
-                    break;
-                }
-            }
-            if (!oldest) break;
-            const [droppedId, dropped] = oldest;
-            this.heldSessionEvents.delete(droppedId);
-            this.heldSessionEventCount -= dropped.length;
-            console.warn("Dropped session events held for an unregistered session", {
-                sessionId: droppedId,
-                dropped: dropped.length,
-                requestIds: dropped.filter((held) => held.type in SETTLED_BY).map(eventRequestId),
-            });
-        }
-        let held = this.heldSessionEvents.get(sessionId);
-        if (!held) {
-            held = [];
-            this.heldSessionEvents.set(sessionId, held);
-        }
-        held.push(event);
-        this.heldSessionEventCount++;
-    }
-
-    /**
-     * Deliver held events to sessions that can now receive them, in arrival
-     * order. A session's events keep being held until its claim fence, so no
-     * live event can overtake its held ones. A held request whose settling
-     * event was also held was answered while this client was not listening:
-     * observers see it, but no handler is asked to answer it again.
-     */
-    private deliverHeldSessionEvents(): void {
-        for (const [sessionId, events] of [...this.heldSessionEvents]) {
-            const session = this.resolveSessionCallback(sessionId);
-            if (!session || this.claimingSessions.has(session)) continue;
-            this.heldSessionEvents.delete(sessionId);
-            this.heldSessionEventCount -= events.length;
-            const held = new Set(events.map((event) => `${event.type}\0${eventRequestId(event)}`));
-            for (const event of events) {
-                const settledBy = SETTLED_BY[event.type];
-                const requestId = eventRequestId(event);
-                // After the connection closed, an answer can no longer be
-                // delivered: observers still see the request, but no handler
-                // runs side effects for it.
-                const settled =
-                    settledBy !== undefined &&
-                    requestId !== undefined &&
-                    (this.connectionClosed || held.has(`${settledBy}\0${requestId}`));
-                session._dispatchEvent(event, settled);
-            }
-        }
-    }
-
-    /**
-     * Route `session`. Its held events, and any that arrive meanwhile, are
-     * delivered once the connection has dispatched every message parsed before
-     * now: a request's completion parsed before registration must be seen
-     * before the request is offered to a handler.
-     */
-    private routeSession(sessionId: string, session: CopilotSession): void {
-        this.sessions.set(sessionId, session);
-        const connection = this.connection;
-        if (!connection || typeof connection.fence !== "function") {
-            this.deliverHeldSessionEvents();
-            return;
-        }
-        this.claimingSessions.set(session, (this.claimingSessions.get(session) ?? 0) + 1);
-        connection.fence(() => {
-            const pending = (this.claimingSessions.get(session) ?? 0) - 1;
-            if (pending > 0) {
-                this.claimingSessions.set(session, pending);
-                return;
-            }
-            if (this.claimingSessions.delete(session)) {
-                this.deliverHeldSessionEvents();
-            }
-        });
-    }
-
-    private unrouteSession(sessionId: string): void {
-        this.sessions.delete(sessionId);
-    }
-
-    private discardHeldSessionEvents(sessionId: string): void {
-        const held = this.heldSessionEvents.get(sessionId);
-        if (held) {
-            this.heldSessionEvents.delete(sessionId);
-            this.heldSessionEventCount -= held.length;
-        }
-    }
-
-    private clearSessionRoutes(): void {
-        this.sessions.clear();
-        this.heldSessionEvents.clear();
-        this.heldSessionEventCount = 0;
-        this.heldSessionEventsConnection = null;
-        this.claimingSessions.clear();
     }
 
     private handleSessionLifecycleNotification(notification: unknown): void {
@@ -5743,15 +5491,6 @@ export class CopilotClient {
         const session = this.resolveSessionCallback(params.sessionId);
         if (!session) {
             throw new Error(`Session not found: ${params.sessionId}`);
-        }
-        // An omitted provider creates no new binding. Pending provider requests
-        // therefore still belong to the resident until the resume settles.
-        for (const pending of this.pendingSessionResumes.values()) {
-            if (pending.connection === this.connection && pending.session === session) {
-                return (
-                    pending.skillProviderSession ?? this.sessions.get(params.sessionId) ?? session
-                );
-            }
         }
         return session;
     }

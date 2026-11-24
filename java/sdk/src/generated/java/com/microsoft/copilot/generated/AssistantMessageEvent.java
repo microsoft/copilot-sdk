@@ -54,8 +54,7 @@ public final class AssistantMessageEvent extends SessionEvent {
         @JsonProperty("reasoningText") String reasoningText,
         /** OpenAI-compatible wire field the provider used for reasoning (e.g. reasoning_content/reasoning). Populated only when non-canonical, so the dialect round-trips across turns. */
         @JsonProperty("reasoningWireField") String reasoningWireField,
-        /** No longer emitted. For OpenAI Responses, read encrypted_content from the reasoning items in reasoningBlocks.blocks instead. Older events may still contain this field. */
-        @Deprecated
+        /** Encrypted reasoning content from OpenAI models. Session-bound and stripped on resume. */
         @JsonProperty("encryptedContent") String encryptedContent,
         /** Generation phase for phased-output models (e.g., thinking vs. response phases) */
         @JsonProperty("phase") String phase,
@@ -63,7 +62,7 @@ public final class AssistantMessageEvent extends SessionEvent {
         @JsonProperty("chunkIndex") Long chunkIndex,
         /** Total messages the model call's response was split into, one per reasoning boundary. Absent for a single-message response; the last chunk is the one where chunkIndex is chunkCount - 1. */
         @JsonProperty("chunkCount") Long chunkCount,
-        /** Output tokens this message adds to replayed context, for token accounting: the API response's completion_tokens, shared across the response's message chunks. Use assistant.usage for billed usage. */
+        /** Output tokens this message adds to replayed context, for token accounting: the API response's completion_tokens, plus reasoning tokens a wire replays as input but reports separately, shared across the response's message chunks. Use assistant.usage for billed usage. */
         @JsonProperty("outputTokens") Long outputTokens,
         /** CAPI interaction ID for correlating this message with upstream telemetry */
         @JsonProperty("interactionId") String interactionId,

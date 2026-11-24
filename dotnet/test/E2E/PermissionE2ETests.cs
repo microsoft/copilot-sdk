@@ -237,11 +237,7 @@ public partial class PermissionE2ETests(E2ETestFixture fixture, ITestOutputHelpe
     [Fact]
     public async Task Should_Resume_Session_With_Permission_Handler()
     {
-        await Ctx.ConfigureForTestAsync("permissions", "Should_Resume_Session_With_Permission_Handler_Dotnet");
-
-        PermissionRequestWrite? writePermissionRequest = null;
-        var testFilePath = Path.Combine(Ctx.WorkDir, "test.txt");
-        await File.WriteAllTextAsync(testFilePath, "original content");
+        var permissionRequestReceived = false;
 
         // Create session without permission handler
         var session1 = await CreateSessionAsync();
@@ -255,30 +251,19 @@ public partial class PermissionE2ETests(E2ETestFixture fixture, ITestOutputHelpe
             Permissions = new SessionPermissionOptions
             {
                 OnRequest = (request, invocation) =>
-                {
-                    Assert.Equal(sessionId, invocation.SessionId);
-                    if (request is PermissionRequestWrite write)
-                    {
-                        writePermissionRequest = write;
-                    }
-                    return Task.FromResult<PermissionDecision>(PermissionDecision.ApproveOnce());
-                }
+        {
+            permissionRequestReceived = true;
+            return Task.FromResult<PermissionDecision>(PermissionDecision.ApproveOnce());
+        }
             }
         });
 
         await session2.SendAndWaitAsync(new MessageOptions
         {
-            Prompt = "Edit test.txt and replace 'original' with 'modified'"
+            Prompt = "Run 'echo resumed' for me"
         });
 
-        Assert.NotNull(writePermissionRequest);
-        Assert.False(string.IsNullOrWhiteSpace(writePermissionRequest.ToolCallId));
-        await WaitForPersistedEventsAsync(
-            session2,
-            events => events.OfType<ToolExecutionCompleteEvent>().Any(evt =>
-                evt.Data.Success && evt.Data.ToolCallId == writePermissionRequest.ToolCallId),
-            "Timed out waiting for persisted successful completion of the approved write.");
-        Assert.Equal("modified content", await File.ReadAllTextAsync(testFilePath));
+        Assert.True(permissionRequestReceived, "Permission request should have been received");
         await session2.DisposeAsync();
     }
 
@@ -667,11 +652,7 @@ public partial class PermissionE2ETests(E2ETestFixture fixture, ITestOutputHelpe
     [Fact]
     public async Task Should_Short_Circuit_Permission_Handler_When_Set_Approve_All_Enabled()
     {
-        await Ctx.ConfigureForTestAsync("permissions", nameof(Should_Invoke_Permission_Handler_For_Write_Operations));
-
         var handlerCallCount = 0;
-        var testFilePath = Path.Combine(Ctx.WorkDir, "test.txt");
-        await File.WriteAllTextAsync(testFilePath, "original content");
 
         var session = await CreateSessionAsync(new CreateSessionOptions
         {
@@ -695,24 +676,19 @@ public partial class PermissionE2ETests(E2ETestFixture fixture, ITestOutputHelpe
         {
             await session.SendAndWaitAsync(new MessageOptions
             {
-                Prompt = "Edit test.txt and replace 'original' with 'modified'",
+                Prompt = "Run 'echo test' and tell me what happens",
             });
 
             var persistedEvents = await WaitForPersistedEventsAsync(
                 session,
-                events => events.OfType<ToolExecutionStartEvent>().Any(started =>
-                    started.Data.ToolName == "edit" &&
-                    events.OfType<ToolExecutionCompleteEvent>().Any(completed =>
-                        completed.Data.Success && completed.Data.ToolCallId == started.Data.ToolCallId)),
-                "Timed out waiting for persisted successful edit tool completion.");
+                events => events.OfType<ToolExecutionCompleteEvent>().Any(evt =>
+                    evt.Data.Success && ToolCompleteContains(evt, "test")),
+                "Timed out waiting for persisted successful shell tool completion.");
 
             Assert.Equal(0, Volatile.Read(ref handlerCallCount));
-            var editStarted = Assert.Single(
-                persistedEvents.OfType<ToolExecutionStartEvent>(), evt => evt.Data.ToolName == "edit");
             Assert.Contains(
                 persistedEvents.OfType<ToolExecutionCompleteEvent>(),
-                evt => evt.Data.Success && evt.Data.ToolCallId == editStarted.Data.ToolCallId);
-            Assert.Equal("modified content", await File.ReadAllTextAsync(testFilePath));
+                evt => evt.Data.Success && ToolCompleteContains(evt, "test"));
         }
         finally
         {
@@ -743,4 +719,13 @@ public partial class PermissionE2ETests(E2ETestFixture fixture, ITestOutputHelpe
             ToolExecutionCompleteEvent completed => $"{evt.Type}:{completed.Data.ToolCallId}:{completed.Data.Success}",
             _ => evt.Type,
         };
+
+    private static bool ToolCompleteContains(ToolExecutionCompleteEvent evt, string expected)
+        => evt.Data.Result?.Content.Contains(expected, StringComparison.OrdinalIgnoreCase) == true ||
+            evt.Data.Result?.DetailedContent?.Contains(expected, StringComparison.OrdinalIgnoreCase) == true ||
+            evt.Data.Result?.Contents?.Any(content => content switch
+            {
+                ToolExecutionCompleteContentText text => text.Text.Contains(expected, StringComparison.OrdinalIgnoreCase),
+                _ => false,
+            }) == true;
 }

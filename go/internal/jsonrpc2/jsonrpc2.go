@@ -15,14 +15,12 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 const version = "2.0"
 
-// processExitGracePeriod bounds the gap between process exit and transport
-// closure when one arrives before the other.
+// processExitGracePeriod bounds how long a request whose connection has closed
+// waits for the watched CLI process to report its exit.
 const processExitGracePeriod = time.Second
 
 // Standard JSON-RPC 2.0 error codes.
@@ -315,11 +313,7 @@ func (c *Client) RequestWithInlineResponse(ctx context.Context, method string, p
 	default:
 	}
 
-	requestUUID, err := uuid.NewRandomFromReader(rand.Reader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate request ID: %w", err)
-	}
-	requestID := requestUUID.String()
+	requestID := generateUUID()
 
 	// Create response channel
 	responseChan := make(chan *Response, 1)
@@ -386,7 +380,7 @@ func (c *Client) RequestWithInlineResponse(ctx context.Context, method string, p
 		}
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
-	if method == "session.sendAndWait" || method == "session.featureFlags.read" || method == "localModels.watch" || method == "feedback.upload.read" || method == "taskAnalytics.classifyTrajectory" || method == "session.resume" {
+	if method == "session.sendAndWait" || method == "session.featureFlags.read" || method == "localModels.watch" || method == "taskAnalytics.classifyTrajectory" {
 		defer func() {
 			if ctx.Err() != nil {
 				c.mu.Lock()
@@ -409,11 +403,6 @@ func (c *Client) RequestWithInlineResponse(ctx context.Context, method string, p
 
 	// Wait for response, also checking for process exit
 	if c.processDone != nil {
-		processDone := c.processDone
-		if _, hasDeadline := ctx.Deadline(); method == "runtime.shutdown" && hasDeadline {
-			// Keep the caller's shutdown budget for the final reply.
-			processDone = nil
-		}
 		select {
 		case <-ctx.Done():
 			return responseAfterShutdown(responseChan, ctx.Err())
@@ -422,24 +411,7 @@ func (c *Client) RequestWithInlineResponse(ctx context.Context, method string, p
 				return nil, response.Error
 			}
 			return response.Result, nil
-		case <-processDone:
-			if method == "runtime.shutdown" {
-				timer := time.NewTimer(processExitGracePeriod)
-				defer timer.Stop()
-				select {
-				case response := <-responseChan:
-					if response.Error != nil {
-						return nil, response.Error
-					}
-					return response.Result, nil
-				case <-ctx.Done():
-					return responseAfterShutdown(responseChan, ctx.Err())
-				case <-c.connectionClosed:
-				case <-c.stopChan:
-					return responseAfterShutdown(responseChan, fmt.Errorf("client stopped"))
-				case <-timer.C:
-				}
-			}
+		case <-c.processDone:
 			if err := c.getProcessError(); err != nil {
 				return responseAfterShutdown(responseChan, err)
 			}
@@ -797,6 +769,15 @@ func (c *Client) sendErrorResponse(ctx context.Context, id json.RawMessage, rpcE
 	if err := c.sendMessage(ctx, response); err != nil {
 		fmt.Printf("Failed to send JSON-RPC error response: %v\n", err)
 	}
+}
+
+// generateUUID generates a simple UUID v4 without external dependencies
+func generateUUID() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	b[6] = (b[6] & 0x0f) | 0x40 // Version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // Variant is 10
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
 // decodeMessage decodes a JSON-RPC message from raw bytes, returning either

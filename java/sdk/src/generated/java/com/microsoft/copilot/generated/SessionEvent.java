@@ -25,7 +25,6 @@ import javax.annotation.processing.Generated;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.EXISTING_PROPERTY, property = "type", visible = true, defaultImpl = UnknownSessionEvent.class)
 @JsonSubTypes({
-    @JsonSubTypes.Type(value = SessionSandboxStateChangedEvent.class, name = "session.sandbox_state_changed"),
     @JsonSubTypes.Type(value = IdeConnectionChangedEvent.class, name = "ide.connection_changed"),
     @JsonSubTypes.Type(value = IdeSelectionChangedEvent.class, name = "ide.selection_changed"),
     @JsonSubTypes.Type(value = IdeAddFileReferenceEvent.class, name = "ide.add_file_reference"),
@@ -62,7 +61,6 @@ import javax.annotation.processing.Generated;
     @JsonSubTypes.Type(value = SessionShutdownEvent.class, name = "session.shutdown"),
     @JsonSubTypes.Type(value = SessionUsageCheckpointEvent.class, name = "session.usage_checkpoint"),
     @JsonSubTypes.Type(value = SessionQuotaObservationEvent.class, name = "session.quota_observation"),
-    @JsonSubTypes.Type(value = SessionSensitivityLabelObservationEvent.class, name = "session.sensitivity_label_observation"),
     @JsonSubTypes.Type(value = SessionContextChangedEvent.class, name = "session.context_changed"),
     @JsonSubTypes.Type(value = SessionUsageInfoEvent.class, name = "session.usage_info"),
     @JsonSubTypes.Type(value = SessionContextClearedEvent.class, name = "session.context_cleared"),
@@ -196,7 +194,6 @@ import javax.annotation.processing.Generated;
 })
 @javax.annotation.processing.Generated("copilot-sdk-codegen")
 public abstract sealed class SessionEvent permits
-        SessionSandboxStateChangedEvent,
         IdeConnectionChangedEvent,
         IdeSelectionChangedEvent,
         IdeAddFileReferenceEvent,
@@ -233,7 +230,6 @@ public abstract sealed class SessionEvent permits
         SessionShutdownEvent,
         SessionUsageCheckpointEvent,
         SessionQuotaObservationEvent,
-        SessionSensitivityLabelObservationEvent,
         SessionContextChangedEvent,
         SessionUsageInfoEvent,
         SessionContextClearedEvent,

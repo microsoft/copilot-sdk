@@ -31,7 +31,6 @@ internal sealed partial class JsonRpc : IDisposable
     private const int ErrorCodeMethodNotFound = -32601;
     private const int ErrorCodeRequestCancelled = -32800;
     private const int ErrorCodeInternalError = -32603;
-    private const int MaxOutgoingMessageDepth = 64;
     private const int InitialReadBufferSize = 256;
     private const int MaximumRetainedReadBufferSize = 1024 * 1024;
 
@@ -55,10 +54,6 @@ internal sealed partial class JsonRpc : IDisposable
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly CancellationTokenSource _disposeCts = new();
     private readonly CancellationTokenSource _connectionClosedCts = new();
-    // Used only under _writeLock. Resetting the writer releases its borrowed memory;
-    // Dispose must not dispose it while a send is still serializing.
-    private Utf8JsonWriter? _sendWriter;
-    private SendBuffer? _sendBuffer;
     private long _nextId;
     private int _disposeStarted;
     private volatile Exception? _terminalError;
@@ -106,8 +101,6 @@ internal sealed partial class JsonRpc : IDisposable
     /// </summary>
     public void StartListening()
     {
-        // Incoming calls must not inherit or retain the connection starter's context.
-        using var flow = ExecutionContextHelpers.SuppressFlow();
         _ = ReadLoopAsync(_disposeCts.Token);
     }
 
@@ -161,7 +154,9 @@ internal sealed partial class JsonRpc : IDisposable
                 Id = id,
                 Method = method,
                 Params = CreateRequestParameters(args),
-            }, JsonRpcWireContext.Default.JsonRpcRequest, cancellationToken).ConfigureAwait(false);
+            }, method is "session.create" or "session.resume"
+                ? GroupedSessionWireContext.JsonRpcRequest
+                : JsonRpcWireContext.Default.JsonRpcRequest, cancellationToken).ConfigureAwait(false);
 
             var result = await pending.Task.ConfigureAwait(false);
             LogInvokeTiming(LogLevel.Debug, null, method, id, "Succeeded", timingTimestamp);
@@ -210,7 +205,11 @@ internal sealed partial class JsonRpc : IDisposable
         try
         {
             // Host callbacks can synchronously wait for a restart gated on Completion.
+#if NET8_0_OR_GREATER
             await _connectionClosedCts.CancelAsync().ConfigureAwait(false);
+#else
+            await Task.Run(() => _connectionClosedCts.Cancel()).ConfigureAwait(false);
+#endif
         }
         catch (AggregateException ex)
         {
@@ -290,7 +289,7 @@ internal sealed partial class JsonRpc : IDisposable
         var elapsed = Stopwatch.GetElapsedTime(startTimestamp);
         _logger.Log(
             level,
-            method is "sessions.import" or "memories.import" ? null : exception,
+            exception,
             "JsonRpc.InvokeAsync JSON-RPC request finished. Elapsed={Elapsed}, Method={Method}, RequestId={RequestId}, Status={Status}",
             elapsed,
             method,
@@ -347,12 +346,18 @@ internal sealed partial class JsonRpc : IDisposable
         }
     }
 
-    private Task SendMessageAsync<T>(T message, JsonTypeInfo<T> typeInfo, CancellationToken cancellationToken)
-        => SendFrameAsync((Message: message, TypeInfo: typeInfo), static (writer, state) =>
-            JsonSerializer.Serialize(writer, state.Message, state.TypeInfo), cancellationToken);
+    private static readonly JsonRpcWireContext GroupedSessionWireContext = new(
+        new JsonSerializerOptions(JsonRpcWireContext.Default.Options) { MaxDepth = 65 });
 
-    private async Task SendFrameAsync<T>(T state, Action<Utf8JsonWriter, T> serialize, CancellationToken cancellationToken)
+    private async Task SendMessageAsync<T>(T message, JsonTypeInfo<T> typeInfo, CancellationToken cancellationToken)
     {
+        var json = JsonSerializer.SerializeToUtf8Bytes(message, typeInfo);
+
+        // Cancellation only applies to *waiting* for the write lock. Once we hold the lock
+        // and start writing a framed message, we must finish it — cancelling between the
+        // header and the body (or mid-body) would leave the peer waiting for N body bytes
+        // that never arrive, desynchronizing the LSP-style stream for every subsequent
+        // message on this connection.
         await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -361,122 +366,57 @@ internal sealed partial class JsonRpc : IDisposable
                 ExceptionDispatchInfo.Throw(terminalError);
             }
 
-            var frame = _sendBuffer ??= new SendBuffer();
-            frame.Reset();
-            var writer = _sendWriter ??= new Utf8JsonWriter(frame, new JsonWriterOptions { MaxDepth = MaxOutgoingMessageDepth });
-            writer.Reset(frame);
+            // Format the LSP header and body into a single pooled buffer so the framed
+            // message is written in one call — over the FFI transport that is one native
+            // boundary crossing per message instead of two.
+            var frame = BuildFrame(json, out int frameLen);
             try
             {
-                serialize(writer, state);
-                writer.Flush();
+                await _sendStream.WriteAsync(frame.AsMemory(0, frameLen), CancellationToken.None).ConfigureAwait(false);
+                await _sendStream.FlushAsync(CancellationToken.None).ConfigureAwait(false);
             }
             finally
             {
-                writer.Reset();
+                ArrayPool<byte>.Shared.Return(frame);
             }
-
-            // Cancellation or shutdown can arrive while a custom converter runs.
-            if (_terminalError is { } sendError)
-            {
-                ExceptionDispatchInfo.Throw(sendError);
-            }
-            cancellationToken.ThrowIfCancellationRequested();
-
-            // Once writing starts, finish the whole frame even if cancellation arrives.
-            // A partial header or body would desynchronize every subsequent message.
-            await _sendStream.WriteAsync(frame.GetFrame(), CancellationToken.None).ConfigureAwait(false);
-            await _sendStream.FlushAsync(CancellationToken.None).ConfigureAwait(false);
         }
         finally
         {
-            try
-            {
-                _sendBuffer?.ReturnBuffer();
-            }
-            finally
-            {
-                _writeLock.Release();
-            }
+            _writeLock.Release();
         }
     }
 
-    private sealed class SendBuffer : IBufferWriter<byte>
+    /// <summary>
+    /// Writes <c>Content-Length: N\r\n\r\n</c> followed by <paramref name="json"/> into a
+    /// single buffer rented from <see cref="ArrayPool{T}"/>. The caller owns the returned
+    /// buffer and must return it to the shared pool.
+    /// </summary>
+    private static byte[] BuildFrame(ReadOnlySpan<byte> json, out int frameLen)
     {
         // "Content-Length: " (16) + max int digits (10) + "\r\n\r\n" (4)
-        private const int MaxHeaderLength = 30;
-        private byte[]? _buffer;
-        private int _written;
+        const int MaxHeaderLength = 30;
 
-        public void Reset()
+        // Over-rent by the (fixed, tiny) header bound so the header can be written
+        // straight into the frame — no scratch buffer or header copy. The JSON is
+        // already UTF-8, so the only copy is placing it after the header, which is
+        // unavoidable since Content-Length needs its length up front.
+        var frame = ArrayPool<byte>.Shared.Rent(MaxHeaderLength + json.Length);
+        if (!Utf8.TryWrite(frame, $"Content-Length: {json.Length}\r\n\r\n", out int headerLen))
         {
-            _written = MaxHeaderLength;
+            ArrayPool<byte>.Shared.Return(frame);
+            throw new InvalidOperationException("Failed to write JSON-RPC frame header.");
         }
 
-        public void Advance(int count)
-        {
-            if ((uint)count > _buffer!.Length - _written)
-            {
-                throw new ArgumentOutOfRangeException(nameof(count));
-            }
-            _written += count;
-        }
-
-        public Memory<byte> GetMemory(int sizeHint = 0)
-        {
-            EnsureCapacity(sizeHint);
-            return _buffer!.AsMemory(_written);
-        }
-
-        public Span<byte> GetSpan(int sizeHint = 0)
-        {
-            EnsureCapacity(sizeHint);
-            return _buffer.AsSpan(_written);
-        }
-
-        public ReadOnlyMemory<byte> GetFrame()
-        {
-            Span<byte> header = stackalloc byte[MaxHeaderLength];
-            if (!Utf8.TryWrite(header, $"Content-Length: {_written - MaxHeaderLength}\r\n\r\n", out int headerLength))
-            {
-                throw new InvalidOperationException("Failed to write JSON-RPC frame header.");
-            }
-
-            // Fill the reserved prefix backwards so the serialized body never needs to move.
-            int start = MaxHeaderLength - headerLength;
-            header.Slice(0, headerLength).CopyTo(_buffer.AsSpan(start));
-            return _buffer!.AsMemory(start, _written - start);
-        }
-
-        private void EnsureCapacity(int sizeHint)
-        {
-            ArgumentOutOfRangeException.ThrowIfNegative(sizeHint);
-            int needed = checked(_written + Math.Max(1, sizeHint));
-            _buffer ??= ArrayPool<byte>.Shared.Rent(needed);
-            if (needed > _buffer.Length)
-            {
-                int doubled = _buffer.Length <= int.MaxValue / 2 ? _buffer.Length * 2 : int.MaxValue;
-                var replacement = ArrayPool<byte>.Shared.Rent(Math.Max(needed, doubled));
-                _buffer.AsSpan(0, _written).CopyTo(replacement);
-                ArrayPool<byte>.Shared.Return(_buffer);
-                _buffer = replacement;
-            }
-        }
-
-        public void ReturnBuffer()
-        {
-            if (_buffer is { } buffer)
-            {
-                _buffer = null;
-                ArrayPool<byte>.Shared.Return(buffer);
-            }
-        }
+        json.CopyTo(frame.AsSpan(headerLen));
+        frameLen = headerLen + json.Length;
+        return frame;
     }
 
     private async Task ReadLoopAsync(CancellationToken cancellationToken)
     {
-        // Even buffered frames must dispatch outside the launch's flow-suppression scope.
-        await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
-
+        // This loop outlives the call that started it, and incoming handlers inherit its context.
+        // Clear the caller's Activity for this flow only so handlers do not run inside that (often finished) trace.
+        Activity.Current = null;
         var buffer = new ReceiveBuffer();
         int start = 0;
         int end = 0;
@@ -879,11 +819,7 @@ internal sealed partial class JsonRpc : IDisposable
                     "Request cancelled",
                     cancellationToken).ConfigureAwait(false);
             }
-            // A handler's own OperationCanceledException (an HttpClient timeout, a CancelAfter
-            // deadline) is a handler failure like any other, so it is answered too. A cancellation
-            // the peer requested is answered above; one from the connection closing is not.
-            catch (Exception ex) when (ex is not OperationCanceledException
-                || !(cancellationToken.IsCancellationRequested || _connectionClosedCts.IsCancellationRequested))
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 // `InvokeHandlerAsync` dispatches handlers via reflection
                 // (`Delegate.DynamicInvoke` / `MethodInfo.Invoke`), which wraps
@@ -1120,6 +1056,18 @@ internal sealed partial class JsonRpc : IDisposable
             }
 
             var typeInfo = _serializerOptions.GetTypeInfo(arg.GetType());
+            // Session configuration can contain custom JSON nodes that need root-level depth.
+            if (arg is CopilotClient.CreateSessionRequest or CopilotClient.ResumeSessionRequest)
+            {
+                // Feature groups add one level without reducing the depth available
+                // to caller-supplied JSON compared with the previous wire contract.
+                var sessionOptions = new JsonSerializerOptions(_serializerOptions)
+                {
+                    MaxDepth = (_serializerOptions.MaxDepth == 0 ? 64 : _serializerOptions.MaxDepth) + 1
+                };
+                typeInfo = sessionOptions.GetTypeInfo(arg.GetType());
+                return new RequestParameters(JsonSerializer.SerializeToElement(arg, typeInfo), null);
+            }
             return new RequestParameters(arg, typeInfo);
         }
 
@@ -1127,7 +1075,7 @@ internal sealed partial class JsonRpc : IDisposable
         // so build the JSON array manually, serializing each element with a TypeInfo
         // looked up by its runtime type from the merged resolver.
         var buffer = new ArrayBufferWriter<byte>();
-        using (var writer = new Utf8JsonWriter(buffer, new JsonWriterOptions { MaxDepth = MaxOutgoingMessageDepth }))
+        using (var writer = new Utf8JsonWriter(buffer))
         {
             writer.WriteStartArray();
             foreach (var arg in args)
@@ -1187,37 +1135,23 @@ internal sealed partial class JsonRpc : IDisposable
         {
             // Prefer the handler's declared result type so polymorphic base types emit
             // their discriminator. Fall back to the runtime type for untyped handlers.
-            var typeInfo = result is null ? null : _serializerOptions.GetTypeInfo(declaredResultType ?? result.GetType());
-            await SendFrameAsync((Id: id, Result: result, TypeInfo: typeInfo), static (writer, state) =>
-                WriteResultResponse(writer, state.Id, state.Result, state.TypeInfo), cancellationToken).ConfigureAwait(false);
-        }
-        catch (IOException ex)
-        {
-            // Connection lost during response - nothing we can do
-            LogMessageDeliveryFailed(_logger, ex, "response");
-        }
-        catch (Exception ex) when (ex is ObjectDisposedException or OperationCanceledException)
-        {
-        }
-    }
+            JsonElement? resultElement = null;
+            if (result is not null)
+            {
+                var typeInfo = _serializerOptions.GetTypeInfo(declaredResultType ?? result.GetType());
+                resultElement = JsonSerializer.SerializeToElement(result, typeInfo);
+            }
 
-    private static void WriteResultResponse(Utf8JsonWriter writer, JsonElement id, object? result, JsonTypeInfo? typeInfo)
-    {
-        writer.WriteStartObject();
-        writer.WriteString("jsonrpc"u8, "2.0"u8);
-        writer.WritePropertyName("id"u8);
-        id.WriteTo(writer);
-        writer.WritePropertyName("result"u8);
-        if (typeInfo is null)
-        {
-            // JSON-RPC requires a result even when a handler returns no value.
-            writer.WriteNullValue();
+            await SendMessageAsync(new JsonRpcResponse
+            {
+                Id = id,
+                Result = resultElement,
+            }, JsonRpcWireContext.Default.JsonRpcResponse, cancellationToken).ConfigureAwait(false);
         }
-        else
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException or OperationCanceledException)
         {
-            JsonSerializer.Serialize(writer, result, typeInfo);
+            // Connection lost during response — nothing we can do
         }
-        writer.WriteEndObject();
     }
 
     private async Task SendErrorResponseAsync(JsonElement id, int code, string message, CancellationToken cancellationToken)
@@ -1233,13 +1167,9 @@ internal sealed partial class JsonRpc : IDisposable
                 Error = new JsonRpcError { Code = code, Message = message, Data = data },
             }, JsonRpcWireContext.Default.JsonRpcErrorResponse, cancellationToken).ConfigureAwait(false);
         }
-        catch (IOException ex)
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException or OperationCanceledException)
         {
-            // Connection lost during error response - nothing we can do
-            LogMessageDeliveryFailed(_logger, ex, "error response");
-        }
-        catch (Exception ex) when (ex is ObjectDisposedException or OperationCanceledException)
-        {
+            // Connection lost during error response — nothing we can do
         }
     }
 
@@ -1255,13 +1185,9 @@ internal sealed partial class JsonRpc : IDisposable
                     CancelRequestParamsContext.Default.CancelRequestParams),
             }, JsonRpcWireContext.Default.JsonRpcNotification, CancellationToken.None).ConfigureAwait(false);
         }
-        catch (IOException ex)
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException or OperationCanceledException)
         {
-            // Best effort - connection may already be gone
-            LogMessageDeliveryFailed(_logger, ex, "cancellation notification");
-        }
-        catch (Exception ex) when (ex is ObjectDisposedException or OperationCanceledException)
-        {
+            // Best effort — connection may already be gone
         }
     }
 
@@ -1373,7 +1299,7 @@ internal sealed partial class JsonRpc : IDisposable
         Debug.Assert(
             specializedType.IsGenericType && specializedType.GetGenericTypeDefinition() == genericMethodDefinition.DeclaringType,
             "Generic member definition doesn't match type.");
-#if NET
+#if NET8_0_OR_GREATER
         return (MethodInfo)specializedType.GetMemberWithSameMetadataDefinitionAs(genericMethodDefinition);
 #else
         const BindingFlags All = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance;
@@ -1385,6 +1311,7 @@ internal sealed partial class JsonRpc : IDisposable
         JsonSerializerDefaults.Web,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
     [JsonSerializable(typeof(JsonRpcRequest))]
+    [JsonSerializable(typeof(JsonRpcResponse))]
     [JsonSerializable(typeof(JsonRpcErrorResponse))]
     [JsonSerializable(typeof(JsonRpcNotification))]
     private partial class JsonRpcWireContext : JsonSerializerContext;
@@ -1402,6 +1329,24 @@ internal sealed partial class JsonRpc : IDisposable
 
         [JsonPropertyName("params")]
         public RequestParameters? Params { get; set; }
+    }
+
+    private sealed class JsonRpcResponse
+    {
+        [JsonPropertyName("jsonrpc")]
+        public string Jsonrpc { get; } = "2.0";
+
+        [JsonPropertyName("id")]
+        public JsonElement Id { get; set; }
+
+        // JSON-RPC 2.0 requires every response to carry either `result` or `error`.
+        // vscode-jsonrpc (used by the CLI) rejects responses that have neither with
+        // "The received response has neither a result nor an error property", so we
+        // must emit `result: null` for void-returning handlers — overriding the
+        // context-level WhenWritingNull policy.
+        [JsonPropertyName("result")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
+        public JsonElement? Result { get; set; }
     }
 
     private sealed class JsonRpcErrorResponse
@@ -1451,11 +1396,6 @@ internal sealed partial class JsonRpc : IDisposable
         Level = LogLevel.Warning,
         Message = "Inline response callback for request {RequestId} threw")]
     private static partial void LogInlineResponseCallbackThrew(ILogger logger, Exception exception, long requestId);
-
-    [LoggerMessage(
-        Level = LogLevel.Warning,
-        Message = "Failed to send JSON-RPC {MessageKind}")]
-    private static partial void LogMessageDeliveryFailed(ILogger logger, Exception exception, string messageKind);
 
     [JsonSerializable(typeof(CancelRequestParams))]
     private partial class CancelRequestParamsContext : JsonSerializerContext;

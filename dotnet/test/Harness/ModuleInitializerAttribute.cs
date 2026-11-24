@@ -2,7 +2,7 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
-#if !NET
+#if !NET5_0_OR_GREATER
 namespace System.Runtime.CompilerServices;
 
 // Polyfill so [ModuleInitializer] compiles on net472; recognized by the compiler.

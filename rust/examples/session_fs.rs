@@ -290,20 +290,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await?;
 
-    // `grep`, `glob` and shell commands do not go through the provider, so ask
-    // for the `view` tool, which reads README.md from the in-memory map.
     let response = session
-        .send_and_wait(MessageOptions::new(
-            "Use the view tool to read /workspace/README.md, then summarize it.",
-        ))
+        .send(MessageOptions::new("Summarize README.md."))
         .await?;
-    let text = response
-        .as_ref()
-        .and_then(|event| event.data.get("content"))
-        .and_then(|content| content.as_str())
-        .unwrap_or("<no response>");
-    println!("Assistant: {text}");
+    println!("Assistant: {response}");
 
-    session.disconnect().await?;
     Ok(())
 }

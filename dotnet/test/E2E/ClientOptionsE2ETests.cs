@@ -3,6 +3,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 using System.Diagnostics;
+using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
@@ -454,26 +455,26 @@ public class ClientOptionsE2ETests(E2ETestFixture fixture, ITestOutputHelper out
     }
 
     [Fact]
-    public async Task StartAsync_Cleans_Up_Tcp_Cli_Process_When_Announced_Port_Is_Invalid()
+    public async Task StartAsync_Cleans_Up_Tcp_Cli_Process_When_Connect_Fails()
     {
-        var cliPath = Path.Join(Ctx.WorkDir, $"fake-tcp-invalid-port-cli-{Guid.NewGuid():N}.js");
-        var pidPath = Path.Join(Ctx.WorkDir, $"fake-tcp-invalid-port-cli-{Guid.NewGuid():N}.pid");
-        await File.WriteAllTextAsync(cliPath, FakeTcpInvalidPortCliScript);
+        var cliPath = Path.Join(Ctx.WorkDir, $"fake-tcp-unavailable-port-cli-{Guid.NewGuid():N}.js");
+        var pidPath = Path.Join(Ctx.WorkDir, $"fake-tcp-unavailable-port-cli-{Guid.NewGuid():N}.pid");
+        var unavailablePort = GetAvailableTcpPort();
+        await File.WriteAllTextAsync(cliPath, FakeTcpUnavailablePortCliScript);
 
         using var observer = new RuntimeStartupProcessObserver(pidPath, useStdio: false, Logger);
         await using var client = Ctx.CreateClient(
             options: new CopilotClientOptions
             {
                 Mode = CopilotClientMode.CodingAgent,
-                Runtime = RuntimeConnection.ForSpawnedTcp(path: cliPath, args: ["--pid-file", pidPath]),
+                Runtime = RuntimeConnection.ForSpawnedTcp(path: cliPath, args: ["--pid-file", pidPath, "--announce-port", unavailablePort.ToString(CultureInfo.InvariantCulture)]),
                 GitHub = new ClientGitHubOptions { UseLoggedInUser = false },
                 Observability = new ClientObservabilityOptions { Logger = observer }
             });
 
-        var ex = await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => client.StartAsync());
-        Assert.Equal("port", ex.ParamName);
+        await Assert.ThrowsAnyAsync<Exception>(() => client.StartAsync());
 
-        Assert.True(observer.Process.HasExited, "Failed TCP startup retained the runtime process.");
+        Assert.True(observer.Process.HasExited, "Failed TCP connection retained the runtime process.");
 
         await client.ForceStopAsync();
     }
@@ -708,6 +709,20 @@ public class ClientOptionsE2ETests(E2ETestFixture fixture, ITestOutputHelper out
         Assert.Equal(600, (options.Runtime as OwnedRuntimeConnection)?.SessionIdleTimeoutSeconds);
     }
 
+    private static int GetAvailableTcpPort()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        try
+        {
+            return ((IPEndPoint)listener.LocalEndpoint).Port;
+        }
+        finally
+        {
+            listener.Stop();
+        }
+    }
+
     private static void AssertArgumentValue(string?[] args, string name, string expectedValue)
     {
         var index = Array.IndexOf(args, name);
@@ -733,15 +748,14 @@ public class ClientOptionsE2ETests(E2ETestFixture fixture, ITestOutputHelper out
             .GetProperty("params");
     }
 
-    private const string FakeTcpInvalidPortCliScript = """
+    private const string FakeTcpUnavailablePortCliScript = """
         const fs = require("fs");
 
         const pidFileIndex = process.argv.indexOf("--pid-file");
+        const portIndex = process.argv.indexOf("--announce-port");
 
         fs.writeFileSync(process.argv[pidFileIndex + 1], String(process.pid));
-        // The SDK has acquired the child when it attempts to connect, but
-        // this port cannot lead to a real dial or depend on OS refusal behavior.
-        console.log("listening on port 65536");
+        console.log(`listening on port ${process.argv[portIndex + 1]}`);
 
         setInterval(() => {}, 1000);
         """;

@@ -5,7 +5,7 @@
 // Polyfills for System.IO APIs not available on .NET Framework.
 // These are test-only and not optimized for production use.
 
-#if !NET
+#if !NET8_0_OR_GREATER
 
 using System.Threading;
 using System.Threading.Tasks;

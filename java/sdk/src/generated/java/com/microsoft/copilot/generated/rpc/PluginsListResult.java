@@ -26,9 +26,7 @@ import javax.annotation.processing.Generated;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record PluginsListResult(
     /** Installed plugins */
-    @JsonProperty("plugins") List<InstalledPluginInfo> plugins,
-    /** Existing discovery warnings for an invocation-context query. Omitted on legacy calls without workingDirectory or pluginDirectories. Display text can contain untrusted paths and must be sanitized before terminal output. */
-    @JsonProperty("warnings") List<String> warnings
+    @JsonProperty("plugins") List<InstalledPluginInfo> plugins
 ) {
 
     /**
@@ -51,7 +49,6 @@ public record PluginsListResult(
     public static final class Builder {
         private Builder() {}
         private List<InstalledPluginInfo> plugins;
-        private List<String> warnings;
 
         /**
          * Sets the {@code plugins} property.
@@ -65,17 +62,6 @@ public record PluginsListResult(
         }
 
         /**
-         * Sets the {@code warnings} property.
-         * @param value the property value
-         * @return this builder
-         * @since 2.0.0
-         */
-        public Builder warnings(List<String> value) {
-            this.warnings = value;
-            return this;
-        }
-
-        /**
          * Builds a record after checking required property presence.
          * @return a new record
          * @throws IllegalStateException if a required property is missing
@@ -83,7 +69,7 @@ public record PluginsListResult(
          */
         public PluginsListResult build() {
             if (plugins == null) throw new IllegalStateException("Missing required property: plugins");
-            return new PluginsListResult(plugins, warnings);
+            return new PluginsListResult(plugins);
         }
     }
 }

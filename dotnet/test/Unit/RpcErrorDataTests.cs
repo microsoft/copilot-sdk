@@ -2,7 +2,7 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
-#if NET
+#if NET8_0_OR_GREATER
 using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
@@ -66,7 +66,7 @@ public sealed class RpcErrorDataTests
             new RemoteRpcException(ErrorMessage, ErrorCode, default(JsonElement)));
     }
 
-#if NET
+#if NET8_0_OR_GREATER
     [Theory]
     [MemberData(nameof(ErrorPayloads))]
     public async Task Session_Create_Preserves_Remote_Error_And_Data(string? data, JsonValueKind? kind)

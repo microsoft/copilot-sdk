@@ -10,7 +10,6 @@ export type JsonValue = null | boolean | number | string | JsonValue[] | { [key:
  * Union of all session event variants emitted by the Copilot CLI runtime.
  */
 export type SessionEvent =
-  | SandboxStateChangedEvent
   | IdeConnectionChangedEvent
   | IdeSelectionChangedEvent
   | IdeAddFileReferenceEvent
@@ -47,7 +46,6 @@ export type SessionEvent =
   | ShutdownEvent
   | UsageCheckpointEvent
   | ProviderQuotaObservationEvent
-  | SensitivityLabelObservationEvent
   | ContextChangedEvent
   | UsageInfoEvent
   | ContextClearedEvent
@@ -218,14 +216,6 @@ export type Verbosity =
   | "medium"
   /** A more detailed response was requested. */
   | "high";
-/**
- * Data loss prevention (DLP) block reported by the model provider's exact error code. Resending the same conversation is blocked again; rewind to the user.message whose messageId equals the error's originatingMessageId.
- */
-export type DlpBlockKind =
-  /** The provider's DLP policy blocked the prompt (provider code `prompt_dlp_blocked`). */
-  | "prompt_dlp_blocked"
-  /** The provider blocked restricted content included inline in the request (provider code `inline_restricted`). */
-  | "inline_restricted";
 /**
  * What the user must do to recover from a failure, named as an action rather than as one client's affordance. The runtime cannot know which affordance a client offers — a slash command, a settings pane, a link — so the accompanying message stays host-agnostic and each client renders its own copy from this value. Absent when the runtime knows of no action the user can take.
  */
@@ -683,19 +673,6 @@ export type ProviderQuotaQuantityKind =
   | "advisory_balance"
   /** No quantity measurement, as with admission-only response headers. */
   | "none";
-/**
- * How the provider resolved the sensitivity label for one model request
- */
-/** @experimental */
-export type SensitivityLabelOutcome =
-  /** The request inherited the sensitivity label carried in `label`. */
-  | "inherited"
-  /** The request's sources carried no sensitivity labels. */
-  | "no_source_labels"
-  /** The request's sources were labeled, but no label applies to the request. */
-  | "no_applicable_label"
-  /** The provider could not determine the label; `failure` may describe why. */
-  | "indeterminate";
 /**
  * What initiated a conversation compaction
  */
@@ -1464,7 +1441,7 @@ export type AssistedApprovalAssessment =
     }
   | {
       /**
-       * Machine-readable exclusion reason. Current runtimes emit `managed-approval-required`, `sandbox-bypass`, `extension-permission-access`, `action-too-long`, `credential-minting`, `credential-exposure`, `authorization-history-incomplete`, `path-not-authorized`, or `content-excluded`; consumers must tolerate future strings.
+       * Machine-readable exclusion reason. Current runtimes emit `managed-approval-required`, `sandbox-bypass`, `extension-permission-access`, `action-too-long`, `authorization-history-incomplete`, `path-not-authorized`, or `content-excluded`; consumers must tolerate future strings.
        */
       reason: string;
       /**
@@ -1487,10 +1464,6 @@ export type AssistedApprovalAssessment =
       status: "completed";
     }
   | {
-      /**
-       * Runtime-authored explanation of the failure when the runtime knows more than `reason`, such as the model error the judge call returned or how to make a judge model available. Absent when `reason` says everything known.
-       */
-      message?: string;
       /**
        * Machine-readable failure reason. Current runtimes emit `timeout`, `abort`, `empty_response`, `model_error`, `parse_error`, or `context_too_large`; consumers must tolerate future strings.
        */
@@ -2070,76 +2043,6 @@ export type ExtensionsLoadedExtensionStatus =
   | "starting";
 
 /**
- * Session event "session.sandbox_state_changed". Read-only sandbox state after a live session policy transition.
- */
-export interface SandboxStateChangedEvent {
-  /**
-   * Sub-agent instance identifier. Absent for events from the root/main agent and session-level events.
-   */
-  agentId?: string;
-  /**
-   * Whether this physical journal record belongs to a replay checkpoint rather than original session history.
-   */
-  checkpoint?: boolean;
-  /**
-   * Read-only sandbox state after a live session policy transition.
-   */
-  data: SandboxStateChangedData;
-  /**
-   * Always true for events that are transient and not persisted to the session event log on disk.
-   */
-  ephemeral: true;
-  /**
-   * Unique event identifier (UUID v4), generated when the event is emitted
-   */
-  id: string;
-  /**
-   * ID of the chronologically preceding event in the session, forming a linked chain. Null for the first event.
-   */
-  parentId: string | null;
-  /**
-   * ISO 8601 timestamp when the event was created
-   */
-  timestamp: string;
-  /**
-   * Type discriminator. Always "session.sandbox_state_changed".
-   */
-  type: "session.sandbox_state_changed";
-}
-/**
- * Read-only sandbox state after a live session policy transition.
- */
-export interface SandboxStateChangedData {
-  /**
-   * Whether queued sandbox bypass requests may use the session opt-out.
-   */
-  autoApproveBypass: boolean;
-  /**
-   * Effective sandbox configuration, including the current managed floor.
-   */
-  config: JsonValue;
-  /**
-   * Exact runtime attribution of the effective sandbox choice.
-   */
-  configSource: string;
-  /**
-   * Whether this session holds an authorized or local session opt-out.
-   */
-  disabledForSession: boolean;
-  /**
-   * Runtime incarnation of the live session.
-   */
-  incarnation: number;
-  /**
-   * Monotonic revision of this live session's sandbox projection.
-   */
-  revision: number;
-  /**
-   * Explicit session enable choice, when one exists.
-   */
-  sessionOverride: boolean | null;
-}
-/**
  * Session event "ide.connection_changed". Live IDE state. This state never restores a connection from session history.
  */
 export interface IdeConnectionChangedEvent {
@@ -2700,7 +2603,7 @@ export interface GitHubMcpToolConfig {
  */
 export interface SessionLimitsConfig {
   /**
-   * Maximum AI Credits allowed across the session's current accounting window. When setting a limit, the value must be at least 30 and greater than the AI Credits the session has already used.
+   * Maximum AI Credits allowed across the session's current accounting window.
    */
   maxAiCredits?: number;
 }
@@ -2810,14 +2713,6 @@ export interface ResumeData {
    */
   remoteSteerable?: boolean;
   /**
-   * Whether this resume kept the reasoning that Copilot's Responses API produced on earlier assistant messages in the history it replays. Replaying this event later reapplies the same choice, so the history is rebuilt as it was sent. Omitted for a resume that joined live work, and by resumes recorded before this field existed, which removed that reasoning.
-   */
-  responsesReasoningKept?: boolean;
-  /**
-   * True when the COPILOT_STRIP_REASONING_ON_RESUME environment override, rather than the runtime's default for this session, decided responsesReasoningKept. Omitted otherwise.
-   */
-  responsesReasoningOverridden?: boolean;
-  /**
    * ISO 8601 timestamp when the session was resumed
    */
   resumeTime: string;
@@ -2885,7 +2780,7 @@ export interface RemoteSteerableChangedData {
   remoteSteerable: boolean;
 }
 /**
- * Session event "session.error". Session error details for timeline display. Request-correlated completion RPC failures carry the terminal error's same fields in their error data, with stack and completionEventId. errorCode is an optional runtime or Copilot API classification, not a closed enum; clients must tolerate unknown values. CAPI HTTP 429 normalizes missing or unknown codes to rate_limited, while HTTP 402 forwards upstream codes or omits an absent code. Direct BYOK provider codes use the separate providerErrorCode field. A code alone does not define remediation or retry policy.
+ * Session event "session.error". Session error details for timeline display. Request-correlated completion RPC failures carry the terminal error's same fields in their error data, with stack and completionEventId.
  */
 export interface ErrorEvent {
   /**
@@ -2897,7 +2792,7 @@ export interface ErrorEvent {
    */
   checkpoint?: boolean;
   /**
-   * Session error details for timeline display. Request-correlated completion RPC failures carry the terminal error's same fields in their error data, with stack and completionEventId. errorCode is an optional runtime or Copilot API classification, not a closed enum; clients must tolerate unknown values. CAPI HTTP 429 normalizes missing or unknown codes to rate_limited, while HTTP 402 forwards upstream codes or omits an absent code. Direct BYOK provider codes use the separate providerErrorCode field. A code alone does not define remediation or retry policy.
+   * Session error details for timeline display. Request-correlated completion RPC failures carry the terminal error's same fields in their error data, with stack and completionEventId.
    */
   data: ErrorData;
   /**
@@ -2922,19 +2817,15 @@ export interface ErrorEvent {
   type: "session.error";
 }
 /**
- * Session error details for timeline display. Request-correlated completion RPC failures carry the terminal error's same fields in their error data, with stack and completionEventId. errorCode is an optional runtime or Copilot API classification, not a closed enum; clients must tolerate unknown values. CAPI HTTP 429 normalizes missing or unknown codes to rate_limited, while HTTP 402 forwards upstream codes or omits an absent code. Direct BYOK provider codes use the separate providerErrorCode field. A code alone does not define remediation or retry policy.
+ * Session error details for timeline display. Request-correlated completion RPC failures carry the terminal error's same fields in their error data, with stack and completionEventId.
  */
 export interface ErrorData {
-  /**
-   * Typed DLP block, set only when providerErrorCode is a known DLP code. Classified from the exact code, never from the message or HTTP status. Other provider codes remain in providerErrorCode.
-   */
-  dlpBlock?: DlpBlockKind;
   /**
    * Only set on `errorType: "rate_limit"`. When `true`, the runtime will follow this error with an `auto_mode_switch.requested` event (or silently switch if `continueOnAutoMode` is enabled). UI clients can use this flag to suppress duplicate rendering of the rate-limit error when they show their own auto-mode-switch prompt.
    */
   eligibleForAutoSwitch?: boolean;
   /**
-   * Optional fine-grained runtime or Copilot API classification; an extensible string, not a closed enum. May be absent; clients must tolerate unknown values. Runtime-local codes include `ai_credit_soft_cap_exhausted` (`errorType: "session_limits"`) and `no_account` (`errorType: "authentication"`): the session has no account, or no credential resolves for its account, so no request was sent. Session RPC rejections for the same state carry `no_account` in their error data. Policy codes include `misalignment_policy_violation` and `cyber_policy`. CAPI rate limits normalize missing or unknown codes to `rate_limited`; recognized codes also include `user_model_rate_limited`, `user_global_rate_limited`, `user_weekly_rate_limited`, and `integration_rate_limited`. HTTP 402 quota failures forward upstream codes, including unknown values, or omit the field if no code is available. Other terminal CAPI query failures expose only reviewed codes. Direct BYOK provider codes use providerErrorCode instead. A code alone does not define remediation or retry policy.
+   * Fine-grained error code from the upstream provider, when available. For `errorType: "rate_limit"`, this is one of the `RateLimitErrorCode` values (e.g., `"user_weekly_rate_limited"`, `"user_global_rate_limited"`, `"rate_limited"`, `"user_model_rate_limited"`, `"integration_rate_limited"`). For `errorType: "quota"`, this is the CAPI quota error code (e.g., `"quota_exceeded"`, `"session_quota_exceeded"`, `"billing_not_configured"`).
    */
   errorCode?: string;
   /**
@@ -2954,7 +2845,7 @@ export interface ErrorData {
    */
   providerCallId?: string;
   /**
-   * Exact error code from the model endpoint's structured error envelope (Copilot API, BYOK, or another provider), preserved verbatim when available; unset otherwise. Unlike errorCode, this is not a runtime or Copilot API classification and does not imply a remediation or retry policy.
+   * Provider-defined error code, when available; unset otherwise. Unlike errorCode, this is not a runtime or Copilot API classification and does not imply a remediation or retry policy.
    */
   providerErrorCode?: string;
   /**
@@ -2981,10 +2872,6 @@ export interface ErrorData {
    * HTTP status code from the upstream request, if applicable
    */
   statusCode?: number;
-  /**
-   * Identifier of the agent-loop turn whose model call failed, matching that turn's assistant.turn_start turnId within the request named by originatingMessageId. Absent when the failure happened outside a model turn.
-   */
-  turnId?: string;
   /**
    * Optional URL associated with this error that the user can open in a browser
    */
@@ -4448,15 +4335,7 @@ export interface ShutdownData {
    */
   accountingSnapshot?: UsageGetMetricsResult;
   /**
-   * Name-keyed launch counts kept outside the strict legacy accounting-snapshot DTO.
-   *
-   * @internal
-   */
-  agentInvocationCounts?: {
-    [k: string]: number | undefined;
-  };
-  /**
-   * Usage summed by configured agent name, not invocation ID. Plugin namespace separators `/` normalize to `:` before key escaping; `plugin/helper` uses `plugin:helper`. Reserved keys are `main` for the main conversation and `unknown` for unnamed subagents. After normalization, names equal to either reserved key or beginning with `agent:` are prefixed with `agent:`.
+   * Per-agent usage breakdown, keyed by agent instance identifier. The main conversation uses the stable key `main`.
    */
   agentMetrics?: {
     [k: string]: ShutdownAgentMetric | undefined;
@@ -4551,7 +4430,7 @@ export interface ShutdownData {
  */
 export interface UsageGetMetricsResult {
   /**
-   * Usage summed by configured agent name, not invocation ID. Plugin namespace separators `/` normalize to `:` before key escaping; `plugin/helper` uses `plugin:helper`. Reserved keys are `main` for the main conversation and `unknown` for unnamed subagents. After normalization, names equal to either reserved key or beginning with `agent:` are prefixed with `agent:`.
+   * Per-agent usage metrics, keyed by agent instance identifier. The main conversation uses the stable key `main`.
    */
   agentMetrics?: {
     [k: string]: UsageMetricsAgentMetric | undefined;
@@ -4615,21 +4494,17 @@ export interface UsageGetMetricsResult {
   totalUserRequests: number;
 }
 /**
- * Usage summed across invocations of one configured agent.
+ * Usage attributed to one agent instance, including its identity, API duration, AI units, and per-model breakdown.
  */
 export interface UsageMetricsAgentMetric {
   /**
-   * Legacy invocation label. Omitted from name-aggregated metrics because task descriptions differ between invocations.
+   * Human-readable label for this subagent invocation, copied from the originating `subagent.started` event. For task-tool subagents this is the invocation's task description rather than the agent's configured display name, so group by `agentName` for stable per-agent labels.
    */
   agentDisplayName?: string;
   /**
-   * Configured agent name with plugin namespace separators normalized from `/` to `:`, when this is a subagent
+   * Configured agent name, when this is a subagent
    */
   agentName?: string;
-  /**
-   * Number of distinct subagent starts in this aggregate. Omitted for main and in legacy instance-keyed metrics.
-   */
-  invocationCount?: number;
   /**
    * Per-model usage for this agent, keyed by model identifier
    */
@@ -4793,21 +4668,17 @@ export interface UsageMetricsTokenDetail {
   tokenCount: number;
 }
 /**
- * Usage summed across invocations of one configured agent at session shutdown.
+ * Usage attributed to one agent instance at session shutdown.
  */
 export interface ShutdownAgentMetric {
   /**
-   * Legacy invocation label. Omitted from name-aggregated metrics because task descriptions differ between invocations.
+   * Human-readable label for this subagent invocation, copied from the originating `subagent.started` event. For task-tool subagents this is the invocation's task description rather than the agent's configured display name, so group by `agentName` for stable per-agent labels.
    */
   agentDisplayName?: string;
   /**
-   * Configured agent name with plugin namespace separators normalized from `/` to `:`, when this is a subagent
+   * Configured agent name, when this is a subagent
    */
   agentName?: string;
-  /**
-   * Number of distinct subagent starts in this aggregate. Omitted for main and in legacy instance-keyed metrics.
-   */
-  invocationCount?: number;
   /**
    * Per-model usage for this agent, keyed by model identifier
    */
@@ -4972,14 +4843,6 @@ export interface UsageCheckpointData {
    * @internal
    */
   accountingSnapshot?: UsageGetMetricsResult;
-  /**
-   * Name-keyed launch counts kept outside the strict legacy accounting-snapshot DTO.
-   *
-   * @internal
-   */
-  agentInvocationCounts?: {
-    [k: string]: number | undefined;
-  };
   /**
    * Internal per-model prompt-cache state used to restore expiration tracking on resume
    *
@@ -5257,122 +5120,6 @@ export interface ProviderMonthlyUsage {
   unit: ProviderQuotaUnit;
 }
 /**
- * Session event "session.sensitivity_label_observation". A provider-reported sensitivity label observation for one model request. Each observation describes only its own request; it neither sets nor clears a session-level label.
- */
-/** @experimental */
-export interface SensitivityLabelObservationEvent {
-  /**
-   * Sub-agent instance identifier. Absent for events from the root/main agent and session-level events.
-   */
-  agentId?: string;
-  /**
-   * Whether this physical journal record belongs to a replay checkpoint rather than original session history.
-   */
-  checkpoint?: boolean;
-  /**
-   * A provider-reported sensitivity label observation for one model request. Each observation describes only its own request; it neither sets nor clears a session-level label.
-   */
-  data: SensitivityLabelObservationData;
-  /**
-   * Always true for events that are transient and not persisted to the session event log on disk.
-   */
-  ephemeral: true;
-  /**
-   * Unique event identifier (UUID v4), generated when the event is emitted
-   */
-  id: string;
-  /**
-   * ID of the chronologically preceding event in the session, forming a linked chain. Null for the first event.
-   */
-  parentId: string | null;
-  /**
-   * ISO 8601 timestamp when the event was created
-   */
-  timestamp: string;
-  /**
-   * Type discriminator. Always "session.sensitivity_label_observation".
-   */
-  type: "session.sensitivity_label_observation";
-}
-/**
- * A provider-reported sensitivity label observation for one model request. Each observation describes only its own request; it neither sets nor clears a session-level label.
- */
-/** @experimental */
-export interface SensitivityLabelObservationData {
-  /**
-   * Why the label could not be determined. Present only when `outcome` is `indeterminate` and the provider described the failure.
-   */
-  failure?: SensitivityLabelFailure;
-  /**
-   * Identifier of the user interaction that owns the model request, matching assistant.turn_start.interactionId when available.
-   */
-  interactionId?: string;
-  /**
-   * The inherited label. Present only when `outcome` is `inherited`.
-   */
-  label?: SensitivityLabel;
-  /**
-   * How the provider resolved the label for this request.
-   */
-  outcome: SensitivityLabelOutcome;
-  /**
-   * Provider that served the model request.
-   */
-  provider: ModelProviderRef;
-  /**
-   * Provider request identifier of the response that carried the observation, when known.
-   */
-  requestId?: string;
-  /**
-   * Agent-loop iteration within the interaction that issued the model request.
-   */
-  turnId: string;
-}
-/**
- * Why the provider could not determine a sensitivity label.
- */
-/** @experimental */
-export interface SensitivityLabelFailure {
-  /**
-   * Provider-defined failure category.
-   */
-  category: string;
-  /**
-   * Whether the provider reported that retrying the request may determine a label.
-   */
-  retryable: boolean;
-  /**
-   * Status code the provider reported for the failure, when present.
-   */
-  status?: number;
-}
-/**
- * A sensitivity label the provider applied to one model request.
- */
-/** @experimental */
-export interface SensitivityLabel {
-  /**
-   * Display color of the label, when the provider supplied one.
-   */
-  color?: string;
-  /**
-   * Label identifier, a lowercase hyphenated GUID.
-   */
-  id: string;
-  /**
-   * Whether the label encrypts content, when the provider stated it explicitly. Absent means unknown.
-   */
-  isEncrypted?: boolean;
-  /**
-   * Display name of the label.
-   */
-  name: string;
-  /**
-   * Tooltip text describing the label, when the provider supplied one.
-   */
-  tooltip?: string;
-}
-/**
  * Session event "session.context_changed". Updated working directory and git context after the change
  */
 export interface ContextChangedEvent {
@@ -5593,18 +5340,6 @@ export interface CompactionStartData {
    */
   model?: string;
   /**
-   * For a context_limit_retry compaction, the client's estimate of the prompt tokens in the rejected request that forced it, when known
-   *
-   * @internal
-   */
-  rejectedRequestTokens?: number;
-  /**
-   * For a context_limit_retry compaction, how the provider rejected the request that forced it: "payload_too_large" (HTTP 413) or "context_window_exceeded" (a context-limit error message). Open set; readers must tolerate other values.
-   *
-   * @internal
-   */
-  rejectionKind?: string;
-  /**
    * Number of trailing conversation messages (the turn's not-yet-answered input) kept verbatim after the summary instead of being compacted. Omitted when every message at compaction start is summarized.
    *
    * @internal
@@ -5813,12 +5548,6 @@ export interface CompactionCompleteData {
    */
   failureReason?: string;
   /**
-   * Experimental HydraFusion attribution for a compaction a HydraFusion turn ran before its first phase.
-   *
-   * @experimental
-   */
-  fusion?: FusionAttribution;
-  /**
    * Model identifier at admission when routing later changed to the reported compaction model
    */
   initialModel?: string;
@@ -5941,18 +5670,6 @@ export interface CompactionCompleteAttemptMetrics {
    */
   cancelledRequestCount?: number;
   /**
-   * Bounded outcome of the capacity catalog refresh: "not_applicable", "not_needed", "succeeded", "failed" or "capacity_unavailable".
-   *
-   * @internal
-   */
-  capacityRefreshOutcome?: string;
-  /**
-   * How the summarizer's context capacity was established: "authoritative" or "threshold_inferred".
-   *
-   * @internal
-   */
-  capacitySource?: string;
-  /**
    * The deadline limit that ended the compaction, in milliseconds. Absent unless a deadline fired.
    *
    * @internal
@@ -6000,12 +5717,6 @@ export interface CompactionCompleteAttemptMetrics {
    * @internal
    */
   failureOperation?: string;
-  /**
-   * Conservative context limit inferred from current history and the automatic compaction threshold. Absent unless capacitySource is "threshold_inferred".
-   *
-   * @internal
-   */
-  inferredContextLimitTokens?: number;
   /**
    * Retry-After of the latest failed summarizer request, in milliseconds. Absent when that request sent none.
    *
@@ -6188,64 +5899,6 @@ export interface CompactionCompleteFailureDiagnostics {
    * @internal
    */
   transportErrorKind?: string;
-}
-/**
- * Experimental attribution linking an ordinary event to the HydraFusion turn, phase, and concrete source that produced it.
- */
-/** @experimental */
-export interface FusionAttribution {
-  /**
-   * Idempotency identifier for the authoritative commit, when the event belongs to the selected output.
-   */
-  commitId?: string;
-  /**
-   * Conversation scope in which the concrete phase executed.
-   */
-  conversationScope?: string;
-  /**
-   * Stable identifier for the HydraFusion turn that produced the event.
-   */
-  fusionId: string;
-  /**
-   * Whether this model request consumed a user steering message rather than only internal Fusion work.
-   */
-  hasUserSteering?: boolean;
-  /**
-   * ISO 8601 time the event happened, when HydraFusion held it back and published it later. The envelope `timestamp` is when it was published.
-   */
-  occurredAt?: string;
-  /**
-   * HydraFusion orchestration pattern selected for the turn.
-   */
-  pattern: string;
-  /**
-   * Identifier of the concrete phase that produced the event.
-   */
-  phaseId?: string;
-  /**
-   * Kind of concrete phase that produced the event.
-   */
-  phaseKind?: string;
-  /**
-   * HydraFusion routing policy used for the turn.
-   */
-  policy: string;
-  /**
-   * Semantic role assigned to the concrete phase.
-   */
-  role?: string;
-  /**
-   * Concrete model that produced the attributed event.
-   */
-  sourceModel?: string;
-  /**
-   * Phase whose output supplied the authoritative content, when different from the executing phase.
-   */
-  sourcePhaseId?: string;
-  /**
-   * Synthetic HydraFusion model selected for the session.
-   */
-  syntheticModel: string;
 }
 /**
  * How far the compaction's summarizer model calls had progressed when the compaction's outcome was decided. Stream statistics describe the latest model request; durationMs and attemptCount cover every request.
@@ -6823,7 +6476,7 @@ export interface FusionRouteFailedData {
   syntheticModel: string;
 }
 /**
- * Session event "session.fusion_resolved". Experimental durable validated HydraFusion route and turn policy. An empty phase plan with pattern single runs an ordinary streaming turn, without phase or commit events.
+ * Session event "session.fusion_resolved". Experimental durable validated HydraFusion route and turn policy.
  */
 /** @experimental */
 export interface FusionResolvedEvent {
@@ -6836,7 +6489,7 @@ export interface FusionResolvedEvent {
    */
   checkpoint?: boolean;
   /**
-   * Experimental durable validated HydraFusion route and turn policy. An empty phase plan with pattern single runs an ordinary streaming turn, without phase or commit events.
+   * Experimental durable validated HydraFusion route and turn policy.
    */
   data: FusionResolvedData;
   /**
@@ -6861,7 +6514,7 @@ export interface FusionResolvedEvent {
   type: "session.fusion_resolved";
 }
 /**
- * Experimental durable validated HydraFusion route and turn policy. An empty phase plan with pattern single runs an ordinary streaming turn, without phase or commit events.
+ * Experimental durable validated HydraFusion route and turn policy.
  */
 /** @experimental */
 export interface FusionResolvedData {
@@ -6912,7 +6565,7 @@ export interface FusionResolvedData {
    */
   pattern: FusionPattern;
   /**
-   * Presentation-neutral phase plan for workflow progress. An empty plan with pattern single runs an ordinary streaming turn, without phase or commit events.
+   * Presentation-neutral phase plan for clients that render workflow progress.
    *
    * @experimental
    */
@@ -7062,7 +6715,7 @@ export interface FusionScores {
   toolUse: number;
 }
 /**
- * Session event "session.fusion_completed". Experimental durable aggregate outcome of a HydraFusion turn. Phase-free Single reports completed, failed, or cancelled; staged patterns emit this event only on successful or degraded completion.
+ * Session event "session.fusion_completed". Experimental durable aggregate outcome of a HydraFusion turn.
  */
 /** @experimental */
 export interface FusionCompletedEvent {
@@ -7075,7 +6728,7 @@ export interface FusionCompletedEvent {
    */
   checkpoint?: boolean;
   /**
-   * Experimental durable aggregate outcome of a HydraFusion turn. Phase-free Single reports completed, failed, or cancelled; staged patterns emit this event only on successful or degraded completion.
+   * Experimental durable aggregate outcome of a HydraFusion turn.
    */
   data: FusionCompletedData;
   /**
@@ -7100,7 +6753,7 @@ export interface FusionCompletedEvent {
   type: "session.fusion_completed";
 }
 /**
- * Experimental durable aggregate outcome of a HydraFusion turn. Phase-free Single reports completed, failed, or cancelled; staged patterns emit this event only on successful or degraded completion.
+ * Experimental durable aggregate outcome of a HydraFusion turn.
  */
 /** @experimental */
 export interface FusionCompletedData {
@@ -7111,15 +6764,15 @@ export interface FusionCompletedData {
    */
   awaitingBackgroundWork?: boolean;
   /**
-   * Total cached input tokens reported by the turn.
+   * Total cached input tokens reported across all phases.
    */
   cachedTokens: number;
   /**
-   * Total tokens written to prompt cache by the turn.
+   * Total tokens written to prompt cache across all phases.
    */
   cacheWriteTokens?: number;
   /**
-   * Idempotency identifier for completion; a phase-free Single has no commit replay.
+   * Idempotency identifier for the authoritative final commit.
    */
   commitId: string;
   /**
@@ -7131,23 +6784,11 @@ export interface FusionCompletedData {
    */
   durationMs: number;
   /**
-   * Error reported by a failed ordinary Single turn, when available.
-   *
-   * @experimental
-   */
-  errorMessage?: string;
-  /**
-   * Failure category of an ordinary Single turn, which has no phase failure record.
-   *
-   * @experimental
-   */
-  failureReason?: string;
-  /**
    * Concrete model that supplied the authoritative final content.
    */
   finalSourceModel: string | null;
   /**
-   * Phase whose output supplied the final content, or null for a phase-free Single.
+   * Phase whose output supplied the authoritative final content.
    */
   finalSourcePhaseId: string | null;
   /**
@@ -7159,15 +6800,15 @@ export interface FusionCompletedData {
    */
   fusionId: string;
   /**
-   * Total input tokens consumed by the turn.
+   * Total input tokens consumed across all phases.
    */
   inputTokens: number;
   /**
-   * Stable aggregate outcome. Phase-free Single reports completed, failed, or cancelled; staged patterns emit this event only on successful or degraded completion.
+   * Stable aggregate outcome of the HydraFusion turn.
    */
   outcome: string;
   /**
-   * Total output tokens produced by the turn.
+   * Total output tokens produced across all phases.
    */
   outputTokens: number;
   /**
@@ -7179,13 +6820,7 @@ export interface FusionCompletedData {
    */
   phaseCount: number;
   /**
-   * Planned reasoning effort of an ordinary Single turn, which has no phase record.
-   *
-   * @experimental
-   */
-  reasoningEffort?: string;
-  /**
-   * Total concrete model requests made by the turn.
+   * Total concrete model requests made across all phases.
    */
   requestCount: number;
   /**
@@ -7193,7 +6828,7 @@ export interface FusionCompletedData {
    */
   syntheticModel: string;
   /**
-   * Total normalized AI-unit cost reported by the turn, in nano-AIU.
+   * Total normalized AI-unit cost reported across all phases, in nano-AIU.
    */
   totalNanoAiu: number;
   /**
@@ -7279,12 +6914,6 @@ export interface UserMessageEvent {
  * Payload of `user.message` with displayed and model-transformed content, attachments, source/delivery metadata, mode, and telemetry IDs.
  */
 export interface UserMessageData {
-  /**
-   * True when the host marked this message as written by an agent and delivered in the user role, such as the kickoff of a session another agent created. Only automatic permission decisions read it; absent in other messages and in older events.
-   *
-   * @internal
-   */
-  agentAuthored?: boolean;
   /**
    * The agent mode that was active when this message was sent
    */
@@ -8543,12 +8172,6 @@ export interface AssistantReasoningData {
    */
   content: string;
   /**
-   * Experimental HydraFusion phase attribution. Present without a `commitId` while a staged root phase streams provisional output that the orchestrator may still discard.
-   *
-   * @experimental
-   */
-  fusion?: FusionAttribution;
-  /**
    * Whether the model call that produced this reasoning used a user-managed provider or an on-device model
    */
   isByok?: boolean;
@@ -8615,12 +8238,6 @@ export interface AssistantReasoningDeltaData {
    */
   deltaContent: string;
   /**
-   * Experimental HydraFusion phase attribution. Present without a `commitId` while a staged root phase streams provisional output that the orchestrator may still discard.
-   *
-   * @experimental
-   */
-  fusion?: FusionAttribution;
-  /**
    * Reasoning block ID this delta belongs to, matching the corresponding assistant.reasoning event
    */
   reasoningId: string;
@@ -8666,12 +8283,6 @@ export interface AssistantToolCallDeltaEvent {
  * Streaming tool-call input delta for incremental tool-call updates
  */
 export interface AssistantToolCallDeltaData {
-  /**
-   * Experimental HydraFusion phase attribution. Present without a `commitId` while a staged root phase streams provisional output that the orchestrator may still discard.
-   *
-   * @experimental
-   */
-  fusion?: FusionAttribution;
   /**
    * Raw provider tool input fragment to append for this tool call. Function/tool-use providers stream serialized JSON argument text (so newlines inside JSON string values may appear as escaped `\n` until the accumulated JSON is parsed); custom tool calls stream raw custom input.
    */
@@ -8803,8 +8414,7 @@ export interface AssistantMessageData {
    */
   content: string;
   /**
-   * @deprecated
-   * No longer emitted. For OpenAI Responses, read encrypted_content from the reasoning items in reasoningBlocks.blocks instead. Older events may still contain this field.
+   * Encrypted reasoning content from OpenAI models. Session-bound and stripped on resume.
    */
   encryptedContent?: string;
   /**
@@ -8830,7 +8440,7 @@ export interface AssistantMessageData {
    */
   originatingMessageId?: string;
   /**
-   * Output tokens this message adds to replayed context, for token accounting: the API response's completion_tokens, shared across the response's message chunks. Use assistant.usage for billed usage.
+   * Output tokens this message adds to replayed context, for token accounting: the API response's completion_tokens, plus reasoning tokens a wire replays as input but reports separately, shared across the response's message chunks. Use assistant.usage for billed usage.
    */
   outputTokens?: number;
   /**
@@ -9017,6 +8627,60 @@ export interface CitationLocationBlock {
   type: "block";
 }
 /**
+ * Experimental attribution linking an ordinary event to the HydraFusion turn, phase, and concrete source that produced it.
+ */
+/** @experimental */
+export interface FusionAttribution {
+  /**
+   * Idempotency identifier for the authoritative commit, when the event belongs to the selected output.
+   */
+  commitId?: string;
+  /**
+   * Conversation scope in which the concrete phase executed.
+   */
+  conversationScope?: string;
+  /**
+   * Stable identifier for the HydraFusion turn that produced the event.
+   */
+  fusionId: string;
+  /**
+   * Whether this model request consumed a user steering message rather than only internal Fusion work.
+   */
+  hasUserSteering?: boolean;
+  /**
+   * HydraFusion orchestration pattern selected for the turn.
+   */
+  pattern: string;
+  /**
+   * Identifier of the concrete phase that produced the event.
+   */
+  phaseId?: string;
+  /**
+   * Kind of concrete phase that produced the event.
+   */
+  phaseKind?: string;
+  /**
+   * HydraFusion routing policy used for the turn.
+   */
+  policy: string;
+  /**
+   * Semantic role assigned to the concrete phase.
+   */
+  role?: string;
+  /**
+   * Concrete model that produced the attributed event.
+   */
+  sourceModel?: string;
+  /**
+   * Phase whose output supplied the authoritative content, when different from the executing phase.
+   */
+  sourcePhaseId?: string;
+  /**
+   * Synthetic HydraFusion model selected for the session.
+   */
+  syntheticModel: string;
+}
+/**
  * Neutral provider-tagged reasoning content blocks preserved verbatim for round-tripping
  */
 /** @experimental */
@@ -9162,12 +8826,6 @@ export interface AssistantMessageStartEvent {
  */
 export interface AssistantMessageStartData {
   /**
-   * Experimental HydraFusion phase attribution. Present without a `commitId` while a staged root phase streams provisional output that the orchestrator may still discard.
-   *
-   * @experimental
-   */
-  fusion?: FusionAttribution;
-  /**
    * Message ID this start event belongs to, matching subsequent deltas and assistant.message
    */
   messageId: string;
@@ -9221,12 +8879,6 @@ export interface AssistantMessageDeltaData {
    * Incremental text chunk to append to the message content
    */
   deltaContent: string;
-  /**
-   * Experimental HydraFusion phase attribution. Present without a `commitId` while a staged root phase streams provisional output that the orchestrator may still discard.
-   *
-   * @experimental
-   */
-  fusion?: FusionAttribution;
   /**
    * Message ID this delta belongs to, matching the corresponding assistant.message event
    */
@@ -9382,12 +9034,6 @@ export interface AssistantUsageData {
    */
   accounting?: UsageAccountingIdentity;
   /**
-   * Whether the logical request was the first the session sent after a resume prepared its history
-   *
-   * @internal
-   */
-  afterResume?: boolean;
-  /**
    * Availability of this call's reported AI-credit amount. Missing billing is unavailable, not a zero charge.
    */
   aiCreditsStatus?: AiCreditsStatus;
@@ -9399,12 +9045,6 @@ export interface AssistantUsageData {
    * API endpoint used for this model call, matching CAPI supported_endpoints vocabulary
    */
   apiEndpoint?: AssistantUsageApiEndpoint;
-  /**
-   * Zero-based index of the dispatched attempt of the logical request that produced this usage
-   *
-   * @internal
-   */
-  attemptIndex?: number;
   /**
    * Number of tools available to the model for this call
    *
@@ -9490,7 +9130,7 @@ export interface AssistantUsageData {
    */
   inferenceGateway?: boolean;
   /**
-   * What initiated this API call: "user" for a request that carries a user prompt, "agent" for an agent-driven request such as the follow-up after a tool result, or the delegating caller (e.g., "sub-agent", "mcp-sampling")
+   * What initiated this API call (e.g., "sub-agent", "mcp-sampling"); absent for user-initiated calls
    */
   initiator?: string;
   /**
@@ -9525,12 +9165,6 @@ export interface AssistantUsageData {
    * Whether this model call used a bring-your-own-key provider
    */
   isByok?: boolean;
-  /**
-   * Identifier of the logical request this call answered, shared by the request's attempts and its `prompt_request_usage` telemetry
-   *
-   * @internal
-   */
-  logicalRequestId?: string;
   /**
    * Requested maximum output tokens used for this model call
    */
@@ -9649,18 +9283,6 @@ export interface AssistantUsageData {
    * Model identifier returned by the provider, absent when the response does not identify it.
    */
   responseModel?: string;
-  /**
-   * Identifier of the `session.resume` event whose resume last prepared the session history in this process. Absent when no resume prepared it; random when that resume recorded no event
-   *
-   * @internal
-   */
-  resumeGeneration?: string;
-  /**
-   * Zero-based index of the retry the attempt that produced this usage belongs to
-   *
-   * @internal
-   */
-  retryIndex?: number;
   /**
    * Per-request treatment/eligibility signal returned by the Copilot API in the `X-GitHub-Copilot-Request-TE` response header for the associated model call; `false` when the header was absent or unparseable.
    */
@@ -9963,7 +9585,7 @@ export interface ModelCallFailureData {
    */
   inferenceGateway?: boolean;
   /**
-   * What initiated this failed API call, when reported (e.g., "sub-agent", "mcp-sampling"); absent for main-loop failures, whether user- or agent-initiated
+   * What initiated this API call (e.g., "sub-agent", "mcp-sampling"); absent for user-initiated calls
    */
   initiator?: string;
   /**
@@ -10856,10 +10478,6 @@ export interface ToolExecutionCompleteResult {
    */
   structuredContent?: JsonValue;
   /**
-   * Tool names discovered by client-side tool search, preserved so replay restores the original tool-reference content. References do not grant execution permission.
-   */
-  toolReferences?: string[];
-  /**
    * MCP Apps UI resource content for rendering in a sandboxed iframe
    */
   uiResource?: ToolExecutionCompleteUIResource;
@@ -11609,10 +11227,6 @@ export interface SubagentStartedData {
    */
   executionMode?: string;
   /**
-   * Interaction ID inherited from the user action that started this sub-agent
-   */
-  interactionId?: string;
-  /**
    * Model the sub-agent will run with, when known at start.
    */
   model?: string;
@@ -11777,10 +11391,6 @@ export interface SubagentCompletedData {
    */
   firstDispatchedModel?: string;
   /**
-   * Interaction ID of the user action that produced this sub-agent turn
-   */
-  interactionId?: string;
-  /**
    * Model used by the sub-agent
    */
   model?: string;
@@ -11882,10 +11492,6 @@ export interface SubagentFailedData {
    * First model for which the sub-agent started an inference request, when one was dispatched
    */
   firstDispatchedModel?: string;
-  /**
-   * Interaction ID of the user action that produced this sub-agent turn
-   */
-  interactionId?: string;
   /**
    * Model selected for the sub-agent, when known
    */
@@ -13310,10 +12916,6 @@ export interface PermissionApprovalEvaluation {
     | "sandbox-bypass"
     /** An action field exceeded the judge input limit. */
     | "action-too-long"
-    /** The action would grant login or privilege to whoever holds a key, which always requires explicit approval. */
-    | "credential-minting"
-    /** An automation started the turn, and the command would use a live credential from a credential store, which requires explicit approval. */
-    | "credential-exposure"
     /** The script path was not authorized for inspection. */
     | "path-not-authorized"
     /** A code source was excluded from review by content exclusion policy. */
@@ -14434,11 +14036,11 @@ export interface PermissionDeniedNoApprovalRuleAndCouldNotRequestFromUser {
   kind: "denied-no-approval-rule-and-could-not-request-from-user";
 }
 /**
- * Permission response variant for a rejection given in answer to a permission prompt, with optional feedback and force-reject flag. A person or an automated responder, such as the Assisted Permissions judge or a host policy, may have given it; the completion's `decisionSource` says which.
+ * Permission response variant denied in an interactive user prompt, with optional feedback and force-reject flag.
  */
 export interface PermissionDeniedInteractivelyByUser {
   /**
-   * Optional feedback explaining the denial, from whoever gave it
+   * Optional feedback from the user explaining the denial
    */
   feedback?: string;
   /**
@@ -14446,7 +14048,7 @@ export interface PermissionDeniedInteractivelyByUser {
    */
   forceReject?: boolean;
   /**
-   * Rejected in answer to a permission prompt. Despite the name, this does not mean a person decided; read the completion's `decisionSource`
+   * Denied by the user during an interactive prompt
    */
   kind: "denied-interactively-by-user";
 }
@@ -16455,7 +16057,7 @@ export interface SessionLimitsExhaustedResponse {
   maxAiCredits?: number;
 }
 /**
- * Session event "session.auto_mode_resolved". Auto or Fusion Single resolution: the concrete model the session settled on, with an optional explanation. Published when routing selects a model that differs from the one last published in the current selection; selecting a model, switching Auto tiers, or returning to Auto starts a new selection. Does not change the user's selected model or tier. Lets SDK clients render the chosen model and its selection notice. The core selection fields (chosenModel/reasoningBucket/categoryScores) are stable; the routing-analytics fields (predictedLabel/confidence/candidateModels) mirror the upstream intent service and may evolve, hence the event's experimental stability.
+ * Session event "session.auto_mode_resolved". Auto Intent resolution: the concrete model an auto-mode session settled on, and why. Published when Auto settles on a model that differs from the one it last published in the current Auto selection, so a routing check that keeps the same model does not repeat it; selecting a model, switching Auto tiers, or returning to Auto starts a new selection. Lets SDK clients render the chosen model and the full reason it was picked. The core selection fields (chosenModel/reasoningBucket/categoryScores) are stable; the routing-analytics fields (predictedLabel/confidence/candidateModels) mirror the upstream intent service and may evolve, hence the event's experimental stability.
  */
 /** @experimental */
 export interface AutoModeResolvedEvent {
@@ -16468,7 +16070,7 @@ export interface AutoModeResolvedEvent {
    */
   checkpoint?: boolean;
   /**
-   * Auto or Fusion Single resolution: the concrete model the session settled on, with an optional explanation. Published when routing selects a model that differs from the one last published in the current selection; selecting a model, switching Auto tiers, or returning to Auto starts a new selection. Does not change the user's selected model or tier. Lets SDK clients render the chosen model and its selection notice. The core selection fields (chosenModel/reasoningBucket/categoryScores) are stable; the routing-analytics fields (predictedLabel/confidence/candidateModels) mirror the upstream intent service and may evolve, hence the event's experimental stability.
+   * Auto Intent resolution: the concrete model an auto-mode session settled on, and why. Published when Auto settles on a model that differs from the one it last published in the current Auto selection, so a routing check that keeps the same model does not repeat it; selecting a model, switching Auto tiers, or returning to Auto starts a new selection. Lets SDK clients render the chosen model and the full reason it was picked. The core selection fields (chosenModel/reasoningBucket/categoryScores) are stable; the routing-analytics fields (predictedLabel/confidence/candidateModels) mirror the upstream intent service and may evolve, hence the event's experimental stability.
    */
   data: AutoModeResolvedData;
   /**
@@ -16493,7 +16095,7 @@ export interface AutoModeResolvedEvent {
   type: "session.auto_mode_resolved";
 }
 /**
- * Auto or Fusion Single resolution: the concrete model the session settled on, with an optional explanation. Published when routing selects a model that differs from the one last published in the current selection; selecting a model, switching Auto tiers, or returning to Auto starts a new selection. Does not change the user's selected model or tier. Lets SDK clients render the chosen model and its selection notice. The core selection fields (chosenModel/reasoningBucket/categoryScores) are stable; the routing-analytics fields (predictedLabel/confidence/candidateModels) mirror the upstream intent service and may evolve, hence the event's experimental stability.
+ * Auto Intent resolution: the concrete model an auto-mode session settled on, and why. Published when Auto settles on a model that differs from the one it last published in the current Auto selection, so a routing check that keeps the same model does not repeat it; selecting a model, switching Auto tiers, or returning to Auto starts a new selection. Lets SDK clients render the chosen model and the full reason it was picked. The core selection fields (chosenModel/reasoningBucket/categoryScores) are stable; the routing-analytics fields (predictedLabel/confidence/candidateModels) mirror the upstream intent service and may evolve, hence the event's experimental stability.
  */
 /** @experimental */
 export interface AutoModeResolvedData {
@@ -16560,7 +16162,7 @@ export interface AutoModeResolvedData {
    */
   routingMethod?: string;
   /**
-   * Short human-readable selection notice. Auto forwards the routing service's explanation when supplied; Fusion Single supplies a neutral announcement of the selected model, without inventing a routing rationale. Otherwise omitted when no explanation is available. The text is display-only: several distinct routing categories share identical wording, so it cannot be used to recover the category or keyed on programmatically.
+   * Short human-readable sentence from the routing service explaining why this model was chosen, for display alongside the model. Present only when the service supplied one: it is omitted for on-device selections, when the service did not provide an explanation, and when a replayed decision made no routing call. The text is display-only and drawn from a fixed catalogue; several distinct routing categories share identical wording, so it cannot be used to recover the category or keyed on programmatically.
    */
   selectionReason?: string;
   /**

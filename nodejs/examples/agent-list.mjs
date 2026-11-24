@@ -3,7 +3,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from "node:assert/strict";
-import { approveAll, CopilotClient } from "@microsoft/copilot-sdk";
+import { approveAll, CopilotClient } from "../dist/index.js";
 
 const cliPath = process.argv[2];
 if (!cliPath) {

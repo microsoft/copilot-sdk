@@ -31,49 +31,6 @@ public final class SessionExtensionsApi {
     }
 
     /**
-     * Updates the original host's live extension management-tool gate. Returns false when no service is configured.
-     * <p>
-     * Note: the {@code sessionId} field in the params record is overridden
-     * by the session-scoped wrapper; any value provided is ignored.
-     *
-     * @apiNote This method is experimental and may change in a future version.
-     * @since 1.0.0
-     */
-    @CopilotExperimental
-    CompletableFuture<Boolean> setManagementToolsEnabled(SessionExtensionsSetManagementToolsEnabledParams params) {
-        com.fasterxml.jackson.databind.node.ObjectNode _p = MAPPER.valueToTree(params);
-        _p.put("sessionId", this.sessionId);
-        return caller.invoke("session.extensions.setManagementToolsEnabled", _p, Boolean.class);
-    }
-
-    /**
-     * Configures the original host's extension service with runtime-owned settings, policy, plugin discovery, and lifecycle fences. Only the original session host may supply launch resources.
-     * <p>
-     * Note: the {@code sessionId} field in the params record is overridden
-     * by the session-scoped wrapper; any value provided is ignored.
-     *
-     * @apiNote This method is experimental and may change in a future version.
-     * @since 1.0.0
-     */
-    @CopilotExperimental
-    CompletableFuture<SessionExtensionsInspectServiceResult> configureHost(SessionExtensionsConfigureHostParams params) {
-        com.fasterxml.jackson.databind.node.ObjectNode _p = MAPPER.valueToTree(params);
-        _p.put("sessionId", this.sessionId);
-        return caller.invoke("session.extensions.configureHost", _p, SessionExtensionsInspectServiceResult.class);
-    }
-
-    /**
-     * Inspects whether the selected session has an attached extension service and returns its current inventory without starting or replacing it.
-     *
-     * @apiNote This method is experimental and may change in a future version.
-     * @since 1.0.0
-     */
-    @CopilotExperimental
-    CompletableFuture<SessionExtensionsInspectServiceResult> inspectService() {
-        return caller.invoke("session.extensions.inspectService", java.util.Map.of("sessionId", this.sessionId), SessionExtensionsInspectServiceResult.class);
-    }
-
-    /**
      * Returns the runtime-derived standalone extension admission policy for the session's actual project and managed-settings context. enforcementVersion 1 means this runtime enforces strictPluginOnlyCustomization for executable extensions. Hosts executing independent extension targets must deny standalone targets unless standalone is allowed; plugin_only requires runtime-verified eligible plugin provenance, not a caller-supplied source label or transport bridge. pending is not confirmed absence. Older runtimes return method-not-found and must not be represented as enforcing this restriction. Re-read on managed-settings changes; a snapshot is not a launch authorization token.
      *
      * @apiNote This method is experimental and may change in a future version.
@@ -139,7 +96,7 @@ public final class SessionExtensionsApi {
     }
 
     /**
-     * Host-only reconciliation of authoritative session-effective extension membership and enablement. Refreshes runtime-owned discovery and preferences without persisting settings, installing plugins, or restarting unchanged activations. Returns ExtensionList only after required starts and process/contribution cleanup settle. Success means every stop, cleanup, contribution refresh and revalidation completed; an enabled extension that fails to start does not fail reconciliation and is reported with status failed, so read statuses rather than assuming every enabled extension is running. Takes no caller inventory or overrides. Missing controllers, unready/incomplete discovery, unavailable workspaces, superseded inputs, and other lifecycle failures (including managed-policy launch denials and failed stops or cleanup) are errors, not empty membership. Independently proven revocations may be applied before an error; retry converges without restarting healthy activations. Error data contains lifecycleChangesApplied and code: extension_reconciliation_host_required, extension_reconciliation_unavailable, extension_reconciliation_not_ready, extension_reconciliation_discovery_failed, extension_reconciliation_workspace_unavailable, extension_reconciliation_superseded, or extension_reconciliation_lifecycle_failed. Mark host reconciliation state applied only on success. On older runtimes, method-not-found must not fall back to global discovery and persistent extension disables.
+     * Host-only reconciliation of authoritative session-effective extension membership and enablement. Refreshes runtime-owned discovery and preferences without persisting settings, installing plugins, or restarting unchanged activations. Returns ExtensionList only after required starts and process/contribution cleanup settle. Takes no caller inventory or overrides. Missing controllers, unready/incomplete discovery, unavailable workspaces, superseded inputs, and lifecycle failures are errors, not empty membership. Independently proven revocations may be applied before an error; retry converges without restarting healthy activations. Error data contains lifecycleChangesApplied and code: extension_reconciliation_host_required, extension_reconciliation_unavailable, extension_reconciliation_not_ready, extension_reconciliation_discovery_failed, extension_reconciliation_workspace_unavailable, extension_reconciliation_superseded, or extension_reconciliation_lifecycle_failed. Mark host reconciliation state applied only on success. On older runtimes, method-not-found must not fall back to global discovery and persistent extension disables.
      *
      * @apiNote This method is experimental and may change in a future version.
      * @since 1.0.0

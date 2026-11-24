@@ -120,7 +120,6 @@ type (
 	CompletionReceiptToolStatus                                    = rpc.CompletionReceiptToolStatus
 	ContextTier                                                    = rpc.ContextTier
 	CustomAgentsUpdatedAgent                                       = rpc.CustomAgentsUpdatedAgent
-	DlpBlockKind                                                   = rpc.DlpBlockKind
 	ElicitationCompletedAction                                     = rpc.ElicitationCompletedAction
 	ElicitationCompletedData                                       = rpc.ElicitationCompletedData
 	ElicitationRequestedData                                       = rpc.ElicitationRequestedData
@@ -359,9 +358,6 @@ type (
 	SamplingRequestedData                                          = rpc.SamplingRequestedData
 	SandboxDecisionData                                            = rpc.SandboxDecisionData
 	ScheduleOrigin                                                 = rpc.ScheduleOrigin
-	SensitivityLabel                                               = rpc.SensitivityLabel
-	SensitivityLabelFailure                                        = rpc.SensitivityLabelFailure
-	SensitivityLabelOutcome                                        = rpc.SensitivityLabelOutcome
 	SessionAutoModeResolvedData                                    = rpc.SessionAutoModeResolvedData
 	SessionAutopilotObjectiveChangedData                           = rpc.SessionAutopilotObjectiveChangedData
 	SessionAutopilotStoppedData                                    = rpc.SessionAutopilotStoppedData
@@ -422,11 +418,9 @@ type (
 	SessionQuotaObservationData                                    = rpc.SessionQuotaObservationData
 	SessionRemoteSteerableChangedData                              = rpc.SessionRemoteSteerableChangedData
 	SessionResumeData                                              = rpc.SessionResumeData
-	SessionSandboxStateChangedData                                 = rpc.SessionSandboxStateChangedData
 	SessionScheduleCancelledData                                   = rpc.SessionScheduleCancelledData
 	SessionScheduleCreatedData                                     = rpc.SessionScheduleCreatedData
 	SessionScheduleRearmedData                                     = rpc.SessionScheduleRearmedData
-	SessionSensitivityLabelObservationData                         = rpc.SessionSensitivityLabelObservationData
 	SessionSessionLimitsChangedData                                = rpc.SessionSessionLimitsChangedData
 	SessionShutdownData                                            = rpc.SessionShutdownData
 	SessionSkillsLoadedData                                        = rpc.SessionSkillsLoadedData
@@ -678,8 +672,6 @@ const (
 	CompletionReceiptToolStatusTimeout                                   = rpc.CompletionReceiptToolStatusTimeout
 	ContextTierDefault                                                   = rpc.ContextTierDefault
 	ContextTierLongContext                                               = rpc.ContextTierLongContext
-	DlpBlockKindInlineRestricted                                         = rpc.DlpBlockKindInlineRestricted
-	DlpBlockKindPromptDlpBlocked                                         = rpc.DlpBlockKindPromptDlpBlocked
 	ElicitationCompletedActionAccept                                     = rpc.ElicitationCompletedActionAccept
 	ElicitationCompletedActionCancel                                     = rpc.ElicitationCompletedActionCancel
 	ElicitationCompletedActionDecline                                    = rpc.ElicitationCompletedActionDecline
@@ -879,8 +871,6 @@ const (
 	PermissionApprovalEvaluationReasonCodeArgumentBindingUnreviewable    = rpc.PermissionApprovalEvaluationReasonCodeArgumentBindingUnreviewable
 	PermissionApprovalEvaluationReasonCodeAuthorizationHistoryIncomplete = rpc.PermissionApprovalEvaluationReasonCodeAuthorizationHistoryIncomplete
 	PermissionApprovalEvaluationReasonCodeContentExcluded                = rpc.PermissionApprovalEvaluationReasonCodeContentExcluded
-	PermissionApprovalEvaluationReasonCodeCredentialExposure             = rpc.PermissionApprovalEvaluationReasonCodeCredentialExposure
-	PermissionApprovalEvaluationReasonCodeCredentialMinting              = rpc.PermissionApprovalEvaluationReasonCodeCredentialMinting
 	PermissionApprovalEvaluationReasonCodeDynamicSource                  = rpc.PermissionApprovalEvaluationReasonCodeDynamicSource
 	PermissionApprovalEvaluationReasonCodeExecutableTooLarge             = rpc.PermissionApprovalEvaluationReasonCodeExecutableTooLarge
 	PermissionApprovalEvaluationReasonCodeExecutableUnavailable          = rpc.PermissionApprovalEvaluationReasonCodeExecutableUnavailable
@@ -1045,10 +1035,6 @@ const (
 	RemediationActionSwitchAccount                                       = rpc.RemediationActionSwitchAccount
 	ScheduleOriginModel                                                  = rpc.ScheduleOriginModel
 	ScheduleOriginUser                                                   = rpc.ScheduleOriginUser
-	SensitivityLabelOutcomeIndeterminate                                 = rpc.SensitivityLabelOutcomeIndeterminate
-	SensitivityLabelOutcomeInherited                                     = rpc.SensitivityLabelOutcomeInherited
-	SensitivityLabelOutcomeNoApplicableLabel                             = rpc.SensitivityLabelOutcomeNoApplicableLabel
-	SensitivityLabelOutcomeNoSourceLabels                                = rpc.SensitivityLabelOutcomeNoSourceLabels
 	SessionEventTypeAbort                                                = rpc.SessionEventTypeAbort
 	SessionEventTypeAgentInterrupted                                     = rpc.SessionEventTypeAgentInterrupted
 	SessionEventTypeAssistantFusionPhaseActivity                         = rpc.SessionEventTypeAssistantFusionPhaseActivity
@@ -1173,11 +1159,9 @@ const (
 	SessionEventTypeSessionQuotaObservation                              = rpc.SessionEventTypeSessionQuotaObservation
 	SessionEventTypeSessionRemoteSteerableChanged                        = rpc.SessionEventTypeSessionRemoteSteerableChanged
 	SessionEventTypeSessionResume                                        = rpc.SessionEventTypeSessionResume
-	SessionEventTypeSessionSandboxStateChanged                           = rpc.SessionEventTypeSessionSandboxStateChanged
 	SessionEventTypeSessionScheduleCancelled                             = rpc.SessionEventTypeSessionScheduleCancelled
 	SessionEventTypeSessionScheduleCreated                               = rpc.SessionEventTypeSessionScheduleCreated
 	SessionEventTypeSessionScheduleRearmed                               = rpc.SessionEventTypeSessionScheduleRearmed
-	SessionEventTypeSessionSensitivityLabelObservation                   = rpc.SessionEventTypeSessionSensitivityLabelObservation
 	SessionEventTypeSessionSessionLimitsChanged                          = rpc.SessionEventTypeSessionSessionLimitsChanged
 	SessionEventTypeSessionShutdown                                      = rpc.SessionEventTypeSessionShutdown
 	SessionEventTypeSessionSkillsLoaded                                  = rpc.SessionEventTypeSessionSkillsLoaded

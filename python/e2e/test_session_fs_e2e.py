@@ -25,10 +25,8 @@ from copilot.rpc import (
 )
 from copilot.session import PermissionHandler
 from copilot.session_events import (
-    PersistedBinaryImage,
     SessionCompactionCompleteData,
     SessionEvent,
-    ToolExecutionCompleteData,
 )
 from copilot.session_fs_provider import (
     SessionFsFileInfo,
@@ -111,18 +109,10 @@ class TestSessionFs:
             assert msg is not None and "SDK_PROVIDER_IMAGE_DONE" in (msg.data.content or "")
             assert image_path in read_paths
             events = await session.get_events()
-            assert not any(event.type.value == "session.binary_asset" for event in events)
             assert any(
-                isinstance(event.data, ToolExecutionCompleteData)
-                and event.data.success
-                and event.data.result is not None
-                and any(
-                    isinstance(result, PersistedBinaryImage)
-                    and result.type.value == "image"
-                    and result.mime_type == "image/png"
-                    and result.data == base64.b64encode(image_bytes).decode("ascii")
-                    for result in event.data.result.binary_results_for_llm or []
-                )
+                event.type.value == "session.binary_asset"
+                and event.data.mime_type == "image/png"
+                and event.data.data == base64.b64encode(image_bytes).decode("ascii")
                 for event in events
             )
             await session.disconnect()

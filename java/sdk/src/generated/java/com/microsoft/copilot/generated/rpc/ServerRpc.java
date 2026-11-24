@@ -25,36 +25,12 @@ public final class ServerRpc {
 
     private final RpcCaller caller;
 
-    /** API methods for the {@code host} namespace. */
-    public final ServerHostApi host;
-    /** API methods for the {@code remoteHosts} namespace. */
-    final ServerRemoteHostsApi remoteHosts;
-    /** API methods for the {@code plugins} namespace. */
-    public final ServerPluginsApi plugins;
-    /** API methods for the {@code skills} namespace. */
-    public final ServerSkillsApi skills;
-    /** API methods for the {@code account} namespace. */
-    public final ServerAccountApi account;
-    /** API methods for the {@code sessions} namespace. */
-    public final ServerSessionsApi sessions;
-    /** API methods for the {@code memories} namespace. */
-    public final ServerMemoriesApi memories;
-    /** API methods for the {@code secrets} namespace. */
-    public final ServerSecretsApi secrets;
-    /** API methods for the {@code git} namespace. */
-    final ServerGitApi git;
     /** API methods for the {@code providers} namespace. */
     public final ServerProvidersApi providers;
     /** API methods for the {@code localModels} namespace. */
     public final ServerLocalModelsApi localModels;
-    /** API methods for the {@code logging} namespace. */
-    public final ServerLoggingApi logging;
-    /** API methods for the {@code ahp} namespace. */
-    final ServerAhpApi ahp;
     /** API methods for the {@code sandbox} namespace. */
     public final ServerSandboxApi sandbox;
-    /** API methods for the {@code feedback} namespace. */
-    final ServerFeedbackApi feedback;
     /** API methods for the {@code persistence} namespace. */
     final ServerPersistenceApi persistence;
     /** API methods for the {@code user} namespace. */
@@ -69,6 +45,8 @@ public final class ServerRpc {
     public final ServerManagedSettingsApi managedSettings;
     /** API methods for the {@code environments} namespace. */
     public final ServerEnvironmentsApi environments;
+    /** API methods for the {@code host} namespace. */
+    public final ServerHostApi host;
     /** API methods for the {@code hooks} namespace. */
     public final ServerHooksApi hooks;
     /** API methods for the {@code models} namespace. */
@@ -83,12 +61,20 @@ public final class ServerRpc {
     public final ServerContentExclusionApi contentExclusion;
     /** API methods for the {@code tools} namespace. */
     public final ServerToolsApi tools;
+    /** API methods for the {@code account} namespace. */
+    public final ServerAccountApi account;
+    /** API methods for the {@code secrets} namespace. */
+    public final ServerSecretsApi secrets;
     /** API methods for the {@code mcp} namespace. */
     public final ServerMcpApi mcp;
     /** API methods for the {@code extensions} namespace. */
     public final ServerExtensionsApi extensions;
     /** API methods for the {@code instructions} namespace. */
     public final ServerInstructionsApi instructions;
+    /** API methods for the {@code skills} namespace. */
+    public final ServerSkillsApi skills;
+    /** API methods for the {@code plugins} namespace. */
+    public final ServerPluginsApi plugins;
     /** API methods for the {@code catalog} namespace. */
     public final ServerCatalogApi catalog;
     /** API methods for the {@code agents} namespace. */
@@ -103,6 +89,8 @@ public final class ServerRpc {
     final ServerGitHubRepositoryApi gitHubRepository;
     /** API methods for the {@code gitHubOwners} namespace. */
     final ServerGitHubOwnersApi gitHubOwners;
+    /** API methods for the {@code git} namespace. */
+    final ServerGitApi git;
     /** API methods for the {@code runtime} namespace. */
     public final ServerRuntimeApi runtime;
     /** API methods for the {@code sessionFs} namespace. */
@@ -113,6 +101,8 @@ public final class ServerRpc {
     public final ServerFetchApi fetch;
     /** API methods for the {@code network} namespace. */
     public final ServerNetworkApi network;
+    /** API methods for the {@code sessions} namespace. */
+    public final ServerSessionsApi sessions;
     /** API methods for the {@code shell} namespace. */
     public final ServerShellApi shell;
     /** API methods for the {@code agentRegistry} namespace. */
@@ -131,10 +121,6 @@ public final class ServerRpc {
     final ServerCloudTasksApi cloudTasks;
     /** API methods for the {@code cafeMetrics} namespace. */
     final ServerCafeMetricsApi cafeMetrics;
-    /** API methods for the {@code acp} namespace. */
-    final ServerAcpApi acp;
-    /** API methods for the {@code mcpSource} namespace. */
-    final ServerMcpSourceApi mcpSource;
 
     /**
      * Creates a new server RPC client.
@@ -143,21 +129,9 @@ public final class ServerRpc {
      */
     public ServerRpc(RpcCaller caller) {
         this.caller = caller;
-        this.host = new ServerHostApi(caller);
-        this.remoteHosts = new ServerRemoteHostsApi(caller);
-        this.plugins = new ServerPluginsApi(caller);
-        this.skills = new ServerSkillsApi(caller);
-        this.account = new ServerAccountApi(caller);
-        this.sessions = new ServerSessionsApi(caller);
-        this.memories = new ServerMemoriesApi(caller);
-        this.secrets = new ServerSecretsApi(caller);
-        this.git = new ServerGitApi(caller);
         this.providers = new ServerProvidersApi(caller);
         this.localModels = new ServerLocalModelsApi(caller);
-        this.logging = new ServerLoggingApi(caller);
-        this.ahp = new ServerAhpApi(caller);
         this.sandbox = new ServerSandboxApi(caller);
-        this.feedback = new ServerFeedbackApi(caller);
         this.persistence = new ServerPersistenceApi(caller);
         this.user = new ServerUserApi(caller);
         this.repo = new ServerRepoApi(caller);
@@ -165,6 +139,7 @@ public final class ServerRpc {
         this.permissions = new ServerPermissionsApi(caller);
         this.managedSettings = new ServerManagedSettingsApi(caller);
         this.environments = new ServerEnvironmentsApi(caller);
+        this.host = new ServerHostApi(caller);
         this.hooks = new ServerHooksApi(caller);
         this.models = new ServerModelsApi(caller);
         this.azureMl = new ServerAzureMlApi(caller);
@@ -172,9 +147,13 @@ public final class ServerRpc {
         this.providersSource = new ServerProvidersSourceApi(caller);
         this.contentExclusion = new ServerContentExclusionApi(caller);
         this.tools = new ServerToolsApi(caller);
+        this.account = new ServerAccountApi(caller);
+        this.secrets = new ServerSecretsApi(caller);
         this.mcp = new ServerMcpApi(caller);
         this.extensions = new ServerExtensionsApi(caller);
         this.instructions = new ServerInstructionsApi(caller);
+        this.skills = new ServerSkillsApi(caller);
+        this.plugins = new ServerPluginsApi(caller);
         this.catalog = new ServerCatalogApi(caller);
         this.agents = new ServerAgentsApi(caller);
         this.globalState = new ServerGlobalStateApi(caller);
@@ -182,11 +161,13 @@ public final class ServerRpc {
         this.settings = new ServerSettingsApi(caller);
         this.gitHubRepository = new ServerGitHubRepositoryApi(caller);
         this.gitHubOwners = new ServerGitHubOwnersApi(caller);
+        this.git = new ServerGitApi(caller);
         this.runtime = new ServerRuntimeApi(caller);
         this.sessionFs = new ServerSessionFsApi(caller);
         this.llmInference = new ServerLlmInferenceApi(caller);
         this.fetch = new ServerFetchApi(caller);
         this.network = new ServerNetworkApi(caller);
+        this.sessions = new ServerSessionsApi(caller);
         this.shell = new ServerShellApi(caller);
         this.agentRegistry = new ServerAgentRegistryApi(caller);
         this.connectors = new ServerConnectorsApi(caller);
@@ -196,8 +177,6 @@ public final class ServerRpc {
         this.gitHubRelease = new ServerGitHubReleaseApi(caller);
         this.cloudTasks = new ServerCloudTasksApi(caller);
         this.cafeMetrics = new ServerCafeMetricsApi(caller);
-        this.acp = new ServerAcpApi(caller);
-        this.mcpSource = new ServerMcpSourceApi(caller);
     }
 
     /**

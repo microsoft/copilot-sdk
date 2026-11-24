@@ -6,8 +6,6 @@
 #[cfg(feature = "in-process")]
 #[doc(hidden)]
 pub use ffi::{InProcessPermissionUpdate, InProcessSessionHost};
-#[cfg(feature = "in-process")]
-pub use ffi::{InProcessProtocolConnection, InProcessProtocolConnectionOptions};
 
 /// Experimental runtime-owned Agent Host Protocol listeners.
 pub mod ahp_host;
@@ -26,13 +24,9 @@ mod canvas_dispatch;
 #[cfg(feature = "local-runtime")]
 #[doc(hidden)]
 pub mod cli_host;
-/// Local process discovery for in-process SDK hosts.
-#[cfg(feature = "in-process")]
-pub mod discovery;
 /// Bundled CLI binary extraction and caching.
 #[cfg(feature = "bundled-cli")]
 pub(crate) mod embeddedcli;
-mod enum_serde;
 mod errors;
 /// Connection-level extension launch profile provider.
 pub mod extension_launch_provider;
@@ -73,13 +67,10 @@ pub mod permission;
 #[allow(dead_code)]
 #[path = "platform_dirs/mod.rs"]
 mod platform_dirs;
-mod process_telemetry;
 mod process_tree;
-pub use process_telemetry::InProcessHostTelemetry;
 /// BYOK bearer-token provider callbacks.
 pub mod provider_token;
 mod provider_token_dispatch;
-mod record_serde;
 /// GitHub Copilot CLI binary resolution (env var, embedded, dev cache).
 #[cfg(feature = "runtime")]
 pub(crate) mod resolve;
@@ -180,8 +171,9 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::io::{AsyncRead, AsyncWrite};
 #[cfg(feature = "runtime")]
 use tokio::net::TcpStream;
+use tokio::process::Child;
 #[cfg(feature = "runtime")]
-use tokio::process::{Child, Command};
+use tokio::process::Command;
 #[cfg(feature = "runtime")]
 use tokio::sync::oneshot;
 use tokio::sync::{broadcast, mpsc};
@@ -193,22 +185,6 @@ pub use types::*;
 mod client_options;
 pub use client_options::*;
 
-/// Host-only plugin operations with parameterless public wire contracts.
-///
-/// These operations use the existing private SDK connection. Raw protocol peers
-/// cannot gain this host capability through request parameters.
-#[cfg(feature = "in-process")]
-#[derive(Clone, Copy)]
-#[repr(u32)]
-pub enum InProcessPluginHostOperation {
-    /// List installed plugins with the host's effective configuration.
-    List = 0,
-    /// Update installed plugins with the host's effective configuration.
-    UpdateAll = 1,
-    /// List marketplaces with the host's effective configuration.
-    ListMarketplaces = 2,
-}
-
 mod sdk_protocol_version;
 pub use sdk_protocol_version::{SDK_PROTOCOL_VERSION, get_sdk_protocol_version};
 pub use startup_timings::StartupTimings;
@@ -217,10 +193,6 @@ pub use subscription::{EventSubscription, LifecycleSubscription};
 /// Minimum protocol version this SDK can communicate with.
 const MIN_PROTOCOL_VERSION: u32 = 4;
 const RUNTIME_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
-/// How long an owned stdio runtime that has exited may keep its output open
-/// before its pending requests fail. A process the runtime started can
-/// inherit that output and hold it open after the runtime exits.
-const RUNTIME_OUTPUT_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[cfg(feature = "runtime")]
 fn record_optional_millis(span: &tracing::Span, field: &'static str, value: Option<u64>) {
@@ -514,10 +486,6 @@ pub struct InProcessSessionBinding {
     /// The native resource ID, which may differ from the public session ID.
     pub native_session_id: String,
     /// The original session host registration token.
-    ///
-    /// An empty token requests a generation-scoped view from the original trusted
-    /// CLI owner. The runtime validates that parent's authority and its engine's live ownership.
-    /// This mode never registers or replaces callbacks.
     pub registration_token: String,
 }
 
@@ -706,17 +674,6 @@ struct StartupOptions {
     /// Only used with [`Transport::InProcess`].
     #[doc(hidden)]
     pub in_process_server_id: Option<u32>,
-    /// Explicit native grant for file logging to this exact path on this connection.
-    ///
-    /// Only used with [`Transport::InProcess`]. The SDK sends this grant through
-    /// the native ABI, not a diagnostic RPC. The path is not inferred from the
-    /// process environment. Each connection has one immutable logging target.
-    pub in_process_file_logging_path: Option<PathBuf>,
-    /// Whether an owned in-process host starts PowerShell discovery at startup.
-    ///
-    /// `None` preserves the runtime default. `Some(false)` lets the embedding
-    /// host defer discovery until its launch policy permits it.
-    pub in_process_eager_power_shell_resolution: Option<bool>,
     /// Bind an existing native session to the SDK engine with its original callback authority.
     /// Requires an attached in-process server and its already-loaded native image.
     pub in_process_session_binding: Option<InProcessSessionBinding>,
@@ -730,10 +687,6 @@ struct StartupOptions {
     /// native binder. The SDK retains it until its host closes. This cannot
     /// be combined with an attached server, a borrowed session, or [`Self::github_token`].
     pub in_process_auth_owner: Option<Arc<dyn InProcessAuthOwner>>,
-    /// Process facts and memory samples for an original owned in-process host.
-    ///
-    /// The provider replaces native-only process telemetry before initialization.
-    pub in_process_host_telemetry: Option<Arc<dyn InProcessHostTelemetry>>,
     /// Override the directory where the bundled CLI binary is extracted on
     /// first use.
     ///
@@ -916,14 +869,6 @@ impl std::fmt::Debug for StartupOptions {
             .field("telemetry", &self.telemetry)
             .field("base_directory", &self.base_directory)
             .field("in_process_server_id", &self.in_process_server_id)
-            .field(
-                "in_process_file_logging_path",
-                &self.in_process_file_logging_path.as_ref().map(|_| "<set>"),
-            )
-            .field(
-                "in_process_eager_power_shell_resolution",
-                &self.in_process_eager_power_shell_resolution,
-            )
             .field(
                 "in_process_runtime_library_path",
                 &self.in_process_runtime_library_path,
@@ -1227,12 +1172,9 @@ impl Default for StartupOptions {
             disable_client_telemetry: false,
             base_directory: None,
             in_process_server_id: None,
-            in_process_file_logging_path: None,
-            in_process_eager_power_shell_resolution: None,
             in_process_session_binding: None,
             in_process_runtime_library_path: None,
             in_process_auth_owner: None,
-            in_process_host_telemetry: None,
             bundled_cli_extract_directory: None,
             mode: ClientMode::CodingAgent,
             client_info: None,
@@ -1417,19 +1359,11 @@ fn telemetry_environment(options: &StartupOptions) -> Vec<(&'static str, OsStrin
 /// Connection to a GitHub Copilot CLI server (stdio, TCP, or external).
 ///
 /// Cheaply cloneable — cloning shares the underlying connection.
-/// Last-clone drop terminates the spawned CLI and its contained descendants.
-/// Unix children run in a private process group: terminal SIGINT/SIGHUP
-/// no longer propagate from the host's group. Hosts must handle shutdown signals
-/// by dropping the client or calling [`force_stop`](Self::force_stop).
-/// Abrupt host exit without Rust cleanup is not contained on Unix, and
-/// descendants that deliberately leave the group are not covered.
-/// Darwin synchronously waits for group exit events, with a two-second deadline
-/// and 64-generation safety limit. Unconfirmed cleanup is returned by [`stop`](Self::stop)
-/// or logged on force-stop/drop; no background reaper runs.
+/// The child process (if any) is killed when the last clone drops.
 #[derive(Clone)]
 pub struct Client {
     // Session-internal clients share the connection, not its AHP retention root.
-    ahp_host_sessions: Option<Arc<dyn ahp_host::HostSessionOwner>>,
+    ahp_host_sessions: Option<Arc<ahp_host::HostSessions>>,
     inner: Arc<ClientInner>,
 }
 
@@ -1468,15 +1402,11 @@ impl std::error::Error for SpawnError {
 
 struct ClientInner {
     ahp_host_callbacks: Arc<ahp_host::ExitCallbacks>,
-    ahp_host_sessions: std::sync::Weak<dyn ahp_host::HostSessionOwner>,
-    /// Shared with the exit watcher of an owned stdio child
-    /// (see `Client::spawn_child_exit_watcher`).
-    child: Arc<parking_lot::Mutex<Option<process_tree::OwnedProcess>>>,
+    ahp_host_sessions: std::sync::Weak<ahp_host::HostSessions>,
+    child: parking_lot::Mutex<Option<Child>>,
     owns_stdio: bool,
     force_stop_requested: tokio_util::sync::CancellationToken,
-    /// Ends the exit watcher: cancelled when stop, force stop or drop takes
-    /// over the child.
-    stop_child_watch: tokio_util::sync::CancellationToken,
+    process_tree: parking_lot::Mutex<Option<process_tree::ProcessTree>>,
     #[cfg(feature = "in-process")]
     /// In-process FFI runtime host, set only for [`Transport::InProcess`].
     /// Closing it tears down the native runtime connection.
@@ -1502,8 +1432,6 @@ struct ClientInner {
     installation_confirmation: Arc<installation_confirmation::InstallationConfirmationDispatcher>,
     /// Open shell password prompts, keyed by session and request.
     shell_authentication_requests: shell_authentication::PendingShellAuthenticationRequests,
-    #[cfg(feature = "local-runtime")]
-    send_admissions: cli_host::PendingSendAdmissions,
     entra_token: Arc<entra::EntraTokenDispatcher>,
     /// Connection-level GitHub telemetry forwarding callback, set from
     /// [`StartupOptions::on_github_telemetry`]. Drives the
@@ -1530,38 +1458,6 @@ struct ClientInner {
     startup_timings: OnceLock<StartupTimings>,
 }
 
-// Callback owners point back to ClientInner. Keep their weak edge opaque so
-// downstream Send/Sync proofs do not repeatedly traverse the connection graph.
-trait ClientOwner: Send + Sync {
-    fn into_inner(self: Arc<Self>) -> Arc<ClientInner>;
-}
-
-impl ClientOwner for ClientInner {
-    fn into_inner(self: Arc<Self>) -> Arc<ClientInner> {
-        self
-    }
-}
-
-#[derive(Clone)]
-struct WeakClientInner(std::sync::Weak<dyn ClientOwner>);
-
-impl Default for WeakClientInner {
-    fn default() -> Self {
-        Self(std::sync::Weak::<ClientInner>::new())
-    }
-}
-
-impl WeakClientInner {
-    fn downgrade(inner: &Arc<ClientInner>) -> Self {
-        let owner = Arc::downgrade(inner);
-        Self(owner)
-    }
-
-    fn upgrade(&self) -> Option<Arc<ClientInner>> {
-        self.0.upgrade().map(|owner| owner.into_inner())
-    }
-}
-
 struct StdioShutdownGuard<'a> {
     client: &'a Client,
     armed: bool,
@@ -1576,172 +1472,6 @@ impl Drop for StdioShutdownGuard<'_> {
 }
 
 impl Client {
-    /// Admit this owned engine's original connection for embedding callbacks.
-    ///
-    /// Register the four `embedder.*` request handlers before this call.
-    /// Callbacks dispose process resources or change visible UI; the runtime
-    /// keeps session ownership and shutdown. Borrowed engines cannot register.
-    #[cfg(feature = "in-process")]
-    pub async fn register_in_process_embedder_observer(&self) -> Result<()> {
-        let host = self.in_process_host()?;
-        tokio::task::spawn_blocking(move || host.register_embedder_observer())
-            .await
-            .map_err(|error| Error::with_message(ErrorKind::InvalidConfig, error.to_string()))?
-    }
-
-    #[cfg(feature = "in-process")]
-    fn in_process_host(&self) -> Result<Arc<ffi::FfiShared>> {
-        self.inner.ffi_host.lock().clone().ok_or_else(|| {
-            Error::with_message(ErrorKind::InvalidConfig, "client has no in-process server")
-        })
-    }
-
-    /// Publish this embedding host's foreground owner without requesting a UI switch.
-    ///
-    /// `None` clears the owner. This changes the existing engine's orphaning
-    /// state, unlike [`Self::set_foreground_session_id`], which requests a switch.
-    /// Calls reserve FIFO order immediately, even when their futures are polled
-    /// in a different order. Dropping an unsubmitted future cancels its reservation.
-    /// A submitted mutation keeps its place until the native call completes.
-    #[cfg(feature = "in-process")]
-    pub fn publish_in_process_foreground_session(
-        &self,
-        session_id: Option<&str>,
-    ) -> impl std::future::Future<Output = Result<bool>> + Send + 'static + use<> {
-        let publication = self.in_process_host().map(|host| {
-            let reservation = host.reserve_foreground_publication();
-            (host, reservation, session_id.map(str::to_owned))
-        });
-        async move {
-            let (host, reservation, session_id) = publication?;
-            let guard = reservation.await;
-            tokio::task::spawn_blocking(move || {
-                let _guard = guard;
-                host.publish_foreground_session(session_id.as_deref())
-            })
-            .await
-            .map_err(|error| Error::with_message(ErrorKind::InvalidConfig, error.to_string()))?
-        }
-    }
-
-    /// Read retention from this client's existing in-process engine.
-    ///
-    /// This does not create, resume, or retain the session.
-    #[cfg(feature = "in-process")]
-    pub async fn in_process_is_session_retained(&self, session_id: &str) -> Result<bool> {
-        let host = self.in_process_host()?;
-        let session_id = session_id.to_owned();
-        tokio::task::spawn_blocking(move || host.is_session_retained(&session_id))
-            .await
-            .map_err(|error| Error::with_message(ErrorKind::InvalidConfig, error.to_string()))?
-    }
-
-    /// Read whether the engine has a connection to this session.
-    ///
-    /// Connections in `ignored_connection_ids` do not count as owners.
-    #[cfg(feature = "in-process")]
-    pub async fn in_process_has_session_connection(
-        &self,
-        session_id: &str,
-        ignored_connection_ids: &[u32],
-    ) -> Result<bool> {
-        let host = self.in_process_host()?;
-        let session_id = session_id.to_owned();
-        let ignored_connection_ids = ignored_connection_ids.to_vec();
-        tokio::task::spawn_blocking(move || {
-            host.has_session_connection(&session_id, &ignored_connection_ids)
-        })
-        .await
-        .map_err(|error| Error::with_message(ErrorKind::InvalidConfig, error.to_string()))?
-    }
-
-    /// Set an existing peer's default session on this client's in-process engine.
-    ///
-    /// The engine rejects connections that do not belong to it.
-    #[cfg(feature = "in-process")]
-    pub async fn set_in_process_connection_default_session_id(
-        &self,
-        connection_id: u32,
-        session_id: &str,
-    ) -> Result<bool> {
-        let host = self.in_process_host()?;
-        let session_id = session_id.to_owned();
-        tokio::task::spawn_blocking(move || {
-            host.set_connection_default_session(connection_id, &session_id)
-        })
-        .await
-        .map_err(|error| Error::with_message(ErrorKind::InvalidConfig, error.to_string()))?
-    }
-
-    /// Apply native session defaults to this client's in-process server.
-    ///
-    /// The runtime validates these embedding-host overrides against its own
-    /// configuration. Omitted fields retain their native defaults. Invalid
-    /// overrides leave all defaults unchanged. This does not replace the engine,
-    /// its credential owner, or the caller's configuration.
-    #[cfg(feature = "in-process")]
-    pub async fn configure_in_process_server(
-        &self,
-        overrides: &serde_json::Map<String, serde_json::Value>,
-    ) -> Result<()> {
-        let host = self.in_process_host()?;
-        let payload = serde_json::to_vec(overrides)?;
-        tokio::task::spawn_blocking(move || host.configure_server_defaults(&payload))
-            .await
-            .map_err(|error| Error::with_message(ErrorKind::InvalidConfig, error.to_string()))?
-    }
-
-    /// Invoke a bounded plugin operation with legacy host-only options.
-    ///
-    /// This does not change public JSON-RPC arity or grant general CLI authority.
-    /// The runtime validates the private registration and preserves canonical
-    /// plugin policy, connection identity, and renewable authentication.
-    ///
-    /// Cancellation drops only the response receiver. An accepted operation
-    /// still completes its native callback and releases its callback state.
-    #[cfg(feature = "in-process")]
-    pub async fn call_in_process_plugin_host(
-        &self,
-        operation: InProcessPluginHostOperation,
-        params: Option<serde_json::Value>,
-    ) -> Result<serde_json::Value> {
-        let host = self.in_process_host()?;
-        let envelope = host.call_plugin_host(operation, params).await?;
-        if envelope["ok"] == true {
-            Ok(envelope["result"].clone())
-        } else {
-            let error: JsonRpcError = serde_json::from_value(envelope["error"].clone())?;
-            Err(Self::call_error(error, None, false))
-        }
-    }
-
-    /// Open an independent inbound protocol peer on this client's in-process server.
-    ///
-    /// The peer uses the same engine, but no SDK response reader. An embedding
-    /// host can bridge its bytes to stdio or TCP without creating another client.
-    /// The client must use the in-process transport. Stopping this client closes
-    /// its peers; closing a peer never stops this client or its server.
-    #[cfg(feature = "in-process")]
-    pub async fn open_in_process_protocol_connection(
-        &self,
-        options: InProcessProtocolConnectionOptions,
-    ) -> Result<InProcessProtocolConnection> {
-        let parent = self.in_process_host()?;
-        ffi::open_protocol_connection(parent, options).await
-    }
-
-    /// Create a local discovery publisher owned by this in-process SDK host.
-    ///
-    /// Session updates read metadata through this client's original connection.
-    /// The runtime owns file writes, generations, heartbeats, and removal.
-    #[cfg(feature = "in-process")]
-    pub fn create_in_process_discovery_publisher(
-        &self,
-        configuration: discovery::DiscoveryPublisherConfig,
-    ) -> Result<discovery::DiscoveryPublisher> {
-        discovery::DiscoveryPublisher::create(self.clone(), configuration)
-    }
-
     #[doc(hidden)]
     /// The live server ID selected by the in-process transport.
     pub fn in_process_server_id(&self) -> Option<u32> {
@@ -1752,23 +1482,6 @@ impl Client {
         #[cfg(not(feature = "in-process"))]
         {
             None
-        }
-    }
-
-    #[doc(hidden)]
-    /// Whether this client owns the in-process host rather than an attached connection.
-    pub fn owns_in_process_host(&self) -> bool {
-        #[cfg(feature = "in-process")]
-        {
-            self.inner
-                .ffi_host
-                .lock()
-                .as_ref()
-                .is_some_and(|host| host.owns_host())
-        }
-        #[cfg(not(feature = "in-process"))]
-        {
-            false
         }
     }
 
@@ -1940,29 +1653,11 @@ impl Client {
                 "a live auth owner cannot be combined with github_token",
             ));
         }
-        if options.in_process_host_telemetry.is_some()
-            && (!matches!(options.transport, Transport::InProcess)
-                || options.in_process_server_id.is_some()
-                || options.in_process_session_binding.is_some())
-        {
-            return Err(Error::with_message(
-                ErrorKind::InvalidConfig,
-                "process telemetry requires SDK-owned in-process startup",
-            ));
-        }
         if options.run_on_ui_thread.is_some() && !matches!(options.transport, Transport::InProcess)
         {
             return Err(Error::with_message(
                 ErrorKind::InvalidConfig,
                 "run_on_ui_thread is supported only with Transport::InProcess",
-            ));
-        }
-        if options.in_process_file_logging_path.is_some()
-            && !matches!(options.transport, Transport::InProcess)
-        {
-            return Err(Error::with_message(
-                ErrorKind::InvalidConfig,
-                "in_process_file_logging_path is supported only with Transport::InProcess",
             ));
         }
         #[cfg(not(feature = "in-process"))]
@@ -2176,6 +1871,7 @@ impl Client {
                     reader,
                     jsonrpc::MessageWriter::stream(writer),
                     None,
+                    None,
                     working_directory,
                     options.on_list_models,
                     extension_launch_provider.clone(),
@@ -2197,7 +1893,7 @@ impl Client {
                 port,
                 connection_token: _,
             } => {
-                let (process, actual_port, spawn_elapsed, port_wait_elapsed) = Self::spawn_tcp(
+                let (child, tree, actual_port, spawn_elapsed, port_wait_elapsed) = Self::spawn_tcp(
                     program
                         .as_deref()
                         .expect("spawned transports resolve a CLI program"),
@@ -2220,7 +1916,8 @@ impl Client {
                 Self::from_transport(
                     reader,
                     jsonrpc::MessageWriter::stream(writer),
-                    Some(process),
+                    Some(child),
+                    tree,
                     working_directory,
                     options.on_list_models,
                     extension_launch_provider.clone(),
@@ -2238,7 +1935,7 @@ impl Client {
                 )?
             }
             Transport::SpawnedStdio(ref process) => {
-                let (mut process, spawn_elapsed) = Self::spawn_stdio(
+                let (mut child, tree, spawn_elapsed) = Self::spawn_stdio(
                     program
                         .as_deref()
                         .expect("spawned transports resolve a CLI program"),
@@ -2247,13 +1944,14 @@ impl Client {
                     &working_directory,
                 )?;
                 timings.process_spawn_ms = Some(StartupTimings::millis(spawn_elapsed));
-                let stdin = process.child.stdin.take().expect("stdin is piped");
-                let stdout = process.child.stdout.take().expect("stdout is piped");
-                Self::drain_stderr(&mut process.child);
+                let stdin = child.stdin.take().expect("stdin is piped");
+                let stdout = child.stdout.take().expect("stdout is piped");
+                Self::drain_stderr(&mut child);
                 Self::from_transport(
                     stdout,
                     jsonrpc::MessageWriter::stream(stdin),
-                    Some(process),
+                    Some(child),
+                    tree,
                     working_directory,
                     options.on_list_models,
                     extension_launch_provider.clone(),
@@ -2286,9 +1984,6 @@ impl Client {
                             .map(str::to_string),
                     );
                     args.extend(Self::session_idle_timeout_args(&options));
-                    if options.in_process_eager_power_shell_resolution == Some(false) {
-                        args.push("--no-eager-powershell-resolution".to_owned());
-                    }
                     if options.github_token.is_some() {
                         args.extend([
                             "--auth-token-env".to_string(),
@@ -2308,9 +2003,6 @@ impl Client {
                     let explicit_cli = std::env::var_os("COPILOT_CLI_PATH")
                         .map(PathBuf::from)
                         .filter(|path| path.is_file());
-                    if options.in_process_host_telemetry.is_some() {
-                        args.push("--defer-process-host-telemetry".to_owned());
-                    }
                     let host = crate::ffi::FfiHost::create(
                         program.as_deref(),
                         explicit_cli.as_deref(),
@@ -2322,7 +2014,6 @@ impl Client {
                             library_path: options.in_process_runtime_library_path.as_deref(),
                             session_binding: options.in_process_session_binding,
                             auth_owner: options.in_process_auth_owner,
-                            file_logging_path: options.in_process_file_logging_path.as_deref(),
                         },
                     )?;
                     let (reader, shared) = host.start().await?;
@@ -2332,6 +2023,7 @@ impl Client {
                         jsonrpc::MessageWriter::Synchronous(Arc::new(move |frame| {
                             sender.write_frame(frame)
                         })),
+                        None,
                         None,
                         working_directory,
                         options.on_list_models,
@@ -2378,10 +2070,6 @@ impl Client {
                         )?;
                     }
                     shared.configure_ui_thread(ui_handler.is_some())?;
-                    if let Some(provider) = options.in_process_host_telemetry {
-                        crate::process_telemetry::register(&client, provider)?;
-                        shared.configure_process_telemetry_host()?;
-                    }
                     *client.inner.ffi_host.lock() = Some(shared);
                     client
                 }
@@ -2409,7 +2097,7 @@ impl Client {
             let dispatcher = Arc::new(copilot_request_handler::CopilotRequestDispatcher::new(
                 handler,
             ));
-            dispatcher.set_client(WeakClientInner::downgrade(&client.inner));
+            dispatcher.set_client(Arc::downgrade(&client.inner));
             let _ = client.inner.llm_inference.set(dispatcher.clone());
             dispatcher
         });
@@ -2510,7 +2198,6 @@ impl Client {
     /// The handler runs independently of the reader, so it may await ordinary
     /// SDK requests on this connection. Its result is written using the normal
     /// framed writer. Duplicate registrations are rejected.
-    /// Notifications use the same handler without writing a response.
     /// Use the supplied request-scoped client for SDK calls instead of capturing
     /// a client clone, which would create an ownership cycle in the registry.
     ///
@@ -2521,7 +2208,7 @@ impl Client {
         F: Fn(serde_json::Value, Client) -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<serde_json::Value>> + Send + 'static,
     {
-        let client = WeakClientInner::downgrade(&self.inner);
+        let client = Arc::downgrade(&self.inner);
         let handler = Arc::new(handler);
         self.inner.rpc.register_request_handler(
             method,
@@ -2602,6 +2289,7 @@ impl Client {
             reader,
             jsonrpc::MessageWriter::stream(writer),
             None,
+            None,
             cwd,
             None,
             None,
@@ -2639,6 +2327,7 @@ impl Client {
             reader,
             jsonrpc::MessageWriter::stream(writer),
             None,
+            None,
             cwd,
             None,
             None,
@@ -2669,6 +2358,7 @@ impl Client {
         Self::from_transport(
             reader,
             jsonrpc::MessageWriter::stream(writer),
+            None,
             None,
             cwd,
             None,
@@ -2722,6 +2412,7 @@ impl Client {
             reader,
             jsonrpc::MessageWriter::stream(writer),
             None,
+            None,
             cwd,
             None,
             None,
@@ -2753,6 +2444,7 @@ impl Client {
             reader,
             jsonrpc::MessageWriter::stream(writer),
             None,
+            None,
             cwd,
             None,
             None,
@@ -2783,6 +2475,7 @@ impl Client {
         Self::from_transport(
             reader,
             jsonrpc::MessageWriter::stream(writer),
+            None,
             None,
             cwd,
             None,
@@ -2826,6 +2519,7 @@ impl Client {
             reader,
             jsonrpc::MessageWriter::stream(writer),
             None,
+            None,
             cwd,
             None,
             None,
@@ -2857,6 +2551,7 @@ impl Client {
             reader,
             jsonrpc::MessageWriter::stream(writer),
             None,
+            None,
             cwd,
             None,
             None,
@@ -2878,7 +2573,8 @@ impl Client {
     fn from_transport(
         reader: impl AsyncRead + Unpin + Send + 'static,
         writer: jsonrpc::MessageWriter,
-        child: Option<process_tree::OwnedProcess>,
+        child: Option<Child>,
+        process_tree: Option<process_tree::ProcessTree>,
         cwd: PathBuf,
         on_list_models: Option<Arc<dyn ListModelsHandler>>,
         extension_launch_provider: Option<
@@ -2912,7 +2608,7 @@ impl Client {
             Some(host_notification_tx),
         );
 
-        let pid = child.as_ref().and_then(|c| c.child.id());
+        let pid = child.as_ref().and_then(|c| c.id());
         info!(pid = ?pid, "copilot CLI client ready");
 
         let github_token_registry = Arc::new(github_token::GitHubTokenRegistry::new());
@@ -2929,16 +2625,15 @@ impl Client {
                 .and_then(|options| options.token_provider.clone()),
         ));
         let ahp_host_sessions = Arc::new(ahp_host::HostSessions::new());
-        let weak_host_sessions = Arc::downgrade(&ahp_host_sessions);
         let client = Self {
             ahp_host_sessions: Some(ahp_host_sessions.clone()),
             inner: Arc::new(ClientInner {
                 ahp_host_callbacks: Arc::new(ahp_host::ExitCallbacks::default()),
-                ahp_host_sessions: weak_host_sessions,
-                child: Arc::new(parking_lot::Mutex::new(child)),
+                ahp_host_sessions: Arc::downgrade(&ahp_host_sessions),
+                child: parking_lot::Mutex::new(child),
                 owns_stdio,
                 force_stop_requested: tokio_util::sync::CancellationToken::new(),
-                stop_child_watch: tokio_util::sync::CancellationToken::new(),
+                process_tree: parking_lot::Mutex::new(process_tree),
                 #[cfg(feature = "in-process")]
                 ffi_host: parking_lot::Mutex::new(None),
                 rpc,
@@ -2960,8 +2655,6 @@ impl Client {
                 installation_confirmation: installation_confirmation.clone(),
                 shell_authentication_requests:
                     shell_authentication::PendingShellAuthenticationRequests::default(),
-                #[cfg(feature = "local-runtime")]
-                send_admissions: cli_host::PendingSendAdmissions::default(),
                 entra_token: entra_token.clone(),
                 on_github_telemetry,
                 on_get_trace_context,
@@ -2972,19 +2665,14 @@ impl Client {
                 startup_timings: OnceLock::new(),
             }),
         };
-        ahp_host_sessions.set_owner(WeakClientInner::downgrade(&client.inner));
-        github_token_registry.set_client(WeakClientInner::downgrade(&client.inner));
-        extension_launch_provider.set_client(WeakClientInner::downgrade(&client.inner));
-        installation_confirmation.set_client(WeakClientInner::downgrade(&client.inner));
-        entra_token.set_client(WeakClientInner::downgrade(&client.inner));
+        ahp_host_sessions.set_owner(Arc::downgrade(&client.inner));
+        github_token_registry.set_client(Arc::downgrade(&client.inner));
+        extension_launch_provider.set_client(Arc::downgrade(&client.inner));
+        installation_confirmation.set_client(Arc::downgrade(&client.inner));
+        entra_token.set_client(Arc::downgrade(&client.inner));
         client.spawn_notification_dispatcher(notification_rx);
         client.spawn_ahp_host_dispatcher(host_notification_rx);
-        if owns_stdio && client.inner.child.lock().is_some() {
-            client.spawn_child_exit_watcher();
-        }
         client.register_ahp_session_factory()?;
-        #[cfg(feature = "local-runtime")]
-        cli_host::register_send_admission_handler(&client)?;
         if client
             .inner
             .entra
@@ -2999,78 +2687,6 @@ impl Client {
             "Client::from_transport setup complete"
         );
         Ok(client)
-    }
-
-    /// Spawn the task that watches an owned stdio child for its exit.
-    ///
-    /// The read loop ends only at the end of the child's stdout, and a process
-    /// the child started can inherit that stdout and keep it open after the
-    /// child exits, so pending and later requests would wait for replies that
-    /// never come. Once the child exits, this task gives the read loop
-    /// `RUNTIME_OUTPUT_DRAIN_TIMEOUT` to read what the child wrote and reach
-    /// the end of its output. Past that bound it closes the connection,
-    /// failing the pending requests with a message that names the exit.
-    ///
-    /// On Unix the exit is observed without reaping: an unreaped root keeps its
-    /// process group identity until stop or force stop has contained the
-    /// group, and `pid()` keeps reporting it until then. Stop, force stop and
-    /// drop cancel `stop_child_watch` before taking the child.
-    fn spawn_child_exit_watcher(&self) {
-        let child = Arc::clone(&self.inner.child);
-        let stop_watch = self.inner.stop_child_watch.clone();
-        let connection_closed = self.inner.rpc.connection_closed_token();
-        let inner = Arc::downgrade(&self.inner);
-        tokio::spawn(async move {
-            let exited = async {
-                loop {
-                    {
-                        let mut child = child.lock();
-                        let Some(process) = child.as_mut() else {
-                            return false;
-                        };
-                        match process.has_exited() {
-                            Ok(true) => return true,
-                            Ok(false) => {}
-                            // has_exited disarms Unix containment when another
-                            // reaper releases the PID; output still needs draining.
-                            #[cfg(unix)]
-                            Err(error) if error.raw_os_error() == Some(libc::ECHILD) => {
-                                return true;
-                            }
-                            Err(error) => {
-                                warn!(%error, "failed to observe the CLI process exit");
-                                return false;
-                            }
-                        }
-                    }
-                    tokio::time::sleep(Duration::from_millis(20)).await;
-                }
-            };
-            let exited = tokio::select! {
-                biased;
-                _ = stop_watch.cancelled() => return,
-                exited = exited => exited,
-            };
-            if !exited {
-                return;
-            }
-            tokio::select! {
-                biased;
-                _ = stop_watch.cancelled() => return,
-                _ = connection_closed.cancelled() => return,
-                _ = tokio::time::sleep(RUNTIME_OUTPUT_DRAIN_TIMEOUT) => {}
-            }
-            let Some(inner) = inner.upgrade() else {
-                return;
-            };
-            warn!(
-                timeout = ?RUNTIME_OUTPUT_DRAIN_TIMEOUT,
-                "the CLI process exited but its output is still open; closing the connection"
-            );
-            inner
-                .rpc
-                .close_after_exit("request cancelled: the CLI process exited");
-        });
     }
 
     /// Spawn the task that delivers every notification the read loop hands
@@ -3102,10 +2718,6 @@ impl Client {
                         sessions.claim(&session_id, token);
                         continue;
                     }
-                    router::DispatcherInput::Detached(session_id, token) => {
-                        sessions.detached(&session_id, token);
-                        continue;
-                    }
                 };
                 let Some(params) = notification.params else {
                     continue;
@@ -3115,9 +2727,6 @@ impl Client {
                     "session.lifecycle" => match SessionLifecycleEvent::deserialize(&params) {
                         // `send` only errors when there are no subscribers.
                         Ok(event) => {
-                            if event.event_type == SessionLifecycleEventType::Deleted {
-                                sessions.deleted(&event.session_id);
-                            }
                             let _ = lifecycle_tx.send(event);
                         }
                         Err(e) => {
@@ -3244,34 +2853,32 @@ impl Client {
         command: &mut Command,
         program: &Path,
         working_directory: &Path,
-    ) -> Result<process_tree::OwnedProcess> {
-        process_tree::spawn(command)
-            .map(|(child, tree)| process_tree::OwnedProcess::new(child, tree))
-            .map_err(|source| {
-                // Only claim the directory is at fault when it is known to be
-                // missing or not a directory; any other failure to inspect it
-                // (for example `PermissionDenied`) says nothing about the spawn.
-                let working_directory_unusable = match std::fs::metadata(working_directory) {
-                    Ok(metadata) => !metadata.is_dir(),
-                    Err(error) => matches!(
-                        error.kind(),
-                        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
-                    ),
-                };
-                let context = if working_directory_unusable {
-                    format!(
-                        "working directory {} does not exist or is not a directory",
-                        working_directory.display()
-                    )
-                } else {
-                    format!(
-                        "failed to start {} in {}",
-                        program.display(),
-                        working_directory.display()
-                    )
-                };
-                Error::new(ErrorKind::Io, SpawnError { context, source })
-            })
+    ) -> Result<(Child, Option<process_tree::ProcessTree>)> {
+        process_tree::spawn(command).map_err(|source| {
+            // Only claim the directory is at fault when it is known to be
+            // missing or not a directory; any other failure to inspect it
+            // (for example `PermissionDenied`) says nothing about the spawn.
+            let working_directory_unusable = match std::fs::metadata(working_directory) {
+                Ok(metadata) => !metadata.is_dir(),
+                Err(error) => matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ),
+            };
+            let context = if working_directory_unusable {
+                format!(
+                    "working directory {} does not exist or is not a directory",
+                    working_directory.display()
+                )
+            } else {
+                format!(
+                    "failed to start {} in {}",
+                    program.display(),
+                    working_directory.display()
+                )
+            };
+            Error::new(ErrorKind::Io, SpawnError { context, source })
+        })
     }
 
     #[cfg(feature = "runtime")]
@@ -3280,7 +2887,7 @@ impl Client {
         options: &StartupOptions,
         process: &SpawnedProcessOptions,
         working_directory: &Path,
-    ) -> Result<(process_tree::OwnedProcess, Duration)> {
+    ) -> Result<(Child, Option<process_tree::ProcessTree>, Duration)> {
         info!(cwd = ?working_directory, program = %program.display(), "spawning copilot CLI (stdio)");
         let mut command = Self::build_command(program, options, process, working_directory);
         command
@@ -3290,13 +2897,13 @@ impl Client {
             .args(Self::session_idle_timeout_args(options))
             .stdin(Stdio::piped());
         let spawn_start = Instant::now();
-        let process = Self::spawn_cli(&mut command, program, working_directory)?;
+        let (child, tree) = Self::spawn_cli(&mut command, program, working_directory)?;
         let spawn_elapsed = spawn_start.elapsed();
         debug!(
             elapsed_ms = spawn_elapsed.as_millis(),
             "Client::spawn_stdio subprocess spawned"
         );
-        Ok((process, spawn_elapsed))
+        Ok((child, tree, spawn_elapsed))
     }
 
     #[cfg(feature = "runtime")]
@@ -3306,7 +2913,13 @@ impl Client {
         process: &SpawnedProcessOptions,
         working_directory: &Path,
         port: u16,
-    ) -> Result<(process_tree::OwnedProcess, u16, Duration, Duration)> {
+    ) -> Result<(
+        Child,
+        Option<process_tree::ProcessTree>,
+        u16,
+        Duration,
+        Duration,
+    )> {
         info!(cwd = ?working_directory, program = %program.display(), port = %port, "spawning copilot CLI (tcp)");
         let mut command = Self::build_command(program, options, process, working_directory);
         command
@@ -3316,14 +2929,14 @@ impl Client {
             .args(Self::session_idle_timeout_args(options))
             .stdin(Stdio::null());
         let spawn_start = Instant::now();
-        let mut process = Self::spawn_cli(&mut command, program, working_directory)?;
+        let (mut child, tree) = Self::spawn_cli(&mut command, program, working_directory)?;
         let spawn_elapsed = spawn_start.elapsed();
         debug!(
             elapsed_ms = spawn_elapsed.as_millis(),
             "Client::spawn_tcp subprocess spawned"
         );
-        Self::drain_stderr(&mut process.child);
-        let stdout = process.child.stdout.take().expect("stdout is piped");
+        Self::drain_stderr(&mut child);
+        let stdout = child.stdout.take().expect("stdout is piped");
 
         let (port_tx, port_rx) = oneshot::channel::<u16>();
         let span = tracing::error_span!("copilot_cli_port_scan");
@@ -3364,7 +2977,7 @@ impl Client {
             "Client::spawn_tcp TCP port wait complete"
         );
         info!(port = %actual_port, "CLI server listening");
-        Ok((process, actual_port, spawn_elapsed, port_wait_elapsed))
+        Ok((child, tree, actual_port, spawn_elapsed, port_wait_elapsed))
     }
 
     #[cfg(feature = "runtime")]
@@ -3403,9 +3016,8 @@ impl Client {
             }
             pending.extend_from_slice(&chunk[..count]);
             loop {
-                if let Some(newline) = pending[..pending.len().min(CHUNK_SIZE)]
-                    .iter()
-                    .position(|&byte| byte == b'\n')
+                if let Some(newline) = pending.iter().position(|&byte| byte == b'\n')
+                    && newline < CHUNK_SIZE
                 {
                     let line = pending[..newline]
                         .strip_suffix(b"\r")
@@ -3541,37 +3153,13 @@ impl Client {
         Ok(async move { Self::call_result(request.await?, session_id, is_repo_settings_write) })
     }
 
-    /// Detach `session_id`. `registration` is the caller's own registration
-    /// for it, which the detach ends; client-wide teardown passes `None`.
-    pub(crate) async fn detach_session(
-        &self,
-        session_id: &str,
-        registration: Option<crate::router::RegistrationToken>,
-    ) -> Result<()> {
-        // Mark where the reply was read, so events after it are held for a
-        // rejoin however late the caller unregisters the session.
-        let detach_replied = self.inner.router.detach_replied(registration);
-        let detached_id = SessionId::from(session_id);
-        let mark: crate::jsonrpc::InlineResponseCallback = Box::new(move |response| {
-            if response
-                .result
-                .as_ref()
-                .and_then(|result| result.get("success"))
-                .and_then(serde_json::Value::as_bool)
-                == Some(true)
-            {
-                detach_replied(&detached_id);
-            }
-            Ok(())
-        });
-        let response: SessionDetachResponse = serde_json::from_value(
-            self.call_with_inline_callback(
+    pub(crate) async fn detach_session(&self, session_id: &str) -> Result<()> {
+        let response: SessionDetachResponse = self
+            .call_typed(
                 "session.detach",
                 Some(serde_json::json!({ "sessionId": session_id })),
-                Some(mark),
             )
-            .await?,
-        )?;
+            .await?;
         if response.success {
             return Ok(());
         }
@@ -3740,14 +3328,15 @@ impl Client {
         self.inner.router.unregister_owned(session_id, token);
     }
 
-    /// [`unregister_session_owned`](Self::unregister_session_owned) for a
-    /// session that detached, whose later events are held for a rejoin.
-    pub(crate) fn unregister_session_detached(
-        &self,
-        session_id: &SessionId,
-        token: crate::router::RegistrationToken,
-    ) {
-        self.inner.router.unregister_detached(session_id, token);
+    /// Snapshot the session IDs currently registered on the router.
+    ///
+    /// Crate-internal so in-crate unit tests can assert registration
+    /// lifecycle without depending on the `test-support` feature, which
+    /// only gates the equivalent *public* test helper. Compiled only for
+    /// those two configurations — a default-feature build has no caller.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn registered_session_ids(&self) -> Vec<SessionId> {
+        self.inner.router.session_ids()
     }
 
     pub(crate) fn register_github_token_provider(
@@ -3989,18 +3578,23 @@ impl Client {
     }
 
     /// Delete a persisted session by ID.
-    ///
-    /// Use the full session ID. The server may accept a UUID prefix, but its
-    /// reply supplies no canonical ID, so clearing held events is not guaranteed.
     pub async fn delete_session(&self, session_id: &SessionId) -> Result<()> {
-        self.delete_session_request(session_id).await?;
+        self.call(
+            "session.delete",
+            Some(serde_json::json!({ "sessionId": session_id })),
+        )
+        .await?;
         self.retire_github_token_provider(session_id);
         Ok(())
     }
 
     pub(crate) async fn delete_session_checked(&self, session_id: &SessionId) -> Result<()> {
-        let response: SessionDeleteResponse =
-            serde_json::from_value(self.delete_session_request(session_id).await?)?;
+        let response: SessionDeleteResponse = self
+            .call_typed(
+                "session.delete",
+                Some(serde_json::json!({ "sessionId": session_id })),
+            )
+            .await?;
         if response.success == Some(false) {
             return Err(Error::with_message(
                 ErrorKind::Session(SessionErrorKind::DeleteFailed),
@@ -4011,25 +3605,6 @@ impl Client {
         }
         self.retire_github_token_provider(session_id);
         Ok(())
-    }
-
-    async fn delete_session_request(&self, session_id: &SessionId) -> Result<serde_json::Value> {
-        let deleted = self.inner.router.delete_replied(session_id);
-        // Queues use exact IDs; the reply does not return an ID resolved from a prefix.
-        let deleted_id = session_id.clone();
-        self.call_with_inline_callback(
-            "session.delete",
-            Some(serde_json::json!({ "sessionId": session_id })),
-            Some(Box::new(move |response| {
-                if response.result.as_ref().is_some_and(|result| {
-                    result.get("success").and_then(serde_json::Value::as_bool) != Some(false)
-                }) {
-                    deleted(&deleted_id);
-                }
-                Ok(())
-            })),
-        )
-        .await
     }
 
     /// Start this client's notification and request router on the current runtime.
@@ -4046,7 +3621,7 @@ impl Client {
     /// notification router. This is test-harness plumbing, not part of the
     /// supported SDK API.
     pub fn registered_session_ids_for_test(&self) -> Vec<SessionId> {
-        self.inner.router.session_ids()
+        self.registered_session_ids()
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -4066,7 +3641,7 @@ impl Client {
         let mut first_error = None;
 
         for session_id in self.inner.router.session_ids() {
-            if let Err(error) = self.detach_session(&session_id, None).await
+            if let Err(error) = self.detach_session(&session_id).await
                 && first_error.is_none()
             {
                 first_error = Some(error);
@@ -4225,14 +3800,8 @@ impl Client {
     }
 
     /// Return the OS process ID of the CLI child process, if one was spawned.
-    ///
-    /// For an owned stdio child on Unix, the exit watcher observes exit without
-    /// reaping, preserving the process-group identity until [`Self::stop`] or
-    /// [`Self::force_stop`] contains the group and takes the child. The ID
-    /// remains available until then. On other platforms, the watcher reaps the
-    /// exited child with `try_wait()`, after which this returns `None`.
     pub fn pid(&self) -> Option<u32> {
-        self.inner.child.lock().as_ref().and_then(|c| c.child.id())
+        self.inner.child.lock().as_ref().and_then(|c| c.id())
     }
 
     /// Cooperatively shut down the client and the CLI child process.
@@ -4242,10 +3811,8 @@ impl Client {
     /// unresponsive runtime cannot hold the rest of teardown back, and asks
     /// SDK-owned runtimes to shut down. For an owned stdio child, closes
     /// stdin and waits up to 10 seconds for host cleanup and exit
-    /// before falling back to termination. Terminates the CLI's private process
-    /// group or Job Object before reaping the root, bounded to 10 seconds.
-    /// Darwin drains exit notifications on a blocking worker, with a two-second
-    /// deadline and 64-generation limit; either safety limit is a cleanup error.
+    /// before falling back to termination. Terminates the Windows-owned CLI
+    /// Job Object when present and bounds the final root-process reap to 10 seconds.
     /// Errors from per-session detaches, runtime shutdown, and final process
     /// termination are collected into [`StopErrors`] rather than
     /// short-circuiting on the first failure — so callers see the full picture
@@ -4285,7 +3852,7 @@ impl Client {
         let detach_deadline = tokio::time::Instant::now() + RUNTIME_SHUTDOWN_TIMEOUT;
         for session_id in self.inner.router.session_ids() {
             let detached =
-                tokio::time::timeout_at(detach_deadline, self.detach_session(&session_id, None))
+                tokio::time::timeout_at(detach_deadline, self.detach_session(&session_id))
                     .await
                     .unwrap_or_else(|_| {
                         Err(std::io::Error::new(
@@ -4309,8 +3876,15 @@ impl Client {
         }
         self.inner.github_token_registry.clear();
 
-        let should_shutdown_runtime =
-            self.inner.child.lock().is_some() || self.owns_in_process_host();
+        let should_shutdown_runtime = self.inner.child.lock().is_some();
+        #[cfg(feature = "in-process")]
+        let should_shutdown_runtime = should_shutdown_runtime
+            || self
+                .inner
+                .ffi_host
+                .lock()
+                .as_ref()
+                .is_some_and(|host| host.owns_host());
         if should_shutdown_runtime {
             let runtime_shutdown_start = Instant::now();
             match tokio::time::timeout(RUNTIME_SHUTDOWN_TIMEOUT, self.rpc().runtime().shutdown())
@@ -4358,22 +3932,16 @@ impl Client {
             self.inner.rpc.close_writer();
             let wait = async {
                 tokio::select! {
-                    result = async {
-                        loop {
-                            {
-                                let mut child = self.inner.child.lock();
-                                let Some(process) = child.as_mut() else {
-                                    return Ok::<(), std::io::Error>(());
-                                };
-                                // Observe exit without reaping: an unreaped root pins
-                                // its PGID even when every descendant has already exited.
-                                if process.has_exited()? {
-                                    return Ok(());
-                                }
-                            }
-                            tokio::time::sleep(Duration::from_millis(20)).await;
-                        }
-                    } => result,
+                    result = std::future::poll_fn(|cx| {
+                        let mut child = self.inner.child.lock();
+                        let Some(child) = child.as_mut() else {
+                            return std::task::Poll::Ready(Ok(()));
+                        };
+                        // Child::wait is cancel-safe; retain ownership between polls so
+                        // synchronous force_stop can still terminate the child and its tree.
+                        std::future::Future::poll(std::pin::pin!(child.wait()), cx)
+                            .map(|result| result.map(|_| ()))
+                    }) => result,
                     _ = self.inner.force_stop_requested.cancelled() => Ok(()),
                 }
             };
@@ -4387,49 +3955,30 @@ impl Client {
             }
             guard.armed = false;
         }
-        self.inner.stop_child_watch.cancel();
-        let process = self.inner.child.lock().take();
-        if let Some(mut process) = process {
-            // The blocking closure owns the root and group together even if
-            // this stop future is cancelled before exit notifications arrive.
-            #[cfg(target_os = "macos")]
-            let termination = tokio::task::spawn_blocking(move || {
-                let result = process.terminate_tree();
-                (process, result)
-            })
-            .await
-            .map_err(|error| Error::new(ErrorKind::Io, error));
-            #[cfg(not(target_os = "macos"))]
-            let termination = Ok::<_, Error>({
-                let result = process.terminate_tree();
-                (process, result)
-            });
-            match termination {
-                Ok((mut process, result)) => {
-                    if let Err(error) = result {
-                        errors.push(error.into());
-                    }
-                    let child = &mut process.child;
-                    match child.try_wait() {
-                        Ok(Some(_status)) => {}
-                        Ok(None) => {
-                            match tokio::time::timeout(RUNTIME_SHUTDOWN_TIMEOUT, child.kill()).await
-                            {
-                                Ok(Ok(())) => {}
-                                Ok(Err(error)) => errors.push(error.into()),
-                                Err(_) => errors.push(
-                                    std::io::Error::new(
-                                        std::io::ErrorKind::TimedOut,
-                                        "CLI process reap timed out during Client::stop",
-                                    )
-                                    .into(),
-                                ),
-                            }
-                        }
-                        Err(error) => errors.push(error.into()),
+        let child = self.inner.child.lock().take();
+        let process_tree = self.inner.process_tree.lock().take();
+        if let Some(process_tree) = process_tree
+            && let Err(error) = process_tree.terminate()
+        {
+            errors.push(error.into());
+        }
+        if let Some(mut child) = child {
+            match child.try_wait() {
+                Ok(Some(_status)) => {}
+                Ok(None) => {
+                    match tokio::time::timeout(RUNTIME_SHUTDOWN_TIMEOUT, child.kill()).await {
+                        Ok(Ok(())) => {}
+                        Ok(Err(error)) => errors.push(error.into()),
+                        Err(_) => errors.push(
+                            std::io::Error::new(
+                                std::io::ErrorKind::TimedOut,
+                                "CLI process reap timed out during Client::stop",
+                            )
+                            .into(),
+                        ),
                     }
                 }
-                Err(error) => errors.push(error),
+                Err(e) => errors.push(e.into()),
             }
         }
 
@@ -4439,13 +3988,10 @@ impl Client {
         #[cfg(feature = "in-process")]
         {
             let host = self.inner.ffi_host.lock().take();
-            if let Some(host) = host {
-                if let Err(error) = host.close_protocol_peers().await {
-                    errors.push(error);
-                }
-                if let Err(error) = tokio::task::spawn_blocking(move || host.close()).await {
-                    errors.push(Error::new(ErrorKind::Io, error));
-                }
+            if let Some(host) = host
+                && let Err(error) = tokio::task::spawn_blocking(move || host.close()).await
+            {
+                errors.push(Error::new(ErrorKind::Io, error));
             }
         }
 
@@ -4457,17 +4003,13 @@ impl Client {
         }
     }
 
-    /// Forcibly stop the CLI process without awaiting asynchronous cleanup.
+    /// Forcibly stop the CLI process without waiting for it to exit.
     ///
     /// Synchronous fallback when [`stop`](Self::stop) is unsuitable — for
     /// example when the awaiting tokio runtime is shutting down or the
-    /// process is wedged on I/O. Terminates the CLI's private process group or Job
+    /// process is wedged on I/O. Terminates the Windows-owned CLI Job Object
     /// when present and immediately drops all per-session router state so
     /// dependent tasks observe a closed channel rather than a hang.
-    /// Unix hosts must arrange cleanup when handling shutdown signals; terminal
-    /// signals to the host's foreground group do not reach the private CLI group.
-    /// Darwin waits synchronously for group exit events, with a two-second
-    /// deadline and 64-generation limit. Failures are logged; no reaper is started.
     ///
     /// # Cancel safety
     ///
@@ -4495,14 +4037,15 @@ impl Client {
         self.inner.extension_launch_provider.clear();
         self.inner.installation_confirmation.clear();
         self.inner.shell_authentication_requests.cancel_all();
-        self.inner.stop_child_watch.cancel();
-        if let Some(mut process) = self.inner.child.lock().take() {
-            if let Err(error) = process.terminate_tree() {
-                error!(pid = ?pid, %error, "failed to terminate CLI process tree");
-            }
-            if let Err(e) = process.child.start_kill() {
-                error!(pid = ?pid, error = %e, "failed to send kill signal");
-            }
+        if let Some(process_tree) = self.inner.process_tree.lock().take()
+            && let Err(error) = process_tree.terminate()
+        {
+            error!(pid = ?pid, %error, "failed to terminate CLI process tree");
+        }
+        if let Some(mut child) = self.inner.child.lock().take()
+            && let Err(e) = child.start_kill()
+        {
+            error!(pid = ?pid, error = %e, "failed to send kill signal");
         }
         self.inner.force_stop_requested.cancel();
         self.inner.rpc.force_close();
@@ -4594,14 +4137,15 @@ fn spawn_github_telemetry_dispatcher(
 
 impl Drop for ClientInner {
     fn drop(&mut self) {
-        self.stop_child_watch.cancel();
         self.rpc.force_close();
-        let pid = self.child.lock().as_ref().and_then(|c| c.child.id());
-        if let Some(mut process) = self.child.lock().take() {
-            if let Err(error) = process.terminate_tree() {
-                error!(pid = ?pid, %error, "failed to terminate CLI process tree on drop");
-            }
-            if let Err(e) = process.child.start_kill() {
+        let pid = self.child.lock().as_ref().and_then(Child::id);
+        if let Some(process_tree) = self.process_tree.lock().take()
+            && let Err(error) = process_tree.terminate()
+        {
+            error!(pid = ?pid, %error, "failed to terminate CLI process tree on drop");
+        }
+        if let Some(ref mut child) = *self.child.lock() {
+            if let Err(e) = child.start_kill() {
                 error!(pid = ?pid, error = %e, "failed to kill CLI process on drop");
             } else {
                 info!(pid = ?pid, "kill signal sent for CLI process on drop");

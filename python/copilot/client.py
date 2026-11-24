@@ -2865,27 +2865,6 @@ class CopilotClient:
         if self._shutdown_count:
             raise RuntimeError("Client disconnected during session initialization")
 
-    async def _started_client_in_order(self) -> JsonRpcClient:
-        """Wait for queued starts before reserving a session ID."""
-        self._assert_not_stopping()
-        observed = self._start_outcome
-        if observed is None or observed.done():
-            return await self._started_client()
-        async with self._start_lock:
-            pass
-        for outcome in (observed, self._start_outcome):
-            if outcome is None or not outcome.done():
-                continue
-            failure = outcome.result()
-            if isinstance(failure, asyncio.CancelledError):
-                raise failure
-            if failure is not None:
-                raise RuntimeError(f"Client failed to start: {failure}") from failure
-        self._assert_not_stopping()
-        if self._client is None:
-            raise RuntimeError("Client not connected")
-        return self._client
-
     async def _start(self) -> None:
         with self._sessions_lock:
             connected = self._state == "connected"
@@ -3068,47 +3047,42 @@ class CopilotClient:
         if self._llm_inference_adapter is not None:
             self._llm_inference_adapter.cancel_pending()
 
-        # Close admission and take the sessions to close. Each stays registered until its
-        # own detach finishes, because the runtime calls back into it while detaching
-        # (sessionEnd hooks, session.shutdown); disconnect() unregisters it, and the
-        # finally below clears any session whose detach failed.
+        # Atomically take ownership of all sessions and clear the dict
+        # so no other thread can access them
         with self._sessions_lock:
             self._session_admission_closed = True
             sessions_to_destroy = list(self._sessions.values())
+            self._sessions.clear()
         self._cancel_pending_shell_authentication_requests()
 
         # A hung runtime never answers session.detach, so every detach shares one
         # deadline; past it, stop() moves on to runtime shutdown and termination.
         loop = asyncio.get_running_loop()
         detach_deadline = loop.time() + _RUNTIME_SHUTDOWN_TIMEOUT_SECONDS
-        try:
-            for session in sessions_to_destroy:
-                try:
-                    await asyncio.wait_for(
-                        session.disconnect(), timeout=max(0.0, detach_deadline - loop.time())
+        for session in sessions_to_destroy:
+            try:
+                await asyncio.wait_for(
+                    session.disconnect(), timeout=max(0.0, detach_deadline - loop.time())
+                )
+            except TimeoutError:
+                errors.append(
+                    StopError(
+                        message=f"Failed to disconnect session {session.session_id}: "
+                        "session.detach did not complete within the "
+                        f"{_RUNTIME_SHUTDOWN_TIMEOUT_SECONDS}s shutdown timeout"
                     )
-                except TimeoutError:
-                    errors.append(
-                        StopError(
-                            message=f"Failed to disconnect session {session.session_id}: "
-                            "session.detach did not complete within the "
-                            f"{_RUNTIME_SHUTDOWN_TIMEOUT_SECONDS}s shutdown timeout"
-                        )
-                    )
-                except Exception as e:
-                    logger.debug(
-                        "Error while cleaning up Copilot session %s",
-                        session.session_id,
-                        exc_info=True,
-                    )
-                    errors.append(
-                        StopError(message=f"Failed to disconnect session {session.session_id}: {e}")
-                    )
-                finally:
-                    session._mark_disconnected()
-        finally:
-            with self._sessions_lock:
-                self._sessions.clear()
+                )
+            except Exception as e:
+                logger.debug(
+                    "Error while cleaning up Copilot session %s",
+                    session.session_id,
+                    exc_info=True,
+                )
+                errors.append(
+                    StopError(message=f"Failed to disconnect session {session.session_id}: {e}")
+                )
+            finally:
+                session._mark_disconnected()
         with self._github_token_providers_lock:
             self._github_token_providers.clear()
 
@@ -3545,9 +3519,7 @@ class CopilotClient:
             mcp.oauth_token_storage: Controls how MCP OAuth tokens are stored.
                 ``"persistent"`` uses the OS keychain (shared across sessions).
                 ``"in-memory"`` stores tokens in memory (discarded on session end).
-                When omitted, the client sends ``"in-memory"`` in ``"empty"`` mode
-                for safe multitenant behavior; in other modes nothing is sent and
-                tokens are stored persistently.
+                Defaults to ``"in-memory"`` for safe multitenant behavior.
             mcp.auth_client_id_metadata_url: OAuth Client ID Metadata Document URL
                 identifying the host for MCP authorization. When unset, no host
                 identity is supplied.
@@ -3590,9 +3562,6 @@ class CopilotClient:
                 hooks. Same path and clearing rules as skill_directories. Available without
                 enable_config_discovery or enable_file_hooks (repository-origin hooks only);
                 hook and managed disables still apply.
-            plugins.directories: Local filesystem paths to Open Plugins-format directories
-                to load for this session. None and omission are equivalent; [] unloads
-                plugins mounted from these directories on resume.
             instructions.directories: Explicit discovery-only instruction roots using existing
                 SDK formats. Same path and clearing rules as skill_directories. Available
                 without enable_config_discovery, subject to instruction/managed disables.
@@ -4103,7 +4072,7 @@ class CopilotClient:
             payload["hookDirectories"] = hook_directories
 
         # Add plugin directories configuration if provided
-        if plugin_directories is not None:
+        if plugin_directories:
             payload["pluginDirectories"] = plugin_directories
 
         # Add instruction directories configuration if provided
@@ -4685,10 +4654,7 @@ class CopilotClient:
             mcp.oauth_token_storage: Controls how MCP OAuth tokens are stored.
                 ``"persistent"`` uses the OS keychain (shared across sessions).
                 ``"in-memory"`` stores tokens in memory (discarded on session end).
-                When omitted, the client sends ``"in-memory"`` in ``"empty"`` mode
-                for safe multitenant behavior; in other modes nothing is sent, so a
-                resident session keeps its current storage and any other session
-                stores tokens persistently.
+                Defaults to ``"in-memory"`` for safe multitenant behavior.
             mcp.auth_client_id_metadata_url: OAuth Client ID Metadata Document URL
                 identifying the host for MCP authorization. Re-supply the same
                 host identity used when the session was created.
@@ -4730,14 +4696,10 @@ class CopilotClient:
                 hooks. Same path and clearing rules as skill_directories. Available without
                 enable_config_discovery or enable_file_hooks (repository-origin hooks only);
                 hook and managed disables still apply.
-            plugins.directories: Local filesystem paths to Open Plugins-format directories
-                to load for this session. None and omission keep the existing plugins;
-                [] unloads plugins mounted from these directories.
             instructions.directories: Explicit discovery-only instruction roots using existing
                 SDK formats. Same path and clearing rules as skill_directories. Available
                 without enable_config_discovery, subject to instruction/managed disables.
-            skills.disabled_skills: Skills to disable. On resident resume, None keeps the
-                skills disabled before and [] re-enables them.
+            skills.disabled_skills: Skills to disable.
             mcp.disabled_servers: Exact MCP server names to disable only for this
                 session. Disabled servers are not started or authenticated on
                 create or cold resume; a resident resume cannot stop servers
@@ -5219,11 +5181,11 @@ class CopilotClient:
             payload["agentDirectories"] = agent_directories
         if hook_directories is not None:
             payload["hookDirectories"] = hook_directories
-        if plugin_directories is not None:
+        if plugin_directories:
             payload["pluginDirectories"] = plugin_directories
         if instruction_directories is not None:
             payload["instructionDirectories"] = instruction_directories
-        if disabled_skills is not None:
+        if disabled_skills:
             payload["disabledSkills"] = disabled_skills
         if disabled_mcp_servers is not None:
             payload["disabledMcpServers"] = disabled_mcp_servers
@@ -5833,7 +5795,7 @@ class CopilotClient:
         Example:
             >>> await client.delete_session("session-123")
         """
-        rpc_client = await self._started_client_in_order()
+        rpc_client = await self._started_client()
         initialization = await self._acquire_session_initialization(
             session_id, rpc_client, wait_for_resumes=True
         )

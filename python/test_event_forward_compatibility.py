@@ -7,7 +7,7 @@ This test verifies that:
 3. Real parsing errors (malformed data) are NOT suppressed and surface for visibility
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from uuid import uuid4
 
 import pytest
@@ -33,27 +33,14 @@ from copilot.session_events import (
     PermissionRequestedData,
     PermissionRequestMemory,
     PermissionRequestMemoryAction,
-    SandboxControl,
-    SandboxDecisionData,
-    SandboxDecisionDataKind,
-    SandboxEnforcementPoint,
-    SandboxManagedControl,
-    SandboxOutcome,
-    SandboxPlatform,
     SessionAutoTierSwitchFailedData,
     SessionEvent,
     SessionEventType,
     SessionManagedSettingsResolvedData,
     SessionResumeData,
-    SessionShutdownData,
     SessionStartData,
     SessionTaskCompleteData,
-    SessionUsageCheckpointData,
-    ShutdownCodeChanges,
-    ShutdownType,
     ToolExecutionCompleteData,
-    ToolExecutionCompleteResult,
-    ToolExecutionCompleteUIResource,
     UserMessageAgentMode,
     session_event_from_dict,
     session_event_to_dict,
@@ -62,31 +49,6 @@ from copilot.session_events import (
 
 class TestEventForwardCompatibility:
     """Test forward compatibility for unknown event types."""
-
-    def test_usage_counts_do_not_shift_existing_positional_event_arguments(self):
-        agents = {}
-        shutdown = SessionShutdownData(
-            ShutdownCodeChanges([], 0, 0),
-            {},
-            0,
-            ShutdownType.ROUTINE,
-            timedelta(),
-            None,
-            agents,
-            _agent_invocation_counts={"explore": 2},
-        )
-        assert shutdown.agent_metrics is agents
-        assert shutdown.to_dict()["agentInvocationCounts"] == {"explore": 2}
-
-        model_cache = []
-        checkpoint = SessionUsageCheckpointData(
-            0.0,
-            None,
-            model_cache,
-            _agent_invocation_counts={"explore": 2},
-        )
-        assert checkpoint._model_cache_state is model_cache
-        assert checkpoint.to_dict()["agentInvocationCounts"] == {"explore": 2}
 
     @pytest.mark.parametrize(
         "selection",
@@ -146,25 +108,6 @@ class TestEventForwardCompatibility:
         wire = {**attempt.to_dict(), "reviewIncomplete": True}
         assert PermissionRecoveryAttempt.from_dict(wire).to_dict() == wire
 
-    def test_sandbox_decision_managed_controls_round_trip(self):
-        decision = SandboxDecisionData(
-            control=SandboxControl.PROCESS,
-            enforcement_point=SandboxEnforcementPoint.SHELL,
-            kind=SandboxDecisionDataKind.POLICY_RESOLVED,
-            outcome=SandboxOutcome.RESOLVED,
-            platform=SandboxPlatform.MACOS,
-            tool_call_id="call-1",
-        )
-        assert decision.tool_call_id == "call-1"
-        assert decision.managed_controls is None
-        wire = {**decision.to_dict(), "managedControls": ["enabled", "allow_bypass"]}
-        restored = SandboxDecisionData.from_dict(wire)
-        assert restored.managed_controls == [
-            SandboxManagedControl.ENABLED,
-            SandboxManagedControl.ALLOW_BYPASS,
-        ]
-        assert restored.to_dict() == wire
-
     @pytest.mark.parametrize("checkpoint", [None, False, True])
     def test_checkpoint_metadata_round_trips_as_a_keyword(self, checkpoint):
         event = session_event_from_dict(
@@ -212,28 +155,6 @@ class TestEventForwardCompatibility:
         assert event.data.file_edits[0].kind is other.data.file_edits[0].kind
         assert event.data.file_edits[0] == other.data.file_edits[0]
         assert len({event.data.file_edits[0].kind, other.data.file_edits[0].kind}) == 1
-
-    def test_tool_result_preserves_wire_fields_with_tool_references(self):
-        ui_resource = ToolExecutionCompleteUIResource(mime_type="text/html", uri="ui://app")
-        result = ToolExecutionCompleteResult(
-            content="content",
-            detailed_content="detailed",
-            structured_content={"structured": True},
-            ui_resource=ui_resource,
-        )
-
-        assert result.ui_resource == ui_resource
-        assert result.tool_references is None
-        wire = result.to_dict()
-        assert wire == {
-            "content": "content",
-            "detailedContent": "detailed",
-            "structuredContent": {"structured": True},
-            "uiResource": {"mimeType": "text/html", "uri": "ui://app"},
-        }
-        result.tool_references = ["search_files"]
-        assert result.to_dict()["toolReferences"] == ["search_files"]
-        assert ToolExecutionCompleteResult.from_dict(result.to_dict()) == result
 
     @staticmethod
     def _permission_requested_with_reason(reason_code):

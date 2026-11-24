@@ -18,7 +18,6 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
-using System.Threading.Channels;
 
 namespace Microsoft.Copilot;
 
@@ -87,7 +86,6 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
     private readonly string[] _builtinPluginDirectories;
     private readonly Func<CancellationToken, Task<IList<Model>>>? _onListModels;
     private readonly List<LifecycleSubscription> _lifecycleHandlers = [];
-    private Task _lifecycleDispatchCompletion = Task.CompletedTask;
 
     private Task<Connection>? _connectionTask;
     private CancellationTokenSource? _startupCancellation;
@@ -116,37 +114,6 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
     private ClientGlobalApiHandlers? _clientGlobalApis;
 
     private sealed record LifecycleSubscription(Type EventType, Action<SessionLifecycleEvent> Handler);
-
-    private sealed class LifecycleEventDispatcher
-    {
-        private readonly CopilotClient _client;
-        private readonly Channel<SessionLifecycleEvent> _events = Channel.CreateUnbounded<SessionLifecycleEvent>();
-
-        public LifecycleEventDispatcher(CopilotClient client)
-        {
-            _client = client;
-            using var flow = ExecutionContextHelpers.SuppressFlow();
-            lock (client._lifecycleHandlers)
-            {
-                var previous = client._lifecycleDispatchCompletion;
-                // Replacement deliveries follow the retired connection without blocking transport cleanup.
-                client._lifecycleDispatchCompletion = Task.Run(() => ProcessAsync(previous));
-            }
-        }
-
-        public void Enqueue(SessionLifecycleEvent evt) => _events.Writer.TryWrite(evt);
-
-        public void Complete() => _events.Writer.TryComplete();
-
-        private async Task ProcessAsync(Task previous)
-        {
-            await previous.ConfigureAwait(false);
-            await foreach (var evt in _events.Reader.ReadAllAsync())
-            {
-                _client.DispatchLifecycleEvent(evt);
-            }
-        }
-    }
 
     private sealed class SessionOperation(CopilotClient client, string sessionId, JsonRpc rpc, bool recoveryInitialization) : IDisposable
     {
@@ -309,7 +276,7 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
         {
             return false;
         }
-#if !NET
+#if NETSTANDARD2_0
         if (Path.DirectorySeparatorChar != '\\')
         {
             return true;
@@ -706,7 +673,11 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
         {
             try
             {
+#if NET8_0_OR_GREATER
                 await startupLifetime.CancelAsync().ConfigureAwait(false);
+#else
+                await Task.Run(() => startupLifetime.Cancel()).ConfigureAwait(false);
+#endif
             }
             catch (Exception ex) { AddCleanupError(errors, ex, _logger); }
         }
@@ -755,7 +726,6 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
 
         try { ctx.Rpc.Dispose(); }
         catch (Exception ex) { AddCleanupError(errors, ex, _logger); }
-        ctx.LifecycleEvents?.Complete();
 
         // Clear RPC
         _serverRpc = null;
@@ -3124,9 +3094,9 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
         {
             throw new InvalidOperationException("Copilot runtime wrapper and adjacent runtime.node must both be non-empty.");
         }
+#if NET8_0_OR_GREATER
         if (!OperatingSystem.IsWindows())
         {
-#if NET
             var mode = File.GetUnixFileMode(wrapper);
             const UnixFileMode executeBits =
                 UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute;
@@ -3134,28 +3104,8 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
             {
                 File.SetUnixFileMode(wrapper, mode | executeBits);
             }
-#else
-            // Use the host's Unix file-mode APIs when a modern .NET app loads the netstandard assembly.
-            if (typeof(File).GetMethod("GetUnixFileMode", [typeof(string)]) is { } getUnixFileMode)
-            {
-                try
-                {
-                    var mode = getUnixFileMode.Invoke(null, [wrapper])!;
-                    const int executeBits = (1 << 6) | (1 << 3) | 1;
-                    var bits = (int)mode;
-                    if ((bits & executeBits) == 0)
-                    {
-                        typeof(File).GetMethod("SetUnixFileMode", [typeof(string), mode.GetType()])!
-                            .Invoke(null, [wrapper, Enum.ToObject(mode.GetType(), bits | executeBits)]);
-                    }
-                }
-                catch (System.Reflection.TargetInvocationException ex) when (ex.InnerException is { } inner)
-                {
-                    ExceptionDispatchInfo.Capture(inner).Throw();
-                }
-            }
-#endif
         }
+#endif
         return new RuntimeLaunch(wrapper, source);
     }
 
@@ -3259,7 +3209,6 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
         var setupTimestamp = Stopwatch.GetTimestamp();
         NetworkStream? networkStream = null;
         JsonRpc? rpc = null;
-        LifecycleEventDispatcher? lifecycleEvents = null;
 
         try
         {
@@ -3315,12 +3264,11 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
                 _logger);
 
             var connection = new Connection(rpc, cliProcess, networkStream, stderrPump, ffiHost);
-            connection.LifecycleEvents = lifecycleEvents = new LifecycleEventDispatcher(this);
             if (_options.Models.RequestHandler is { } requestHandler)
             {
                 connection.LlmInference = new LlmInferenceAdapter(requestHandler, () => connection.Server);
             }
-            var handler = new RpcHandler(this, lifecycleEvents);
+            var handler = new RpcHandler(this);
             rpc.SetLocalRpcNotification<string, SessionEvent?>("session.event", handler.OnSessionEvent);
             rpc.SetLocalRpcMethod("session.lifecycle", handler.OnSessionLifecycle);
             rpc.SetLocalRpcMethod("userInput.request", handler.OnUserInputRequest);
@@ -3333,14 +3281,11 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
             rpc.SetLocalRpcMethod("skillProvider.list", handler.OnSkillProviderList, singleObjectParam: true);
             rpc.SetLocalRpcMethod("skillProvider.read", handler.OnSkillProviderRead, singleObjectParam: true);
             rpc.SetLocalRpcMethod("memoryStore.store", handler.OnMemoryStore, singleObjectParam: true);
-            ClientSessionApiHandlers GetSessionHandlers(string sessionId)
+            ClientSessionApiRegistration.RegisterClientSessionApiHandlers(rpc, sessionId =>
             {
                 var session = GetSession(sessionId) ?? throw new ArgumentException($"Unknown session {sessionId}");
                 return session.ClientSessionApis;
-            }
-            Func<string, ClientSessionApiHandlers> getSessionHandlers = GetSessionHandlers;
-            ClientSessionApiRegistration.RegisterClientSessionApiHandlers(rpc, getSessionHandlers);
-            SessionFsProvider.RegisterByteReadHandlers(rpc, getSessionHandlers);
+            });
             if (_clientGlobalApis is not null)
             {
                 if (_clientGlobalApis.EntraToken is EntraTokenAdapter entraTokenAdapter)
@@ -3378,18 +3323,13 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
                 "CopilotClient.ConnectToServerAsync transport setup complete. Elapsed={Elapsed}",
                 setupTimestamp);
 
-            // This waiter lives as long as the connection, not the startup request.
-            using (ExecutionContextHelpers.SuppressFlow())
-            {
-                connection.CloseCleanup = CancelExternalToolsWhenConnectionClosesAsync(connection);
-            }
+            connection.CloseCleanup = CancelExternalToolsWhenConnectionClosesAsync(connection);
             _serverRpc = connection.Server;
 
             return connection;
         }
         catch
         {
-            lifecycleEvents?.Complete();
             try { rpc?.Dispose(); }
             catch (Exception ex) when (IsRecoverableConnectionCleanupFailure(ex))
             {
@@ -3410,48 +3350,19 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
 
     private void RegisterRpcProcessExit(Process cliProcess, JsonRpc rpc)
     {
-        // Process exit monitoring also captures ExecutionContext when it registers its wait.
-        using var flow = ExecutionContextHelpers.SuppressFlow();
         try
         {
             cliProcess.EnableRaisingEvents = true;
-            cliProcess.Exited += (_, _) => OnProcessExit();
+            cliProcess.Exited += (_, _) => DisposeRpcAfterProcessExit(rpc);
             if (cliProcess.HasExited)
             {
-                OnProcessExit();
+                DisposeRpcAfterProcessExit(rpc);
             }
         }
         catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException)
         {
             _logger.LogDebug(ex, "Unable to monitor the Copilot CLI process for transport closure");
         }
-
-        void OnProcessExit()
-        {
-            if (_connection is SpawnedStdioRuntimeConnection)
-            {
-                _ = DrainRpcAfterProcessExitAsync(rpc);
-            }
-            else
-            {
-                DisposeRpcAfterProcessExit(rpc);
-            }
-        }
-    }
-
-    private async Task DrainRpcAfterProcessExitAsync(JsonRpc rpc)
-    {
-        // Final stdout bytes can arrive after process exit. A descendant can retain
-        // stdout, so drain within the existing shutdown budget.
-        try
-        {
-            await rpc.Completion.WaitAsync(s_runtimeShutdownTimeout).ConfigureAwait(false);
-        }
-        catch (TimeoutException ex)
-        {
-            _logger.LogDebug(ex, "Copilot CLI stdout remained open after the shutdown timeout");
-        }
-        DisposeRpcAfterProcessExit(rpc);
     }
 
     private void DisposeRpcAfterProcessExit(JsonRpc rpc)
@@ -3476,7 +3387,6 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
     {
         var rpc = connection.Rpc;
         await Task.WhenAny(rpc.Completion).ConfigureAwait(false);
-        connection.LifecycleEvents?.Complete();
         if (rpc.Completion.Exception is { } exception)
         {
             _logger.LogDebug(exception, "JSON-RPC connection completed with an error");
@@ -3606,7 +3516,11 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
     {
         try
         {
+#if NET8_0_OR_GREATER
             await pending.CancelAsync().ConfigureAwait(false);
+#else
+            await Task.Run(() => pending.Cancel()).ConfigureAwait(false);
+#endif
         }
         catch (AggregateException)
         {
@@ -3862,17 +3776,7 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
     /// </remarks>
     public void Dispose()
     {
-        // The stop chain's awaits resume on the caller's SynchronizationContext or TaskScheduler. When that
-        // runs continuations on the thread blocked here (a WinForms or WPF UI thread), blocking inline never
-        // returns, so stop on the thread pool instead.
-        if (SynchronizationContext.Current is null && TaskScheduler.Current == TaskScheduler.Default)
-        {
-            DisposeAsync().AsTask().GetAwaiter().GetResult();
-        }
-        else
-        {
-            Task.Run(() => DisposeAsync().AsTask()).GetAwaiter().GetResult();
-        }
+        DisposeAsync().AsTask().GetAwaiter().GetResult();
     }
 
     /// <summary>
@@ -3891,7 +3795,7 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
         await StopAsync();
     }
 
-    private class RpcHandler(CopilotClient client, LifecycleEventDispatcher lifecycleEvents)
+    private class RpcHandler(CopilotClient client)
     {
         public void OnSessionEvent(string sessionId, SessionEvent? @event)
         {
@@ -3921,7 +3825,7 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
                 evt.Metadata = metadata.Value.Deserialize(TypesJsonContext.Default.SessionLifecycleEventMetadata);
             }
 
-            lifecycleEvents.Enqueue(evt);
+            client.DispatchLifecycleEvent(evt);
         }
 
         public async ValueTask<UserInputRequestResponse> OnUserInputRequest(string sessionId, string question, IList<string>? choices = null, bool? allowFreeform = null, string? requestId = null)
@@ -4047,7 +3951,6 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
         public RuntimePortRegistration? OwnedRuntimePort { get; set; } // Set if we created the child process and it listens on TCP
         public JsonRpc Rpc => rpc;
         public LlmInferenceAdapter? LlmInference { get; set; }
-        public LifecycleEventDispatcher? LifecycleEvents { get; set; }
         public Task CloseCleanup { get; set; } = Task.CompletedTask;
         public ServerRpc Server => field ?? Interlocked.CompareExchange(ref field, new(rpc), null) ?? field;
         public NetworkStream? NetworkStream => networkStream;
@@ -4063,7 +3966,6 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
 
         private ProcessStderrPump(Process process, ILogger logger)
         {
-            using var flow = ExecutionContextHelpers.SuppressFlow();
             _completion = Task.Run(() => PumpAsync(process, logger, _cancellationTokenSource.Token));
         }
 
@@ -4175,7 +4077,7 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
             var toolNamespace = function.AdditionalProperties.TryGetValue(CopilotTool.NamespaceKey, out var namespaceVal) && namespaceVal is ToolNamespace ns
                 ? new ProtocolExternalToolNamespace { Name = ns.Name, Description = ns.Description }
                 : null;
-            return new ToolDefinition(function.Name, function.Description, ToolSchemaDefaults.WithoutRoundedDefaults(function.JsonSchema),
+            return new ToolDefinition(function.Name, function.Description, function.JsonSchema,
                 overrides ? true : null,
                 skipPerm ? true : null,
                 function.GetService<AIFunction>() is not null,
@@ -4409,7 +4311,6 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
     [JsonSerializable(typeof(SessionLimitsConfig))]
     [JsonSerializable(typeof(ResumeSessionRequest))]
     [JsonSerializable(typeof(ResumeSessionResponse))]
-    [JsonSerializable(typeof(SessionFsProvider.ByteReadResponse))]
     [JsonSerializable(typeof(SessionCapabilities))]
     [JsonSerializable(typeof(SessionUiCapabilities))]
     [JsonSerializable(typeof(SessionMetadata))]
@@ -4429,7 +4330,7 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
     [JsonSerializable(typeof(UserInputResponse))]
     internal partial class ClientJsonContext : JsonSerializerContext;
 
-#if NET
+#if NET8_0_OR_GREATER
     [GeneratedRegex(@"listening on port ([0-9]+)", RegexOptions.IgnoreCase)]
     private static partial Regex ListeningOnPortRegex();
 #else

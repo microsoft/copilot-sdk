@@ -8,7 +8,6 @@
 package com.microsoft.copilot.generated.rpc;
 
 import com.microsoft.copilot.CopilotExperimental;
-import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import javax.annotation.processing.Generated;
 
@@ -47,19 +46,6 @@ public final class ServerSkillsConfigApi {
     @CopilotExperimental
     public CompletableFuture<Void> setSkillDisabled(SkillsConfigSetSkillDisabledParams params) {
         return caller.invoke("skills.config.setSkillDisabled", params, Void.class);
-    }
-
-    /**
-     * Atomically adds or removes one skill from the disabled list.
-     * <p>
-     * Accepts the extensible request, including inputs added after the params record.
-     *
-     * @apiNote This method is experimental and may change in a future version.
-     * @since 1.0.0
-     */
-    @CopilotExperimental
-    public CompletableFuture<Void> setSkillDisabled(SkillsConfigSetSkillDisabledRequest request) {
-        return caller.invoke("skills.config.setSkillDisabled", Objects.requireNonNull(request, "request"), Void.class);
     }
 
 }

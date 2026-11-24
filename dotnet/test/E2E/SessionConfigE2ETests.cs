@@ -4,10 +4,8 @@
 
 using Microsoft.Copilot.Rpc;
 using Microsoft.Copilot.Test.Harness;
-using System.Net.Http;
 using System.Text;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -493,7 +491,7 @@ public class SessionConfigE2ETests(E2ETestFixture fixture, ITestOutputHelper out
         try
         {
             var baselineExchange = await SendAndGetNextExchangeAsync(baselineSession, prompt);
-            Assert.Contains(excludedAgent, await GetTaskAgentTypesAsync(baselineExchange));
+            Assert.Contains(excludedAgent, GetTaskAgentTypes(baselineExchange));
         }
         finally
         {
@@ -506,7 +504,7 @@ public class SessionConfigE2ETests(E2ETestFixture fixture, ITestOutputHelper out
         try
         {
             var excludedExchange = await SendAndGetNextExchangeAsync(excludedSession, prompt);
-            var agentTypes = await GetTaskAgentTypesAsync(excludedExchange);
+            var agentTypes = GetTaskAgentTypes(excludedExchange);
 
             Assert.NotEmpty(agentTypes);
             Assert.DoesNotContain(excludedAgent, agentTypes);
@@ -531,7 +529,7 @@ public class SessionConfigE2ETests(E2ETestFixture fixture, ITestOutputHelper out
         try
         {
             var exchange = await SendAndGetNextExchangeAsync(session2, "What is 1+1?");
-            var agentTypes = await GetTaskAgentTypesAsync(exchange);
+            var agentTypes = GetTaskAgentTypes(exchange);
 
             Assert.NotEmpty(agentTypes);
             Assert.DoesNotContain(excludedAgent, agentTypes);
@@ -732,7 +730,7 @@ public class SessionConfigE2ETests(E2ETestFixture fixture, ITestOutputHelper out
         Assert.Equal<double?>(maxAiCredits, metadata.SessionLimits!.MaxAiCredits);
     }
 
-    private async Task<IReadOnlyList<string>> GetTaskAgentTypesAsync(ParsedHttpExchange exchange)
+    private static IReadOnlyList<string> GetTaskAgentTypes(ParsedHttpExchange exchange)
     {
         var taskTool = Assert.Single(
             exchange.Request.Tools ?? [],
@@ -740,54 +738,12 @@ public class SessionConfigE2ETests(E2ETestFixture fixture, ITestOutputHelper out
         var parameters = taskTool.Function.Parameters;
 
         Assert.NotNull(parameters);
-        var agentType = parameters!.Value
+        var enumValues = parameters!.Value
             .GetProperty("properties")
-            .GetProperty("agent_type");
-        if (Environment.GetEnvironmentVariable("COPILOT_EXP_COPILOT_CLI_STABLE_PROMPT_PREFIX") != "true")
-        {
-            var enumValues = agentType.GetProperty("enum");
-            return [.. enumValues.EnumerateArray().Select(value => value.GetString()).OfType<string>()];
-        }
+            .GetProperty("agent_type")
+            .GetProperty("enum");
 
-        // Under the stable prompt prefix the agents state note lists the agents.
-        Assert.Equal("string", agentType.GetProperty("type").GetString());
-        Assert.False(agentType.TryGetProperty("enum", out _));
-
-        // Normalized exchanges omit runtime reminders; inspect the actual provider request.
-        using var client = new HttpClient();
-        using var requests = JsonDocument.Parse(await client.GetStringAsync($"{Ctx.ProxyUrl}/requests"));
-        var inference = requests.RootElement.EnumerateArray()
-            .Where(request => RecordingRequestHandler.IsInferenceUrl(request.GetProperty("url").GetString()!))
-            .ToList();
-        Assert.NotEmpty(inference);
-        using var body = JsonDocument.Parse(inference[^1].GetProperty("body").GetString()!);
-        var messages = body.RootElement.TryGetProperty("messages", out var chatMessages)
-            ? chatMessages
-            : body.RootElement.GetProperty("input");
-        foreach (var message in messages.EnumerateArray().Reverse())
-        {
-            if (!message.TryGetProperty("role", out var role) || role.GetString() != "user")
-            {
-                continue;
-            }
-            var content = message.GetProperty("content");
-            var text = content.ValueKind == JsonValueKind.String
-                ? content.GetString()!
-                : string.Concat(content.EnumerateArray()
-                    .Where(part => part.TryGetProperty("text", out _))
-                    .Select(part => part.GetProperty("text").GetString()));
-            if (!text.Contains("<system_reminder>\n<agents>\n", StringComparison.Ordinal))
-            {
-                continue;
-            }
-            var catalog = Regex.Match(text, @"<available_agents>\n([\s\S]*?)\n</available_agents>");
-            Assert.True(catalog.Success, "Expected available agents in state note");
-            return [.. Regex.Matches(catalog.Groups[1].Value, @"^- \*\*([^*]+)\*\*:", RegexOptions.Multiline)
-                .Cast<Match>()
-                .Select(match => match.Groups[1].Value)];
-        }
-        Assert.Fail("Expected agents state note in the latest provider request");
-        return [];
+        return [.. enumValues.EnumerateArray().Select(value => value.GetString()).OfType<string>()];
     }
 
     private static AttachmentBlob CreatePdfAttachment()

@@ -2,7 +2,7 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
-#if NET
+#if NET8_0_OR_GREATER
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -417,57 +417,6 @@ public sealed partial class ClientSessionLifetimeTests
             releaseNotification.TrySetResult();
         }
         await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    }
-
-    [Fact]
-    public async Task ShellAuthentication_Stop_Marks_Cancellation_Before_Queued_Work_Runs()
-    {
-        await using var server = await FakeCopilotServer.StartAsync();
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
-        var started = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions
-        {
-            SessionId = "secret-synchronous-cancellation",
-            Interaction = new SessionInteractionOptions
-            {
-                OnShellAuthenticationRequest = async (_, token) =>
-                {
-                    started.TrySetResult(token);
-                    await Task.Delay(Timeout.Infinite, token);
-                    return ShellAuthenticationResponse.Cancel();
-                }
-            }
-        });
-        _ = await server.SendRequestWithoutWaitingAsync("shellAuthentication.request", ShellAuthenticationRequestParams(session.SessionId, "secret-1"));
-        var token = await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        var releaseCancellation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        // Pause all work queued by stop, so cancellation cannot win a thread-pool race.
-        var cancellationContext = new AsyncLocal<bool>(change =>
-        {
-            if (change.ThreadContextChanged && change.CurrentValue)
-            {
-                releaseCancellation.Task.GetAwaiter().GetResult();
-            }
-        });
-        Task stopping;
-        try
-        {
-            cancellationContext.Value = true;
-            stopping = client.StopAsync();
-        }
-        finally
-        {
-            cancellationContext.Value = false;
-        }
-        try
-        {
-            Assert.True(token.IsCancellationRequested, "Prompt cancellation must be observable before queued callbacks run.");
-        }
-        finally
-        {
-            releaseCancellation.TrySetResult();
-            await stopping.WaitAsync(TimeSpan.FromSeconds(5));
-        }
     }
 
     [Fact]

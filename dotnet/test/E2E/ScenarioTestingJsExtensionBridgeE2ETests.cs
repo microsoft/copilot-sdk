@@ -510,6 +510,7 @@ public class ScenarioTestingJsExtensionBridgeE2ETests(E2ETestFixture fixture, IT
         let initializationStage = "join";
         try {
           session = await joinSession({
+            workingDirectory,
             tools: { definitions: [] },
             canvases: { definitions: [canvas] }
           });

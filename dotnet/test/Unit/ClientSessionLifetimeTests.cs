@@ -2,7 +2,7 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
-#if NET
+#if NET8_0_OR_GREATER
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
@@ -210,140 +210,6 @@ public sealed partial class ClientSessionLifetimeTests
     }
 
     [Fact]
-    public async Task Stop_Cancels_Pending_Startup_Before_Queued_Work_Runs()
-    {
-        await using var server = await FakeCopilotServer.StartAsync();
-        server.ResponseFactory = request => request.Method == "sessionFs.setProvider"
-            ? new Dictionary<string, object?> { ["success"] = true }
-            : throw new InvalidOperationException($"Unexpected RPC method '{request.Method}'.");
-        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        server.BeforeResponseAsync = async (request, token) =>
-        {
-            if (request.Method != "connect") return;
-            entered.TrySetResult();
-            await release.Task.WaitAsync(token);
-        };
-        var sessionFs = Activator.CreateInstance<SessionFsConfig>();
-        // Init-only setters reference different IsExternalInit types in the two SDK assets.
-        typeof(SessionFsConfig).GetProperty(nameof(SessionFsConfig.InitialWorkingDirectory))!.SetValue(sessionFs, "/");
-        typeof(SessionFsConfig).GetProperty(nameof(SessionFsConfig.SessionStatePath))!.SetValue(sessionFs, "/session-state");
-        typeof(SessionFsConfig).GetProperty(nameof(SessionFsConfig.Conventions))!.SetValue(sessionFs, SessionFsSetProviderConventions.Posix);
-        await using var client = new CopilotClient(new CopilotClientOptions
-        {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForTcp(server.Host, server.Port),
-            SessionFs = sessionFs
-        });
-        var starting = client.StartAsync();
-        Task? stopping = null;
-        var releaseCancellation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var stoppingThreadId = Environment.CurrentManagedThreadId;
-        var cancellationContext = new AsyncLocal<bool>(change =>
-        {
-            if (change.ThreadContextChanged && change.CurrentValue && Environment.CurrentManagedThreadId != Volatile.Read(ref stoppingThreadId))
-            {
-                releaseCancellation.Task.GetAwaiter().GetResult();
-            }
-        });
-        try
-        {
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            stoppingThreadId = Environment.CurrentManagedThreadId;
-            try
-            {
-                cancellationContext.Value = true;
-                stopping = client.StopAsync();
-            }
-            finally
-            {
-                cancellationContext.Value = false;
-                // Later pool work may reuse this thread after the test yields.
-                Volatile.Write(ref stoppingThreadId, 0);
-            }
-            release.TrySetResult();
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => starting.WaitAsync(TimeSpan.FromSeconds(5)));
-        }
-        finally
-        {
-            releaseCancellation.TrySetResult();
-            release.TrySetResult();
-            if (stopping is not null) await stopping.WaitAsync(TimeSpan.FromSeconds(5));
-        }
-    }
-
-    [Fact]
-    public async Task Stop_Marks_Connection_Closed_Before_Queued_Work_Runs()
-    {
-        await using var server = await FakeCopilotServer.StartAsync();
-        server.ResponseFactory = request => request.Method == "registerExtensionLaunchProvider"
-            ? new Dictionary<string, object?>()
-            : throw new InvalidOperationException($"Unexpected RPC method '{request.Method}'.");
-        using var releaseHandler = new ManualResetEventSlim();
-        var entered = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var exited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var client = new CopilotClient(new CopilotClientOptions
-        {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForTcp(server.Host, server.Port),
-            Extensions = new ClientExtensionOptions
-            {
-                LaunchProvider = new BlockingLaunchProvider(entered, exited, releaseHandler)
-            }
-        });
-        var releaseCancellation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        Task? stopping = null;
-        try
-        {
-            await client.StartAsync();
-            // A notification receives the connection token directly. Keep the reader inside the
-            // handler so its EOF cleanup cannot independently cancel the connection during this check.
-            await server.SendNotificationAsync("extensionLaunchProvider.resolve", new() { ["id"] = "pending" });
-            var token = await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            var stoppingThreadId = Environment.CurrentManagedThreadId;
-            var cancellationContext = new AsyncLocal<bool>(change =>
-            {
-                if (change.ThreadContextChanged && change.CurrentValue && Environment.CurrentManagedThreadId != stoppingThreadId)
-                {
-                    releaseCancellation.Task.GetAwaiter().GetResult();
-                }
-            });
-            try
-            {
-                cancellationContext.Value = true;
-                stopping = client.StopAsync();
-            }
-            finally
-            {
-                cancellationContext.Value = false;
-            }
-            Assert.True(token.IsCancellationRequested, "Connection closure must be observable before queued work runs.");
-        }
-        finally
-        {
-            releaseCancellation.TrySetResult();
-            releaseHandler.Set();
-            if (stopping is not null) await stopping.WaitAsync(TimeSpan.FromSeconds(5));
-            if (entered.Task.IsCompletedSuccessfully) await exited.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        }
-    }
-
-    private sealed class BlockingLaunchProvider(
-        TaskCompletionSource<CancellationToken> entered,
-        TaskCompletionSource exited,
-        ManualResetEventSlim release) : IExtensionLaunchProviderHandler
-    {
-        public Task<ExtensionLaunchProviderResolveResult> ResolveAsync(
-            ExtensionLaunchProviderResolveRequest request, CancellationToken cancellationToken = default)
-        {
-            entered.TrySetResult(cancellationToken);
-            release.Wait(CancellationToken.None);
-            exited.TrySetResult();
-            return Task.FromResult(new ExtensionLaunchProviderResolveResult());
-        }
-    }
-
-    [Fact]
     public async Task RawHistory_PreservesKnownEventJson_InAnalyticsRequests()
     {
         await using var server = await FakeCopilotServer.StartAsync();
@@ -367,13 +233,11 @@ public sealed partial class ClientSessionLifetimeTests
     }
 
     [Theory]
-    [InlineData(false, false, 59, false)]
-    [InlineData(true, false, 59, false)]
-    [InlineData(false, true, 57, false)]
-    [InlineData(true, true, 57, false)]
-    [InlineData(false, false, 61, true)]
-    public async Task SessionRequests_Apply_The_Outgoing_Depth_Limit_To_Custom_JsonValues(
-        bool resume, bool toolMetadata, int levels, bool exceedsLimit)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task SessionRequests_Preserve_Depth_For_Custom_JsonValues(bool resume, bool toolMetadata)
     {
         await using var server = await FakeCopilotServer.StartAsync();
         await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
@@ -382,6 +246,7 @@ public sealed partial class ClientSessionLifetimeTests
         server.ClearRequests();
 
         JsonNode groups = JsonValue.Create<object>(42)!;
+        var levels = toolMetadata ? 59 : 61;
         for (var i = 0; i < levels; i++)
         {
             groups = new JsonObject { ["nested"] = groups };
@@ -391,16 +256,13 @@ public sealed partial class ClientSessionLifetimeTests
             ? [CopilotTool.DefineTool((Func<string>)(() => "unused"),
                 new CopilotToolOptions { Metadata = new Dictionary<string, JsonNode?> { ["depth"] = groups } })]
             : null;
-        var method = resume ? "session.resume" : "session.create";
-        if (exceedsLimit)
-        {
-            await Assert.ThrowsAsync<JsonException>(OpenSessionAsync);
-            Assert.DoesNotContain(server.Requests, request => request.Method == method);
-            return;
-        }
+        await using var session = resume
+            ? await client.ResumeSessionAsync(original.SessionId, new ResumeSessionOptions
+            { Experiments = new SessionExperimentOptions { Assignments = assignments }, Tools = new SessionToolOptions { Definitions = tools }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } })
+            : await client.CreateSessionAsync(new CreateSessionOptions
+            { Experiments = new SessionExperimentOptions { Assignments = assignments }, Tools = new SessionToolOptions { Definitions = tools }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
 
-        await using var session = await OpenSessionAsync();
-        var request = Assert.Single(server.Requests, r => r.Method == method);
+        var request = Assert.Single(server.Requests, r => r.Method == (resume ? "session.resume" : "session.create"));
         var value = toolMetadata
             ? request.Params.GetProperty("tools").GetProperty("definitions")[0].GetProperty("metadata").GetProperty("depth")
             : request.Params.GetProperty("experiments").GetProperty("assignments").GetProperty("ParameterGroups");
@@ -409,12 +271,6 @@ public sealed partial class ClientSessionLifetimeTests
             value = value.GetProperty("nested");
         }
         Assert.Equal(42, value.GetInt32());
-
-        Task<CopilotSession> OpenSessionAsync() => resume
-            ? client.ResumeSessionAsync(original.SessionId, new ResumeSessionOptions
-            { Experiments = new SessionExperimentOptions { Assignments = assignments }, Tools = new SessionToolOptions { Definitions = tools }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } })
-            : client.CreateSessionAsync(new CreateSessionOptions
-            { Experiments = new SessionExperimentOptions { Assignments = assignments }, Tools = new SessionToolOptions { Definitions = tools }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
     }
 
     [Theory]
@@ -3503,9 +3359,17 @@ public sealed partial class ClientSessionLifetimeTests
         }
     }
 
-    [Fact]
-    public async Task StopAsync_Rejects_External_Tools_While_Detach_Is_Pending()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task StopAsync_Rejects_External_Tools_While_Detach_Is_Pending(bool queuedCancellation)
     {
+        if (queuedCancellation && typeof(CopilotClient).Assembly.GetCustomAttribute<TargetFrameworkAttribute>()?.FrameworkName != ".NETStandard,Version=v2.0")
+        {
+            await RunWithDownlevelSdkAsync();
+            return;
+        }
+
         var timeout = TimeSpan.FromSeconds(5);
         await using var server = await FakeCopilotServer.StartAsync();
         await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
@@ -3531,10 +3395,30 @@ public sealed partial class ClientSessionLifetimeTests
             detachEntered.TrySetResult();
             await releaseDetach.Task.WaitAsync(token);
         };
-        var stopping = client.StopAsync();
+        var cancellationQueued = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseCancellation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        // Only gate downlevel Task.Run, not async transport continuations that inherit this context.
+        var cancellationContext = new AsyncLocal<bool>(change =>
+        {
+            if (change.ThreadContextChanged && change.CurrentValue && Task.CurrentId is not null)
+            {
+                cancellationQueued.TrySetResult();
+                releaseCancellation.Task.GetAwaiter().GetResult();
+            }
+        });
+        Task stopping;
         try
         {
-            await detachEntered.Task.WaitAsync(timeout);
+            cancellationContext.Value = queuedCancellation;
+            stopping = client.StopAsync();
+        }
+        finally
+        {
+            cancellationContext.Value = false;
+        }
+        try
+        {
+            await (queuedCancellation ? cancellationQueued.Task : detachEntered.Task).WaitAsync(timeout);
             await SendToolAsync("during-stop");
             // The later callback response fences the reader's dispatch of the tool event.
             await server.SendRequestAsync("hooks.invoke", new()
@@ -3552,6 +3436,7 @@ public sealed partial class ClientSessionLifetimeTests
         }
         finally
         {
+            releaseCancellation.TrySetResult();
             releaseDetach.TrySetResult();
             await stopping.WaitAsync(timeout);
         }
@@ -3566,10 +3451,10 @@ public sealed partial class ClientSessionLifetimeTests
         });
     }
 
-    internal static async Task RunWithDownlevelSdkAsync(Type fixtureType, string methodName, object?[] arguments, [CallerFilePath] string sourceFile = "")
+    private static async Task RunWithDownlevelSdkAsync([CallerFilePath] string sourceFile = "")
     {
         var project = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(sourceFile)!, "../../src/Microsoft.Copilot.SDK.csproj"));
-        var output = Directory.CreateTempSubdirectory("copilot-downlevel-");
+        var output = Directory.CreateTempSubdirectory("copilot-downlevel-cancellation-");
         var context = new DownlevelSdkLoadContext(output.FullName);
         try
         {
@@ -3609,9 +3494,9 @@ public sealed partial class ClientSessionLifetimeTests
             var sdkAssembly = context.LoadFromStream(sdk);
             Assert.Equal(".NETStandard,Version=v2.0", sdkAssembly.GetCustomAttribute<TargetFrameworkAttribute>()?.FrameworkName);
             var tests = context.LoadFromAssemblyPath(typeof(ClientSessionLifetimeTests).Assembly.Location);
-            var fixture = tests.GetType(fixtureType.FullName!, throwOnError: true)!;
-            var method = fixture.GetMethod(methodName)!;
-            await ((Task)method.Invoke(Activator.CreateInstance(fixture), arguments)!).WaitAsync(TimeSpan.FromSeconds(30));
+            var fixture = tests.GetType(typeof(ClientSessionLifetimeTests).FullName!, throwOnError: true)!;
+            var method = fixture.GetMethod(nameof(StopAsync_Rejects_External_Tools_While_Detach_Is_Pending))!;
+            await ((Task)method.Invoke(Activator.CreateInstance(fixture), [true])!).WaitAsync(TimeSpan.FromSeconds(30));
         }
         finally
         {
@@ -5100,19 +4985,6 @@ public sealed partial class ClientSessionLifetimeTests
         return request!;
     }
 
-    [Fact]
-    public async Task ForceStopAsync_Preserves_Process_Kill_Exception_Type()
-    {
-        await using var server = await FakeCopilotServer.StartAsync();
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
-        await client.StartAsync();
-        // Tree termination rejects the current process without killing it.
-        using var process = Process.GetCurrentProcess();
-        await ReplaceConnectionResourcesAsync(client, process);
-
-        await Assert.ThrowsAsync<InvalidOperationException>(() => client.ForceStopAsync());
-    }
-
     private static async Task ReplaceConnectionResourcesAsync(CopilotClient client, Process? process = null, IDisposable? ffiHost = null)
     {
         var field = typeof(CopilotClient).GetField("_connectionTask", BindingFlags.Instance | BindingFlags.NonPublic)
@@ -5310,15 +5182,6 @@ public sealed partial class ClientSessionLifetimeTests
             }, _cts.Token);
             return await completion.Task.WaitAsync(_cts.Token);
         }
-
-        public Task SendNotificationAsync(string method, Dictionary<string, object?> parameters) =>
-            WriteMessageAsync(_stream ?? throw new InvalidOperationException("Client is not connected."),
-                new Dictionary<string, object?>
-                {
-                    ["jsonrpc"] = "2.0",
-                    ["method"] = method,
-                    ["params"] = parameters
-                }, _cts.Token);
 
         public Task SendSessionEventAsync(string sessionId, string type, Dictionary<string, object?> data, string? agentId = null)
         {

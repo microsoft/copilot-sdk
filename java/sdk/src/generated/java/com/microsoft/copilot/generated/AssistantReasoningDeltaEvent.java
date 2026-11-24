@@ -10,7 +10,6 @@ package com.microsoft.copilot.generated;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.microsoft.copilot.CopilotExperimental;
 import javax.annotation.processing.Generated;
 
 /**
@@ -38,10 +37,7 @@ public final class AssistantReasoningDeltaEvent extends SessionEvent {
         /** Reasoning block ID this delta belongs to, matching the corresponding assistant.reasoning event */
         @JsonProperty("reasoningId") String reasoningId,
         /** Incremental text chunk to append to the reasoning content */
-        @JsonProperty("deltaContent") String deltaContent,
-        /** Experimental HydraFusion phase attribution. Present without a `commitId` while a staged root phase streams provisional output that the orchestrator may still discard. */
-        @CopilotExperimental
-        @JsonProperty("fusion") FusionAttribution fusion
+        @JsonProperty("deltaContent") String deltaContent
     ) {
 
         /**
@@ -65,7 +61,6 @@ public final class AssistantReasoningDeltaEvent extends SessionEvent {
             private Builder() {}
             private String reasoningId;
             private String deltaContent;
-            private FusionAttribution fusion;
 
             /**
              * Sets the {@code reasoningId} property.
@@ -90,18 +85,6 @@ public final class AssistantReasoningDeltaEvent extends SessionEvent {
             }
 
             /**
-             * Sets the {@code fusion} property.
-             * @param value the property value
-             * @return this builder
-             * @since 2.0.0
-             */
-            @com.microsoft.copilot.CopilotExperimental
-            public Builder fusion(FusionAttribution value) {
-                this.fusion = value;
-                return this;
-            }
-
-            /**
              * Builds a record after checking required property presence.
              * @return a new record
              * @throws IllegalStateException if a required property is missing
@@ -110,7 +93,7 @@ public final class AssistantReasoningDeltaEvent extends SessionEvent {
             public AssistantReasoningDeltaEventData build() {
                 if (reasoningId == null) throw new IllegalStateException("Missing required property: reasoningId");
                 if (deltaContent == null) throw new IllegalStateException("Missing required property: deltaContent");
-                return new AssistantReasoningDeltaEventData(reasoningId, deltaContent, fusion);
+                return new AssistantReasoningDeltaEventData(reasoningId, deltaContent);
             }
         }
     }

@@ -2,7 +2,7 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
-#if NET
+#if NET8_0_OR_GREATER
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
@@ -43,8 +43,7 @@ public sealed partial class ClientSessionLifetimeTests
             },
         };
         ActivitySource.AddActivityListener(listener);
-        using var remote = toolSource.CreateActivity("external_tool", ActivityKind.Internal)!
-            .SetIdFormat(ActivityIdFormat.W3C).Start();
+        using var remote = toolSource.StartActivity("external_tool")!;
         traceId = remote.TraceId;
         remote.TraceStateString = "tenant=example";
         remote.Stop();

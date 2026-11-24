@@ -9,7 +9,6 @@ using System.Diagnostics.CodeAnalysis;
 using System.Net.WebSockets;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
-using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Channels;
 
@@ -557,9 +556,8 @@ public class CopilotRequestHandler
 
             if (!message.Headers.TryAddWithoutValidation(name, values))
             {
-#if !NET
-                // .NET Framework rejects content on GET/HEAD, even when it is empty.
-                if (!hasBody && RuntimeInformation.FrameworkDescription.StartsWith(".NET Framework", StringComparison.Ordinal))
+#if NETSTANDARD2_0
+                if (!hasBody)
                 {
                     continue;
                 }

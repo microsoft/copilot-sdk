@@ -29,7 +29,7 @@ namespace Microsoft.Copilot.Test.E2E;
 /// <para>
 /// All response bodies are emitted as raw JSON string literals rather than via
 /// <c>JsonSerializer</c>: the test project disables reflection-based STJ on
-/// net10.0 (<c>JsonSerializerIsReflectionEnabledByDefault=false</c>), so
+/// net8.0 (<c>JsonSerializerIsReflectionEnabledByDefault=false</c>), so
 /// serializing anonymous types would throw at runtime.
 /// </para>
 /// </remarks>
@@ -51,7 +51,7 @@ internal sealed class RecordingRequestHandler : CopilotRequestHandler
         var url = request.RequestUri!.ToString();
         var bodyText = request.Content is null
             ? string.Empty
-#if NET
+#if NET8_0_OR_GREATER
             : await request.Content.ReadAsStringAsync(ctx.CancellationToken).ConfigureAwait(false);
 #else
             : await request.Content.ReadAsStringAsync().ConfigureAwait(false);

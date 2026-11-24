@@ -3,7 +3,7 @@
 //! Connection-global human confirmation for experimental installation operations.
 
 use std::panic::AssertUnwindSafe;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, Weak};
 
 use async_trait::async_trait;
 use futures_util::FutureExt;
@@ -16,7 +16,7 @@ pub use crate::rpc::{
     InstallationReview, McpInstallationReview,
 };
 use crate::{
-    Client, JsonRpcError, JsonRpcRequest, JsonRpcResponse, Result, WeakClientInner, error_codes,
+    Client, ClientInner, JsonRpcError, JsonRpcRequest, JsonRpcResponse, Result, error_codes,
 };
 
 pub(crate) const CONFIRM_METHOD: &str = "installations.confirm";
@@ -65,7 +65,7 @@ pub trait InstallationConfirmationHandler: Send + Sync + 'static {
 
 pub(crate) struct InstallationConfirmationDispatcher {
     handler: RwLock<Option<Arc<dyn InstallationConfirmationHandler>>>,
-    client: OnceLock<WeakClientInner>,
+    client: OnceLock<Weak<ClientInner>>,
 }
 
 impl InstallationConfirmationDispatcher {
@@ -76,7 +76,7 @@ impl InstallationConfirmationDispatcher {
         }
     }
 
-    pub(crate) fn set_client(&self, client: WeakClientInner) {
+    pub(crate) fn set_client(&self, client: Weak<ClientInner>) {
         let _ = self.client.set(client);
     }
 
@@ -90,7 +90,7 @@ impl InstallationConfirmationDispatcher {
     }
 
     pub(crate) fn dispatch(self: &Arc<Self>, request: JsonRpcRequest) {
-        let Some(client) = self.client.get().and_then(WeakClientInner::upgrade) else {
+        let Some(client) = self.client.get().and_then(Weak::upgrade) else {
             return;
         };
         let Some(pending) = client.rpc.cancellable_requests.claim(request.id) else {
@@ -191,7 +191,7 @@ impl InstallationConfirmationDispatcher {
         id: u64,
         outcome: std::result::Result<InstallationConfirmationResponse, (i32, &'static str)>,
     ) {
-        let Some(client) = self.client.get().and_then(WeakClientInner::upgrade) else {
+        let Some(client) = self.client.get().and_then(Weak::upgrade) else {
             return;
         };
         let (result, error) = match outcome {

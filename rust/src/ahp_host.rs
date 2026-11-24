@@ -27,8 +27,8 @@ use crate::generated::api_types::{
 };
 use crate::session::Session;
 use crate::{
-    Client, CreateSessionOptions, Error, ErrorKind, ProtocolErrorKind, ResumeSessionOptions,
-    WeakClientInner,
+    Client, ClientInner, CreateSessionOptions, Error, ErrorKind, ProtocolErrorKind,
+    ResumeSessionOptions,
 };
 
 /// Experimental local callback for a host's exit or owner disconnection.
@@ -434,7 +434,7 @@ pub struct AhpHost {
     pub pid: Option<i64>,
     /// Connection token, absent when token authentication is disabled.
     pub token: Option<String>,
-    client: WeakClientInner,
+    client: Weak<ClientInner>,
 }
 
 impl std::fmt::Debug for AhpHost {
@@ -542,31 +542,6 @@ impl AhpHost {
 
 pub(crate) type ExitCallbacks = Mutex<HashMap<String, AhpHostExitCallback>>;
 
-/// Scoped observation of one host on its original SDK connection.
-///
-/// Dropping the subscription removes only its own observer. A callback already
-/// dispatched by the client can finish after the subscription is dropped.
-pub struct AhpHostExitSubscription {
-    callbacks: Weak<ExitCallbacks>,
-    host_id: String,
-    callback: AhpHostExitCallback,
-}
-
-impl Drop for AhpHostExitSubscription {
-    fn drop(&mut self) {
-        let Some(callbacks) = self.callbacks.upgrade() else {
-            return;
-        };
-        let mut callbacks = callbacks.lock();
-        if callbacks
-            .get(&self.host_id)
-            .is_some_and(|callback| Arc::ptr_eq(callback, &self.callback))
-        {
-            callbacks.remove(&self.host_id);
-        }
-    }
-}
-
 fn invoke_exit_callback(callback: AhpHostExitCallback, exit: AhpHostExit) {
     tokio::task::spawn_blocking(move || {
         if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| callback(exit))).is_err() {
@@ -582,7 +557,7 @@ struct PendingStart {
     sessions: Arc<HostSessions>,
     host_id: Option<String>,
     start: Option<tokio::task::JoinHandle<Result<HostStartResult, Error>>>,
-    client: WeakClientInner,
+    client: Weak<ClientInner>,
 }
 
 impl Drop for PendingStart {
@@ -616,53 +591,10 @@ impl Drop for PendingStart {
 }
 
 impl Client {
-    /// Observe exits for a caller-owned host without changing its start options.
-    ///
-    /// Register before `host.start` on this same client and retain the returned
-    /// subscription through disposal. This does not transfer host ownership.
-    /// An existing observer is preserved and makes this call fail.
-    /// Do not capture the owning client in the callback.
-    ///
-    /// ```no_run
-    /// # use copilot_sdk::{Client, Error};
-    /// # async fn observe(client: &Client, host_id: &str) -> Result<(), Error> {
-    /// let observer = client.observe_ahp_host_exit(
-    ///     host_id,
-    ///     std::sync::Arc::new(|exit| eprintln!("AHP host exited: {}", exit.host_id)),
-    /// )?;
-    /// // Use this same client for host.start and host.dispose.
-    /// # drop(observer);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn observe_ahp_host_exit(
-        &self,
-        host_id: impl Into<String>,
-        callback: AhpHostExitCallback,
-    ) -> Result<AhpHostExitSubscription, Error> {
-        let host_id = host_id.into();
-        let mut callbacks = self.inner.ahp_host_callbacks.lock();
-        if callbacks.contains_key(&host_id) {
-            return Err(Error::with_message(
-                ErrorKind::InvalidConfig,
-                "An AHP host exit observer is already registered for this host",
-            ));
-        }
-        // A fresh wrapper distinguishes registrations that reuse the same callback.
-        let callback: AhpHostExitCallback = Arc::new(move |exit| callback(exit));
-        callbacks.insert(host_id.clone(), callback.clone());
-        Ok(AhpHostExitSubscription {
-            callbacks: Arc::downgrade(&self.inner.ahp_host_callbacks),
-            host_id,
-            callback,
-        })
-    }
-
     pub(crate) fn host_sessions(&self) -> Result<Arc<HostSessions>, Error> {
         self.ahp_host_sessions
             .clone()
             .or_else(|| self.inner.ahp_host_sessions.upgrade())
-            .map(|owner| owner.into_sessions())
             .ok_or_else(|| handoff_error("AHP owning client has been dropped"))
     }
 
@@ -706,7 +638,7 @@ impl Client {
             sessions: self.host_sessions()?,
             host_id: Some(host_id.clone()),
             start: None,
-            client: WeakClientInner::downgrade(&self.inner),
+            client: Arc::downgrade(&self.inner),
         };
         if let AhpHostAuthentication::Custom { authenticate, .. } = &authentication {
             pending
@@ -777,7 +709,7 @@ impl Client {
             environment_id: result.environment_id,
             pid: result.pid,
             token: result.token,
-            client: WeakClientInner::downgrade(&self.inner),
+            client: Arc::downgrade(&self.inner),
         })
     }
 
@@ -809,7 +741,7 @@ impl Client {
                             }
                         };
                         if let Some(sessions) = sessions.upgrade() {
-                            sessions.into_sessions().release_host(&exit.host_id);
+                            sessions.release_host(&exit.host_id);
                         }
                         let callback = callbacks.lock().remove(&exit.host_id);
                         if let Some(callback) = callback {
@@ -822,9 +754,7 @@ impl Client {
                                 serde_json::from_value::<HostSessionReleasedNotification>(params)
                             && let Some(sessions) = sessions.upgrade()
                         {
-                            sessions
-                                .into_sessions()
-                                .release(&released.host_id, &released.handoff_id);
+                            sessions.release(&released.host_id, &released.handoff_id);
                         }
                     }
                     Some(notification) if notification.method == "host.authenticationCancelled" => {
@@ -835,7 +765,6 @@ impl Client {
                             && let Some(sessions) = sessions.upgrade()
                         {
                             sessions
-                                .into_sessions()
                                 .cancel_authentication(&cancelled.host_id, &cancelled.request_id);
                         }
                     }
@@ -844,7 +773,7 @@ impl Client {
                 }
             }
             if let Some(sessions) = sessions.upgrade() {
-                sessions.into_sessions().release_all();
+                sessions.release_all();
             }
             let callbacks = std::mem::take(&mut *callbacks.lock());
             for (host_id, callback) in callbacks {
@@ -940,21 +869,9 @@ impl Drop for HostSessionState {
     }
 }
 
-// Retained sessions contain Client handles. Hide this ownership edge from
-// recursive auto-trait proofs while retaining the same allocation and lifetime.
-pub(crate) trait HostSessionOwner: Send + Sync {
-    fn into_sessions(self: Arc<Self>) -> Arc<HostSessions>;
-}
-
-impl HostSessionOwner for HostSessions {
-    fn into_sessions(self: Arc<Self>) -> Arc<HostSessions> {
-        self
-    }
-}
-
 pub(crate) struct HostSessions(
     Mutex<HostSessionState>,
-    Mutex<WeakClientInner>,
+    Mutex<Weak<ClientInner>>,
     tokio::runtime::Handle,
 );
 
@@ -1073,7 +990,7 @@ impl HostSessions {
         )
     }
 
-    pub(crate) fn set_owner(&self, owner: WeakClientInner) {
+    pub(crate) fn set_owner(&self, owner: Weak<ClientInner>) {
         *self.1.lock() = owner;
     }
 
@@ -1156,7 +1073,7 @@ fn handoff_error(message: &'static str) -> Error {
 
 impl Client {
     fn register_ahp_authenticator(&self) -> Result<(), Error> {
-        let client = WeakClientInner::downgrade(&self.inner);
+        let client = Arc::downgrade(&self.inner);
         self.inner.rpc.register_request_handler(
             "host.validateAuthentication",
             Arc::new(move |params| {
@@ -1218,7 +1135,7 @@ impl Client {
 
     pub(crate) fn register_ahp_session_factory(&self) -> Result<(), Error> {
         self.register_ahp_authenticator()?;
-        let client = WeakClientInner::downgrade(&self.inner);
+        let client = Arc::downgrade(&self.inner);
         self.inner.rpc.register_request_handler(
             "host.materializeSession",
             Arc::new(move |params| {
@@ -1358,9 +1275,7 @@ impl Client {
         if result.is_err()
             && let Some(sessions) = self.inner.ahp_host_sessions.upgrade()
         {
-            sessions
-                .into_sessions()
-                .release(&params.host_id, &params.handoff_id);
+            sessions.release(&params.host_id, &params.handoff_id);
         }
         result
     }

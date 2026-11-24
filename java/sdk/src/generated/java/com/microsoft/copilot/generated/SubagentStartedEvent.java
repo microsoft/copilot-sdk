@@ -57,9 +57,7 @@ public final class SubagentStartedEvent extends SessionEvent {
         /** Type of the sub-agent selected at spawn time. */
         @JsonProperty("agentType") String agentType,
         /** Whether the sub-agent runs synchronously or in the background. */
-        @JsonProperty("executionMode") String executionMode,
-        /** Interaction ID inherited from the user action that started this sub-agent */
-        @JsonProperty("interactionId") String interactionId
+        @JsonProperty("executionMode") String executionMode
     ) {
 
         /**
@@ -93,7 +91,6 @@ public final class SubagentStartedEvent extends SessionEvent {
             private Boolean resumable;
             private String agentType;
             private String executionMode;
-            private String interactionId;
 
             /**
              * Sets the {@code toolCallId} property.
@@ -228,17 +225,6 @@ public final class SubagentStartedEvent extends SessionEvent {
             }
 
             /**
-             * Sets the {@code interactionId} property.
-             * @param value the property value
-             * @return this builder
-             * @since 2.0.0
-             */
-            public Builder interactionId(String value) {
-                this.interactionId = value;
-                return this;
-            }
-
-            /**
              * Builds a record after checking required property presence.
              * @return a new record
              * @throws IllegalStateException if a required property is missing
@@ -249,7 +235,7 @@ public final class SubagentStartedEvent extends SessionEvent {
                 if (agentName == null) throw new IllegalStateException("Missing required property: agentName");
                 if (agentDisplayName == null) throw new IllegalStateException("Missing required property: agentDisplayName");
                 if (agentDescription == null) throw new IllegalStateException("Missing required property: agentDescription");
-                return new SubagentStartedEventData(toolCallId, agentName, agentDisplayName, agentDescription, model, taskModelSource, modelSelectionSource, workflowRunId, parentId, resumable, agentType, executionMode, interactionId);
+                return new SubagentStartedEventData(toolCallId, agentName, agentDisplayName, agentDescription, model, taskModelSource, modelSelectionSource, workflowRunId, parentId, resumable, agentType, executionMode);
             }
         }
     }

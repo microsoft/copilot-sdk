@@ -9,7 +9,6 @@ package com.microsoft.copilot.generated.rpc;
 
 import com.microsoft.copilot.CopilotExperimental;
 import java.util.List;
-import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import javax.annotation.processing.Generated;
 
@@ -23,46 +22,9 @@ public final class ServerSessionsApi {
 
     private final RpcCaller caller;
 
-    /** API methods for the {@code sessions.forgeProposals} sub-namespace. */
-    final ServerSessionsForgeProposalsApi forgeProposals;
-
     /** @param caller the RPC transport function */
     ServerSessionsApi(RpcCaller caller) {
         this.caller = caller;
-        this.forgeProposals = new ServerSessionsForgeProposalsApi(caller);
-    }
-
-    /**
-     * Validates an explicit session name with the canonical session naming rules and returns an optional error.
-     *
-     * @apiNote This method is experimental and may change in a future version.
-     * @since 1.0.0
-     */
-    @CopilotExperimental
-    CompletableFuture<SessionsValidateNameResult> validateName(SessionsValidateNameParams params) {
-        return caller.invoke("sessions.validateName", params, SessionsValidateNameResult.class);
-    }
-
-    /**
-     * Validates semantic session JSONL and imports canonical events into a fresh local session with rollback. Dry runs perform no authentication, network calls, or writes.
-     *
-     * @apiNote This method is experimental and may change in a future version.
-     * @since 1.0.0
-     */
-    @CopilotExperimental
-    CompletableFuture<SessionsImportSemanticResult> importSemantic(SessionsImportSemanticParams params) {
-        return caller.invoke("sessions.importSemantic", params, SessionsImportSemanticResult.class);
-    }
-
-    /**
-     * Validates semantic session JSONL and imports a new local session. Dry runs create no session.
-     *
-     * @apiNote This method is experimental and may change in a future version.
-     * @since 1.0.0
-     */
-    @CopilotExperimental
-    public CompletableFuture<SessionsImportResult> import_(SessionsImportParams params) {
-        return caller.invoke("sessions.import", params, SessionsImportResult.class);
     }
 
     /**
@@ -123,17 +85,6 @@ public final class ServerSessionsApi {
     }
 
     /**
-     * Lists canonical live session identities owned by this engine. Includes SDK and protocol sessions without scanning saved history or consulting terminal views.
-     *
-     * @apiNote This method is experimental and may change in a future version.
-     * @since 1.0.0
-     */
-    @CopilotExperimental
-    CompletableFuture<SessionsListActiveResult> listActive() {
-        return caller.invoke("sessions.listActive", java.util.Map.of(), SessionsListActiveResult.class);
-    }
-
-    /**
      * Reads lightweight persisted metadata for one local session without opening it.
      *
      * @apiNote This method is experimental and may change in a future version.
@@ -142,17 +93,6 @@ public final class ServerSessionsApi {
     @CopilotExperimental
     CompletableFuture<SessionsGetMetadataResult> getMetadata(SessionsGetMetadataParams params) {
         return caller.invoke("sessions.getMetadata", params, SessionsGetMetadataResult.class);
-    }
-
-    /**
-     * Lists one step of the signed-in user's Mission Control tasks, including archived tasks, as remote session metadata. Each step follows the task list's `Link: rel="next"` header (falling back to the next page number when there is none) for up to one active and one archived page, and returns a continuation for the next step. HTTP failures are reported in `failure` rather than as an RPC error so callers keep the status, payload and `retryAfterMs`.
-     *
-     * @apiNote This method is experimental and may change in a future version.
-     * @since 1.0.0
-     */
-    @CopilotExperimental
-    CompletableFuture<SessionsListRemotePageResult> listRemotePage(SessionsListRemotePageParams params) {
-        return caller.invoke("sessions.listRemotePage", params, SessionsListRemotePageResult.class);
     }
 
     /**
@@ -332,19 +272,6 @@ public final class ServerSessionsApi {
     }
 
     /**
-     * Flushes a session's pending events to disk.
-     * <p>
-     * Accepts the extensible request, including inputs added after the params record.
-     *
-     * @apiNote This method is experimental and may change in a future version.
-     * @since 1.0.0
-     */
-    @CopilotExperimental
-    public CompletableFuture<Void> save(SessionsSaveRequest request) {
-        return caller.invoke("sessions.save", Objects.requireNonNull(request, "request"), Void.class);
-    }
-
-    /**
      * Releases the in-use lock held by this process for a session.
      *
      * @apiNote This method is experimental and may change in a future version.
@@ -408,19 +335,6 @@ public final class ServerSessionsApi {
     @CopilotExperimental
     public CompletableFuture<Void> reloadPluginHooks(SessionsReloadPluginHooksParams params) {
         return caller.invoke("sessions.reloadPluginHooks", params, Void.class);
-    }
-
-    /**
-     * Reloads user, plugin, and (optionally) repo hooks on the active session.
-     * <p>
-     * Accepts the extensible request, including inputs added after the params record.
-     *
-     * @apiNote This method is experimental and may change in a future version.
-     * @since 1.0.0
-     */
-    @CopilotExperimental
-    public CompletableFuture<Void> reloadPluginHooks(SessionsReloadPluginHooksRequest request) {
-        return caller.invoke("sessions.reloadPluginHooks", Objects.requireNonNull(request, "request"), Void.class);
     }
 
     /**

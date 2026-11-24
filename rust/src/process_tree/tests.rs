@@ -33,9 +33,6 @@ use windows_sys::Win32::System::Threading::{
 
 use super::platform::{check_status, resume_initial_thread, resume_owned_thread};
 
-#[path = "../../tests/support/node_fixture.rs"]
-mod node_fixture;
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum FailurePoint {
     Capture,
@@ -610,7 +607,10 @@ async fn recovered_client(dir: &Path, tcp: bool) -> crate::Client {
             Ok(())
         }));
     });
-    let script = node_fixture::shutdown_script();
+    let script = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../test/harness/stdio-shutdown-runtime.cjs")
+        .canonicalize()
+        .unwrap();
     let mut process = SpawnedProcessOptions::new()
         .with_program(crate::CliProgram::Path("node".into()))
         .with_args([

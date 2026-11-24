@@ -680,11 +680,6 @@ export type ToolResultObject = {
     sessionLog?: string;
     toolTelemetry?: ToolTelemetry;
     /**
-     * When true, bypasses spill-to-file processing for this result.
-     * False or omitted uses the session's normal large-output policy.
-     */
-    skipLargeOutputProcessing?: boolean;
-    /**
      * Names of tools returned by a tool-search tool.
      */
     toolReferences?: string[];
@@ -3548,16 +3543,7 @@ export interface GetAuthStatusResponse {
     /** Whether the user is authenticated */
     isAuthenticated: boolean;
     /** Authentication type */
-    authType?:
-        | "user"
-        | "env"
-        | "gh-cli"
-        | "hmac"
-        | "api-key"
-        | "token"
-        | "account"
-        | "token-provider"
-        | "copilot-api-token";
+    authType?: "user" | "env" | "gh-cli" | "hmac" | "api-key" | "token";
     /** GitHub host URL */
     host?: string;
     /** User login name */

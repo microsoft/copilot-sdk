@@ -293,7 +293,11 @@ public sealed partial class CopilotClient
     {
         try
         {
+#if NET8_0_OR_GREATER
             await entry.Cancellation.CancelAsync().ConfigureAwait(false);
+#else
+            await Task.Run(() => entry.Cancellation.Cancel()).ConfigureAwait(false);
+#endif
         }
         catch (AggregateException)
         {
@@ -412,7 +416,11 @@ public sealed partial class CopilotClient
     {
         try
         {
+#if NET8_0_OR_GREATER
             await entry.Cancellation.CancelAsync().ConfigureAwait(false);
+#else
+            await Task.Run(() => entry.Cancellation.Cancel()).ConfigureAwait(false);
+#endif
         }
         catch (AggregateException error) { _logger.LogError(error, "AHP cancellation callback failed"); }
         finally { entry.CancellationCompleted.TrySetResult(true); }

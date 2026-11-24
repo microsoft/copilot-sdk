@@ -2,7 +2,7 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
-#if NET
+#if NET8_0_OR_GREATER
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -455,9 +455,6 @@ public sealed class GitHubTelemetryTests
         }
 
         public async Task SendGitHubTelemetryEventAsync(Dictionary<string, object?> notificationParams)
-            => await SendNotificationAsync("gitHubTelemetry.event", notificationParams);
-
-        public async Task SendNotificationAsync(string method, Dictionary<string, object?> notificationParams)
         {
             var stream = await _connected.Task.WaitAsync(_cts.Token);
 
@@ -467,7 +464,7 @@ public sealed class GitHubTelemetryTests
             await WriteMessageAsync(stream, new Dictionary<string, object?>
             {
                 ["jsonrpc"] = "2.0",
-                ["method"] = method,
+                ["method"] = "gitHubTelemetry.event",
                 ["params"] = notificationParams,
             }, _cts.Token);
         }
@@ -538,7 +535,6 @@ public sealed class GitHubTelemetryTests
                 "session.detach" => new Dictionary<string, object?> { ["success"] = true },
                 "session.options.update" => new Dictionary<string, object?> { ["success"] = true },
                 "runtime.shutdown" => new Dictionary<string, object?>(),
-                "ping" => new Dictionary<string, object?> { ["message"] = "callback", ["timestamp"] = "2026-01-01T00:00:00Z" },
                 _ => throw new InvalidOperationException($"Unexpected RPC method '{method}'."),
             };
 

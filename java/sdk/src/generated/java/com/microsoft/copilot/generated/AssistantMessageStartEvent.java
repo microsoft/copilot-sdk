@@ -10,7 +10,6 @@ package com.microsoft.copilot.generated;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.microsoft.copilot.CopilotExperimental;
 import javax.annotation.processing.Generated;
 
 /**
@@ -38,10 +37,7 @@ public final class AssistantMessageStartEvent extends SessionEvent {
         /** Message ID this start event belongs to, matching subsequent deltas and assistant.message */
         @JsonProperty("messageId") String messageId,
         /** Generation phase this message belongs to for phased-output models */
-        @JsonProperty("phase") String phase,
-        /** Experimental HydraFusion phase attribution. Present without a `commitId` while a staged root phase streams provisional output that the orchestrator may still discard. */
-        @CopilotExperimental
-        @JsonProperty("fusion") FusionAttribution fusion
+        @JsonProperty("phase") String phase
     ) {
 
         /**
@@ -65,7 +61,6 @@ public final class AssistantMessageStartEvent extends SessionEvent {
             private Builder() {}
             private String messageId;
             private String phase;
-            private FusionAttribution fusion;
 
             /**
              * Sets the {@code messageId} property.
@@ -90,18 +85,6 @@ public final class AssistantMessageStartEvent extends SessionEvent {
             }
 
             /**
-             * Sets the {@code fusion} property.
-             * @param value the property value
-             * @return this builder
-             * @since 2.0.0
-             */
-            @com.microsoft.copilot.CopilotExperimental
-            public Builder fusion(FusionAttribution value) {
-                this.fusion = value;
-                return this;
-            }
-
-            /**
              * Builds a record after checking required property presence.
              * @return a new record
              * @throws IllegalStateException if a required property is missing
@@ -109,7 +92,7 @@ public final class AssistantMessageStartEvent extends SessionEvent {
              */
             public AssistantMessageStartEventData build() {
                 if (messageId == null) throw new IllegalStateException("Missing required property: messageId");
-                return new AssistantMessageStartEventData(messageId, phase, fusion);
+                return new AssistantMessageStartEventData(messageId, phase);
             }
         }
     }

@@ -29,22 +29,6 @@ public final class SessionRpc {
     private final RpcCaller caller;
     private final String sessionId;
 
-    /** API methods for the {@code persistence} namespace. */
-    final SessionPersistenceApi persistence;
-    /** API methods for the {@code extensions} namespace. */
-    public final SessionExtensionsApi extensions;
-    /** API methods for the {@code plugins} namespace. */
-    public final SessionPluginsApi plugins;
-    /** API methods for the {@code name} namespace. */
-    public final SessionNameApi name;
-    /** API methods for the {@code model} namespace. */
-    public final SessionModelApi model;
-    /** API methods for the {@code mcp} namespace. */
-    public final SessionMcpApi mcp;
-    /** API methods for the {@code eventLog} namespace. */
-    public final SessionEventLogApi eventLog;
-    /** API methods for the {@code remote} namespace. */
-    public final SessionRemoteApi remote;
     /** API methods for the {@code management} namespace. */
     public final SessionManagementApi management;
     /** API methods for the {@code providers} namespace. */
@@ -55,8 +39,6 @@ public final class SessionRpc {
     public final SessionGitHubAuthApi gitHubAuth;
     /** API methods for the {@code accounts} namespace. */
     public final SessionAccountsApi accounts;
-    /** API methods for the {@code authProviders} namespace. */
-    public final SessionAuthProvidersApi authProviders;
     /** API methods for the {@code debug} namespace. */
     public final SessionDebugApi debug;
     /** API methods for the {@code canvas} namespace. */
@@ -65,12 +47,16 @@ public final class SessionRpc {
     final SessionCanvasSourceApi canvasSource;
     /** API methods for the {@code workflow} namespace. */
     public final SessionWorkflowApi workflow;
+    /** API methods for the {@code model} namespace. */
+    public final SessionModelApi model;
     /** API methods for the {@code featureFlags} namespace. */
     public final SessionFeatureFlagsApi featureFlags;
     /** API methods for the {@code dynamicContext} namespace. */
     public final SessionDynamicContextApi dynamicContext;
     /** API methods for the {@code mode} namespace. */
     public final SessionModeApi mode;
+    /** API methods for the {@code name} namespace. */
+    public final SessionNameApi name;
     /** API methods for the {@code plan} namespace. */
     public final SessionPlanApi plan;
     /** API methods for the {@code workspaces} namespace. */
@@ -93,24 +79,26 @@ public final class SessionRpc {
     public final SessionTasksApi tasks;
     /** API methods for the {@code skills} namespace. */
     public final SessionSkillsApi skills;
+    /** API methods for the {@code mcp} namespace. */
+    public final SessionMcpApi mcp;
     /** API methods for the {@code diagnostics} namespace. */
     public final SessionDiagnosticsApi diagnostics;
     /** API methods for the {@code connectors} namespace. */
     public final SessionConnectorsApi connectors;
     /** API methods for the {@code managedSettings} namespace. */
     public final SessionManagedSettingsApi managedSettings;
+    /** API methods for the {@code plugins} namespace. */
+    public final SessionPluginsApi plugins;
     /** API methods for the {@code provider} namespace. */
     public final SessionProviderApi provider;
     /** API methods for the {@code options} namespace. */
     public final SessionOptionsApi options;
-    /** API methods for the {@code host} namespace. */
-    final SessionHostApi host;
     /** API methods for the {@code lsp} namespace. */
     public final SessionLspApi lsp;
+    /** API methods for the {@code extensions} namespace. */
+    public final SessionExtensionsApi extensions;
     /** API methods for the {@code tools} namespace. */
     public final SessionToolsApi tools;
-    /** API methods for the {@code memory} namespace. */
-    public final SessionMemoryApi memory;
     /** API methods for the {@code commands} namespace. */
     public final SessionCommandsApi commands;
     /** API methods for the {@code telemetry} namespace. */
@@ -131,24 +119,22 @@ public final class SessionRpc {
     public final SessionHistoryApi history;
     /** API methods for the {@code queue} namespace. */
     public final SessionQueueApi queue;
+    /** API methods for the {@code eventLog} namespace. */
+    public final SessionEventLogApi eventLog;
     /** API methods for the {@code usage} namespace. */
     public final SessionUsageApi usage;
     /** API methods for the {@code quota} namespace. */
     public final SessionQuotaApi quota;
     /** API methods for the {@code limitPrediction} namespace. */
     public final SessionLimitPredictionApi limitPrediction;
+    /** API methods for the {@code remote} namespace. */
+    public final SessionRemoteApi remote;
     /** API methods for the {@code visibility} namespace. */
     public final SessionVisibilityApi visibility;
     /** API methods for the {@code schedule} namespace. */
     public final SessionScheduleApi schedule;
     /** API methods for the {@code cafeMetrics} namespace. */
     final SessionCafeMetricsApi cafeMetrics;
-    /** API methods for the {@code mcpSource} namespace. */
-    final SessionMcpSourceApi mcpSource;
-    /** API methods for the {@code research} namespace. */
-    final SessionResearchApi research;
-    /** API methods for the {@code github} namespace. */
-    final SessionGithubApi github;
 
     /**
      * Creates a new session RPC client.
@@ -159,27 +145,20 @@ public final class SessionRpc {
     public SessionRpc(RpcCaller caller, String sessionId) {
         this.caller = caller;
         this.sessionId = sessionId;
-        this.persistence = new SessionPersistenceApi(caller, sessionId);
-        this.extensions = new SessionExtensionsApi(caller, sessionId);
-        this.plugins = new SessionPluginsApi(caller, sessionId);
-        this.name = new SessionNameApi(caller, sessionId);
-        this.model = new SessionModelApi(caller, sessionId);
-        this.mcp = new SessionMcpApi(caller, sessionId);
-        this.eventLog = new SessionEventLogApi(caller, sessionId);
-        this.remote = new SessionRemoteApi(caller, sessionId);
         this.management = new SessionManagementApi(caller, sessionId);
         this.providers = new SessionProvidersApi(caller, sessionId);
         this.sandbox = new SessionSandboxApi(caller, sessionId);
         this.gitHubAuth = new SessionGitHubAuthApi(caller, sessionId);
         this.accounts = new SessionAccountsApi(caller, sessionId);
-        this.authProviders = new SessionAuthProvidersApi(caller, sessionId);
         this.debug = new SessionDebugApi(caller, sessionId);
         this.canvas = new SessionCanvasApi(caller, sessionId);
         this.canvasSource = new SessionCanvasSourceApi(caller, sessionId);
         this.workflow = new SessionWorkflowApi(caller, sessionId);
+        this.model = new SessionModelApi(caller, sessionId);
         this.featureFlags = new SessionFeatureFlagsApi(caller, sessionId);
         this.dynamicContext = new SessionDynamicContextApi(caller, sessionId);
         this.mode = new SessionModeApi(caller, sessionId);
+        this.name = new SessionNameApi(caller, sessionId);
         this.plan = new SessionPlanApi(caller, sessionId);
         this.workspaces = new SessionWorkspacesApi(caller, sessionId);
         this.autopilotObjective = new SessionAutopilotObjectiveApi(caller, sessionId);
@@ -191,15 +170,16 @@ public final class SessionRpc {
         this.agent = new SessionAgentApi(caller, sessionId);
         this.tasks = new SessionTasksApi(caller, sessionId);
         this.skills = new SessionSkillsApi(caller, sessionId);
+        this.mcp = new SessionMcpApi(caller, sessionId);
         this.diagnostics = new SessionDiagnosticsApi(caller, sessionId);
         this.connectors = new SessionConnectorsApi(caller, sessionId);
         this.managedSettings = new SessionManagedSettingsApi(caller, sessionId);
+        this.plugins = new SessionPluginsApi(caller, sessionId);
         this.provider = new SessionProviderApi(caller, sessionId);
         this.options = new SessionOptionsApi(caller, sessionId);
-        this.host = new SessionHostApi(caller, sessionId);
         this.lsp = new SessionLspApi(caller, sessionId);
+        this.extensions = new SessionExtensionsApi(caller, sessionId);
         this.tools = new SessionToolsApi(caller, sessionId);
-        this.memory = new SessionMemoryApi(caller, sessionId);
         this.commands = new SessionCommandsApi(caller, sessionId);
         this.telemetry = new SessionTelemetryApi(caller, sessionId);
         this.ui = new SessionUiApi(caller, sessionId);
@@ -210,15 +190,14 @@ public final class SessionRpc {
         this.shell = new SessionShellApi(caller, sessionId);
         this.history = new SessionHistoryApi(caller, sessionId);
         this.queue = new SessionQueueApi(caller, sessionId);
+        this.eventLog = new SessionEventLogApi(caller, sessionId);
         this.usage = new SessionUsageApi(caller, sessionId);
         this.quota = new SessionQuotaApi(caller, sessionId);
         this.limitPrediction = new SessionLimitPredictionApi(caller, sessionId);
+        this.remote = new SessionRemoteApi(caller, sessionId);
         this.visibility = new SessionVisibilityApi(caller, sessionId);
         this.schedule = new SessionScheduleApi(caller, sessionId);
         this.cafeMetrics = new SessionCafeMetricsApi(caller, sessionId);
-        this.mcpSource = new SessionMcpSourceApi(caller, sessionId);
-        this.research = new SessionResearchApi(caller, sessionId);
-        this.github = new SessionGithubApi(caller, sessionId);
     }
 
     /**
@@ -230,33 +209,6 @@ public final class SessionRpc {
     @CopilotExperimental
     public CompletableFuture<Void> suspend() {
         return caller.invoke("session.suspend", java.util.Map.of("sessionId", this.sessionId), Void.class);
-    }
-
-    /**
-     * Retains the active session for a subscribed view without creating, resuming, or copying it. Editors and other SDK clients use this while a view outlives its original connection owner. The token belongs to this connection and session generation. Connection teardown releases it automatically.
-     *
-     * @apiNote This method is experimental and may change in a future version.
-     * @since 1.0.0
-     */
-    @CopilotExperimental
-    CompletableFuture<SessionViewRetainResult> retainView() {
-        return caller.invoke("session.retainView", java.util.Map.of("sessionId", this.sessionId), SessionViewRetainResult.class);
-    }
-
-    /**
-     * Releases one view retention from the original connection and session generation. Unknown tokens, tokens owned by another connection, and tokens from an older generation return released false. Explicit session close and deletion keep their existing behavior.
-     * <p>
-     * Note: the {@code sessionId} field in the params record is overridden
-     * by the session-scoped wrapper; any value provided is ignored.
-     *
-     * @apiNote This method is experimental and may change in a future version.
-     * @since 1.0.0
-     */
-    @CopilotExperimental
-    CompletableFuture<SessionViewReleaseResult> releaseView(SessionReleaseViewParams params) {
-        com.fasterxml.jackson.databind.node.ObjectNode _p = MAPPER.valueToTree(params);
-        _p.put("sessionId", this.sessionId);
-        return caller.invoke("session.releaseView", _p, SessionViewReleaseResult.class);
     }
 
     /**
@@ -356,7 +308,7 @@ public final class SessionRpc {
     }
 
     /**
-     * Cancels every running background agent (task-registry subagents plus sidekick agents) without interrupting the main agent loop. Stops attached background shells, including promoted shells, started by cancelled task-registry agents or their descendants. Detached shells and shells belonging to unrelated agents are left running.
+     * Cancels every running background agent (task-registry subagents plus sidekick agents) without interrupting the main agent loop. Promoted attached shells are left running.
      *
      * @apiNote This method is experimental and may change in a future version.
      * @since 1.0.0

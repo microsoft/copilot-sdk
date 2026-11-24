@@ -10,11 +10,6 @@
 
 export { CopilotClient } from "./client.js";
 export { parseTrajectoryJson } from "./taskAnalyticsJson.js";
-export type {
-    ExactSettingsResponse,
-    SettingsResponse,
-    SettingsResponseOptions,
-} from "./settingsJson.js";
 export { toSavedProviderConfiguration } from "./providerConfiguration.js";
 export {
     CopilotDecisions,
@@ -25,49 +20,6 @@ export {
     type YesNoOptions,
     type YesNoResult,
 } from "./decisions.js";
-export type {
-    Account,
-    AccountHealth,
-    AccountKind,
-    AccountsGetActiveResult,
-    AccountsList,
-    AccountsListRequest,
-    AccountsLogoutRequest,
-    AccountsSetCredentialsRequest,
-    AccountsSwitchActiveRequest,
-    AuthIdentity,
-    AuthLoginAccount,
-    AuthLoginAdvanceRequest,
-    AuthLoginBeginRequest,
-    AuthLoginBegun,
-    AuthLoginCancelRequest,
-    AuthLoginIdentity,
-    AuthLoginIdentityList,
-    AuthLoginListRequest,
-    AuthLoginMethod,
-    AuthLoginMode,
-    AuthLoginResultDto,
-    AuthLoginResultStatus,
-    AuthLoginStep,
-    AuthProviderDescriptor,
-    AuthProvidersList,
-    AuthValidationError,
-    AuthValidationErrors,
-    LoginProviderKind,
-    SessionAccountsLogoutResult,
-} from "./generated/rpc.js";
-export type {
-    AgentFileLocation,
-    AgentToolCategory,
-    AgentToolCategoryId,
-    AgentsCreateFileRequest,
-    AgentsCreateFileResult,
-    AgentsGenerateFileContentRequest,
-    AgentsGenerateFileContentResult,
-    AgentsListToolCategoriesResult,
-    AgentsValidateNameRequest,
-    AgentsValidateNameResult,
-} from "./generated/rpc.js";
 export type {
     DecisionAnswer,
     DecisionContext,
@@ -84,28 +36,6 @@ export type {
     DecisionsAskResult,
     DecisionUsage,
     DecisionViolation,
-} from "./generated/rpc.js";
-export type {
-    FileLogLevel,
-    FileLogOpenRequest,
-    FileLogOperation,
-    FileLogResource,
-    FileLogWriteRequest,
-    SecretFilterFormat,
-    SecretsFilterRequest,
-    SecretsFilterResult,
-    SecretsRemoveFilterValuesRequest,
-    SecretsRemoveFilterValuesResult,
-} from "./generated/rpc.js";
-export type {
-    ImportDiagnostic,
-    MemoryImportCounts,
-    MemoryImportItemResult,
-    MemoryImportRequest,
-    MemoryImportResult,
-    SessionImportCounts,
-    SessionImportRequest,
-    SessionImportResult,
 } from "./generated/rpc.js";
 export type {
     SkillInstallSourceKind,
@@ -130,13 +60,10 @@ export type {
     FetchFileOperation,
     FetchHeader,
     FetchProxyEnv,
-    FetchProxyRoute,
     FetchReadRequest,
     FetchReadResult,
     FetchRedirect,
     FetchRequestId,
-    FetchResolveProxyRequest,
-    FetchResolveProxyResult,
     FetchResponseMode,
     FetchSendParams,
     FetchSendRequest,
@@ -162,7 +89,6 @@ export type {
     LocalModelAzureMlIdentity,
     LocalModelDescriptor,
     LocalModelJsonValue,
-    UserSettingsJsonValue,
     TrajectoryJsonValue,
     LocalModelDiskRequirement,
     LocalModelDownloadProgress,
@@ -214,9 +140,6 @@ export type {
     LspWarmupResult,
     LspListResult,
     LspListRequest,
-    PluginActivationStatus,
-    PluginsActivateRequest,
-    PluginsActivateResult,
     SessionLspListResult,
     SessionLspStartResult,
     SessionLspDiagnoseResult,

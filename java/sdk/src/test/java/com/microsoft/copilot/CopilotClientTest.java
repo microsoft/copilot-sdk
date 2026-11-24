@@ -75,7 +75,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -99,17 +98,13 @@ public class CopilotClientTest {
         cliPath = TestUtil.findCliPath();
     }
 
-    @ParameterizedTest
-    @ValueSource(booleans = {false, true})
-    void testStopPropagatesRuntimeShutdownFailureAfterCleanup(boolean timeout) throws Exception {
+    @Test
+    void testStopDoesNotThrowWhenRuntimeShutdownFails() throws Exception {
         var client = new CopilotClient(
                 new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT).setAutoStart(false));
         var rpc = mock(JsonRpcClient.class);
-        Exception failure = timeout
-                ? new TimeoutException("shutdown timed out")
-                : new RuntimeException("shutdown failed");
         when(rpc.invoke(eq("runtime.shutdown"), any(), eq(Void.class)))
-                .thenReturn(CompletableFuture.failedFuture(failure));
+                .thenReturn(CompletableFuture.failedFuture(new RuntimeException("shutdown failed")));
         var process = mock(Process.class);
         when(process.isAlive()).thenReturn(true);
         when(process.getOutputStream()).thenReturn(OutputStream.nullOutputStream());
@@ -118,8 +113,7 @@ public class CopilotClientTest {
 
         setConnectionFuture(client, rpc, process);
 
-        var error = assertThrows(ExecutionException.class, () -> client.stop().get());
-        assertSame(failure, error.getCause());
+        assertDoesNotThrow(() -> client.stop().get());
 
         verify(rpc).invoke(eq("runtime.shutdown"), eq(Map.of()), eq(Void.class));
         verify(rpc).close();
@@ -367,9 +361,8 @@ public class CopilotClientTest {
 
         when(rpc.invoke(eq("session.create"), any(), eq(CreateSessionResponse.class))).thenReturn(CompletableFuture
                 .completedFuture(new CreateSessionResponse("create-options-session", null, null, null)));
-        when(rpc.invoke(eq("session.resume"), any(), eq(ResumeSessionResponse.class), any()))
-                .thenReturn(CompletableFuture
-                        .completedFuture(new ResumeSessionResponse("resume-options-session", null, null, null)));
+        when(rpc.invoke(eq("session.resume"), any(), eq(ResumeSessionResponse.class))).thenReturn(CompletableFuture
+                .completedFuture(new ResumeSessionResponse("resume-options-session", null, null, null)));
         when(rpc.invoke(eq("session.options.update"), any(), eq(SessionOptionsUpdateResult.class)))
                 .thenAnswer(invocation -> {
                     optionsPatches.add(invocation.getArgument(1));
@@ -425,7 +418,7 @@ public class CopilotClientTest {
 
             assertInstanceOf(IllegalArgumentException.class, error.getCause());
             assertSame(resident, registeredSkillProvider(client, "resident-session"));
-            verify(rpc, never()).invoke(eq("session.resume"), any(), any(), any());
+            verify(rpc, never()).invoke(eq("session.resume"), any(), any());
         } finally {
             client.forceStop().get();
         }
@@ -444,7 +437,7 @@ public class CopilotClientTest {
         when(rpc.invoke(eq("session.options.update"), any(), eq(Void.class)))
                 .thenReturn(CompletableFuture.completedFuture(null));
         var firstResume = new CompletableFuture<ResumeSessionResponse>();
-        when(rpc.invoke(eq("session.resume"), any(), eq(ResumeSessionResponse.class), any())).thenReturn(firstResume,
+        when(rpc.invoke(eq("session.resume"), any(), eq(ResumeSessionResponse.class))).thenReturn(firstResume,
                 CompletableFuture.completedFuture(new ResumeSessionResponse("shared-session", null, null, null)));
 
         try {
@@ -480,7 +473,7 @@ public class CopilotClientTest {
                 CompletableFuture.completedFuture(new CreateSessionResponse("tracked-session", null, null, null)));
         when(rpc.invoke(eq("session.options.update"), any(), eq(Void.class)))
                 .thenReturn(CompletableFuture.completedFuture(null));
-        when(rpc.invoke(eq("session.resume"), any(), eq(ResumeSessionResponse.class), any())).thenReturn(
+        when(rpc.invoke(eq("session.resume"), any(), eq(ResumeSessionResponse.class))).thenReturn(
                 CompletableFuture.completedFuture(new ResumeSessionResponse("tracked-session", null, null, null)));
         when(rpc.invoke(eq("session.detach"), any(), eq(CopilotSession.SessionDetachResponse.class)))
                 .thenReturn(CompletableFuture.completedFuture(
@@ -495,8 +488,8 @@ public class CopilotClientTest {
             var client = sessionTrackingClient(rpc, true);
             var firstResponse = new CompletableFuture<ResumeSessionResponse>();
             var secondResponse = new CompletableFuture<ResumeSessionResponse>();
-            when(rpc.invoke(eq("session.resume"), any(), eq(ResumeSessionResponse.class), any()))
-                    .thenReturn(firstResponse, secondResponse);
+            when(rpc.invoke(eq("session.resume"), any(), eq(ResumeSessionResponse.class))).thenReturn(firstResponse,
+                    secondResponse);
             try {
                 var resident = client.createSession(new CreateSessionOptions().setSessionId("tracked-session")
                         .setPermissions(new SessionPermissionOptions().setOnRequest(PermissionHandler.APPROVE_ALL)))
@@ -542,7 +535,7 @@ public class CopilotClientTest {
         var client = sessionTrackingClient(rpc, true);
         var firstResponse = new CompletableFuture<ResumeSessionResponse>();
         var secondResponse = new CompletableFuture<ResumeSessionResponse>();
-        when(rpc.invoke(eq("session.resume"), any(), eq(ResumeSessionResponse.class), any())).thenReturn(firstResponse,
+        when(rpc.invoke(eq("session.resume"), any(), eq(ResumeSessionResponse.class))).thenReturn(firstResponse,
                 secondResponse);
         try {
             var config = new ResumeSessionOptions()
@@ -574,7 +567,7 @@ public class CopilotClientTest {
         var secondResponse = new CompletableFuture<ResumeSessionResponse>();
         var detach = new CompletableFuture<CopilotSession.SessionDetachResponse>();
         var detachStarted = new CountDownLatch(1);
-        when(rpc.invoke(eq("session.resume"), any(), eq(ResumeSessionResponse.class), any())).thenReturn(firstResponse,
+        when(rpc.invoke(eq("session.resume"), any(), eq(ResumeSessionResponse.class))).thenReturn(firstResponse,
                 secondResponse);
         when(rpc.invoke(eq("session.detach"), any(), eq(CopilotSession.SessionDetachResponse.class)))
                 .thenAnswer(invocation -> {
@@ -627,7 +620,7 @@ public class CopilotClientTest {
         var client = sessionTrackingClient(rpc, true);
         var firstResponse = new CompletableFuture<ResumeSessionResponse>();
         var secondResponse = new CompletableFuture<ResumeSessionResponse>();
-        when(rpc.invoke(eq("session.resume"), any(), eq(ResumeSessionResponse.class), any())).thenReturn(firstResponse,
+        when(rpc.invoke(eq("session.resume"), any(), eq(ResumeSessionResponse.class))).thenReturn(firstResponse,
                 secondResponse);
         when(rpc.invoke(eq("session.delete"), any(), eq(DeleteSessionResponse.class)))
                 .thenReturn(CompletableFuture.completedFuture(new DeleteSessionResponse(true, null)));
@@ -689,7 +682,7 @@ public class CopilotClientTest {
         var rpc = mock(JsonRpcClient.class);
         var client = sessionTrackingClient(rpc, true);
         var response = new CompletableFuture<ResumeSessionResponse>();
-        when(rpc.invoke(eq("session.resume"), any(), eq(ResumeSessionResponse.class), any())).thenReturn(response);
+        when(rpc.invoke(eq("session.resume"), any(), eq(ResumeSessionResponse.class))).thenReturn(response);
         try {
             var resident = client
                     .createSession(new CreateSessionOptions().setSessionId("tracked-session")
@@ -712,7 +705,7 @@ public class CopilotClientTest {
         var rpc = mock(JsonRpcClient.class);
         var client = sessionTrackingClient(rpc, true);
         var response = new CompletableFuture<ResumeSessionResponse>();
-        when(rpc.invoke(eq("session.resume"), any(), eq(ResumeSessionResponse.class), any())).thenReturn(response);
+        when(rpc.invoke(eq("session.resume"), any(), eq(ResumeSessionResponse.class))).thenReturn(response);
         when(rpc.invoke(eq("session.delete"), any(), eq(DeleteSessionResponse.class)))
                 .thenReturn(CompletableFuture.completedFuture(new DeleteSessionResponse(true, null)));
         when(rpc.invoke(eq("session.sendAndWait"), any(), eq(com.fasterxml.jackson.databind.JsonNode.class)))
@@ -746,7 +739,7 @@ public class CopilotClientTest {
     void failedResumeKeepsAResidentWhoseDetachFailed() throws Exception {
         var rpc = mock(JsonRpcClient.class);
         var client = sessionTrackingClient(rpc, false);
-        when(rpc.invoke(eq("session.resume"), any(), eq(ResumeSessionResponse.class), any()))
+        when(rpc.invoke(eq("session.resume"), any(), eq(ResumeSessionResponse.class)))
                 .thenReturn(CompletableFuture.failedFuture(new IllegalStateException("resume rejected")));
         try {
             var resident = client
@@ -770,7 +763,7 @@ public class CopilotClientTest {
             var rpc = mock(JsonRpcClient.class);
             var client = sessionTrackingClient(rpc, false);
             var response = new CompletableFuture<ResumeSessionResponse>();
-            when(rpc.invoke(eq("session.resume"), any(), eq(ResumeSessionResponse.class), any())).thenReturn(response);
+            when(rpc.invoke(eq("session.resume"), any(), eq(ResumeSessionResponse.class))).thenReturn(response);
             try {
                 var resident = client.createSession(new CreateSessionOptions().setSessionId("tracked-session")
                         .setPermissions(new SessionPermissionOptions().setOnRequest(PermissionHandler.APPROVE_ALL)))
@@ -799,7 +792,7 @@ public class CopilotClientTest {
         var rpc = mock(JsonRpcClient.class);
         var client = sessionTrackingClient(rpc, true);
         var response = new CompletableFuture<ResumeSessionResponse>();
-        when(rpc.invoke(eq("session.resume"), any(), eq(ResumeSessionResponse.class), any())).thenReturn(response);
+        when(rpc.invoke(eq("session.resume"), any(), eq(ResumeSessionResponse.class))).thenReturn(response);
         when(rpc.invoke(eq("session.sendAndWait"), any(), eq(com.fasterxml.jackson.databind.JsonNode.class)))
                 .thenReturn(CompletableFuture.failedFuture(new JsonRpcException(-32601, "Method not found")));
         when(rpc.invoke(eq("session.send"), any(), eq(SendMessageResponse.class)))
@@ -857,7 +850,7 @@ public class CopilotClientTest {
         var oldConnection = ((CompletableFuture<?>) field.get(client)).get();
         var startup = new CompletableFuture<Object>();
         setConnectionFuture(client, startup);
-        when(oldRpc.invoke(eq("session.resume"), any(), eq(ResumeSessionResponse.class), any()))
+        when(oldRpc.invoke(eq("session.resume"), any(), eq(ResumeSessionResponse.class)))
                 .thenReturn(CompletableFuture.failedFuture(new IllegalStateException("old transport closed")));
         CompletableFuture<Void> stopping = null;
         try {
@@ -888,7 +881,7 @@ public class CopilotClientTest {
             assertSame(resident, trackedSession(client, resident.getSessionId()));
             assertDoesNotThrow(() -> resident.on(event -> {
             }).close());
-            verify(oldRpc, never()).invoke(eq("session.resume"), any(), any(), any());
+            verify(oldRpc, never()).invoke(eq("session.resume"), any(), any());
         } finally {
             startup.complete(oldConnection);
             if (stopping != null) {
@@ -908,7 +901,7 @@ public class CopilotClientTest {
                 CompletableFuture.completedFuture(new CreateSessionResponse("restarted-session", null, null, null)));
         when(rpc.invoke(eq("session.options.update"), any(), eq(Void.class)))
                 .thenReturn(CompletableFuture.completedFuture(null));
-        when(rpc.invoke(eq("session.resume"), any(), eq(ResumeSessionResponse.class), any()))
+        when(rpc.invoke(eq("session.resume"), any(), eq(ResumeSessionResponse.class)))
                 .thenReturn(CompletableFuture.failedFuture(new IllegalStateException("resume rejected")));
         try {
             client.forceStop().get();
@@ -936,7 +929,7 @@ public class CopilotClientTest {
         var client = sessionTrackingClient(rpc, true);
         var response = new CompletableFuture<ResumeSessionResponse>();
         var detach = new CompletableFuture<CopilotSession.SessionDetachResponse>();
-        when(rpc.invoke(eq("session.resume"), any(), eq(ResumeSessionResponse.class), any())).thenReturn(response);
+        when(rpc.invoke(eq("session.resume"), any(), eq(ResumeSessionResponse.class))).thenReturn(response);
         when(rpc.invoke(eq("session.detach"), any(), eq(CopilotSession.SessionDetachResponse.class)))
                 .thenReturn(detach);
         try {

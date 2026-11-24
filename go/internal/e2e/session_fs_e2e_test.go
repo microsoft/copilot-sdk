@@ -136,25 +136,15 @@ func TestSessionFSE2E(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to read session events: %v", err)
 		}
-		foundImage := false
+		foundAsset := false
 		for _, event := range events {
-			if event.Type() == copilot.SessionEventTypeSessionBinaryAsset {
-				t.Fatal("Internal binary asset event escaped public session history")
-			}
-			complete, ok := event.Data.(*copilot.ToolExecutionCompleteData)
-			if !ok || !complete.Success || complete.Result == nil {
-				continue
-			}
-			for _, result := range complete.Result.BinaryResultsForLlm {
-				if image, ok := result.(*rpc.PersistedBinaryImage); ok &&
-					image.Type() == rpc.PersistedBinaryResultTypeImage &&
-					image.MIMEType == "image/png" && image.Data == base64.StdEncoding.EncodeToString(imageBytes) {
-					foundImage = true
-				}
+			if asset, ok := event.Data.(*copilot.SessionBinaryAssetData); ok &&
+				asset.MIMEType == "image/png" && asset.Data == base64.StdEncoding.EncodeToString(imageBytes) {
+				foundAsset = true
 			}
 		}
-		if !foundImage {
-			t.Fatal("Expected an inline tool result with the exact provider image bytes")
+		if !foundAsset {
+			t.Fatal("Expected a binary asset with the exact provider image bytes")
 		}
 		if err := session.Disconnect(); err != nil {
 			t.Fatalf("Failed to disconnect session: %v", err)

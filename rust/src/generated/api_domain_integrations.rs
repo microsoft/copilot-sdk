@@ -16,9 +16,9 @@ pub use session_events::{
     ManagedSettingsResolvedSource, McpOauthHttpResponse, McpOauthWWWAuthenticateParams,
     McpServerMetadata, McpServerSource, McpServerStatus, McpSkillOrigin, ModelChangeSource,
     ModelProviderKind, ModelProviderRef, OmittedBinaryOmittedReason, PermissionDecisionSource,
-    PermissionMode, PermissionPromptRequest, PermissionRule, PermissionSandboxPathGrant,
-    PolicyHelperCapabilities, PolicyHelperFailure, ProviderQuotaState, ReasoningSummary,
-    RemediationAction, SessionLimitsConfig, SessionMode, ShutdownType, SkillSource, TaskBlocker,
+    PermissionMode, PermissionPromptRequest, PermissionRule, PolicyHelperCapabilities,
+    PolicyHelperFailure, ProviderQuotaState, ReasoningSummary, RemediationAction,
+    SessionLimitsConfig, SessionMode, ShutdownType, SkillSource, TaskBlocker,
     TaskCompletionOutcome, UsageGetMetricsResult, UserToolSessionApproval, Verbosity,
 };
 
@@ -34,16 +34,17 @@ use crate::types::{RequestId, SessionEvent, SessionId};
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CanvasActionInvokeRequest {
     /// Action name to invoke
     pub action_name: String,
     /// Action input
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub input: Option<serde_json::Value>,
     /// Open canvas instance identifier
     pub instance_id: String,
 }
-crate::record_serde::wire_record!(CanvasActionInvokeRequest { action_name: "actionName", input: "input" if is_none, instance_id: "instanceId" });
 
 /// Canvas action invocation result.
 ///
@@ -53,12 +54,13 @@ crate::record_serde::wire_record!(CanvasActionInvokeRequest { action_name: "acti
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CanvasActionInvokeResult {
     /// Provider-supplied action result
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<serde_json::Value>,
 }
-crate::record_serde::wire_record!(CanvasActionInvokeResult { result: "result" if is_none });
 
 /// Canvas close parameters.
 ///
@@ -68,14 +70,12 @@ crate::record_serde::wire_record!(CanvasActionInvokeResult { result: "result" if
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CanvasCloseRequest {
     /// Open canvas instance identifier
     pub instance_id: String,
 }
-crate::record_serde::wire_record!(CanvasCloseRequest {
-    instance_id: "instanceId"
-});
 
 /// Host capabilities
 ///
@@ -85,12 +85,13 @@ crate::record_serde::wire_record!(CanvasCloseRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CanvasHostContextCapabilities {
     /// Whether canvas rendering is supported
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub canvases: Option<bool>,
 }
-crate::record_serde::wire_record!(CanvasHostContextCapabilities { canvases: "canvases" if is_none });
 
 /// Host context supplied by the runtime.
 ///
@@ -100,12 +101,13 @@ crate::record_serde::wire_record!(CanvasHostContextCapabilities { canvases: "can
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CanvasHostContext {
     /// Host capabilities
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub capabilities: Option<CanvasHostContextCapabilities>,
 }
-crate::record_serde::wire_record!(CanvasHostContext { capabilities: "capabilities" if is_none });
 
 /// Declared canvases available in this session.
 ///
@@ -115,14 +117,12 @@ crate::record_serde::wire_record!(CanvasHostContext { capabilities: "capabilitie
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CanvasList {
     /// Declared canvases available in this session
     pub canvases: Vec<DiscoveredCanvas>,
 }
-crate::record_serde::wire_record!(CanvasList {
-    canvases: "canvases"
-});
 
 /// Live open-canvas snapshot.
 ///
@@ -132,14 +132,12 @@ crate::record_serde::wire_record!(CanvasList {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CanvasListOpenResult {
     /// Currently open canvas instances
     pub open_canvases: Vec<OpenCanvasInstance>,
 }
-crate::record_serde::wire_record!(CanvasListOpenResult {
-    open_canvases: "openCanvases"
-});
 
 /// Canvas open parameters.
 ///
@@ -149,18 +147,20 @@ crate::record_serde::wire_record!(CanvasListOpenResult {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CanvasOpenRequest {
     /// Provider-local canvas identifier
     pub canvas_id: String,
     /// Owning provider identifier. Optional when the canvasId is unique across providers; required to disambiguate when multiple providers register the same canvasId.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub extension_id: Option<String>,
     /// Canvas open input
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub input: Option<serde_json::Value>,
     /// Caller-supplied stable instance identifier
     pub instance_id: String,
 }
-crate::record_serde::wire_record!(CanvasOpenRequest { canvas_id: "canvasId", extension_id: "extensionId" if is_none, input: "input" if is_none, instance_id: "instanceId" });
 
 /// Session context supplied by the runtime.
 ///
@@ -170,12 +170,13 @@ crate::record_serde::wire_record!(CanvasOpenRequest { canvas_id: "canvasId", ext
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CanvasSessionContext {
     /// Active session working directory, when known.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub working_directory: Option<String>,
 }
-crate::record_serde::wire_record!(CanvasSessionContext { working_directory: "workingDirectory" if is_none });
 
 /// Canvas close parameters sent to the provider.
 ///
@@ -185,7 +186,8 @@ crate::record_serde::wire_record!(CanvasSessionContext { working_directory: "wor
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CanvasProviderCloseRequest {
     /// Target session identifier
     pub session_id: SessionId,
@@ -196,11 +198,12 @@ pub struct CanvasProviderCloseRequest {
     /// Canvas instance identifier
     pub instance_id: String,
     /// Host context supplied by the runtime.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub host: Option<CanvasHostContext>,
     /// Session context supplied by the runtime.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub session: Option<CanvasSessionContext>,
 }
-crate::record_serde::wire_record!(CanvasProviderCloseRequest { session_id: "sessionId", extension_id: "extensionId", canvas_id: "canvasId", instance_id: "instanceId", host: "host" if is_none, session: "session" if is_none });
 
 /// Canvas action invocation parameters sent to the provider.
 ///
@@ -210,7 +213,8 @@ crate::record_serde::wire_record!(CanvasProviderCloseRequest { session_id: "sess
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CanvasProviderInvokeActionRequest {
     /// Target session identifier
     pub session_id: SessionId,
@@ -223,13 +227,15 @@ pub struct CanvasProviderInvokeActionRequest {
     /// Action name to invoke
     pub action_name: String,
     /// Action input
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub input: Option<serde_json::Value>,
     /// Host context supplied by the runtime.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub host: Option<CanvasHostContext>,
     /// Session context supplied by the runtime.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub session: Option<CanvasSessionContext>,
 }
-crate::record_serde::wire_record!(CanvasProviderInvokeActionRequest { session_id: "sessionId", extension_id: "extensionId", canvas_id: "canvasId", instance_id: "instanceId", action_name: "actionName", input: "input" if is_none, host: "host" if is_none, session: "session" if is_none });
 
 /// Canvas open parameters sent to the provider.
 ///
@@ -239,7 +245,8 @@ crate::record_serde::wire_record!(CanvasProviderInvokeActionRequest { session_id
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CanvasProviderOpenRequest {
     /// Target session identifier
     pub session_id: SessionId,
@@ -250,13 +257,15 @@ pub struct CanvasProviderOpenRequest {
     /// Stable caller-supplied canvas instance identifier
     pub instance_id: String,
     /// Canvas open input
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub input: Option<serde_json::Value>,
     /// Host context supplied by the runtime.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub host: Option<CanvasHostContext>,
     /// Session context supplied by the runtime.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub session: Option<CanvasSessionContext>,
 }
-crate::record_serde::wire_record!(CanvasProviderOpenRequest { session_id: "sessionId", extension_id: "extensionId", canvas_id: "canvasId", instance_id: "instanceId", input: "input" if is_none, host: "host" if is_none, session: "session" if is_none });
 
 /// Canvas open result returned by the provider.
 ///
@@ -266,16 +275,19 @@ crate::record_serde::wire_record!(CanvasProviderOpenRequest { session_id: "sessi
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CanvasProviderOpenResult {
     /// Provider-supplied status text
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
     /// Provider-supplied title
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     /// URL for web-rendered canvases
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
 }
-crate::record_serde::wire_record!(CanvasProviderOpenResult { status: "status" if is_none, title: "title" if is_none, url: "url" if is_none });
 
 /// Internal canvas provider registration parameters.
 ///
@@ -285,7 +297,8 @@ crate::record_serde::wire_record!(CanvasProviderOpenResult { status: "status" if
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CanvasProviderRegisterRequest {
     /// Canvas contributions supplied by the provider
     pub canvases: Vec<serde_json::Value>,
@@ -294,11 +307,6 @@ pub struct CanvasProviderRegisterRequest {
     /// Provider metadata supplied by the host
     pub info: serde_json::Value,
 }
-crate::record_serde::wire_record!(CanvasProviderRegisterRequest {
-    canvases: "canvases",
-    connection_id: "connectionId",
-    info: "info"
-});
 
 /// Internal canvas provider unregistration parameters.
 ///
@@ -308,14 +316,12 @@ crate::record_serde::wire_record!(CanvasProviderRegisterRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CanvasProviderUnregisterRequest {
     /// Connection identifier to unregister
     pub connection_id: String,
 }
-crate::record_serde::wire_record!(CanvasProviderUnregisterRequest {
-    connection_id: "connectionId"
-});
 
 /// Closes a canvas through its original owned or attached session namespace.
 ///
@@ -325,14 +331,15 @@ crate::record_serde::wire_record!(CanvasProviderUnregisterRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CanvasSourceCloseRequest {
     /// Exact authenticated local attachment identifier. Omit for the SDK connection's owned session.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub attach_id: Option<i64>,
     /// Open canvas instance identifier
     pub instance_id: String,
 }
-crate::record_serde::wire_record!(CanvasSourceCloseRequest { attach_id: "attachId" if is_none, instance_id: "instanceId" });
 
 /// Semantic digest of a strictly parsed and schema-validated JSON MCP card. Both URL-backed and embedded cards are canonicalised with RFC 8785 JSON Canonicalization Scheme, encoded as UTF-8, and hashed with SHA-256.
 ///
@@ -378,7 +385,8 @@ impl CardDigest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CatalogHandleRejectedError {
     /// Which kind of handle was presented.
     pub handle_type: CatalogHandleType,
@@ -389,12 +397,6 @@ pub struct CatalogHandleRejectedError {
     /// Why the handle was rejected.
     pub reason: CatalogHandleRejectionReason,
 }
-crate::record_serde::wire_record!(CatalogHandleRejectedError {
-    handle_type: "handleType",
-    kind: "kind",
-    message: "message",
-    reason: "reason"
-});
 
 /// The candidate is discoverable but cannot be installed. `application/ai-skill` resolves here, because it stays searchable while remaining typed non-installable.
 ///
@@ -404,7 +406,8 @@ crate::record_serde::wire_record!(CatalogHandleRejectedError {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CatalogNotInstallableError {
     /// Discriminator: the candidate cannot be installed
     pub kind: CatalogNotInstallableErrorKind,
@@ -413,11 +416,6 @@ pub struct CatalogNotInstallableError {
     /// Why the candidate cannot be installed.
     pub reason: CatalogNotInstallableReason,
 }
-crate::record_serde::wire_record!(CatalogNotInstallableError {
-    kind: "kind",
-    message: "message",
-    reason: "reason"
-});
 
 /// No transport this runtime can use is available for the requested server.
 ///
@@ -427,7 +425,8 @@ crate::record_serde::wire_record!(CatalogNotInstallableError {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CatalogUnavailableTransportError {
     /// Discriminator: no usable transport is available
     pub kind: CatalogUnavailableTransportErrorKind,
@@ -436,11 +435,6 @@ pub struct CatalogUnavailableTransportError {
     /// Why no transport could be offered.
     pub reason: CatalogUnavailableTransportReason,
 }
-crate::record_serde::wire_record!(CatalogUnavailableTransportError {
-    kind: "kind",
-    message: "message",
-    reason: "reason"
-});
 
 /// Concrete configuration file containing an MCP server declaration.
 ///
@@ -450,14 +444,15 @@ crate::record_serde::wire_record!(CatalogUnavailableTransportError {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpSourceFile {
     /// RFC 6901 JSON Pointer to the server declaration, when known
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub json_pointer: Option<String>,
     /// Canonical file URI for the configuration document
     pub uri: String,
 }
-crate::record_serde::wire_record!(McpSourceFile { json_pointer: "jsonPointer" if is_none, uri: "uri" });
 
 /// Plugin identity associated with an MCP server declaration.
 ///
@@ -467,16 +462,18 @@ crate::record_serde::wire_record!(McpSourceFile { json_pointer: "jsonPointer" if
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpSourcePlugin {
     /// Canonical plugin identity
     pub id: String,
     /// Human-readable plugin name, when available
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// Plugin version, when available
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
 }
-crate::record_serde::wire_record!(McpSourcePlugin { id: "id", name: "name" if is_none, version: "version" if is_none });
 
 /// Canonical identity and location of the effective MCP server declaration. The declaration is uniquely addressed by this source id together with the discovered server name.
 ///
@@ -486,20 +483,22 @@ crate::record_serde::wire_record!(McpSourcePlugin { id: "id", name: "name" if is
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpSourceRef {
     /// Open semantic editability identifier. Known values are editable and read-only.
     pub editability: String,
     /// Configuration file location, when the declaration is file-backed.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub file: Option<McpSourceFile>,
     /// Opaque stable identity for the configuration source. Clients must not parse this value.
     pub id: String,
     /// Open source-kind identifier. Known values include user, workspace, invocation, plugin, builtin, and device-registry.
     pub kind: String,
     /// Plugin identity, when the declaration is plugin-provided.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub plugin: Option<McpSourcePlugin>,
 }
-crate::record_serde::wire_record!(McpSourceRef { editability: "editability", file: "file" if is_none, id: "id", kind: "kind", plugin: "plugin" if is_none });
 
 /// MCP server discovered by `mcp.discover`, with config source, optional plugin source, transport type, and enabled state.
 ///
@@ -509,12 +508,9 @@ crate::record_serde::wire_record!(McpSourceRef { editability: "editability", fil
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DiscoveredMcpServer {
-    /// Effective serializable configuration, present only when includeConfiguration is true. Authentication remains owned by the runtime; callers must not log secret configuration values.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub configuration: Option<serde_json::Value>,
     /// Canonical identity and location of the effective server declaration.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effective_source: Option<McpSourceRef>,
@@ -535,47 +531,6 @@ pub struct DiscoveredMcpServer {
     pub r#type: Option<DiscoveredMcpServerType>,
 }
 
-impl std::fmt::Debug for DiscoveredMcpServer {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DiscoveredMcpServer")
-            .field(
-                "configuration",
-                &self.configuration.as_ref().map(|_| "<redacted>"),
-            )
-            .field("effective_source", &self.effective_source)
-            .field("enabled", &self.enabled)
-            .field("name", &self.name)
-            .field("source", &self.source)
-            .field("source_plugin", &self.source_plugin)
-            .field("source_plugin_version", &self.source_plugin_version)
-            .field("type", &self.r#type)
-            .finish()
-    }
-}
-
-/// Discovered extension metadata, including source-qualified ID, name, discovery source, status, and optional process ID.
-///
-/// Expanded projection for the existing `Client::call` API. It includes fields added after `Extension` was published.
-#[derive(Debug, Clone, Default)]
-#[non_exhaustive]
-pub struct ExtensionDetails {
-    /// Source-qualified ID (e.g., 'project:my-ext', 'user:auth-helper', 'plugin:my-plugin:my-ext')
-    pub id: String,
-    /// Runtime-owned process log path, when available.
-    pub log_path: Option<String>,
-    /// Absolute executable module path discovered by the runtime.
-    pub module_path: Option<String>,
-    /// Extension name (directory name)
-    pub name: String,
-    /// Process ID if the extension is running
-    pub pid: Option<i64>,
-    /// Discovery source: project (.github/extensions/), user (~/.copilot/extensions/), plugin (installed plugin), or session (session-state/`<id>`/extensions/)
-    pub source: ExtensionSource,
-    /// Current status: running, dormant, disabled, failed, or starting
-    pub status: ExtensionStatus,
-}
-crate::record_serde::wire_record!(ExtensionDetails { id: "id", log_path: "logPath" if is_none, module_path: "modulePath" if is_none, name: "name", pid: "pid" if is_none, source: "source", status: "status" });
-
 /// Slim input shape for extension_context attachments; identity fields are runtime-derived.
 ///
 /// <div class="warning">
@@ -584,7 +539,8 @@ crate::record_serde::wire_record!(ExtensionDetails { id: "id", log_path: "logPat
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ExtensionContextPushInput {
     /// Caller-supplied JSON payload (required, may be null but not undefined)
     pub payload: serde_json::Value,
@@ -593,11 +549,6 @@ pub struct ExtensionContextPushInput {
     /// Attachment type discriminator
     pub r#type: ExtensionContextPushInputType,
 }
-crate::record_serde::wire_record!(ExtensionContextPushInput {
-    payload: "payload",
-    title: "title",
-    r#type: "type"
-});
 
 /// Opaque integrator-owned process launch profile for one extension entrypoint.
 ///
@@ -607,7 +558,8 @@ crate::record_serde::wire_record!(ExtensionContextPushInput {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ExtensionLaunchProfile {
     /// Opaque integrator-defined arguments passed to the executable. The runtime does not append the extension entrypoint.
     pub args: Vec<String>,
@@ -616,11 +568,6 @@ pub struct ExtensionLaunchProfile {
     /// Executable used to launch the extension entrypoint.
     pub executable: String,
 }
-crate::record_serde::wire_record!(ExtensionLaunchProfile {
-    args: "args",
-    env: "env",
-    executable: "executable"
-});
 
 /// A discovered extension entrypoint that the registered integrator may classify and resolve to an opaque launch profile.
 ///
@@ -630,7 +577,8 @@ crate::record_serde::wire_record!(ExtensionLaunchProfile {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ExtensionLaunchProviderResolveRequest {
     /// Source-qualified extension identifier.
     pub id: String,
@@ -641,12 +589,6 @@ pub struct ExtensionLaunchProviderResolveRequest {
     /// Discovery source for the extension entrypoint.
     pub source: ExtensionSource,
 }
-crate::record_serde::wire_record!(ExtensionLaunchProviderResolveRequest {
-    id: "id",
-    module_path: "modulePath",
-    name: "name",
-    source: "source"
-});
 
 /// The launch profile for a supported entrypoint. Omit launch when the provider does not support the entrypoint.
 ///
@@ -656,12 +598,28 @@ crate::record_serde::wire_record!(ExtensionLaunchProviderResolveRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ExtensionLaunchProviderResolveResult {
     /// Opaque launch profile, omitted when this provider does not support the entrypoint.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub launch: Option<ExtensionLaunchProfile>,
 }
-crate::record_serde::wire_record!(ExtensionLaunchProviderResolveResult { launch: "launch" if is_none });
+
+/// Extensions discovered for the session, with their current status.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionList {
+    /// Discovered extensions and their current status
+    pub extensions: Vec<Extension>,
+}
 
 /// Runtime support and session-context standalone executable extension policy.
 ///
@@ -671,7 +629,8 @@ crate::record_serde::wire_record!(ExtensionLaunchProviderResolveResult { launch:
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ExtensionManagedPolicy {
     /// Executable entries discovered from this session's runtime-verified eligible plugins. Under plugin_only, independently launched targets must match these entry paths; an external package, a caller-supplied plugin label, or a synthetic transport bootstrap does not establish eligibility. Empty while pending or when no extension controller is configured.
     pub eligible_plugin_entries: Vec<EligiblePluginExtensionEntry>,
@@ -680,11 +639,6 @@ pub struct ExtensionManagedPolicy {
     /// Whether standalone extensions are allowed, prohibited by plugin-only policy, or pending unresolved managed policy.
     pub standalone: StandaloneExtensionAdmission,
 }
-crate::record_serde::wire_record!(ExtensionManagedPolicy {
-    eligible_plugin_entries: "eligiblePluginEntries",
-    enforcement_version: "enforcementVersion",
-    standalone: "standalone"
-});
 
 /// Source-qualified extension identifier to disable for the session.
 ///
@@ -694,12 +648,12 @@ crate::record_serde::wire_record!(ExtensionManagedPolicy {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ExtensionsDisableRequest {
     /// Source-qualified extension ID to disable
     pub id: String,
 }
-crate::record_serde::wire_record!(ExtensionsDisableRequest { id: "id" });
 
 /// Source-qualified extension identifier to enable for the session.
 ///
@@ -709,12 +663,12 @@ crate::record_serde::wire_record!(ExtensionsDisableRequest { id: "id" });
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ExtensionsEnableRequest {
     /// Source-qualified extension ID to enable
     pub id: String,
 }
-crate::record_serde::wire_record!(ExtensionsEnableRequest { id: "id" });
 
 /// The configuration-change alternative for the transportChoices entry at the same index. Only the selected alternative is applied; entries are not cumulative. The payload stays behind the runtime boundary.
 ///
@@ -724,7 +678,8 @@ crate::record_serde::wire_record!(ExtensionsEnableRequest { id: "id" });
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpPlanConfigurationChange {
     /// Names of the configuration fields the change would set, without their values.
     pub changed_fields: Vec<String>,
@@ -737,19 +692,13 @@ pub struct McpPlanConfigurationChange {
     /// Secret placeholders the written configuration would reference. The constrained placeholder type cannot carry a literal secret value.
     pub secret_references: Vec<String>,
 }
-crate::record_serde::wire_record!(McpPlanConfigurationChange {
-    changed_fields: "changedFields",
-    config_key: "configKey",
-    operation: "operation",
-    scope: "scope",
-    secret_references: "secretReferences"
-});
 
 /// Final remote configuration, not a template. The producer refuses external-value
 /// expansion before presenting this review. Receipt-owned secrets appear only as
 /// `${installation-secret:<id>}` references whose `<id>` matches a reviewed
 /// `${secret:<id>}` placeholder; values are never included.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpInstallationRemoteConfiguration {
     /// Configured headers, excluding separately authorised OAuth tokens. Values may
     /// contain owned secret references, never secret values.
@@ -761,12 +710,6 @@ pub struct McpInstallationRemoteConfiguration {
     /// Exact resolved endpoint, without templates or secret placeholders.
     pub url: String,
 }
-crate::record_serde::wire_record!(McpInstallationRemoteConfiguration {
-    headers: "headers",
-    tools: "tools",
-    transport: "transport",
-    url: "url"
-});
 
 /// Normalised identity of the MCP server a plan targets, independent of how the card spelled it.
 ///
@@ -776,18 +719,20 @@ crate::record_serde::wire_record!(McpInstallationRemoteConfiguration {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpPlanResourceIdentity {
     /// Canonical, normalised name of the server, for example `io.github.owner/server`.
     pub canonical_name: String,
     /// Registry identifier of the server, when it came from a registry.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub registry_id: Option<String>,
     /// Local configuration key the server would be recorded under.
     pub server_name: String,
     /// Version advertised by the card, when it declares one.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
 }
-crate::record_serde::wire_record!(McpPlanResourceIdentity { canonical_name: "canonicalName", registry_id: "registryId" if is_none, server_name: "serverName", version: "version" if is_none });
 
 /// One Registry string-valued configuration entry for the selected transport.
 ///
@@ -797,7 +742,8 @@ crate::record_serde::wire_record!(McpPlanResourceIdentity { canonical_name: "can
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpInstallationInput {
     /// Exact category declared by the selected choice.
     pub category: McpPlanValueCategory,
@@ -806,11 +752,6 @@ pub struct McpInstallationInput {
     /// Explicit non-secret value. Secret placeholders use a separate input channel.
     pub value: String,
 }
-crate::record_serde::wire_record!(McpInstallationInput {
-    category: "category",
-    key: "key",
-    value: "value"
-});
 
 /// Outcome of evaluating the planned server against registry and enterprise policy. Evaluation is read-only.
 ///
@@ -820,16 +761,17 @@ crate::record_serde::wire_record!(McpInstallationInput {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpPlanPolicyResult {
     /// What policy decided for this server.
     pub decision: McpPlanPolicyDecision,
     /// Human-readable explanation, safe to surface. Never contains a query, URL, handle, or secret.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     /// Which authority produced the decision.
     pub source: McpPlanPolicySource,
 }
-crate::record_serde::wire_record!(McpPlanPolicyResult { decision: "decision", reason: "reason" if is_none, source: "source" });
 
 /// Provenance of the exact validated JSON MCP card content bound privately to a completed plan and its opaque handle.
 ///
@@ -839,7 +781,8 @@ crate::record_serde::wire_record!(McpPlanPolicyResult { decision: "decision", re
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpPlanProvenance {
     /// Authority associated with the validated card, without path, query, or credentials. Inert untrusted data.
     pub authority: String,
@@ -850,12 +793,6 @@ pub struct McpPlanProvenance {
     /// ISO 8601 timestamp at which the runtime completed strict parsing and schema validation of the card content.
     pub validated_at: String,
 }
-crate::record_serde::wire_record!(McpPlanProvenance {
-    authority: "authority",
-    card_digest: "cardDigest",
-    media_type: "mediaType",
-    validated_at: "validatedAt"
-});
 
 /// One non-secret scalar value a transport choice needs before it can be applied.
 ///
@@ -981,16 +918,17 @@ impl McpPlanRequiredValueEnum {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpPlanSecretPlaceholder {
     /// Key the secret is supplied under. Inert untrusted data.
     pub key: String,
     /// The runtime-assigned `${secret:<id>}` placeholder written into configuration in place of the value.
     pub placeholder: String,
     /// Human-readable label from the card. Inert untrusted text.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
 }
-crate::record_serde::wire_record!(McpPlanSecretPlaceholder { key: "key", placeholder: "placeholder", title: "title" if is_none });
 
 /// An eligible local-package transport choice. Package identity is required and a remote endpoint cannot be represented.
 ///
@@ -1088,17 +1026,14 @@ impl McpPlanTransportChoiceRemote {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpPlanTarget {
     /// Configuration key the server would be recorded under within that scope.
     pub config_key: String,
     /// Configuration scope the plan targets.
     pub scope: McpPlanScope,
 }
-crate::record_serde::wire_record!(McpPlanTarget {
-    config_key: "configKey",
-    scope: "scope"
-});
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1136,7 +1071,8 @@ pub struct McpInstallationReviewInstall {
     pub target: McpPlanTarget,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpInstallationReviewUninstall {
     /// Exact reviewed installation action.
     pub action: McpInstallationReviewUninstallAction,
@@ -1157,17 +1093,6 @@ pub struct McpInstallationReviewUninstall {
     /// Exact destination, checked for intervening changes before mutation.
     pub target: McpPlanTarget,
 }
-crate::record_serde::wire_record!(McpInstallationReviewUninstall {
-    action: "action",
-    identity: "identity",
-    installation_id: "installationId",
-    owned_secret_count: "ownedSecretCount",
-    policy: "policy",
-    preserves_shared_authentication: "preservesSharedAuthentication",
-    provenance: "provenance",
-    restores_previous_configuration: "restoresPreviousConfiguration",
-    target: "target"
-});
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1188,13 +1113,15 @@ pub struct InstallationReviewSkill {
 }
 
 /// Review for installing a verified Agent Plugin.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct InstallationReviewPluginReview {
     /// Exact reviewed Agent Plugin installation action.
     pub action: InstallationReviewPluginReviewAction,
     /// Catalogue identity retained from the bound candidate, or verified data for a reference.
     pub catalogue: InstallationCatalogueIdentity,
     /// Manifest description when present.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     /// Reviewed files and digests.
     pub files: Vec<PluginInstallationFileReview>,
@@ -1207,6 +1134,7 @@ pub struct InstallationReviewPluginReview {
     pub manifest_path: String,
     /// MCP servers the verified files declare, exactly as an install of these files loads
     /// them. Omitted when the plugin declares none.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub mcp_servers: Option<Vec<PluginInstallationMcpServerReview>>,
     /// Installed plugin name, derived from the verified manifest exactly as a direct install derives it.
     pub name: String,
@@ -1217,21 +1145,18 @@ pub struct InstallationReviewPluginReview {
     /// Total reviewed payload size in bytes.
     pub total_bytes: i64,
     /// Manifest version when present.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
 }
-crate::record_serde::wire_record!(InstallationReviewPluginReview { action: "action", catalogue: "catalogue", description: "description" if is_none, files: "files", installs_disabled: "installsDisabled", manifest_content: "manifestContent", manifest_path: "manifestPath", mcp_servers: "mcpServers" if is_none, name: "name", source: "source", target: "target", total_bytes: "totalBytes", version: "version" if is_none });
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct InstallationReviewPlugin {
     /// Reviewed resource discriminator.
     pub resource: InstallationReviewPluginResource,
     /// The exact verified Agent Plugin action and its reviewed files.
     pub review: InstallationReviewPluginReview,
 }
-crate::record_serde::wire_record!(InstallationReviewPlugin {
-    resource: "resource",
-    review: "review"
-});
 
 /// One connection-owned, expiring request for a trusted host's explicit user decision.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1254,7 +1179,8 @@ pub struct InstallationConfirmationRequest {
 }
 
 /// A response is meaningful only on the connection and request that issued its challenge.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct InstallationConfirmationResponse {
     /// Exact challenge from the request.
     pub confirmation_id: String,
@@ -1263,37 +1189,6 @@ pub struct InstallationConfirmationResponse {
     /// Exact review commitment from the request.
     pub review_fingerprint: String,
 }
-crate::record_serde::wire_record!(InstallationConfirmationResponse {
-    confirmation_id: "confirmationId",
-    decision: "decision",
-    review_fingerprint: "reviewFingerprint"
-});
-
-/// A JSON document to validate and compose.
-#[derive(Debug, Clone, Default)]
-pub struct McpAdditionalConfigSourceJson {
-    /// The source format: inline JSON or a host file.
-    pub kind: McpAdditionalConfigSourceJsonKind,
-    /// Raw JSON text.
-    pub value: String,
-}
-crate::record_serde::wire_record!(McpAdditionalConfigSourceJson {
-    kind: "kind",
-    value: "value"
-});
-
-/// A document read from the host filesystem.
-#[derive(Debug, Clone, Default)]
-pub struct McpAdditionalConfigSourceFile {
-    /// The source format: inline JSON or a host file.
-    pub kind: McpAdditionalConfigSourceFileKind,
-    /// Absolute path resolved by the caller.
-    pub path: String,
-}
-crate::record_serde::wire_record!(McpAdditionalConfigSourceFile {
-    kind: "kind",
-    path: "path"
-});
 
 /// Applies exactly one previously prepared operation on its original connection.
 ///
@@ -1303,7 +1198,8 @@ crate::record_serde::wire_record!(McpAdditionalConfigSourceFile {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpApplyInstallRequest {
     /// Capabilities required by the original prepared operation.
     pub contract: CatalogClientContract,
@@ -1312,11 +1208,6 @@ pub struct McpApplyInstallRequest {
     /// Same existing attached or privately borrowed session as preparation.
     pub policy_session_id: String,
 }
-crate::record_serde::wire_record!(McpApplyInstallRequest {
-    contract: "contract",
-    operation_id: "operationId",
-    policy_session_id: "policySessionId"
-});
 
 /// One-use application of the exact retained removal plan.
 ///
@@ -1326,7 +1217,8 @@ crate::record_serde::wire_record!(McpApplyInstallRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpApplyUninstallRequest {
     /// Required authenticated bound installation capabilities.
     pub contract: CatalogClientContract,
@@ -1335,11 +1227,6 @@ pub struct McpApplyUninstallRequest {
     /// Same existing selected session as removal preparation.
     pub policy_session_id: String,
 }
-crate::record_serde::wire_record!(McpApplyUninstallRequest {
-    contract: "contract",
-    plan_handle: "planHandle",
-    policy_session_id: "policySessionId"
-});
 
 /// MCP server, tool name, and arguments to invoke from an MCP App view.
 ///
@@ -1349,11 +1236,14 @@ crate::record_serde::wire_record!(McpApplyUninstallRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpAppsCallToolRequest {
     /// MCP tools/call request metadata, forwarded separately from tool arguments. Host-owned progress tokens and protocol metadata take precedence.
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub meta: Option<HashMap<String, serde_json::Value>>,
     /// Tool arguments
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub arguments: Option<HashMap<String, serde_json::Value>>,
     /// **Required.** Server whose ui:// view issued the request. Per SEP-1865 ('callable by the app from this server only'), the call is rejected when this differs from `serverName`, and rejected outright when missing.
     pub origin_server_name: String,
@@ -1362,7 +1252,6 @@ pub struct McpAppsCallToolRequest {
     /// MCP tool name
     pub tool_name: String,
 }
-crate::record_serde::wire_record!(McpAppsCallToolRequest { meta: "_meta" if is_none, arguments: "arguments" if is_none, origin_server_name: "originServerName", server_name: "serverName", tool_name: "toolName" });
 
 /// MCP server to diagnose MCP Apps wiring for.
 ///
@@ -1372,14 +1261,12 @@ crate::record_serde::wire_record!(McpAppsCallToolRequest { meta: "_meta" if is_n
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpAppsDiagnoseRequest {
     /// MCP server to probe
     pub server_name: String,
 }
-crate::record_serde::wire_record!(McpAppsDiagnoseRequest {
-    server_name: "serverName"
-});
 
 /// Diagnostic snapshot of MCP Apps wiring for the named server.
 ///
@@ -1389,17 +1276,14 @@ crate::record_serde::wire_record!(McpAppsDiagnoseRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpAppsDiagnoseResult {
     /// Capability negotiation snapshot
     pub capability: McpAppsDiagnoseCapability,
     /// What the server returned for this session
     pub server: McpAppsDiagnoseServer,
 }
-crate::record_serde::wire_record!(McpAppsDiagnoseResult {
-    capability: "capability",
-    server: "server"
-});
 
 /// Current host context advertised to MCP App guests.
 ///
@@ -1409,12 +1293,12 @@ crate::record_serde::wire_record!(McpAppsDiagnoseResult {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpAppsHostContext {
     /// Current host context
     pub context: McpAppsHostContextDetails,
 }
-crate::record_serde::wire_record!(McpAppsHostContext { context: "context" });
 
 /// MCP server to list app-callable tools for.
 ///
@@ -1424,17 +1308,14 @@ crate::record_serde::wire_record!(McpAppsHostContext { context: "context" });
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpAppsListToolsRequest {
     /// **Required.** Server whose ui:// view issued the request. Per SEP-1865 ('callable by the app from this server only'), the call is rejected when this differs from `serverName`, and rejected outright when missing.
     pub origin_server_name: String,
     /// MCP server hosting the app
     pub server_name: String,
 }
-crate::record_serde::wire_record!(McpAppsListToolsRequest {
-    origin_server_name: "originServerName",
-    server_name: "serverName"
-});
 
 /// App-callable tools from the named MCP server.
 ///
@@ -1444,12 +1325,12 @@ crate::record_serde::wire_record!(McpAppsListToolsRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpAppsListToolsResult {
     /// App-callable tools from the server
     pub tools: Vec<HashMap<String, serde_json::Value>>,
 }
-crate::record_serde::wire_record!(McpAppsListToolsResult { tools: "tools" });
 
 /// MCP server and resource URI to fetch.
 ///
@@ -1459,17 +1340,14 @@ crate::record_serde::wire_record!(McpAppsListToolsResult { tools: "tools" });
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpAppsReadResourceRequest {
     /// Name of the MCP server hosting the resource
     pub server_name: String,
     /// Resource URI (typically ui://...)
     pub uri: String,
 }
-crate::record_serde::wire_record!(McpAppsReadResourceRequest {
-    server_name: "serverName",
-    uri: "uri"
-});
 
 /// Resource contents returned by the MCP server.
 ///
@@ -1479,14 +1357,12 @@ crate::record_serde::wire_record!(McpAppsReadResourceRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpAppsReadResourceResult {
     /// Resource contents returned by the server
     pub contents: Vec<McpAppsResourceContent>,
 }
-crate::record_serde::wire_record!(McpAppsReadResourceResult {
-    contents: "contents"
-});
 
 /// Host context advertised to MCP App guests
 ///
@@ -1496,24 +1372,31 @@ crate::record_serde::wire_record!(McpAppsReadResourceResult {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpAppsSetHostContextDetails {
     /// Display modes the host supports
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub available_display_modes: Option<Vec<McpAppsSetHostContextDetailsAvailableDisplayMode>>,
     /// Current display mode (SEP-1865)
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub display_mode: Option<McpAppsSetHostContextDetailsDisplayMode>,
     /// BCP-47 locale, e.g. 'en-US'
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub locale: Option<String>,
     /// Platform type for responsive design
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub platform: Option<McpAppsSetHostContextDetailsPlatform>,
     /// UI theme preference per SEP-1865
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub theme: Option<McpAppsSetHostContextDetailsTheme>,
     /// IANA timezone, e.g. 'America/New_York'
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub time_zone: Option<String>,
     /// Host application identifier
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub user_agent: Option<String>,
 }
-crate::record_serde::wire_record!(McpAppsSetHostContextDetails { available_display_modes: "availableDisplayModes" if is_none, display_mode: "displayMode" if is_none, locale: "locale" if is_none, platform: "platform" if is_none, theme: "theme" if is_none, time_zone: "timeZone" if is_none, user_agent: "userAgent" if is_none });
 
 /// Host context to advertise to MCP App guests.
 ///
@@ -1523,12 +1406,12 @@ crate::record_serde::wire_record!(McpAppsSetHostContextDetails { available_displ
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpAppsSetHostContextRequest {
     /// Host context advertised to MCP App guests
     pub context: McpAppsSetHostContextDetails,
 }
-crate::record_serde::wire_record!(McpAppsSetHostContextRequest { context: "context" });
 
 /// Invokes a tool on a session MCP server through the server's permission policy.
 ///
@@ -1538,7 +1421,8 @@ crate::record_serde::wire_record!(McpAppsSetHostContextRequest { context: "conte
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpCallToolRequest {
     /// MCP tool arguments.
     pub arguments: serde_json::Value,
@@ -1547,11 +1431,6 @@ pub struct McpCallToolRequest {
     /// Unprefixed MCP tool name.
     pub tool_name: String,
 }
-crate::record_serde::wire_record!(McpCallToolRequest {
-    arguments: "arguments",
-    server_name: "serverName",
-    tool_name: "toolName"
-});
 
 /// The requestId previously passed to executeSampling that should be cancelled.
 ///
@@ -1561,14 +1440,12 @@ crate::record_serde::wire_record!(McpCallToolRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpCancelSamplingExecutionParams {
     /// The requestId previously passed to executeSampling that should be cancelled
     pub request_id: RequestId,
 }
-crate::record_serde::wire_record!(McpCancelSamplingExecutionParams {
-    request_id: "requestId"
-});
 
 /// Indicates whether an in-flight sampling execution with the given requestId was found and cancelled.
 ///
@@ -1578,57 +1455,12 @@ crate::record_serde::wire_record!(McpCancelSamplingExecutionParams {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpCancelSamplingExecutionResult {
     /// True if an in-flight execution with the given requestId was found and signalled to cancel. False when no such execution is in flight (already completed, never started, or cancelled by another caller).
     pub cancelled: bool,
 }
-crate::record_serde::wire_record!(McpCancelSamplingExecutionResult {
-    cancelled: "cancelled"
-});
-
-/// Apply the host's Computer Use platform overlay without starting a server.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct McpComputerUseApplyConfigurationRequest {
-    /// Disabled servers after invocation precedence.
-    pub disabled_servers: Vec<String>,
-    /// Explicitly enabled servers.
-    pub enabled_servers: Vec<String>,
-    /// Complete server map, including provenance and fields unknown to older clients.
-    pub servers: serde_json::Value,
-}
-crate::record_serde::wire_record!(McpComputerUseApplyConfigurationRequest {
-    disabled_servers: "disabledServers",
-    enabled_servers: "enabledServers",
-    servers: "servers"
-});
-
-/// Effective configuration after the existing platform overlay.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct McpComputerUseApplyConfigurationResult {
-    /// Effective disabled server names.
-    pub disabled_servers: Vec<String>,
-    /// Server map with only the platform overlay's changes.
-    pub servers: serde_json::Value,
-}
-crate::record_serde::wire_record!(McpComputerUseApplyConfigurationResult {
-    disabled_servers: "disabledServers",
-    servers: "servers"
-});
 
 /// MCP server name and configuration to add to user configuration.
 ///
@@ -1638,88 +1470,14 @@ crate::record_serde::wire_record!(McpComputerUseApplyConfigurationResult {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpConfigAddRequest {
     /// MCP server configuration (stdio process or remote HTTP/SSE)
     pub config: serde_json::Value,
     /// Unique name for the MCP server
     pub name: String,
 }
-crate::record_serde::wire_record!(McpConfigAddRequest {
-    config: "config",
-    name: "name"
-});
-
-/// Extensible [`McpConfigAddRequest`], including inputs added after it was published.
-///
-/// Required inputs are [`McpConfigAddOptions::new`] arguments; optional inputs have fluent setters.
-/// Input-only: it serialises to the flat wire request and is not deserialisable.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct McpConfigAddOptions {
-    #[serde(flatten)]
-    legacy: McpConfigAddRequest,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    config_dir: Option<String>,
-}
-
-impl McpConfigAddOptions {
-    /// Creates options with the required inputs.
-    pub fn new(name: impl Into<String>, config: serde_json::Value) -> Self {
-        Self {
-            legacy: McpConfigAddRequest {
-                name: name.into(),
-                config,
-            },
-            config_dir: None,
-        }
-    }
-
-    /// Configuration root for the user MCP document. Omission retains the connection's root; overrides require a trusted host or direct SDK caller.
-    pub fn config_dir(mut self, value: impl Into<String>) -> Self {
-        self.config_dir = Some(value.into());
-        self
-    }
-}
-
-/// Validates and combines additional MCP documents in source order.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct McpConfigComposeAdditionalRequest {
-    /// Documents in low-to-high precedence order.
-    pub sources: Vec<McpAdditionalConfigSource>,
-}
-crate::record_serde::wire_record!(McpConfigComposeAdditionalRequest { sources: "sources" });
-
-/// Validated additional MCP servers in source precedence order. Runtime-owned filtering remains outside the serialized document.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct McpConfigComposeAdditionalResult {
-    /// Server names mapped to their validated document configuration.
-    pub mcp_servers: HashMap<String, serde_json::Value>,
-}
-crate::record_serde::wire_record!(McpConfigComposeAdditionalResult {
-    mcp_servers: "mcpServers"
-});
 
 /// MCP server names to disable for new sessions.
 ///
@@ -1729,47 +1487,11 @@ crate::record_serde::wire_record!(McpConfigComposeAdditionalResult {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpConfigDisableRequest {
     /// Names of MCP servers to disable. Each server is added to the persisted disabled list so new sessions skip it. Already-disabled names are ignored. Active sessions keep their current connections until they end.
     pub names: Vec<String>,
-}
-crate::record_serde::wire_record!(McpConfigDisableRequest { names: "names" });
-
-/// Extensible [`McpConfigDisableRequest`], including inputs added after it was published.
-///
-/// Required inputs are [`McpConfigDisableOptions::new`] arguments; optional inputs have fluent setters.
-/// Input-only: it serialises to the flat wire request and is not deserialisable.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct McpConfigDisableOptions {
-    #[serde(flatten)]
-    legacy: McpConfigDisableRequest,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    config_dir: Option<String>,
-}
-
-impl McpConfigDisableOptions {
-    /// Creates options with the required inputs.
-    pub fn new(names: Vec<String>) -> Self {
-        Self {
-            legacy: McpConfigDisableRequest { names },
-            config_dir: None,
-        }
-    }
-
-    /// Optional configuration root for user settings. Omission retains the connection's root; overrides require a trusted host or direct SDK caller.
-    pub fn config_dir(mut self, value: impl Into<String>) -> Self {
-        self.config_dir = Some(value.into());
-        self
-    }
 }
 
 /// MCP server names to enable for new sessions.
@@ -1780,65 +1502,12 @@ impl McpConfigDisableOptions {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpConfigEnableRequest {
     /// Names of MCP servers to enable. Each server is removed from the persisted disabled list so new sessions spawn it. Unknown or already-enabled names are ignored.
     pub names: Vec<String>,
 }
-crate::record_serde::wire_record!(McpConfigEnableRequest { names: "names" });
-
-/// Extensible [`McpConfigEnableRequest`], including inputs added after it was published.
-///
-/// Required inputs are [`McpConfigEnableOptions::new`] arguments; optional inputs have fluent setters.
-/// Input-only: it serialises to the flat wire request and is not deserialisable.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct McpConfigEnableOptions {
-    #[serde(flatten)]
-    legacy: McpConfigEnableRequest,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    config_dir: Option<String>,
-}
-
-impl McpConfigEnableOptions {
-    /// Creates options with the required inputs.
-    pub fn new(names: Vec<String>) -> Self {
-        Self {
-            legacy: McpConfigEnableRequest { names },
-            config_dir: None,
-        }
-    }
-
-    /// Optional configuration root for user settings. Omission retains the connection's root; overrides require a trusted host or direct SDK caller.
-    pub fn config_dir(mut self, value: impl Into<String>) -> Self {
-        self.config_dir = Some(value.into());
-        self
-    }
-}
-
-/// Selects an explicit user MCP configuration root without changing the connection owner.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct McpConfigForConfigDirRequest {
-    /// Configuration root containing the user MCP document.
-    pub config_dir: String,
-}
-crate::record_serde::wire_record!(McpConfigForConfigDirRequest {
-    config_dir: "configDir"
-});
 
 /// User-configured MCP servers, keyed by server name.
 ///
@@ -1848,85 +1517,12 @@ crate::record_serde::wire_record!(McpConfigForConfigDirRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpConfigList {
     /// All MCP servers from user config, keyed by name
     pub servers: HashMap<String, serde_json::Value>,
 }
-crate::record_serde::wire_record!(McpConfigList { servers: "servers" });
-
-/// Optional configuration root for user MCP servers. Omission retains the connection's root.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct McpConfigListRequest {
-    /// Configuration root containing the user MCP document. Only trusted hosts or direct SDK callers can override it.
-    pub config_dir: Option<String>,
-}
-crate::record_serde::wire_record!(McpConfigListRequest { config_dir: "configDir" if is_none });
-
-/// Read-only MCP configuration composition from explicit source inventories. The result grants no execution authority.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct McpConfigMergeSourcesRequest {
-    /// Additional MCP configuration, merged after the other sources.
-    pub additional_config: Option<serde_json::Value>,
-    /// Host-bundled plugin records, below user and workspace configuration.
-    pub builtin_plugins: Option<Vec<serde_json::Value>>,
-    /// Configuration root for the user MCP document.
-    pub config_dir: String,
-    /// Include workspace files only where the runtime confirms folder trust.
-    pub include_workspace_sources: Option<bool>,
-    /// Resolved installed, live, and explicit plugin records in precedence order.
-    pub installed_plugins: Option<Vec<serde_json::Value>>,
-    /// Repository boundary for upward workspace discovery.
-    pub repo_root: Option<String>,
-    /// Working directory for workspace discovery and relative source references.
-    pub working_directory: String,
-}
-crate::record_serde::wire_record!(McpConfigMergeSourcesRequest { additional_config: "additionalConfig" if is_none, builtin_plugins: "builtinPlugins" if is_none, config_dir: "configDir", include_workspace_sources: "includeWorkspaceSources" if is_none, installed_plugins: "installedPlugins" if is_none, repo_root: "repoRoot" if is_none, working_directory: "workingDirectory" });
-
-/// The composed MCP configuration and all omitted-source diagnostics.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct McpConfigMergeSourcesResult {
-    /// The complete merged configuration, including source provenance.
-    pub config: serde_json::Value,
-    /// Registry servers disabled because their MSIX container is unavailable.
-    pub odr_msix_disabled_server_names: Vec<String>,
-    /// Server names discovered through the on-device registry.
-    pub odr_server_names: Vec<String>,
-    /// Invalid user entries omitted while valid siblings remained.
-    #[doc(hidden)]
-    pub(crate) user_config_errors: Vec<McpConfigSourceDiagnostic>,
-    /// Workspace files or entries that did not load.
-    #[doc(hidden)]
-    pub(crate) workspace_errors: Vec<McpConfigSourceDiagnostic>,
-}
-crate::record_serde::wire_record!(McpConfigMergeSourcesResult {
-    config: "config",
-    odr_msix_disabled_server_names: "odrMsixDisabledServerNames",
-    odr_server_names: "odrServerNames",
-    user_config_errors: "userConfigErrors",
-    workspace_errors: "workspaceErrors"
-});
 
 /// MCP server name to remove from user configuration.
 ///
@@ -1936,58 +1532,14 @@ crate::record_serde::wire_record!(McpConfigMergeSourcesResult {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpConfigRemoveRequest {
     /// OAuth Client ID Metadata Document URL whose persisted credentials should also be removed.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub auth_client_id_metadata_url: Option<String>,
     /// Name of the MCP server to remove
     pub name: String,
-}
-crate::record_serde::wire_record!(McpConfigRemoveRequest { auth_client_id_metadata_url: "authClientIdMetadataUrl" if is_none, name: "name" });
-
-/// Extensible [`McpConfigRemoveRequest`], including inputs added after it was published.
-///
-/// Required inputs are [`McpConfigRemoveOptions::new`] arguments; optional inputs have fluent setters.
-/// Input-only: it serialises to the flat wire request and is not deserialisable.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct McpConfigRemoveOptions {
-    #[serde(flatten)]
-    legacy: McpConfigRemoveRequest,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    config_dir: Option<String>,
-}
-
-impl McpConfigRemoveOptions {
-    /// Creates options with the required inputs.
-    pub fn new(name: impl Into<String>) -> Self {
-        Self {
-            legacy: McpConfigRemoveRequest {
-                name: name.into(),
-                auth_client_id_metadata_url: None,
-            },
-            config_dir: None,
-        }
-    }
-
-    /// OAuth Client ID Metadata Document URL whose persisted credentials should also be removed.
-    pub fn auth_client_id_metadata_url(mut self, value: impl Into<String>) -> Self {
-        self.legacy.auth_client_id_metadata_url = Some(value.into());
-        self
-    }
-
-    /// Configuration root for the user MCP document and credentials. Omission retains the connection's root; overrides require a trusted host or direct SDK caller.
-    pub fn config_dir(mut self, value: impl Into<String>) -> Self {
-        self.config_dir = Some(value.into());
-        self
-    }
 }
 
 /// MCP server name and replacement configuration to write to user configuration.
@@ -1998,17 +1550,14 @@ impl McpConfigRemoveOptions {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpConfigUpdateRequest {
     /// MCP server configuration (stdio process or remote HTTP/SSE)
     pub config: serde_json::Value,
     /// Name of the MCP server to update
     pub name: String,
 }
-crate::record_serde::wire_record!(McpConfigUpdateRequest {
-    config: "config",
-    name: "name"
-});
 
 /// Effective MCP configuration with optional live observations from matching already materialized servers.
 ///
@@ -2018,12 +1567,12 @@ crate::record_serde::wire_record!(McpConfigUpdateRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpConfiguredServerList {
     /// Effective configured MCP servers.
     pub servers: Vec<McpConfiguredServer>,
 }
-crate::record_serde::wire_record!(McpConfiguredServerList { servers: "servers" });
 
 /// Credential-free authentication identity used to configure GitHub MCP.
 ///
@@ -2033,15 +1582,13 @@ crate::record_serde::wire_record!(McpConfiguredServerList { servers: "servers" }
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct McpConfigureGitHubRequest {
-    /// Credential-free authentication identity for GitHub MCP configuration. The field retains its legacy opaque schema for compatibility.
+    /// Opaque runtime auth info for GitHub MCP configuration. Marked internal: an in-process runtime shape (configureGitHubMcp is a no-op over the wire).
     #[doc(hidden)]
     pub(crate) auth_info: serde_json::Value,
 }
-crate::record_serde::wire_record!(McpConfigureGitHubRequest {
-    auth_info: "authInfo"
-});
 
 /// Result of configuring GitHub MCP.
 ///
@@ -2051,27 +1598,12 @@ crate::record_serde::wire_record!(McpConfigureGitHubRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpConfigureGitHubResult {
     /// Whether GitHub MCP configuration changed.
     pub changed: bool,
 }
-crate::record_serde::wire_record!(McpConfigureGitHubResult { changed: "changed" });
-
-/// Fresh user MCP server names, including invalid entries but excluding installation-owned entries. This read does not change the validated configuration cache.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct McpConfigUserServerNamesResult {
-    /// User-owned persisted server names, including entries that validation skips.
-    pub names: Vec<String>,
-}
-crate::record_serde::wire_record!(McpConfigUserServerNamesResult { names: "names" });
 
 /// Name of the MCP server to disable for the session.
 ///
@@ -2081,14 +1613,15 @@ crate::record_serde::wire_record!(McpConfigUserServerNamesResult { names: "names
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpDisableRequest {
     /// Required for an owned installation; omission preserves only manual-server behaviour.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub expected_installation_id: Option<String>,
     /// Name of the MCP server to disable
     pub server_name: String,
 }
-crate::record_serde::wire_record!(McpDisableRequest { expected_installation_id: "expectedInstallationId" if is_none, server_name: "serverName" });
 
 /// Optional working directory used as context for MCP server discovery.
 ///
@@ -2098,173 +1631,16 @@ crate::record_serde::wire_record!(McpDisableRequest { expected_installation_id: 
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpDiscoverRequest {
     /// Whether to include canonical effectiveSource metadata for each discovered server. Callers must opt in so protocol-3 clients retain the legacy closed response shape.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub include_effective_source: Option<bool>,
     /// Working directory used as context for discovery (e.g., plugin resolution)
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub working_directory: Option<String>,
 }
-crate::record_serde::wire_record!(McpDiscoverRequest { include_effective_source: "includeEffectiveSource" if is_none, working_directory: "workingDirectory" if is_none });
-
-/// Read-only invocation options for effective MCP discovery. User and repository settings remain unchanged.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct McpDiscoveryOptions {
-    /// Additional MCP configuration, as inline JSON or @file references, merged in order after the persisted and plugin sources. Relative file references resolve against workingDirectory.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub additional_config: Option<Vec<String>>,
-    /// Invocation tool allowlist. Together with excludedTools, it controls whether shell-replaceable GitHub MCP tools remain necessary.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub available_tools: Option<Vec<String>>,
-    /// Disable the runtime's built-in MCP server names for this invocation.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub disable_builtin_servers: Option<bool>,
-    /// Server names explicitly disabled for this invocation. These disables take precedence over enabledServers.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub disabled_servers: Option<Vec<String>>,
-    /// Enable the full GitHub MCP tool surface for this invocation.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub enable_all_github_tools: Option<bool>,
-    /// Server names explicitly enabled for this invocation, overriding persisted disabled names but not explicit invocation disables or runtime policy.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub enabled_servers: Option<Vec<String>>,
-    /// Invocation tool exclusions. These exclusions take precedence over availableTools.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub excluded_tools: Option<Vec<String>>,
-    /// Experimental feature opt-in for this invocation. Defaults to the effective user and trusted repository setting.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub experimental: Option<bool>,
-    /// Additional GitHub MCP tools selected for this invocation.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub github_tools: Option<Vec<String>>,
-    /// Additional GitHub MCP toolsets selected for this invocation.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub github_toolsets: Option<Vec<String>>,
-}
-
-impl std::fmt::Debug for McpDiscoveryOptions {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("McpDiscoveryOptions")
-            .field(
-                "additional_config",
-                &self.additional_config.as_ref().map(|_| "<redacted>"),
-            )
-            .field("available_tools", &self.available_tools)
-            .field("disable_builtin_servers", &self.disable_builtin_servers)
-            .field("disabled_servers", &self.disabled_servers)
-            .field("enable_all_github_tools", &self.enable_all_github_tools)
-            .field("enabled_servers", &self.enabled_servers)
-            .field("excluded_tools", &self.excluded_tools)
-            .field("experimental", &self.experimental)
-            .field("github_tools", &self.github_tools)
-            .field("github_toolsets", &self.github_toolsets)
-            .finish()
-    }
-}
-
-/// Extensible [`McpDiscoverRequest`], including inputs added after it was published.
-///
-/// Required inputs are [`McpDiscoverOptions::new`] arguments; optional inputs have fluent setters.
-/// Input-only: it serialises to the flat wire request and is not deserialisable.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct McpDiscoverOptions {
-    #[serde(flatten)]
-    legacy: McpDiscoverRequest,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    include_configuration: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    options: Option<McpDiscoveryOptions>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    plugin_directories: Option<Vec<String>>,
-}
-
-impl McpDiscoverOptions {
-    /// Creates options with the required inputs.
-    pub fn new() -> Self {
-        Self {
-            legacy: McpDiscoverRequest {
-                working_directory: None,
-                include_effective_source: None,
-            },
-            include_configuration: None,
-            options: None,
-            plugin_directories: None,
-        }
-    }
-
-    /// Working directory used as context for discovery (e.g., plugin resolution)
-    pub fn working_directory(mut self, value: impl Into<String>) -> Self {
-        self.legacy.working_directory = Some(value.into());
-        self
-    }
-
-    /// Whether to include canonical effectiveSource metadata for each discovered server. Callers must opt in so protocol-3 clients retain the legacy closed response shape.
-    pub fn include_effective_source(mut self, value: bool) -> Self {
-        self.legacy.include_effective_source = Some(value);
-        self
-    }
-
-    /// Include each server's effective serializable configuration and structured diagnostics. Omitted or false preserves the existing response shape exactly.
-    pub fn include_configuration(mut self, value: bool) -> Self {
-        self.include_configuration = Some(value);
-        self
-    }
-
-    /// Read-only invocation options layered over runtime-owned configuration. These options never assert account, workspace trust, or managed policy.
-    pub fn options(mut self, value: McpDiscoveryOptions) -> Self {
-        self.options = Some(value);
-        self
-    }
-
-    /// External plugin directories mounted for this discovery only. Relative paths resolve against workingDirectory. The runtime resolves trust and policy; these directories do not become trusted built-ins or change settings.
-    pub fn plugin_directories(mut self, value: Vec<String>) -> Self {
-        self.plugin_directories = Some(value);
-        self
-    }
-}
-
-impl Default for McpDiscoverOptions {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// A nonfatal discovery problem. Paths and messages are untrusted display text and can contain private configuration data.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct McpDiscoveryDiagnostic {
-    /// Problem detail for display. Clients must sanitize terminal control characters before printing it.
-    pub message: String,
-    /// Configuration path when the problem concerns a file.
-    pub path: Option<String>,
-    /// Machine-readable reason, such as invalid-server, malformed, unreadable, timeout, or unavailable.
-    pub reason: String,
-    /// Source of the diagnostic, such as user, workspace, plugin, builtin, auth, or policy.
-    pub source: String,
-}
-crate::record_serde::wire_record!(McpDiscoveryDiagnostic { message: "message", path: "path" if is_none, reason: "reason", source: "source" });
 
 /// MCP servers discovered from user, workspace, plugin, and built-in sources.
 ///
@@ -2274,71 +1650,12 @@ crate::record_serde::wire_record!(McpDiscoveryDiagnostic { message: "message", p
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpDiscoverResult {
-    /// Discovery warnings, present only when includeConfiguration is true. Empty when discovery has no warnings.
-    pub diagnostics: Option<Vec<McpDiscoveryDiagnostic>>,
     /// MCP servers discovered from all sources
     pub servers: Vec<DiscoveredMcpServer>,
 }
-crate::record_serde::wire_record!(McpDiscoverResult { diagnostics: "diagnostics" if is_none, servers: "servers" });
-
-/// Discovered configuration for a registered in-process MCP bridge.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct McpDiscoveryMemoryConfig {
-    /// Configuration warnings recorded while loading the server.
-    pub config_warnings: Option<Vec<String>>,
-    /// Controls whether tools can be loaded on demand.
-    pub defer_tools: Option<McpServerConfigDeferTools>,
-    /// Whether secret masking is disabled for calls to this server.
-    pub disable_secret_masking: Option<bool>,
-    /// Whether persisted tool snapshots are disabled.
-    pub disable_tool_cache: Option<bool>,
-    /// Optional human-readable server name.
-    pub display_name: Option<String>,
-    /// Event types this server receives as Copilot notifications.
-    pub events: Option<Vec<String>>,
-    /// Tool names excluded after the include filter is applied.
-    pub exclude_tools: Option<Vec<String>>,
-    /// Content filtering mode to apply to this server's tools.
-    pub filter_mapping: Option<serde_json::Value>,
-    /// Whether this server is a built-in fallback.
-    pub is_default_server: Option<bool>,
-    /// Copilot notification types this server may send to the host.
-    pub notifications: Option<Vec<String>>,
-    /// Set to `true` to use default OIDC settings.
-    pub oidc: Option<serde_json::Value>,
-    /// Telemetry-obfuscation policy for this server's tools.
-    pub safe_for_telemetry: Option<serde_json::Value>,
-    /// Indicates a registered in-process MCP bridge, not a serializable server instance.
-    pub server_instance: bool,
-    /// Milliseconds this server may spend connecting before the CLI warns that it is taking longer than expected. Presentation only: it does not change how long the connection is allowed to take.
-    pub slow_connection_threshold_ms: Option<i64>,
-    /// The origin of this server configuration.
-    pub source: Option<McpServerSource>,
-    /// Source file path recorded while loading the config.
-    pub source_path: Option<String>,
-    /// Plugin that provided this server.
-    pub source_plugin: Option<String>,
-    /// Whether the providing plugin uses the Open Plugin Spec.
-    pub source_plugin_spec: Option<bool>,
-    /// Version of the plugin that provided this server.
-    pub source_plugin_version: Option<String>,
-    /// Timeout in milliseconds for tool discovery and tool calls.
-    pub timeout: Option<i64>,
-    /// Tools to include. Defaults to all tools if not specified.
-    pub tools: Option<Vec<String>>,
-    /// In-process MCP transport.
-    pub r#type: McpDiscoveryMemoryConfigType,
-}
-crate::record_serde::wire_record!(McpDiscoveryMemoryConfig { config_warnings: "configWarnings" if is_none, defer_tools: "deferTools" if is_none, disable_secret_masking: "disableSecretMasking" if is_none, disable_tool_cache: "disableToolCache" if is_none, display_name: "displayName" if is_none, events: "events" if is_none, exclude_tools: "excludeTools" if is_none, filter_mapping: "filterMapping" if is_none, is_default_server: "isDefaultServer" if is_none, notifications: "notifications" if is_none, oidc: "oidc" if is_none, safe_for_telemetry: "safeForTelemetry" if is_none, server_instance: "serverInstance", slow_connection_threshold_ms: "slowConnectionThresholdMs" if is_none, source: "source" if is_none, source_path: "sourcePath" if is_none, source_plugin: "sourcePlugin" if is_none, source_plugin_spec: "sourcePluginSpec" if is_none, source_plugin_version: "sourcePluginVersion" if is_none, timeout: "timeout" if is_none, tools: "tools" if is_none, r#type: "type" });
 
 /// Name of the MCP server to enable for the session.
 ///
@@ -2348,14 +1665,15 @@ crate::record_serde::wire_record!(McpDiscoveryMemoryConfig { config_warnings: "c
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpEnableRequest {
     /// Exact receipt identity for explicit owned activation in this session.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub expected_installation_id: Option<String>,
     /// Name of the MCP server to enable
     pub server_name: String,
 }
-crate::record_serde::wire_record!(McpEnableRequest { expected_installation_id: "expectedInstallationId" if is_none, server_name: "serverName" });
 
 /// Raw MCP CreateMessageRequest params, as received in the `sampling.requested` event. Treated as opaque at the schema layer; the runtime converts the embedded MCP messages into the OpenAI chat-completion shape internally.
 ///
@@ -2377,7 +1695,8 @@ pub struct McpExecuteSamplingRequest {}
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpExecuteSamplingParams {
     /// The original MCP JSON-RPC request ID (string or number). Used by the runtime to correlate the inference with the originating MCP request for telemetry; this is distinct from `requestId` (which is the schema-level cancellation handle).
     pub mcp_request_id: serde_json::Value,
@@ -2388,245 +1707,34 @@ pub struct McpExecuteSamplingParams {
     /// Name of the MCP server that initiated the sampling request
     pub server_name: String,
 }
-crate::record_serde::wire_record!(McpExecuteSamplingParams {
-    mcp_request_id: "mcpRequestId",
-    request: "request",
-    request_id: "requestId",
-    server_name: "serverName"
-});
 
-/// Object envelope for one trusted live-client transport operation.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct McpExternalClientExchangeRequest {
-    /// The operation and its serializable arguments.
-    pub request: serde_json::Value,
-}
-crate::record_serde::wire_record!(McpExternalClientExchangeRequest { request: "request" });
-
-/// Operation-specific reply or a complete live-client callback frame.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct McpExternalClientResult {
-    /// Operation-specific reply or callback frame. A null next value closes the channel.
-    /// Memory opens return bridgeId, completion returns registered, and next returns
-    /// {"kind":"memory","frameJson":"..."} for each complete client-to-server packet.
-    pub value: serde_json::Value,
-}
-crate::record_serde::wire_record!(McpExternalClientResult { value: "value" });
-
-/// A caller-owned client's serializable MCP advertisement.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct McpExternalClientSnapshot {
-    /// Original server configuration for policy and tool selection.
-    pub config: Option<serde_json::Value>,
-    /// Initialize instructions from the caller-owned MCP server.
-    pub instructions: Option<String>,
-    /// Backing server capabilities, not client capabilities.
-    pub server_capabilities: Option<serde_json::Value>,
-    /// MCP server name.
-    pub server_name: String,
-    /// MCP server version.
-    pub server_version: String,
-    /// Complete MCP tool descriptors, without executable JavaScript.
-    pub tools: Vec<serde_json::Value>,
-}
-crate::record_serde::wire_record!(McpExternalClientSnapshot { config: "config" if is_none, instructions: "instructions" if is_none, server_capabilities: "serverCapabilities" if is_none, server_name: "serverName", server_version: "serverVersion", tools: "tools" });
-
-/// One invocation's GitHub MCP tool overrides.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct McpGitHubInvocationToolOptions {
-    /// Additional tools.
-    pub additional_tools: Option<Vec<String>>,
-    /// Additional toolsets.
-    pub additional_toolsets: Option<Vec<String>>,
-    /// Override form deferral when the shared tool resolver supports it.
-    pub disable_form_deferral: Option<bool>,
-    /// Expose all supported tools.
-    pub enable_all_tools: Option<bool>,
-    /// Select the insiders endpoint.
-    pub enable_insiders_mode: Option<bool>,
-}
-crate::record_serde::wire_record!(McpGitHubInvocationToolOptions { additional_tools: "additionalTools" if is_none, additional_toolsets: "additionalToolsets" if is_none, disable_form_deferral: "disableFormDeferral" if is_none, enable_all_tools: "enableAllTools" if is_none, enable_insiders_mode: "enableInsidersMode" if is_none });
-
-/// Feature populations for a sessionless capability inspection.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct McpInvocationAudience {
-    /// First launch time in Unix milliseconds.
-    pub first_launch_at_millis: Option<f64>,
-    /// Whether experimental capabilities are enabled.
-    pub is_experimental: bool,
-    /// Whether this installation belongs to staff.
-    pub is_staff: bool,
-    /// Whether this installation belongs to GitHub staff.
-    pub is_staff_github: Option<bool>,
-    /// Whether this installation belongs to Microsoft staff.
-    pub is_staff_microsoft: Option<bool>,
-    /// Whether team capabilities are enabled.
-    pub is_team: bool,
-    /// Whether streamer mode is active.
-    pub streamer_mode: bool,
-}
-crate::record_serde::wire_record!(McpInvocationAudience { first_launch_at_millis: "firstLaunchAtMillis" if is_none, is_experimental: "isExperimental", is_staff: "isStaff", is_staff_github: "isStaffGithub" if is_none, is_staff_microsoft: "isStaffMicrosoft" if is_none, is_team: "isTeam", streamer_mode: "streamerMode" });
-
-/// The session tool filters that decide whether the session still has a shell to run `gh` with.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct McpShouldExcludeGitHubToolsRequest {
-    /// The session's tool allowlist, when it set one. Omitted means the session constrains nothing this way.
-    pub available_tools: Option<Vec<String>>,
-    /// The session's tool denylist, when it set one. Omitted means the session constrains nothing this way.
-    pub excluded_tools: Option<Vec<String>>,
-    /// How the allowlist and denylist combine when both are set. Omitted uses the default excluded precedence; supply the session's explicit Update selection when present.
-    pub tool_filter_precedence: Option<OptionsUpdateToolFilterPrecedence>,
-}
-crate::record_serde::wire_record!(McpShouldExcludeGitHubToolsRequest { available_tools: "availableTools" if is_none, excluded_tools: "excludedTools" if is_none, tool_filter_precedence: "toolFilterPrecedence" if is_none });
-
-/// Resolve the authentication-derived built-in without a session or MCP connection.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct McpGitHubResolveInvocationRequest {
-    /// Existing launch populations; account identity comes only from the connection.
-    #[doc(hidden)]
-    pub(crate) audience: McpInvocationAudience,
-    /// Effective disabled servers, after enable overrides.
-    pub disabled_servers: Vec<String>,
-    /// Invocation tool overrides, above settings.
-    #[doc(hidden)]
-    pub(crate) flags: Option<McpGitHubInvocationToolOptions>,
-    /// Client integration identifier for the secret-free descriptor.
-    pub integration_id: String,
-    /// Tool filters used by the session this invocation describes.
-    #[doc(hidden)]
-    pub(crate) tool_filters: Option<McpShouldExcludeGitHubToolsRequest>,
-    /// Effective user and trusted repository settings.
-    pub user_settings: serde_json::Value,
-    /// Repository context for host detection and shell availability.
-    pub working_directory: String,
-}
-crate::record_serde::wire_record!(McpGitHubResolveInvocationRequest { audience: "audience", disabled_servers: "disabledServers", flags: "flags" if is_none, integration_id: "integrationId", tool_filters: "toolFilters" if is_none, user_settings: "userSettings", working_directory: "workingDirectory" });
-
-/// A secret-free GitHub descriptor, an ordinary signed-out result, or a bounded degraded result.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct McpGitHubResolveInvocationResult {
-    /// Built-in descriptor without authentication headers; absent when unavailable.
-    pub server: Option<serde_json::Value>,
-    /// Whether the existing two-second resolution budget expired.
-    pub timed_out: bool,
-    /// Resolution failure detail, distinct from an ordinary signed-out result.
-    pub warning: Option<String>,
-}
-crate::record_serde::wire_record!(McpGitHubResolveInvocationResult { server: "server" if is_none, timed_out: "timedOut", warning: "warning" if is_none });
-
-/// Repository and server state for GitHub MCP exposure.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct McpGitHubWorkspace {
-    /// Server names already disabled by the host.
-    pub already_disabled: Vec<String>,
-    /// The repository has an Azure DevOps remote.
-    pub has_azure_dev_ops: bool,
-    /// The repository has a GitHub remote.
-    pub has_github: bool,
-    /// A user configured the GitHub MCP server.
-    pub user_configured_github_mcp: bool,
-}
-crate::record_serde::wire_record!(McpGitHubWorkspace {
-    already_disabled: "alreadyDisabled",
-    has_azure_dev_ops: "hasAzureDevOps",
-    has_github: "hasGithub",
-    user_configured_github_mcp: "userConfiguredGithubMcp"
-});
-
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpHeadersHandlePendingHeadersRefreshRequestHeaders {
     /// Headers to overlay onto the MCP request. Dynamic headers override static config headers but do not replace SDK-managed request headers.
     pub headers: HashMap<String, String>,
     /// Headers-refresh response variant discriminator.
     pub kind: McpHeadersHandlePendingHeadersRefreshRequestHeadersKind,
     /// Optional lifetime in milliseconds for these returned headers. The runtime clamps its configured cache lifetime to this value.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub ttl_ms: Option<i64>,
 }
-crate::record_serde::wire_record!(McpHeadersHandlePendingHeadersRefreshRequestHeaders { headers: "headers", kind: "kind", ttl_ms: "ttlMs" if is_none });
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpHeadersHandlePendingHeadersRefreshRequestNone {
     /// Headers-refresh response variant discriminator.
     pub kind: McpHeadersHandlePendingHeadersRefreshRequestNoneKind,
 }
-crate::record_serde::wire_record!(McpHeadersHandlePendingHeadersRefreshRequestNone {
-    kind: "kind"
-});
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpHeadersHandlePendingHeadersRefreshRequestError {
     /// Headers-refresh response variant discriminator.
     pub kind: McpHeadersHandlePendingHeadersRefreshRequestErrorKind,
     /// Host credential broker failure, denial, or revocation reason.
     pub message: String,
 }
-crate::record_serde::wire_record!(McpHeadersHandlePendingHeadersRefreshRequestError {
-    kind: "kind",
-    message: "message"
-});
 
 /// MCP headers refresh request id and the host response.
 ///
@@ -2653,72 +1761,12 @@ pub struct McpHeadersHandlePendingHeadersRefreshRequestRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpHeadersHandlePendingHeadersRefreshRequestResult {
     /// Whether the response was accepted. False if the request was unknown, timed out, or already resolved.
     pub success: bool,
 }
-crate::record_serde::wire_record!(McpHeadersHandlePendingHeadersRefreshRequestResult {
-    success: "success"
-});
-
-/// One callback routed only to the engine's original observer.
-#[derive(Debug, Clone, Default)]
-pub struct McpIdeClientCallback {
-    /// Unique live-client identity, independent of server name and graph token.
-    pub callback_id: String,
-    /// Tool, protocol, cancellation, or release operation as JSON.
-    pub request_json: String,
-    /// Canonical session that owns this client.
-    pub session_id: SessionId,
-}
-crate::record_serde::wire_record!(McpIdeClientCallback {
-    callback_id: "callbackId",
-    request_json: "requestJson",
-    session_id: "sessionId"
-});
-
-/// Serialized response from the original host's live IDE client.
-#[derive(Debug, Clone, Default)]
-pub struct McpIdeClientCallbackResult {
-    /// The backing client's result as JSON.
-    pub result_json: String,
-}
-crate::record_serde::wire_record!(McpIdeClientCallbackResult {
-    result_json: "resultJson"
-});
-
-/// Original-host request for a session-owned IDE bridge.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct McpIdeClientRequest {
-    /// The operation to apply to the original host's IDE bridge.
-    pub operation: McpIdeClientOperation,
-}
-
-/// Result of an original-host IDE operation.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct McpIdeClientResult {
-    /// Whether this operation changed or addressed the current registration.
-    pub applied: bool,
-    /// Opaque token returned only after successful registration.
-    pub token: Option<String>,
-}
-crate::record_serde::wire_record!(McpIdeClientResult { applied: "applied", token: "token" if is_none });
 
 /// IDE metadata for an existing local MCP endpoint on the runtime host.
 ///
@@ -2728,7 +1776,8 @@ crate::record_serde::wire_record!(McpIdeClientResult { applied: "applied", token
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpIdeConfig {
     /// Client process identifier sent to the IDE.
     pub client_pid: i64,
@@ -2745,25 +1794,14 @@ pub struct McpIdeConfig {
     /// Absolute workspace path on the runtime host.
     pub workspace_folder: String,
 }
-crate::record_serde::wire_record!(McpIdeConfig {
-    client_pid: "clientPid",
-    client_version: "clientVersion",
-    ide_name: "ideName",
-    lock_file_path: "lockFilePath",
-    parent_pid: "parentPid",
-    pid: "pid",
-    workspace_folder: "workspaceFolder"
-});
 
 /// Already-confirmed durable work must be reconciled before new mutations or inventory.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpInstallationManagementOutcomeRecoveryRequired {
     /// Installation management outcome discriminator.
     pub kind: McpInstallationManagementOutcomeRecoveryRequiredKind,
 }
-crate::record_serde::wire_record!(McpInstallationManagementOutcomeRecoveryRequired {
-    kind: "kind"
-});
 
 /// Inert, runtime-owned admission. The operation ID is known before confirmation or effects.
 ///
@@ -2773,29 +1811,23 @@ crate::record_serde::wire_record!(McpInstallationManagementOutcomeRecoveryRequir
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpPreparedInstall {
     /// Original plan expiry in Unix epoch milliseconds; preparation does not extend it.
     pub expires_at_epoch_ms: i64,
     /// Original connection-owned operation, known before the first confirmation callback.
     pub operation_id: String,
 }
-crate::record_serde::wire_record!(McpPreparedInstall {
-    expires_at_epoch_ms: "expiresAtEpochMs",
-    operation_id: "operationId"
-});
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpInstallationManagementOutcomeInstallPrepared {
     /// Installation management outcome discriminator.
     pub kind: McpInstallationManagementOutcomeInstallPreparedKind,
     /// Known original operation identity, returned before callback or effects.
     pub operation: McpPreparedInstall,
 }
-crate::record_serde::wire_record!(McpInstallationManagementOutcomeInstallPrepared {
-    kind: "kind",
-    operation: "operation"
-});
 
 /// Durable configuration ownership is distinct from session-specific usability.
 ///
@@ -2805,9 +1837,11 @@ crate::record_serde::wire_record!(McpInstallationManagementOutcomeInstallPrepare
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpInstallationSummary {
     /// Catalogue identity retained from the installed plan when available.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub catalogue: Option<InstallationCatalogueIdentity>,
     /// Exact alternative retained in the installing receipt.
     pub choice_id: String,
@@ -2816,37 +1850,31 @@ pub struct McpInstallationSummary {
     /// Exact durable installation receipt identity.
     pub installation_id: String,
     /// ISO 8601 wall-clock installation time when available.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub installed_at: Option<String>,
     /// Original installing operation, not a fresh management operation.
     pub operation_id: String,
     /// Ownership or setup state, never inferred proof of tool usability.
     pub state: McpInstallationState,
 }
-crate::record_serde::wire_record!(McpInstallationSummary { catalogue: "catalogue" if is_none, choice_id: "choiceId", identity: "identity", installation_id: "installationId", installed_at: "installedAt" if is_none, operation_id: "operationId", state: "state" });
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpInstallationManagementOutcomeListed {
     /// Owned receipts visible to the selected account and host.
     pub installations: Vec<McpInstallationSummary>,
     /// Installation management outcome discriminator.
     pub kind: McpInstallationManagementOutcomeListedKind,
 }
-crate::record_serde::wire_record!(McpInstallationManagementOutcomeListed {
-    installations: "installations",
-    kind: "kind"
-});
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpInstallationManagementOutcomeRecovered {
     /// Freshly inspected receipts after successful durable reconciliation.
     pub installations: Vec<McpInstallationSummary>,
     /// Installation management outcome discriminator.
     pub kind: McpInstallationManagementOutcomeRecoveredKind,
 }
-crate::record_serde::wire_record!(McpInstallationManagementOutcomeRecovered {
-    installations: "installations",
-    kind: "kind"
-});
 
 /// Exact inert removal plan. No configuration or credentials have changed.
 ///
@@ -2856,7 +1884,8 @@ crate::record_serde::wire_record!(McpInstallationManagementOutcomeRecovered {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpUninstallPlan {
     /// Original wall-clock expiry in milliseconds. Applying never renews it.
     pub expires_at_epoch_ms: i64,
@@ -2873,29 +1902,18 @@ pub struct McpUninstallPlan {
     /// Whether removal restores a protected earlier configuration.
     pub restores_previous_configuration: bool,
 }
-crate::record_serde::wire_record!(McpUninstallPlan {
-    expires_at_epoch_ms: "expiresAtEpochMs",
-    installation: "installation",
-    operation_id: "operationId",
-    owned_secret_count: "ownedSecretCount",
-    plan_handle: "planHandle",
-    preserves_shared_authentication: "preservesSharedAuthentication",
-    restores_previous_configuration: "restoresPreviousConfiguration"
-});
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpInstallationManagementOutcomeUninstallPlanned {
     /// Installation management outcome discriminator.
     pub kind: McpInstallationManagementOutcomeUninstallPlannedKind,
     /// Original owned removal plan and operation.
     pub plan: McpUninstallPlan,
 }
-crate::record_serde::wire_record!(McpInstallationManagementOutcomeUninstallPlanned {
-    kind: "kind",
-    plan: "plan"
-});
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpInstallationOperationStatusPreparing {
     /// Whether cancellation has been requested, not proof that a write was undone.
     pub cancellation_requested: bool,
@@ -2904,13 +1922,9 @@ pub struct McpInstallationOperationStatusPreparing {
     /// Original operation progress discriminator.
     pub phase: McpInstallationOperationStatusPreparingPhase,
 }
-crate::record_serde::wire_record!(McpInstallationOperationStatusPreparing {
-    cancellation_requested: "cancellationRequested",
-    operation_id: "operationId",
-    phase: "phase"
-});
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpInstallationOperationStatusPrepared {
     /// Whether the inert prepared operation was asked to cancel.
     pub cancellation_requested: bool,
@@ -2919,13 +1933,9 @@ pub struct McpInstallationOperationStatusPrepared {
     /// Original operation progress discriminator.
     pub phase: McpInstallationOperationStatusPreparedPhase,
 }
-crate::record_serde::wire_record!(McpInstallationOperationStatusPrepared {
-    cancellation_requested: "cancellationRequested",
-    operation_id: "operationId",
-    phase: "phase"
-});
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpInstallationOperationStatusAwaitingConfirmation {
     /// Whether the pending human callback was asked to cancel.
     pub cancellation_requested: bool,
@@ -2934,13 +1944,9 @@ pub struct McpInstallationOperationStatusAwaitingConfirmation {
     /// Original operation progress discriminator.
     pub phase: McpInstallationOperationStatusAwaitingConfirmationPhase,
 }
-crate::record_serde::wire_record!(McpInstallationOperationStatusAwaitingConfirmation {
-    cancellation_requested: "cancellationRequested",
-    operation_id: "operationId",
-    phase: "phase"
-});
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpInstallationOperationStatusRevalidating {
     /// Whether source or authority revalidation was asked to cancel.
     pub cancellation_requested: bool,
@@ -2949,13 +1955,9 @@ pub struct McpInstallationOperationStatusRevalidating {
     /// Original operation progress discriminator.
     pub phase: McpInstallationOperationStatusRevalidatingPhase,
 }
-crate::record_serde::wire_record!(McpInstallationOperationStatusRevalidating {
-    cancellation_requested: "cancellationRequested",
-    operation_id: "operationId",
-    phase: "phase"
-});
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpInstallationOperationStatusApplying {
     /// Whether applying was asked to cancel; already-started effects retain their lease.
     pub cancellation_requested: bool,
@@ -2964,13 +1966,9 @@ pub struct McpInstallationOperationStatusApplying {
     /// Original operation progress discriminator.
     pub phase: McpInstallationOperationStatusApplyingPhase,
 }
-crate::record_serde::wire_record!(McpInstallationOperationStatusApplying {
-    cancellation_requested: "cancellationRequested",
-    operation_id: "operationId",
-    phase: "phase"
-});
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpInstallationOutcomeInstalled {
     /// Durable installation succeeded but final transaction cleanup remains.
     pub cleanup_pending: bool,
@@ -2979,13 +1977,9 @@ pub struct McpInstallationOutcomeInstalled {
     /// Terminal installation outcome discriminator.
     pub kind: McpInstallationOutcomeInstalledKind,
 }
-crate::record_serde::wire_record!(McpInstallationOutcomeInstalled {
-    cleanup_pending: "cleanupPending",
-    installation: "installation",
-    kind: "kind"
-});
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpInstallationOutcomeUninstalled {
     /// Durable removal succeeded but final cleanup remains.
     pub cleanup_pending: bool,
@@ -3002,18 +1996,10 @@ pub struct McpInstallationOutcomeUninstalled {
     /// Whether protected pre-install configuration was restored.
     pub restored_previous_configuration: bool,
 }
-crate::record_serde::wire_record!(McpInstallationOutcomeUninstalled {
-    cleanup_pending: "cleanupPending",
-    installation_id: "installationId",
-    kind: "kind",
-    operation_id: "operationId",
-    preserved_shared_authentication: "preservedSharedAuthentication",
-    removed_owned_secrets: "removedOwnedSecrets",
-    restored_previous_configuration: "restoredPreviousConfiguration"
-});
 
 /// The durable transaction was aborted or fully compensated.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpInstallationOutcomeRolledBack {
     /// Terminal installation outcome discriminator.
     pub kind: McpInstallationOutcomeRolledBackKind,
@@ -3022,59 +2008,46 @@ pub struct McpInstallationOutcomeRolledBack {
     /// Cause of the fully aborted or compensated operation.
     pub reason: McpInstallationFailureReason,
 }
-crate::record_serde::wire_record!(McpInstallationOutcomeRolledBack {
-    kind: "kind",
-    operation_id: "operationId",
-    reason: "reason"
-});
 
 /// A write may have completed. Recover and inspect durable state before retrying.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpInstallationOutcomeRecoveryRequired {
     /// Terminal installation outcome discriminator.
     pub kind: McpInstallationOutcomeRecoveryRequiredKind,
     /// Operation whose durable result must be recovered and inspected.
     pub operation_id: String,
 }
-crate::record_serde::wire_record!(McpInstallationOutcomeRecoveryRequired {
-    kind: "kind",
-    operation_id: "operationId"
-});
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpInstallationOutcomeDeclined {
     /// Terminal installation outcome discriminator.
     pub kind: McpInstallationOutcomeDeclinedKind,
     /// Original operation explicitly declined by the user.
     pub operation_id: String,
 }
-crate::record_serde::wire_record!(McpInstallationOutcomeDeclined {
-    kind: "kind",
-    operation_id: "operationId"
-});
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpInstallationOutcomeCancelled {
     /// Terminal installation outcome discriminator.
     pub kind: McpInstallationOutcomeCancelledKind,
     /// Original operation cancelled before a terminal application result.
     pub operation_id: String,
 }
-crate::record_serde::wire_record!(McpInstallationOutcomeCancelled {
-    kind: "kind",
-    operation_id: "operationId"
-});
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpInstallationOutcomeRefused {
     /// Terminal installation outcome discriminator.
     pub kind: McpInstallationOutcomeRefusedKind,
     /// Present once an operation has been allocated; never a plan handle.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_id: Option<String>,
     /// Specific bounded refusal, never a success-shaped fallback.
     pub reason: McpInstallationFailureReason,
 }
-crate::record_serde::wire_record!(McpInstallationOutcomeRefused { kind: "kind", operation_id: "operationId" if is_none, reason: "reason" });
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -3098,17 +2071,14 @@ pub struct McpInstallationManagementOutcomeOperation {
     pub operation: McpInstallationOperationStatus,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpInstallationManagementOutcomeRefused {
     /// Installation management outcome discriminator.
     pub kind: McpInstallationManagementOutcomeRefusedKind,
     /// Specific bounded refusal.
     pub reason: McpInstallationFailureReason,
 }
-crate::record_serde::wire_record!(McpInstallationManagementOutcomeRefused {
-    kind: "kind",
-    reason: "reason"
-});
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -3129,17 +2099,14 @@ pub struct McpInstallationManagementResultOutcome {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpInstallationOperationRequest {
     /// Original installation wire capability; new-work authentication is not reacquired.
     pub contract: CatalogClientContract,
     /// Exact runtime-issued operation ID on the original connection.
     pub operation_id: String,
 }
-crate::record_serde::wire_record!(McpInstallationOperationRequest {
-    contract: "contract",
-    operation_id: "operationId"
-});
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -3160,17 +2127,14 @@ pub struct McpInstallationResultOutcome {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpInstallationSecret {
     /// Exact placeholder from the selected choice, not a caller-chosen backend identifier.
     pub placeholder: String,
     /// Fresh explicit secret value. It is omitted from confirmation reviews and telemetry.
     pub value: String,
 }
-crate::record_serde::wire_record!(McpInstallationSecret {
-    placeholder: "placeholder",
-    value: "value"
-});
 
 /// New-work inventory or recovery request under an explicitly selected existing session.
 ///
@@ -3180,17 +2144,14 @@ crate::record_serde::wire_record!(McpInstallationSecret {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpInstallationsRequest {
     /// Required authenticated bound installation contract.
     pub contract: CatalogClientContract,
     /// Existing selected local session on this connection.
     pub policy_session_id: String,
 }
-crate::record_serde::wire_record!(McpInstallationsRequest {
-    contract: "contract",
-    policy_session_id: "policySessionId"
-});
 
 /// A normalised, inert description of what installing an MCP server would involve. Carries no raw card, no install specification, and no secret value.
 ///
@@ -3200,7 +2161,8 @@ crate::record_serde::wire_record!(McpInstallationsRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpInstallPlan {
     /// Alternative configuration changes, with exactly one entry for each transportChoices entry in the same order. Only the entry for the subsequently selected transport applies; these are not cumulative writes. Payloads remain behind the runtime boundary.
     pub configuration_changes: Vec<McpPlanConfigurationChange>,
@@ -3215,6 +2177,7 @@ pub struct McpInstallPlan {
     /// Origin and semantic digest of the exact validated JSON MCP card content bound to this plan.
     pub provenance: McpPlanProvenance,
     /// Identifier of the choice the runtime would pick by default. Omitted when there is no eligible transport, or when the runtime expresses no preference.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub recommended_transport_choice_id: Option<String>,
     /// Whether applying this plan would require an MCP reload to take effect. Planning itself never reloads.
     pub reload_required: bool,
@@ -3225,7 +2188,6 @@ pub struct McpInstallPlan {
     /// Every eligible transport, so a host can present an explicit choice. A completed plan always has at least one; when none is eligible, planning returns `CatalogUnavailableTransportError` instead.
     pub transport_choices: Vec<McpPlanTransportChoice>,
 }
-crate::record_serde::wire_record!(McpInstallPlan { configuration_changes: "configurationChanges", identity: "identity", plan_handle: "planHandle", plan_handle_expires_at: "planHandleExpiresAt", policy: "policy", provenance: "provenance", recommended_transport_choice_id: "recommendedTransportChoiceId" if is_none, reload_required: "reloadRequired", requires_interactive_configuration: "requiresInteractiveConfiguration", target: "target", transport_choices: "transportChoices" });
 
 /// Server name to check running status for.
 ///
@@ -3235,14 +2197,12 @@ crate::record_serde::wire_record!(McpInstallPlan { configuration_changes: "confi
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpIsServerRunningRequest {
     /// Name of the MCP server to check
     pub server_name: String,
 }
-crate::record_serde::wire_record!(McpIsServerRunningRequest {
-    server_name: "serverName"
-});
 
 /// Whether the named MCP server is running.
 ///
@@ -3252,12 +2212,12 @@ crate::record_serde::wire_record!(McpIsServerRunningRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpIsServerRunningResult {
     /// True if the server has an active client and transport.
     pub running: bool,
 }
-crate::record_serde::wire_record!(McpIsServerRunningResult { running: "running" });
 
 /// Names of the MCP servers the runtime supplies itself.
 ///
@@ -3267,12 +2227,12 @@ crate::record_serde::wire_record!(McpIsServerRunningResult { running: "running" 
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct McpListBuiltinServerNamesResult {
     /// Every built-in server name. A host disabling the built-ins wholesale suppresses exactly this set.
     pub names: Vec<String>,
 }
-crate::record_serde::wire_record!(McpListBuiltinServerNamesResult { names: "names" });
 
 /// Server name whose tool list should be returned.
 ///
@@ -3282,14 +2242,12 @@ crate::record_serde::wire_record!(McpListBuiltinServerNamesResult { names: "name
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpListToolsRequest {
     /// Name of the connected MCP server whose tools to list.
     pub server_name: String,
 }
-crate::record_serde::wire_record!(McpListToolsRequest {
-    server_name: "serverName"
-});
 
 /// Tools exposed by the connected MCP server. Throws when the server is not connected.
 ///
@@ -3299,12 +2257,12 @@ crate::record_serde::wire_record!(McpListToolsRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpListToolsResult {
     /// Tools exposed by the server.
     pub tools: Vec<McpTools>,
 }
-crate::record_serde::wire_record!(McpListToolsResult { tools: "tools" });
 
 /// Full host-driven authentication for an arbitrary, possibly unsaved, MCP URL.
 ///
@@ -3314,56 +2272,76 @@ crate::record_serde::wire_record!(McpListToolsResult { tools: "tools" });
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct McpOauthAuthenticateRequest {
     /// Authorization timeout in milliseconds. Defaults to five minutes.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub authorization_timeout_ms: Option<i64>,
     /// Fail with browser_required when silent authentication cannot complete.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub browserless: Option<bool>,
     /// Text displayed after a successful loopback callback.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub callback_success_message: Option<String>,
     /// Client metadata document URL. Omission uses the session identity.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id_metadata_url: Option<String>,
     /// Display name for new dynamic client registrations.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub client_name: Option<String>,
     /// Delay before the runtime offers device authorization.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub device_code_offer_timeout_ms: Option<i64>,
     /// Override the device authorization poll interval in milliseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub device_code_poll_interval_ms: Option<i64>,
     /// Correlation identity reserved through prepareFlow.
     pub flow_id: String,
     /// Start device authorization instead of a browser flow.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub force_device_code: Option<bool>,
     /// Bypass cached grants for explicit account selection.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub force_reauth: Option<bool>,
     /// Preserve previously granted scopes during additional consent.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub include_existing_token_scopes: Option<bool>,
     /// Preserve replacement policy when another pending flow owns consent.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub preserve_pending_flow_replacement_flags: Option<bool>,
     /// Fixed callback port. A busy port fails without fallback.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub redirect_port: Option<i64>,
     /// Raw protected-resource metadata already fetched by the host.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub resource_metadata: Option<String>,
     /// Proxy fallback when the session has not published an egress entry.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub sandbox_proxy: Option<String>,
     /// MCP endpoint, without a requirement for saved configuration.
     pub server_url: String,
     /// Use environment session claims for a hostless compatibility call, while retaining this requester's egress authority.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub sessionless: Option<bool>,
     /// Let the host present the authorization URL without a runtime browser launch.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub skip_browser_open: Option<bool>,
     /// Reject the cached access token but permit a refresh grant.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub skip_cached_access_token: Option<bool>,
     /// Static OAuth client settings for this attempt.
     #[doc(hidden)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) static_client_config: Option<McpOauthFlowStaticClientConfig>,
     /// Credential owner. Omission uses the authoritative session store.
     #[doc(hidden)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) store: Option<McpOauthFlowStore>,
     /// Challenge captured by the host, including an empty challenge.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub www_authenticate_params: Option<McpOauthWWWAuthenticateParams>,
 }
-crate::record_serde::wire_record!(McpOauthAuthenticateRequest { authorization_timeout_ms: "authorizationTimeoutMs" if is_none, browserless: "browserless" if is_none, callback_success_message: "callbackSuccessMessage" if is_none, client_id_metadata_url: "clientIdMetadataUrl" if is_none, client_name: "clientName" if is_none, device_code_offer_timeout_ms: "deviceCodeOfferTimeoutMs" if is_none, device_code_poll_interval_ms: "deviceCodePollIntervalMs" if is_none, flow_id: "flowId", force_device_code: "forceDeviceCode" if is_none, force_reauth: "forceReauth" if is_none, include_existing_token_scopes: "includeExistingTokenScopes" if is_none, preserve_pending_flow_replacement_flags: "preservePendingFlowReplacementFlags" if is_none, redirect_port: "redirectPort" if is_none, resource_metadata: "resourceMetadata" if is_none, sandbox_proxy: "sandboxProxy" if is_none, server_url: "serverUrl", sessionless: "sessionless" if is_none, skip_browser_open: "skipBrowserOpen" if is_none, skip_cached_access_token: "skipCachedAccessToken" if is_none, static_client_config: "staticClientConfig" if is_none, store: "store" if is_none, www_authenticate_params: "wwwAuthenticateParams" if is_none });
 
 /// Token projection for the existing host-delegated provider.
 ///
@@ -3373,16 +2351,17 @@ crate::record_serde::wire_record!(McpOauthAuthenticateRequest { authorization_ti
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct McpOauthAuthenticateResult {
     /// Access token from the runtime-owned store.
     pub access_token: String,
     /// Remaining lifetime in seconds when the issuer supplied an expiry.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_in: Option<i64>,
     /// Token scheme. Defaults to Bearer.
     pub token_type: String,
 }
-crate::record_serde::wire_record!(McpOauthAuthenticateResult { access_token: "accessToken", expires_in: "expiresIn" if is_none, token_type: "tokenType" });
 
 /// Identifies the MCP server whose persisted OAuth credentials were updated.
 ///
@@ -3392,30 +2371,16 @@ crate::record_serde::wire_record!(McpOauthAuthenticateResult { access_token: "ac
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpOauthAuthenticationStateChangedRequest {
     /// Whether the target session must mint a session-scoped access token instead of reusing a shared access token persisted by another session.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub refresh_session_token: Option<bool>,
     /// Name of the MCP server whose OAuth credentials were updated. Omit only when the host cannot identify the server.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub server_name: Option<String>,
 }
-crate::record_serde::wire_record!(McpOauthAuthenticationStateChangedRequest { refresh_session_token: "refreshSessionToken" if is_none, server_name: "serverName" if is_none });
-
-/// Authorization URL presented by the original SDK requester.
-#[derive(Debug, Clone, Default)]
-pub(crate) struct McpOauthAuthorizationUrlCallback {
-    /// Authorization URL that the requester must present.
-    pub authorization_url: String,
-    /// Identity reserved by the original requester.
-    pub flow_id: String,
-    /// Session that owns the authentication attempt.
-    pub session_id: SessionId,
-}
-crate::record_serde::wire_record!(McpOauthAuthorizationUrlCallback {
-    authorization_url: "authorizationUrl",
-    flow_id: "flowId",
-    session_id: "sessionId"
-});
 
 /// Targets only the original prepared/applying owned login on this exact session requester.
 ///
@@ -3425,17 +2390,14 @@ crate::record_serde::wire_record!(McpOauthAuthorizationUrlCallback {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpOauthCancelLoginRequest {
     /// The same authoritative installation identity supplied during preparation.
     pub expected_installation_id: String,
     /// Runtime-issued login handle known before the effectful login request begins.
     pub login_id: String,
 }
-crate::record_serde::wire_record!(McpOauthCancelLoginRequest {
-    expected_installation_id: "expectedInstallationId",
-    login_id: "loginId"
-});
 
 /// Honest terminal cancellation result; persistence or recovery failures remain RPC errors.
 ///
@@ -3445,14 +2407,12 @@ crate::record_serde::wire_record!(McpOauthCancelLoginRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpOauthCancelLoginResult {
     /// True after cancellation settles, false when the original login already connected successfully.
     pub cancelled: bool,
 }
-crate::record_serde::wire_record!(McpOauthCancelLoginResult {
-    cancelled: "cancelled"
-});
 
 /// A remote MCP server whose authorization server should be asked about Dynamic Client Registration.
 ///
@@ -3462,18 +2422,21 @@ crate::record_serde::wire_record!(McpOauthCancelLoginResult {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct McpOauthCheckDcrSupportRequest {
     /// Raw protected-resource metadata text from the server's `WWW-Authenticate` challenge. Omit to discover the authorization server from the server URL instead.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub resource_metadata_text: Option<String>,
     /// Proxy the request must travel through. Omit to use the session's own egress settings.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub sandbox_proxy: Option<String>,
     /// URL of the remote MCP server that answered 401.
     pub server_url: String,
     /// Locally owned session whose egress policy and sandbox proxy constrain the request. Omitted or nonlocal session IDs provide no local session egress state.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<SessionId>,
 }
-crate::record_serde::wire_record!(McpOauthCheckDcrSupportRequest { resource_metadata_text: "resourceMetadataText" if is_none, sandbox_proxy: "sandboxProxy" if is_none, server_url: "serverUrl", session_id: "sessionId" if is_none });
 
 /// Whether the server's authorization server registers clients dynamically.
 ///
@@ -3483,14 +2446,15 @@ crate::record_serde::wire_record!(McpOauthCheckDcrSupportRequest { resource_meta
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct McpOauthCheckDcrSupportResult {
     /// Authorization server the metadata pointed at. Absent when none could be discovered.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub authorization_server_url: Option<String>,
     /// Whether the authorization server advertises a client registration endpoint.
     pub supports_dcr: bool,
 }
-crate::record_serde::wire_record!(McpOauthCheckDcrSupportResult { authorization_server_url: "authorizationServerUrl" if is_none, supports_dcr: "supportsDcr" });
 
 /// Host-delivered callback for a runtime-managed MCP OAuth login.
 ///
@@ -3500,27 +2464,22 @@ crate::record_serde::wire_record!(McpOauthCheckDcrSupportResult { authorization_
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpOauthCompleteRequest {
     /// Opaque identifier returned by session.mcp.oauth.login for the pending external callback.
     pub authorization_id: String,
     /// Full externally visible HTTPS callback URL received by the host, including the authorization response query parameters. Applications behind a reverse proxy must reconstruct the public URL rather than passing an internal proxy URL.
     pub callback_url: String,
 }
-crate::record_serde::wire_record!(McpOauthCompleteRequest {
-    authorization_id: "authorizationId",
-    callback_url: "callbackUrl"
-});
 
 /// Dispose an explicit host store without altering the session authorizer's owner.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct McpOauthDisposeStoreRequest {
     /// Host-selected identity of the explicit store.
     pub store_id: String,
 }
-crate::record_serde::wire_record!(McpOauthDisposeStoreRequest {
-    store_id: "storeId"
-});
 
 /// An OAuth challenge from a remote MCP server whose protected-resource metadata should be read.
 ///
@@ -3530,22 +2489,27 @@ crate::record_serde::wire_record!(McpOauthDisposeStoreRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct McpOauthFetchProtectedResourceMetadataRequest {
     /// Request headers the configured server sends, as a serialized JSON object. Omit to send none.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub headers_json: Option<String>,
     /// URL of the remote MCP server that answered 401.
     pub request_url: String,
     /// Metadata URL named in the server's `WWW-Authenticate` challenge. Omit to try conventional metadata endpoints derived from the request URL. It is server-controlled, so it passes the same egress policy check as the request URL.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub resource_metadata_url: Option<String>,
     /// Proxy the request must travel through. Omit to use the session's own egress settings.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub sandbox_proxy: Option<String>,
     /// Locally owned session whose egress policy and sandbox proxy constrain the request. Omitted or nonlocal session IDs provide no local session egress state.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<SessionId>,
     /// User agent to send. Omit to use the runtime's own.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub user_agent: Option<String>,
 }
-crate::record_serde::wire_record!(McpOauthFetchProtectedResourceMetadataRequest { headers_json: "headersJson" if is_none, request_url: "requestUrl", resource_metadata_url: "resourceMetadataUrl" if is_none, sandbox_proxy: "sandboxProxy" if is_none, session_id: "sessionId" if is_none, user_agent: "userAgent" if is_none });
 
 /// Raw protected-resource metadata from the explicit metadata URL or conventional discovery.
 ///
@@ -3555,71 +2519,52 @@ crate::record_serde::wire_record!(McpOauthFetchProtectedResourceMetadataRequest 
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct McpOauthFetchProtectedResourceMetadataResult {
     /// Metadata document exactly as the server returned it, unparsed. Absent when no document could be read from the explicit metadata URL or, when omitted, the conventional metadata endpoints.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata_text: Option<String>,
 }
-crate::record_serde::wire_record!(McpOauthFetchProtectedResourceMetadataResult { metadata_text: "metadataText" if is_none });
 
 /// Correlation identity reserved before an effectful authentication request.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct McpOauthFlowIdentityRequest {
     /// Host-chosen identity, unique within this session requester.
     pub flow_id: String,
 }
-crate::record_serde::wire_record!(McpOauthFlowIdentityRequest { flow_id: "flowId" });
 
-/// Progress from an OAuth attempt to its original SDK requester.
-#[derive(Debug, Clone, Default)]
-pub(crate) struct McpOauthFlowStatusCallback {
-    /// Identity reserved by the original requester.
-    pub flow_id: String,
-    /// Status detail for the host UI, or null when absent.
-    pub message: Option<String>,
-    /// Serialized device authorization details, or null when absent.
-    pub payload_json: Option<String>,
-    /// Session that owns the authentication attempt.
-    pub session_id: SessionId,
-    /// Current OAuth flow status.
-    pub status: String,
-}
-crate::record_serde::wire_record!(McpOauthFlowStatusCallback {
-    flow_id: "flowId",
-    message: "message",
-    payload_json: "payloadJson",
-    session_id: "sessionId",
-    status: "status"
-});
-
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpOauthPendingRequestResponseToken {
     /// Access token acquired by the SDK host
     pub access_token: String,
     /// Token lifetime in seconds, if known.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_in: Option<i64>,
     /// OAuth response variant discriminator.
     pub kind: McpOauthPendingRequestResponseTokenKind,
     /// OAuth token type. Defaults to bearer when omitted.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub token_type: Option<String>,
 }
-crate::record_serde::wire_record!(McpOauthPendingRequestResponseToken { access_token: "accessToken", expires_in: "expiresIn" if is_none, kind: "kind", token_type: "tokenType" if is_none });
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpOauthPendingRequestResponseCancelled {
     /// OAuth response variant discriminator.
     pub kind: McpOauthPendingRequestResponseCancelledKind,
 }
-crate::record_serde::wire_record!(McpOauthPendingRequestResponseCancelled { kind: "kind" });
 
 /// Delegate noninteractive refresh to the original runtime authorization operation.
 /// Valid only for a Refresh request advertising runtimeRefreshSupported.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpOauthPendingRequestResponseRuntimeRefresh {
     /// OAuth response variant discriminator.
     pub kind: McpOauthPendingRequestResponseRuntimeRefreshKind,
 }
-crate::record_serde::wire_record!(McpOauthPendingRequestResponseRuntimeRefresh { kind: "kind" });
 
 /// Pending MCP OAuth request ID and host token, cancellation, or advertised runtime refresh response.
 ///
@@ -3646,12 +2591,12 @@ pub struct McpOauthHandlePendingRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpOauthHandlePendingResult {
     /// Whether the response was accepted. False if the request was unknown, timed out, or already resolved.
     pub success: bool,
 }
-crate::record_serde::wire_record!(McpOauthHandlePendingResult { success: "success" });
 
 /// An authorization server URL to classify.
 ///
@@ -3661,14 +2606,12 @@ crate::record_serde::wire_record!(McpOauthHandlePendingResult { success: "succes
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct McpOauthIsMicrosoftAuthorizationServerRequest {
     /// Authorization server URL, typically the one `mcp.oauth.checkDcrSupport` discovered.
     pub authorization_server_url: String,
 }
-crate::record_serde::wire_record!(McpOauthIsMicrosoftAuthorizationServerRequest {
-    authorization_server_url: "authorizationServerUrl"
-});
 
 /// Whether the URL is a Microsoft Entra ID authorization server.
 ///
@@ -3678,14 +2621,12 @@ crate::record_serde::wire_record!(McpOauthIsMicrosoftAuthorizationServerRequest 
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct McpOauthIsMicrosoftAuthorizationServerResult {
     /// Whether the host is one Microsoft Entra ID serves authorization from.
     pub is_microsoft_authorization_server: bool,
 }
-crate::record_serde::wire_record!(McpOauthIsMicrosoftAuthorizationServerResult {
-    is_microsoft_authorization_server: "isMicrosoftAuthorizationServer"
-});
 
 /// Remote MCP server name and optional overrides controlling reauthentication, OAuth client display name, callback handling, and static OAuth client selection.
 ///
@@ -3695,33 +2636,43 @@ crate::record_serde::wire_record!(McpOauthIsMicrosoftAuthorizationServerResult {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpOauthLoginRequest {
     /// Optional override for the body text shown on the OAuth loopback callback success page. When omitted, the runtime applies a neutral fallback; callers driving interactive auth should pass surface-specific copy telling the user where to return.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub callback_success_message: Option<String>,
     /// Optional OAuth client ID override for this login. When set, the runtime uses this pre-registered static client instead of dynamic client registration.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
     /// Optional override for the OAuth client display name shown on the consent screen. Applies to newly registered dynamic clients only — existing registrations keep the name they were created with. When omitted, the runtime applies a neutral fallback; callers driving interactive auth should pass their own surface-specific label so the consent screen matches the product the user sees.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub client_name: Option<String>,
     /// Optional OAuth client secret override for this login. The runtime treats this as an ephemeral host-owned secret, uses it for this authentication attempt and does not persist it.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub client_secret: Option<String>,
     /// Exact owned receipt identity. Owned login never uses an implicit helper session.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub expected_installation_id: Option<String>,
     /// When true, clears any cached OAuth token for the server and runs a full new authorization. Use when the user explicitly wants to switch accounts or believes their session is stuck.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub force_reauth: Option<bool>,
     /// Optional OAuth grant type override for this login. Defaults to the server configuration, or authorization_code when no grant type is specified.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub grant_type: Option<McpOauthLoginGrantType>,
     /// Required for owned login. Consumes the exact prepareLogin handle once.
     /// Set forceReauth and display options during preparation, not consumption.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub login_id: Option<String>,
     /// Optional override indicating whether the static OAuth client is public. When false, the runtime treats it as confidential and uses the per-login clientSecret if provided, otherwise retrieving the client secret from the MCP OAuth secret store.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub public_client: Option<bool>,
     /// Optional externally visible HTTPS redirect URI for a host-managed callback endpoint. When supplied, the runtime still owns discovery, PKCE, token exchange, persistence, and reconnect, but does not bind a loopback listener or terminate HTTPS. The URI must not contain query parameters or a fragment and must be registered for the selected CIMD, DCR, or static OAuth client.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub redirect_uri: Option<String>,
     /// Name of the remote MCP server to authenticate
     pub server_name: String,
 }
-crate::record_serde::wire_record!(McpOauthLoginRequest { callback_success_message: "callbackSuccessMessage" if is_none, client_id: "clientId" if is_none, client_name: "clientName" if is_none, client_secret: "clientSecret" if is_none, expected_installation_id: "expectedInstallationId" if is_none, force_reauth: "forceReauth" if is_none, grant_type: "grantType" if is_none, login_id: "loginId" if is_none, public_client: "publicClient" if is_none, redirect_uri: "redirectUri" if is_none, server_name: "serverName" });
 
 /// OAuth authorization URL the caller should open, or empty when cached tokens already authenticated the server.
 ///
@@ -3731,18 +2682,22 @@ crate::record_serde::wire_record!(McpOauthLoginRequest { callback_success_messag
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpOauthLoginResult {
     /// Opaque authorization identifier returned only for a host-managed redirect URI. The runtime also sends it as the OAuth state value, so the callback endpoint can read state and pass it with the full callback URL to session.mcp.oauth.complete.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub authorization_id: Option<String>,
     /// URL the caller should open in a browser to complete OAuth. Omitted when cached tokens were still valid and no browser interaction was needed — the server is already reconnected in that case. For the default loopback flow, the runtime starts its listener before returning. With redirectUri, the host receives the callback and completes it through session.mcp.oauth.complete. The runtime continues the flow in the background and signals completion via session.mcp_server_status_changed.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub authorization_url: Option<String>,
     /// Runtime-issued owned flow identity; never a server name or installation operation ID.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub login_id: Option<String>,
     /// Explicit outcome for owned sign-in. Manual callers retain their legacy response shape.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<McpOwnedOauthLoginStatus>,
 }
-crate::record_serde::wire_record!(McpOauthLoginResult { authorization_id: "authorizationId" if is_none, authorization_url: "authorizationUrl" if is_none, login_id: "loginId" if is_none, status: "status" if is_none });
 
 /// Effect-free preparation bound to the existing local session, requester and installation, with frozen options.
 ///
@@ -3752,20 +2707,23 @@ crate::record_serde::wire_record!(McpOauthLoginResult { authorization_id: "autho
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpOauthPrepareLoginRequest {
     /// Text shown on the loopback callback page after successful authorisation.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub callback_success_message: Option<String>,
     /// Display name used by the incumbent OAuth client-registration flow.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub client_name: Option<String>,
     /// Exact installation identity from owned inventory, never a server-name alias.
     pub expected_installation_id: String,
     /// Request a new authorisation rather than accepting a usable cached grant.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub force_reauth: Option<bool>,
     /// Name recorded by the authoritative owned installation receipt.
     pub server_name: String,
 }
-crate::record_serde::wire_record!(McpOauthPrepareLoginRequest { callback_success_message: "callbackSuccessMessage" if is_none, client_name: "clientName" if is_none, expected_installation_id: "expectedInstallationId", force_reauth: "forceReauth" if is_none, server_name: "serverName" });
 
 /// An inert runtime-issued login handle. Preparation alone performs no activation or OAuth work.
 ///
@@ -3775,17 +2733,14 @@ crate::record_serde::wire_record!(McpOauthPrepareLoginRequest { callback_success
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpOauthPrepareLoginResult {
     /// Original expiry, not extended by consumption, retries or cancellation.
     pub expires_at: String,
     /// Retain with the original requester and use for one login or cancellation.
     pub login_id: String,
 }
-crate::record_serde::wire_record!(McpOauthPrepareLoginResult {
-    expires_at: "expiresAt",
-    login_id: "loginId"
-});
 
 /// Remote MCP server name for a passive OAuth status probe.
 ///
@@ -3795,40 +2750,36 @@ crate::record_serde::wire_record!(McpOauthPrepareLoginResult {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpOauthProbeRequest {
     /// Exact owned receipt identity; probing never activates a dormant installation.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub expected_installation_id: Option<String>,
     /// Name of the configured remote MCP server to probe.
     pub server_name: String,
 }
-crate::record_serde::wire_record!(McpOauthProbeRequest { expected_installation_id: "expectedInstallationId" if is_none, server_name: "serverName" });
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpOauthProbeResultNoAuthRequired {
     /// HTTP response returned by the server.
     pub http_response: McpOauthHttpResponse,
     /// Probe outcome variant discriminator.
     pub status: McpOauthProbeResultNoAuthRequiredStatus,
 }
-crate::record_serde::wire_record!(McpOauthProbeResultNoAuthRequired {
-    http_response: "httpResponse",
-    status: "status"
-});
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpOauthProbeResultAuthenticated {
     /// HTTP response returned by the server.
     pub http_response: McpOauthHttpResponse,
     /// Probe outcome variant discriminator.
     pub status: McpOauthProbeResultAuthenticatedStatus,
 }
-crate::record_serde::wire_record!(McpOauthProbeResultAuthenticated {
-    http_response: "httpResponse",
-    status: "status"
-});
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpOauthProbeResultNeedsAuth {
     /// HTTP 401 or 403 response returned by the server.
     pub http_response: McpOauthHttpResponse,
@@ -3837,20 +2788,21 @@ pub struct McpOauthProbeResultNeedsAuth {
     /// Probe outcome variant discriminator.
     pub status: McpOauthProbeResultNeedsAuthStatus,
     /// Parsed WWW-Authenticate challenge parameters, when present and parseable.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub www_authenticate_params: Option<McpOauthWWWAuthenticateParams>,
 }
-crate::record_serde::wire_record!(McpOauthProbeResultNeedsAuth { http_response: "httpResponse", reason: "reason", status: "status", www_authenticate_params: "wwwAuthenticateParams" if is_none });
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpOauthProbeResultFailed {
     /// Human-readable probe failure detail.
     pub error: String,
     /// HTTP response returned by the server, when the probe reached the server and captured the complete response.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub http_response: Option<McpOauthHttpResponse>,
     /// Probe outcome variant discriminator.
     pub status: McpOauthProbeResultFailedStatus,
 }
-crate::record_serde::wire_record!(McpOauthProbeResultFailed { error: "error", http_response: "httpResponse" if is_none, status: "status" });
 
 /// Pending MCP OAuth request id to respond to.
 ///
@@ -3860,14 +2812,12 @@ crate::record_serde::wire_record!(McpOauthProbeResultFailed { error: "error", ht
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpOauthRespondRequest {
     /// OAuth request identifier from the mcp.oauth_required event
     pub request_id: RequestId,
 }
-crate::record_serde::wire_record!(McpOauthRespondRequest {
-    request_id: "requestId"
-});
 
 /// Indicates whether the pending MCP OAuth response was accepted.
 ///
@@ -3877,27 +2827,29 @@ crate::record_serde::wire_record!(McpOauthRespondRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpOauthRespondResult {
     /// Whether the response was accepted. False if the request was unknown, timed out, or already resolved.
     pub success: bool,
 }
-crate::record_serde::wire_record!(McpOauthRespondResult { success: "success" });
 
 /// Persist a confidential client's static secret without exposing token-store CRUD.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct McpOauthSaveStaticClientSecretRequest {
     /// Secret to persist in the selected credential owner.
     pub secret: String,
     /// Preserve hostless credential and account selection.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub sessionless: Option<bool>,
     /// Credential owner. Omission uses the authoritative session store.
     #[doc(hidden)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) store: Option<McpOauthFlowStore>,
     /// Runtime OAuth credential key.
     pub store_key: String,
 }
-crate::record_serde::wire_record!(McpOauthSaveStaticClientSecretRequest { secret: "secret", sessionless: "sessionless" if is_none, store: "store" if is_none, store_key: "storeKey" });
 
 /// An OAuth client a server configuration pins, without its secret.
 ///
@@ -3907,18 +2859,21 @@ crate::record_serde::wire_record!(McpOauthSaveStaticClientSecretRequest { secret
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct McpOauthStaticClientConfig {
     /// Configured OAuth client identifier.
     pub client_id: String,
     /// Grant type, carried only when the configuration pins the headless `client_credentials` flow. Absent for the default interactive authorization-code flow.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub grant_type: Option<McpServerConfigHttpOauthGrantType>,
     /// Whether the configuration declares a public client. Absent when the configuration does not say, which the flow reads as a public client.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub public_client: Option<bool>,
     /// Configured OAuth scopes joined into one space-delimited scope value. Absent when the configuration specifies no scopes.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub scope: Option<String>,
 }
-crate::record_serde::wire_record!(McpOauthStaticClientConfig { client_id: "clientId", grant_type: "grantType" if is_none, public_client: "publicClient" if is_none, scope: "scope" if is_none });
 
 /// A remote MCP server configuration whose pinned OAuth client should be read.
 ///
@@ -3928,12 +2883,12 @@ crate::record_serde::wire_record!(McpOauthStaticClientConfig { client_id: "clien
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct McpOauthStaticClientConfigRequest {
     /// The server configuration to read. A configuration that pins no client answers nothing.
     pub config: serde_json::Value,
 }
-crate::record_serde::wire_record!(McpOauthStaticClientConfigRequest { config: "config" });
 
 /// The OAuth client the configuration pins, when it pins one.
 ///
@@ -3943,46 +2898,54 @@ crate::record_serde::wire_record!(McpOauthStaticClientConfigRequest { config: "c
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct McpOauthStaticClientConfigResult {
     /// The pinned client. Absent when the configuration pins no non-empty client id, so the flow should register one dynamically.
     #[doc(hidden)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) client_config: Option<McpOauthStaticClientConfig>,
 }
-crate::record_serde::wire_record!(McpOauthStaticClientConfigResult { client_config: "clientConfig" if is_none });
 
 /// A narrow token-validity query against the chosen credential owner.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct McpOauthStoredGrantRequest {
     /// Preserve hostless credential and account selection.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub sessionless: Option<bool>,
     /// Static client identity required for refresh, when configured.
     #[doc(hidden)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) static_client_config: Option<McpOauthFlowStaticClientConfig>,
     /// Credential owner. Omission uses the authoritative session store.
     #[doc(hidden)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) store: Option<McpOauthFlowStore>,
     /// Runtime OAuth credential key.
     pub store_key: String,
 }
-crate::record_serde::wire_record!(McpOauthStoredGrantRequest { sessionless: "sessionless" if is_none, static_client_config: "staticClientConfig" if is_none, store: "store" if is_none, store_key: "storeKey" });
 
 /// Derive a credential key through the selected account and store owner.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct McpOauthStoreKeyRequest {
     /// Static OAuth client identity, when configured.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
     /// Metadata document identity when no static client is configured.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id_metadata_url: Option<String>,
     /// MCP endpoint whose credentials the key identifies.
     pub server_url: String,
     /// Preserve hostless credential and account selection.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub sessionless: Option<bool>,
     /// Credential owner. Omission uses the authoritative session store.
     #[doc(hidden)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) store: Option<McpOauthFlowStore>,
 }
-crate::record_serde::wire_record!(McpOauthStoreKeyRequest { client_id: "clientId" if is_none, client_id_metadata_url: "clientIdMetadataUrl" if is_none, server_url: "serverUrl", sessionless: "sessionless" if is_none, store: "store" if is_none });
 
 /// Tokenless initialize handshake for a possibly unsaved remote MCP server.
 ///
@@ -3992,53 +2955,56 @@ crate::record_serde::wire_record!(McpOauthStoreKeyRequest { client_id: "clientId
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct McpOauthTestConnectionRequest {
     /// Headers sent during the handshake.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub headers: Option<HashMap<String, String>>,
     /// Proxy fallback when no session egress entry exists.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub sandbox_proxy: Option<String>,
     /// Transport. Omission selects Streamable HTTP.
     #[doc(hidden)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) r#type: Option<McpOauthTestConnectionTransport>,
     /// Remote endpoint to initialize without an OAuth token.
     pub url: String,
 }
-crate::record_serde::wire_record!(McpOauthTestConnectionRequest { headers: "headers" if is_none, sandbox_proxy: "sandboxProxy" if is_none, r#type: "type" if is_none, url: "url" });
 
 /// The server accepted an unauthenticated initialize request.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpOauthTestConnectionResultConnected {
     pub status: McpOauthTestConnectionResultConnectedStatus,
 }
-crate::record_serde::wire_record!(McpOauthTestConnectionResultConnected { status: "status" });
 
 /// The server refused the initialize request with an authentication challenge.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpOauthTestConnectionResultNeedsAuth {
     /// The transport's authentication error message.
     pub error: String,
     /// Exact refusing HTTP response, when the transport captured it.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub http_response: Option<McpOauthHttpResponse>,
     pub status: McpOauthTestConnectionResultNeedsAuthStatus,
     /// Raw WWW-Authenticate header, when the refusing response supplies one.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub www_authenticate_header: Option<String>,
     /// Parsed challenge parameters from the refusing HTTP response.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub www_authenticate_params: Option<McpOauthWWWAuthenticateParams>,
 }
-crate::record_serde::wire_record!(McpOauthTestConnectionResultNeedsAuth { error: "error", http_response: "httpResponse" if is_none, status: "status", www_authenticate_header: "wwwAuthenticateHeader" if is_none, www_authenticate_params: "wwwAuthenticateParams" if is_none });
 
 /// The handshake failed for a reason other than authentication.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpOauthTestConnectionResultFailed {
     /// Transport or session policy failure detail.
     pub error: String,
     pub status: McpOauthTestConnectionResultFailedStatus,
 }
-crate::record_serde::wire_record!(McpOauthTestConnectionResultFailed {
-    error: "error",
-    status: "status"
-});
 
 /// A computed MCP install plan. Nothing has been applied: the plan describes what installing would change, and the plan handle is what a later apply operation would consume.
 ///
@@ -4048,7 +3014,8 @@ crate::record_serde::wire_record!(McpOauthTestConnectionResultFailed {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpPlanInstallPlanned {
     /// Discriminator: a plan was computed and nothing was changed
     pub kind: McpPlanInstallPlannedKind,
@@ -4057,11 +3024,6 @@ pub struct McpPlanInstallPlanned {
     /// The normalised plan.
     pub plan: McpInstallPlan,
 }
-crate::record_serde::wire_record!(McpPlanInstallPlanned {
-    kind: "kind",
-    negotiated: "negotiated",
-    plan: "plan"
-});
 
 /// Plan from a candidate returned by a previous catalog search.
 ///
@@ -4234,7 +3196,8 @@ pub struct McpPlanInstallRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpPlanUninstallRequest {
     /// Required authenticated bound installation capabilities.
     pub contract: CatalogClientContract,
@@ -4243,11 +3206,6 @@ pub struct McpPlanUninstallRequest {
     /// Existing selected session on the original connection.
     pub policy_session_id: String,
 }
-crate::record_serde::wire_record!(McpPlanUninstallRequest {
-    contract: "contract",
-    installation_id: "installationId",
-    policy_session_id: "policySessionId"
-});
 
 /// Side-effect-free preparation of one original bound remote MCP choice.
 ///
@@ -4288,16 +3246,17 @@ pub struct McpPrepareInstallRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpPromptsGetRequest {
     /// String-valued arguments to pass to the prompt
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub arguments: Option<HashMap<String, String>>,
     /// The programmatic name of the prompt
     pub prompt_name: String,
     /// Name of the MCP server hosting the prompt
     pub server_name: String,
 }
-crate::record_serde::wire_record!(McpPromptsGetRequest { arguments: "arguments" if is_none, prompt_name: "promptName", server_name: "serverName" });
 
 /// Prompt messages returned by the MCP server without sending them to the model.
 ///
@@ -4307,18 +3266,21 @@ crate::record_serde::wire_record!(McpPromptsGetRequest { arguments: "arguments" 
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpPromptsGetResult {
     /// MCP result metadata
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub meta: Option<HashMap<String, serde_json::Value>>,
     /// Server-provided non-standard result fields
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub additional_properties: Option<HashMap<String, serde_json::Value>>,
     /// Description of the prompt
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     /// Ordered prompt messages
     pub messages: Vec<McpPromptMessage>,
 }
-crate::record_serde::wire_record!(McpPromptsGetResult { meta: "_meta" if is_none, additional_properties: "additionalProperties" if is_none, description: "description" if is_none, messages: "messages" });
 
 /// MCP server whose prompts to enumerate.
 ///
@@ -4328,14 +3290,15 @@ crate::record_serde::wire_record!(McpPromptsGetResult { meta: "_meta" if is_none
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpPromptsListRequest {
     /// Opaque MCP pagination cursor from a prior `nextCursor` value
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
     /// Name of the MCP server whose prompts to enumerate
     pub server_name: String,
 }
-crate::record_serde::wire_record!(McpPromptsListRequest { cursor: "cursor" if is_none, server_name: "serverName" });
 
 /// One page of prompts advertised by the named MCP server.
 ///
@@ -4345,18 +3308,21 @@ crate::record_serde::wire_record!(McpPromptsListRequest { cursor: "cursor" if is
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpPromptsListResult {
     /// MCP result metadata
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub meta: Option<HashMap<String, serde_json::Value>>,
     /// Server-provided non-standard result fields
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub additional_properties: Option<HashMap<String, serde_json::Value>>,
     /// Opaque cursor for the next page, if the server has more prompts
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
     /// Prompts advertised by the server
     pub prompts: Vec<McpPrompt>,
 }
-crate::record_serde::wire_record!(McpPromptsListResult { meta: "_meta" if is_none, additional_properties: "additionalProperties" if is_none, next_cursor: "nextCursor" if is_none, prompts: "prompts" });
 
 /// Registration parameters for an external MCP client.
 ///
@@ -4366,7 +3332,8 @@ crate::record_serde::wire_record!(McpPromptsListResult { meta: "_meta" if is_non
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct McpRegisterExternalClientRequest {
     /// In-process MCP Client instance. Marked internal: cannot be serialized across the JSON-RPC boundary.
     #[doc(hidden)]
@@ -4380,12 +3347,6 @@ pub(crate) struct McpRegisterExternalClientRequest {
     #[doc(hidden)]
     pub(crate) transport: serde_json::Value,
 }
-crate::record_serde::wire_record!(McpRegisterExternalClientRequest {
-    client: "client",
-    config: "config",
-    server_name: "serverName",
-    transport: "transport"
-});
 
 /// Registry search to abandon.
 ///
@@ -4395,14 +3356,12 @@ crate::record_serde::wire_record!(McpRegisterExternalClientRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct McpRegistryCancelRequest {
     /// Request ID from `mcp.registry.allocateRequestId` that the search uses.
     pub request_id: i64,
 }
-crate::record_serde::wire_record!(McpRegistryCancelRequest {
-    request_id: "requestId"
-});
 
 /// Whether the cancel reached a live search.
 ///
@@ -4412,14 +3371,12 @@ crate::record_serde::wire_record!(McpRegistryCancelRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct McpRegistryCancelResult {
     /// True when the cancel stopped a running search. False for unknown or reclaimed IDs, completed or canceled searches, and unused reservations. The cancel releases an unused reservation.
     pub canceled: bool,
 }
-crate::record_serde::wire_record!(McpRegistryCancelResult {
-    canceled: "canceled"
-});
 
 /// Request id naming a cancellable registry search.
 ///
@@ -4429,14 +3386,12 @@ crate::record_serde::wire_record!(McpRegistryCancelResult {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct McpRegistryRequestIdResult {
     /// Request ID for `mcp.registry.search` and `mcp.registry.cancel`. It serves one search. Allocation can reclaim unused IDs at the 1,024-ID reservation limit.
     pub request_id: i64,
 }
-crate::record_serde::wire_record!(McpRegistryRequestIdResult {
-    request_id: "requestId"
-});
 
 /// Registry search terms, the credential to search under, and the request id that makes the search cancellable.
 ///
@@ -4446,20 +3401,22 @@ crate::record_serde::wire_record!(McpRegistryRequestIdResult {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct McpRegistrySearchRequest {
     /// The credential the search runs under, carried opaquely. Hosts usually send credential-free `AuthIdentity`; a `token` identity can be resolved only when it embeds a token, while `env` and `gh-cli` identities can use a token embedded in the request first.
     pub auth_info: serde_json::Value,
     /// Maximum number of servers to return.
     pub limit: i64,
     /// Free-text query. Omitted or empty asks the registry for its top servers rather than searching. A value that is not a string is refused.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub query: Option<String>,
     /// Repository used for the policy lookup, as `owner/name`. The policy selects the registry URL and whether the user token goes to the registry. The registry receives this repository only when the policy entry lists it as required context. A value that is not a string is refused.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub repository: Option<String>,
     /// Request ID from `mcp.registry.allocateRequestId`. The search refuses unknown, reclaimed, or canceled IDs and IDs that another search or request already uses.
     pub request_id: i64,
 }
-crate::record_serde::wire_record!(McpRegistrySearchRequest { auth_info: "authInfo", limit: "limit", query: "query" if is_none, repository: "repository" if is_none, request_id: "requestId" });
 
 /// Servers selected from the registry response.
 ///
@@ -4469,29 +3426,12 @@ crate::record_serde::wire_record!(McpRegistrySearchRequest { auth_info: "authInf
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct McpRegistrySearchResult {
     /// The server objects, carried opaquely. The runtime follows pages, keeps the newest entry per server name, cuts the list to `limit`, and sorts an empty-query result by GitHub stars. Each server object remains unchanged because the registry owns that shape.
     pub servers: serde_json::Value,
 }
-crate::record_serde::wire_record!(McpRegistrySearchResult { servers: "servers" });
-
-/// An MCP server whose saved disable replaces its session-only override.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct McpReleaseSessionDisableRequest {
-    /// Name of the MCP server whose disable the host saved.
-    pub server_name: String,
-}
-crate::record_serde::wire_record!(McpReleaseSessionDisableRequest {
-    server_name: "serverName"
-});
 
 /// In-process MCP reload configuration.
 ///
@@ -4501,28 +3441,39 @@ crate::record_serde::wire_record!(McpReleaseSessionDisableRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct McpReloadConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub active_git_hub_token: Option<String>,
     /// Server names the CLI enabled for this session via `--enable-mcp-server`.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub cli_enabled_servers: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub config_filter: Option<serde_json::Value>,
     /// Caller-resolved settings disables, below CLI enables and explicit session disables.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub configured_disabled_servers: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub disabled_servers: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled_servers: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub force_restart: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub github_mcp_tool_options: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub github_mcp_user_override: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub include_workspace_sources: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub mcp3p_enabled: Option<bool>,
     pub mcp_servers: HashMap<String, serde_json::Value>,
-    /// Reload reason for the runtime-owned registry policy check.
-    pub policy_check_trigger: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub secret_store: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub use_cached_tool_snapshots: Option<bool>,
 }
-crate::record_serde::wire_record!(McpReloadConfig { active_git_hub_token: "activeGitHubToken" if is_none, cli_enabled_servers: "cliEnabledServers" if is_none, config_filter: "configFilter" if is_none, configured_disabled_servers: "configuredDisabledServers" if is_none, disabled_servers: "disabledServers" if is_none, enabled_servers: "enabledServers" if is_none, force_restart: "forceRestart" if is_none, github_mcp_tool_options: "githubMcpToolOptions" if is_none, github_mcp_user_override: "githubMcpUserOverride" if is_none, include_workspace_sources: "includeWorkspaceSources" if is_none, mcp3p_enabled: "mcp3pEnabled" if is_none, mcp_servers: "mcpServers", policy_check_trigger: "policyCheckTrigger" if is_none, secret_store: "secretStore" if is_none, use_cached_tool_snapshots: "useCachedToolSnapshots" if is_none });
 
 /// Opaque MCP reload configuration.
 ///
@@ -4532,13 +3483,13 @@ crate::record_serde::wire_record!(McpReloadConfig { active_git_hub_token: "activ
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct McpReloadWithConfigRequest {
     /// Opaque runtime MCP reload configuration. Marked internal: an in-process runtime shape (reloadMcpServers throws over the wire).
     #[doc(hidden)]
     pub(crate) config: serde_json::Value,
 }
-crate::record_serde::wire_record!(McpReloadWithConfigRequest { config: "config" });
 
 /// Indicates whether the auto-managed `github` MCP server was removed (false when nothing to remove).
 ///
@@ -4548,73 +3499,12 @@ crate::record_serde::wire_record!(McpReloadWithConfigRequest { config: "config" 
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpRemoveGitHubResult {
     /// True when the auto-managed `github` MCP server was removed; false when no removal happened (e.g. user has explicitly configured a `github` server, or the server was not registered).
     pub removed: bool,
 }
-crate::record_serde::wire_record!(McpRemoveGitHubResult { removed: "removed" });
-
-/// Resolve GitHub MCP exposure and optionally build a secretless server descriptor.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct McpResolveGitHubConfigRequest {
-    /// Existing host auth context for an explicit session credential.
-    pub auth_context_id: Option<String>,
-    /// Pinned identity metadata for a host-owned registration.
-    pub auth_info: Option<serde_json::Value>,
-    /// Opaque selector for an existing host credential owner, admitted on this connection.
-    pub auth_owner_id: Option<String>,
-    /// Build a descriptor using the caller's current account.
-    pub build_config: Option<bool>,
-    /// The runtime's shell and gh availability decision.
-    pub exclude_gh_replaceable_tools: Option<bool>,
-    /// Enable the FIDES capability.
-    pub fides_ifc_enabled: Option<bool>,
-    /// Invocation options, with precedence over settings.
-    pub flags: Option<GitHubMcpOptions>,
-    /// Explicit descriptor options, when the host already resolved exposure.
-    pub options: Option<GitHubMcpOptions>,
-    /// Session override to validate and merge after invocation options.
-    pub session: Option<serde_json::Value>,
-    /// Persisted user settings in their original shape.
-    pub settings: Option<serde_json::Value>,
-    /// Workspace state for automatic ADO restriction.
-    pub workspace: Option<McpGitHubWorkspace>,
-}
-crate::record_serde::wire_record!(McpResolveGitHubConfigRequest { auth_context_id: "authContextId" if is_none, auth_info: "authInfo" if is_none, auth_owner_id: "authOwnerId" if is_none, build_config: "buildConfig" if is_none, exclude_gh_replaceable_tools: "excludeGhReplaceableTools" if is_none, fides_ifc_enabled: "fidesIfcEnabled" if is_none, flags: "flags" if is_none, options: "options" if is_none, session: "session" if is_none, settings: "settings" if is_none, workspace: "workspace" if is_none });
-
-/// Effective GitHub MCP configuration and override attribution.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct McpResolveGitHubConfigResult {
-    /// Secretless descriptor. Omitted when not requested or not authenticated.
-    pub config_json: Option<String>,
-    /// Effective options after source precedence and capability policy.
-    #[doc(hidden)]
-    pub(crate) options: GitHubMcpOptions,
-    /// True when the workspace requires web_search-only exposure.
-    pub restrict_to_ado_web_search: bool,
-    /// Validated session options, if present.
-    pub session: Option<serde_json::Value>,
-    /// Override attribution: none, flag, settings, or both.
-    pub source: String,
-    /// True when a source explicitly widens exposure.
-    pub user_overrode: bool,
-}
-crate::record_serde::wire_record!(McpResolveGitHubConfigResult { config_json: "configJson" if is_none, options: "options", restrict_to_ado_web_search: "restrictToAdoWebSearch", session: "session" if is_none, source: "source", user_overrode: "userOverrode" });
 
 /// MCP server whose resources to enumerate.
 ///
@@ -4624,14 +3514,15 @@ crate::record_serde::wire_record!(McpResolveGitHubConfigResult { config_json: "c
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpResourcesListRequest {
     /// Opaque MCP pagination cursor from a prior `nextCursor` value
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
     /// Name of the MCP server whose resources to enumerate
     pub server_name: String,
 }
-crate::record_serde::wire_record!(McpResourcesListRequest { cursor: "cursor" if is_none, server_name: "serverName" });
 
 /// One page of resources advertised by the named MCP server.
 ///
@@ -4641,14 +3532,15 @@ crate::record_serde::wire_record!(McpResourcesListRequest { cursor: "cursor" if 
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpResourcesListResult {
     /// Opaque cursor for the next page, if the server has more resources
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
     /// Resources advertised by the server (proxied MCP `resources/list`)
     pub resources: Vec<McpResource>,
 }
-crate::record_serde::wire_record!(McpResourcesListResult { next_cursor: "nextCursor" if is_none, resources: "resources" });
 
 /// MCP server whose resource templates to enumerate.
 ///
@@ -4658,14 +3550,15 @@ crate::record_serde::wire_record!(McpResourcesListResult { next_cursor: "nextCur
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpResourcesListTemplatesRequest {
     /// Opaque MCP pagination cursor from a prior `nextCursor` value
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
     /// Name of the MCP server whose resource templates to enumerate
     pub server_name: String,
 }
-crate::record_serde::wire_record!(McpResourcesListTemplatesRequest { cursor: "cursor" if is_none, server_name: "serverName" });
 
 /// One page of resource templates advertised by the named MCP server.
 ///
@@ -4675,14 +3568,15 @@ crate::record_serde::wire_record!(McpResourcesListTemplatesRequest { cursor: "cu
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpResourcesListTemplatesResult {
     /// Opaque cursor for the next page, if the server has more resource templates
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
     /// Resource templates advertised by the server (proxied MCP `resources/templates/list`)
     pub resource_templates: Vec<McpResourceTemplate>,
 }
-crate::record_serde::wire_record!(McpResourcesListTemplatesResult { next_cursor: "nextCursor" if is_none, resource_templates: "resourceTemplates" });
 
 /// MCP server and resource URI to fetch.
 ///
@@ -4692,17 +3586,14 @@ crate::record_serde::wire_record!(McpResourcesListTemplatesResult { next_cursor:
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpResourcesReadRequest {
     /// Name of the MCP server hosting the resource
     pub server_name: String,
     /// Resource URI
     pub uri: String,
 }
-crate::record_serde::wire_record!(McpResourcesReadRequest {
-    server_name: "serverName",
-    uri: "uri"
-});
 
 /// Resource contents returned by the MCP server.
 ///
@@ -4712,14 +3603,12 @@ crate::record_serde::wire_record!(McpResourcesReadRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpResourcesReadResult {
     /// Resource contents returned by the server
     pub contents: Vec<McpResourceContent>,
 }
-crate::record_serde::wire_record!(McpResourcesReadResult {
-    contents: "contents"
-});
 
 /// Server name and optional replacement configuration for an individual MCP server restart. Omit `config` for a config-free restart-by-name of an already-configured server.
 ///
@@ -4729,16 +3618,18 @@ crate::record_serde::wire_record!(McpResourcesReadResult {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpRestartServerRequest {
     /// Replacement MCP server configuration (stdio process or remote HTTP/SSE). Omit to restart the server with its already-registered configuration (config-free restart-by-name).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub config: Option<serde_json::Value>,
     /// Exact receipt identity for an explicit owned restart; configuration overrides are refused.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub expected_installation_id: Option<String>,
     /// Name of the MCP server to restart
     pub server_name: String,
 }
-crate::record_serde::wire_record!(McpRestartServerRequest { config: "config" if is_none, expected_installation_id: "expectedInstallationId" if is_none, server_name: "serverName" });
 
 /// Per-field MCP telemetry-obfuscation policy.
 ///
@@ -4748,17 +3639,14 @@ crate::record_serde::wire_record!(McpRestartServerRequest { config: "config" if 
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpSafeForTelemetryFields {
     /// Whether MCP tool input names may be included in telemetry without obfuscation.
     pub inputs_names: bool,
     /// Whether the MCP tool name may be included in telemetry without obfuscation.
     pub name: bool,
 }
-crate::record_serde::wire_record!(McpSafeForTelemetryFields {
-    inputs_names: "inputsNames",
-    name: "name"
-});
 
 /// Outcome of an MCP sampling execution: success result, failure error, or cancellation.
 ///
@@ -4768,16 +3656,18 @@ crate::record_serde::wire_record!(McpSafeForTelemetryFields {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpSamplingExecutionResult {
     /// Outcome of the sampling inference. 'success' produced a response; 'failure' encountered an error (including agent-side rejection by content filter or criteria); 'cancelled' the caller cancelled this execution via cancelSamplingExecution.
     pub action: McpSamplingExecutionAction,
     /// Error description, present when action='failure'.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     /// MCP CreateMessageResult payload (with optional 'tools' extension), present when action='success'. Treated as opaque at the schema layer; consumers should construct/consume it per the MCP CreateMessageResult shape.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<McpExecuteSamplingResult>,
 }
-crate::record_serde::wire_record!(McpSamplingExecutionResult { action: "action", error: "error" if is_none, result: "result" if is_none });
 
 /// Authentication settings with optional redirect port configuration.
 ///
@@ -4787,12 +3677,13 @@ crate::record_serde::wire_record!(McpSamplingExecutionResult { action: "action",
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpServerAuthConfigRedirectPort {
     /// Fixed port for the OAuth redirect callback server.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub redirect_port: Option<i32>,
 }
-crate::record_serde::wire_record!(McpServerAuthConfigRedirectPort { redirect_port: "redirectPort" if is_none });
 
 /// Remote MCP server configuration accessed over HTTP or SSE.
 ///
@@ -4802,68 +3693,96 @@ crate::record_serde::wire_record!(McpServerAuthConfigRedirectPort { redirect_por
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpServerConfigHttp {
     /// Set to `true` to use defaults, or provide an object with additional auth or OIDC settings.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub auth: Option<serde_json::Value>,
     /// Configuration warnings recorded while loading the server.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub config_warnings: Option<Vec<String>>,
     /// Controls if tools provided by this server can be loaded on demand via tool search (auto) or always included in the initial tool list (never)
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub defer_tools: Option<McpServerConfigDeferTools>,
     /// Whether secret masking is disabled for calls to this server.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub disable_secret_masking: Option<bool>,
     /// Set to true to disable persisted MCP tool snapshots for this server. Live tool discovery is unaffected.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub disable_tool_cache: Option<bool>,
     /// Optional human-readable server name.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     /// Event types this server receives as Copilot notifications.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub events: Option<Vec<String>>,
     /// Tool names excluded after the include filter is applied.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub exclude_tools: Option<Vec<String>>,
     /// Content filtering mode to apply to all tools, or a map of tool name to content filtering mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub filter_mapping: Option<serde_json::Value>,
     /// HTTP headers to include in requests to the remote MCP server.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub headers: Option<HashMap<String, String>>,
     /// Dynamic-header refresh cache lifetime in milliseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub headers_refresh_ttl_ms: Option<i64>,
     /// Whether this server is a built-in fallback used when the user has not configured their own server.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub is_default_server: Option<bool>,
     /// Copilot notification types this server may send to the host.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub notifications: Option<Vec<String>>,
     /// OAuth client ID for a pre-registered remote MCP OAuth client.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub oauth_client_id: Option<String>,
     /// OAuth grant type to use when authenticating to the remote MCP server.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub oauth_grant_type: Option<McpServerConfigHttpOauthGrantType>,
     /// Whether the configured OAuth client is public and does not require a client secret.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub oauth_public_client: Option<bool>,
     /// Non-empty array of valid RFC 6749 scope-token strings to request for the statically configured OAuth client when the server challenge omits scope or provides an empty scope. Requires a non-empty oauthClientId. These scopes take precedence over protected-resource metadata.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub oauth_scopes: Option<Vec<String>>,
     /// Set to `true` to use defaults, or provide an object with additional auth or OIDC settings.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub oidc: Option<serde_json::Value>,
     /// Telemetry-obfuscation policy for this server's tools.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub safe_for_telemetry: Option<serde_json::Value>,
     /// Milliseconds this server may spend connecting before the CLI warns that it is taking longer than expected. Presentation only: it does not change how long the connection is allowed to take.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub slow_connection_threshold_ms: Option<i64>,
     /// The origin of this server configuration.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<McpServerSource>,
     /// Source file path recorded while loading the config.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub source_path: Option<String>,
     /// Plugin that provided this server.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub source_plugin: Option<String>,
     /// Whether the providing plugin uses the Open Plugin Spec.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub source_plugin_spec: Option<bool>,
     /// Version of the plugin that provided this server.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub source_plugin_version: Option<String>,
     /// Timeout in milliseconds for tool discovery and tool calls.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub timeout: Option<i64>,
     /// Tools to include. Defaults to all tools if not specified.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<String>>,
     /// Remote transport type. Defaults to "http" when omitted.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub r#type: Option<McpServerConfigHttpType>,
     /// URL of the remote MCP server endpoint.
     pub url: String,
 }
-crate::record_serde::wire_record!(McpServerConfigHttp { auth: "auth" if is_none, config_warnings: "configWarnings" if is_none, defer_tools: "deferTools" if is_none, disable_secret_masking: "disableSecretMasking" if is_none, disable_tool_cache: "disableToolCache" if is_none, display_name: "displayName" if is_none, events: "events" if is_none, exclude_tools: "excludeTools" if is_none, filter_mapping: "filterMapping" if is_none, headers: "headers" if is_none, headers_refresh_ttl_ms: "headersRefreshTtlMs" if is_none, is_default_server: "isDefaultServer" if is_none, notifications: "notifications" if is_none, oauth_client_id: "oauthClientId" if is_none, oauth_grant_type: "oauthGrantType" if is_none, oauth_public_client: "oauthPublicClient" if is_none, oauth_scopes: "oauthScopes" if is_none, oidc: "oidc" if is_none, safe_for_telemetry: "safeForTelemetry" if is_none, slow_connection_threshold_ms: "slowConnectionThresholdMs" if is_none, source: "source" if is_none, source_path: "sourcePath" if is_none, source_plugin: "sourcePlugin" if is_none, source_plugin_spec: "sourcePluginSpec" if is_none, source_plugin_version: "sourcePluginVersion" if is_none, timeout: "timeout" if is_none, tools: "tools" if is_none, r#type: "type" if is_none, url: "url" });
 
 /// A session-only local IDE endpoint. Starting it never writes persistent configuration.
 ///
@@ -4873,9 +3792,11 @@ crate::record_serde::wire_record!(McpServerConfigHttp { auth: "auth" if is_none,
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpServerConfigLocal {
     /// Endpoint headers from IDE discovery.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub headers: Option<HashMap<String, String>>,
     /// IDE identity and initialize metadata. The server name must be `ide`.
     pub ide: McpIdeConfig,
@@ -4884,7 +3805,6 @@ pub struct McpServerConfigLocal {
     /// Local transport discriminator.
     pub r#type: McpServerConfigLocalType,
 }
-crate::record_serde::wire_record!(McpServerConfigLocal { headers: "headers" if is_none, ide: "ide", socket_path: "socketPath", r#type: "type" });
 
 /// In-process MCP server configuration used by embedded SDK clients.
 ///
@@ -4894,55 +3814,75 @@ crate::record_serde::wire_record!(McpServerConfigLocal { headers: "headers" if i
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct McpServerConfigMemory {
     /// Configuration warnings recorded while loading the server.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub config_warnings: Option<Vec<String>>,
     /// Controls whether tools can be loaded on demand.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub defer_tools: Option<McpServerConfigDeferTools>,
     /// Whether secret masking is disabled for calls to this server.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub disable_secret_masking: Option<bool>,
     /// Whether persisted tool snapshots are disabled.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub disable_tool_cache: Option<bool>,
     /// Optional human-readable server name.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     /// Event types this server receives as Copilot notifications.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub events: Option<Vec<String>>,
     /// Tool names excluded after the include filter is applied.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub exclude_tools: Option<Vec<String>>,
     /// Content filtering mode to apply to this server's tools.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub filter_mapping: Option<serde_json::Value>,
     /// Whether this server is a built-in fallback.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub is_default_server: Option<bool>,
     /// Copilot notification types this server may send to the host.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub notifications: Option<Vec<String>>,
     /// Set to `true` to use default OIDC settings.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub oidc: Option<serde_json::Value>,
     /// Telemetry-obfuscation policy for this server's tools.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub safe_for_telemetry: Option<serde_json::Value>,
     /// In-process MCP server instance. This value cannot cross a JSON-RPC boundary.
     #[doc(hidden)]
     pub(crate) server_instance: serde_json::Value,
     /// Milliseconds this server may spend connecting before the CLI warns that it is taking longer than expected. Presentation only: it does not change how long the connection is allowed to take.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub slow_connection_threshold_ms: Option<i64>,
     /// The origin of this server configuration.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<McpServerSource>,
     /// Source file path recorded while loading the config.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub source_path: Option<String>,
     /// Plugin that provided this server.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub source_plugin: Option<String>,
     /// Whether the providing plugin uses the Open Plugin Spec.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub source_plugin_spec: Option<bool>,
     /// Version of the plugin that provided this server.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub source_plugin_version: Option<String>,
     /// Timeout in milliseconds for tool discovery and tool calls.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub timeout: Option<i64>,
     /// Tools to include. Defaults to all tools if not specified.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<String>>,
     #[doc(hidden)]
     pub(crate) r#type: McpServerConfigMemoryType,
 }
-crate::record_serde::wire_record!(McpServerConfigMemory { config_warnings: "configWarnings" if is_none, defer_tools: "deferTools" if is_none, disable_secret_masking: "disableSecretMasking" if is_none, disable_tool_cache: "disableToolCache" if is_none, display_name: "displayName" if is_none, events: "events" if is_none, exclude_tools: "excludeTools" if is_none, filter_mapping: "filterMapping" if is_none, is_default_server: "isDefaultServer" if is_none, notifications: "notifications" if is_none, oidc: "oidc" if is_none, safe_for_telemetry: "safeForTelemetry" if is_none, server_instance: "serverInstance", slow_connection_threshold_ms: "slowConnectionThresholdMs" if is_none, source: "source" if is_none, source_path: "sourcePath" if is_none, source_plugin: "sourcePlugin" if is_none, source_plugin_spec: "sourcePluginSpec" if is_none, source_plugin_version: "sourcePluginVersion" if is_none, timeout: "timeout" if is_none, tools: "tools" if is_none, r#type: "type" });
 
 /// Stdio MCP server configuration launched as a child process.
 ///
@@ -4952,62 +3892,87 @@ crate::record_serde::wire_record!(McpServerConfigMemory { config_warnings: "conf
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpServerConfigStdio {
     /// Command-line arguments passed to the Stdio MCP server process.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub args: Option<Vec<String>>,
     /// Set to `true` to use defaults, or provide an object with additional auth or OIDC settings.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub auth: Option<serde_json::Value>,
     /// Executable command used to start the Stdio MCP server process.
     pub command: String,
     /// Configuration warnings recorded while loading the server.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub config_warnings: Option<Vec<String>>,
     /// Working directory for the Stdio MCP server process.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
     /// Controls if tools provided by this server can be loaded on demand via tool search (auto) or always included in the initial tool list (never)
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub defer_tools: Option<McpServerConfigDeferTools>,
     /// Whether secret masking is disabled for calls to this server.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub disable_secret_masking: Option<bool>,
     /// Set to true to disable persisted MCP tool snapshots for this server. Live tool discovery is unaffected.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub disable_tool_cache: Option<bool>,
     /// Optional human-readable server name.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     /// Environment variables to pass to the Stdio MCP server process.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub env: Option<HashMap<String, String>>,
     /// Event types this server receives as Copilot notifications.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub events: Option<Vec<String>>,
     /// Tool names excluded after the include filter is applied.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub exclude_tools: Option<Vec<String>>,
     /// Content filtering mode to apply to all tools, or a map of tool name to content filtering mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub filter_mapping: Option<serde_json::Value>,
     /// Whether this server is a built-in fallback used when the user has not configured their own server.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub is_default_server: Option<bool>,
     /// Copilot notification types this server may send to the host.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub notifications: Option<Vec<String>>,
     /// Set to `true` to use defaults, or provide an object with additional auth or OIDC settings.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub oidc: Option<serde_json::Value>,
     /// Telemetry-obfuscation policy for this server's tools.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub safe_for_telemetry: Option<serde_json::Value>,
     /// Milliseconds this server may spend connecting before the CLI warns that it is taking longer than expected. Presentation only: it does not change how long the connection is allowed to take.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub slow_connection_threshold_ms: Option<i64>,
     /// The origin of this server configuration.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<McpServerSource>,
     /// Source file path recorded while loading the config.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub source_path: Option<String>,
     /// Plugin that provided this server.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub source_plugin: Option<String>,
     /// Whether the providing plugin uses the Open Plugin Spec.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub source_plugin_spec: Option<bool>,
     /// Version of the plugin that provided this server.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub source_plugin_version: Option<String>,
     /// Timeout in milliseconds for tool discovery and tool calls.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub timeout: Option<i64>,
     /// Tools to include. Defaults to all tools if not specified.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<String>>,
     /// Local transport type. Defaults to stdio when omitted.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub r#type: Option<McpServerConfigStdioType>,
 }
-crate::record_serde::wire_record!(McpServerConfigStdio { args: "args" if is_none, auth: "auth" if is_none, command: "command", config_warnings: "configWarnings" if is_none, cwd: "cwd" if is_none, defer_tools: "deferTools" if is_none, disable_secret_masking: "disableSecretMasking" if is_none, disable_tool_cache: "disableToolCache" if is_none, display_name: "displayName" if is_none, env: "env" if is_none, events: "events" if is_none, exclude_tools: "excludeTools" if is_none, filter_mapping: "filterMapping" if is_none, is_default_server: "isDefaultServer" if is_none, notifications: "notifications" if is_none, oidc: "oidc" if is_none, safe_for_telemetry: "safeForTelemetry" if is_none, slow_connection_threshold_ms: "slowConnectionThresholdMs" if is_none, source: "source" if is_none, source_path: "sourcePath" if is_none, source_plugin: "sourcePlugin" if is_none, source_plugin_spec: "sourcePluginSpec" if is_none, source_plugin_version: "sourcePluginVersion" if is_none, timeout: "timeout" if is_none, tools: "tools" if is_none, r#type: "type" if is_none });
 
 /// MCP servers configured for the session, with their connection status and host-level state.
 ///
@@ -5017,14 +3982,15 @@ crate::record_serde::wire_record!(McpServerConfigStdio { args: "args" if is_none
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpServerList {
     /// Host-level state, omitted when no MCP host is initialized.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub host: Option<McpHostState>,
     /// Configured MCP servers
     pub servers: Vec<McpServer>,
 }
-crate::record_serde::wire_record!(McpServerList { host: "host" if is_none, servers: "servers" });
 
 /// Mode controlling how MCP server env values are resolved (`direct` or `indirect`).
 ///
@@ -5034,12 +4000,12 @@ crate::record_serde::wire_record!(McpServerList { host: "host" if is_none, serve
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpSetEnvValueModeParams {
     /// How environment-variable values supplied to MCP servers are resolved. "direct" passes literal string values; "indirect" treats values as references (e.g. names of environment variables on the host) that the runtime resolves before launch. Defaults to the runtime's startup mode; clients that intentionally launch MCP servers with literal values (e.g. CLI prompt mode and ACP) set this to "direct".
     pub mode: McpSetEnvValueModeDetails,
 }
-crate::record_serde::wire_record!(McpSetEnvValueModeParams { mode: "mode" });
 
 /// Env-value mode recorded on the session after the update.
 ///
@@ -5049,86 +4015,14 @@ crate::record_serde::wire_record!(McpSetEnvValueModeParams { mode: "mode" });
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpSetEnvValueModeResult {
     /// Mode recorded on the session after the update
     pub mode: McpSetEnvValueModeDetails,
 }
-crate::record_serde::wire_record!(McpSetEnvValueModeResult { mode: "mode" });
 
-/// Whether the gh-replaceable GitHub MCP tools may be clipped for the session described by the request.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct McpShouldExcludeGitHubToolsResult {
-    /// True only when both halves hold: the session's filters still reach the platform shell tool, and the host actually has the `gh` those tools would be replaced by. Feed it straight back as the `excludeGhReplaceableTools` build option.
-    pub exclude_gh_replaceable_tools: bool,
-}
-crate::record_serde::wire_record!(McpShouldExcludeGitHubToolsResult {
-    exclude_gh_replaceable_tools: "excludeGhReplaceableTools"
-});
-
-/// Server name and optional configuration for an individual MCP server start. Omit `config` for a config-free start-by-name of an already-configured server.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct McpStartServerRequest {
-    /// MCP server configuration (stdio, remote HTTP/SSE, or session-only local IDE endpoint). Local IDE endpoints never write persistent configuration. Omit to start with the already-registered configuration.
-    pub config: Option<serde_json::Value>,
-    /// Exact receipt identity for explicit owned activation in this session.
-    pub expected_installation_id: Option<String>,
-    /// Name of the MCP server to start
-    pub server_name: String,
-}
-crate::record_serde::wire_record!(McpStartServerRequest { config: "config" if is_none, expected_installation_id: "expectedInstallationId" if is_none, server_name: "serverName" });
-
-/// MCP server startup filtering result.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct McpStartServersResult {
-    /// Non-default servers allowed by policy
-    pub allowed_servers: Option<Vec<McpAllowedServer>>,
-    /// Servers whose connection attempt failed.
-    pub failed_servers: Option<Vec<McpFailedServer>>,
-    /// Servers filtered out before startup
-    pub filtered_servers: Vec<McpFilteredServer>,
-}
-crate::record_serde::wire_record!(McpStartServersResult { allowed_servers: "allowedServers" if is_none, failed_servers: "failedServers" if is_none, filtered_servers: "filteredServers" });
-
-/// Plugin identity for a scoped MCP server stop.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct McpStopPluginServersRequest {
-    /// Name of the plugin whose owned MCP servers must stop.
-    pub plugin_name: String,
-}
-crate::record_serde::wire_record!(McpStopPluginServersRequest {
-    plugin_name: "pluginName"
-});
-
-/// Acknowledges completion of the scoped plugin MCP server stop.
+/// The session tool filters that decide whether the session still has a shell to run `gh` with.
 ///
 /// <div class="warning">
 ///
@@ -5138,7 +4032,74 @@ crate::record_serde::wire_record!(McpStopPluginServersRequest {
 /// </div>
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct McpStopPluginServersResult {}
+pub(crate) struct McpShouldExcludeGitHubToolsRequest {
+    /// The session's tool allowlist, when it set one. Omitted means the session constrains nothing this way.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub available_tools: Option<Vec<String>>,
+    /// The session's tool denylist, when it set one. Omitted means the session constrains nothing this way.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub excluded_tools: Option<Vec<String>>,
+    /// How the allowlist and denylist combine when both are set. Omitted uses the default excluded precedence; supply the session's explicit Update selection when present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_filter_precedence: Option<OptionsUpdateToolFilterPrecedence>,
+}
+
+/// Whether the gh-replaceable GitHub MCP tools may be clipped for the session described by the request.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct McpShouldExcludeGitHubToolsResult {
+    /// True only when both halves hold: the session's filters still reach the platform shell tool, and the host actually has the `gh` those tools would be replaced by. Feed it straight back as the `excludeGhReplaceableTools` build option.
+    pub exclude_gh_replaceable_tools: bool,
+}
+
+/// Server name and optional configuration for an individual MCP server start. Omit `config` for a config-free start-by-name of an already-configured server.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpStartServerRequest {
+    /// MCP server configuration (stdio, remote HTTP/SSE, or session-only local IDE endpoint). Local IDE endpoints never write persistent configuration. Omit to start with the already-registered configuration.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config: Option<serde_json::Value>,
+    /// Exact receipt identity for explicit owned activation in this session.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_installation_id: Option<String>,
+    /// Name of the MCP server to start
+    pub server_name: String,
+}
+
+/// MCP server startup filtering result.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpStartServersResult {
+    /// Non-default servers allowed by policy
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_servers: Option<Vec<McpAllowedServer>>,
+    /// Servers whose connection attempt failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failed_servers: Option<Vec<McpFailedServer>>,
+    /// Servers filtered out before startup
+    pub filtered_servers: Vec<McpFilteredServer>,
+}
 
 /// Server name and optional transport selector for an individual MCP server stop. Omit transport to stop the server by name.
 ///
@@ -5148,16 +4109,18 @@ pub struct McpStopPluginServersResult {}
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpStopServerRequest {
     /// Exact owned receipt identity. Stop also forgets this session's durable activation.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub expected_installation_id: Option<String>,
     /// Name of the MCP server to stop
     pub server_name: String,
     /// Optional transport selector. The only supported value, local-http, requires serverName ide and cannot accompany expectedInstallationId. It cancels pending IDE initialization and removes local IDE state without stopping an ordinary server with the same name. Omit this field for a generic stop by name.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub transport: Option<McpServerConfigLocalType>,
 }
-crate::record_serde::wire_record!(McpStopServerRequest { expected_installation_id: "expectedInstallationId" if is_none, server_name: "serverName", transport: "transport" if is_none });
 
 /// Per-server MCP tool definition token costs.
 ///
@@ -5167,12 +4130,12 @@ crate::record_serde::wire_record!(McpStopServerRequest { expected_installation_i
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpToolTokenBreakdownResult {
     /// One entry per MCP server with tools in the session's current tool set, in tool order. Empty both when the session has not computed its tool set yet and when the computed tool set contains no MCP tools; the two cases are not distinguished.
     pub servers: Vec<McpServerToolTokenBreakdown>,
 }
-crate::record_serde::wire_record!(McpToolTokenBreakdownResult { servers: "servers" });
 
 /// Server name identifying the external client to remove.
 ///
@@ -5182,14 +4145,12 @@ crate::record_serde::wire_record!(McpToolTokenBreakdownResult { servers: "server
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct McpUnregisterExternalClientRequest {
     /// Server name of the external client to unregister
     pub server_name: String,
 }
-crate::record_serde::wire_record!(McpUnregisterExternalClientRequest {
-    server_name: "serverName"
-});
 
 /// Applies exactly one retained verified Agent Plugin installation plan.
 ///
@@ -5199,7 +4160,8 @@ crate::record_serde::wire_record!(McpUnregisterExternalClientRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PluginApplyInstallRequest {
     /// Required authenticated bound catalogue and agent-plugin-confirmed-installation capabilities.
     pub contract: CatalogClientContract,
@@ -5208,118 +4170,29 @@ pub struct PluginApplyInstallRequest {
     /// Same existing selected session as planning.
     pub policy_session_id: String,
 }
-crate::record_serde::wire_record!(PluginApplyInstallRequest {
-    contract: "contract",
-    plan_handle: "planHandle",
-    policy_session_id: "policySessionId"
-});
-
-/// Locates bundled plugin manifests relative to one installed host directory.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct PluginBuiltinDiscoverRequest {
-    /// Host module directory used to locate the installed distribution.
-    pub base_directory: String,
-}
-crate::record_serde::wire_record!(PluginBuiltinDiscoverRequest {
-    base_directory: "baseDirectory"
-});
-
-/// Bundled plugin records and diagnostics from the original manifest scanner.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct PluginBuiltinDiscoverResult {
-    /// Scanned bundled records in host precedence order.
-    pub plugins: Vec<serde_json::Value>,
-    /// Manifest and filesystem diagnostics, including a missing required bundle.
-    pub warnings: Vec<String>,
-}
-crate::record_serde::wire_record!(PluginBuiltinDiscoverResult {
-    plugins: "plugins",
-    warnings: "warnings"
-});
-
-/// Identifies a plugin and its configured marketplace without accepting configuration or policy overrides.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct PluginCheckUpdateRequest {
-    /// Configured marketplace name.
-    pub marketplace: String,
-    /// Installed plugin name.
-    pub name: String,
-}
-crate::record_serde::wire_record!(PluginCheckUpdateRequest {
-    marketplace: "marketplace",
-    name: "name"
-});
-
-/// Inspects persisted and live plugins under an explicit effective configuration without changing the existing user-only plugins.list API.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct PluginInspectInventoryRequest {
-    /// Trusted caller-composed read configuration, not persisted by inspection.
-    pub config_override: serde_json::Value,
-    /// Includes pending managed plugins by default. False excludes uninstalled rows before source merging.
-    pub include_uninstalled: Option<bool>,
-    /// Effective policy for read-only inspection; mutation guards retain their own authority.
-    pub managed_settings: Option<serde_json::Value>,
-    /// Additional plugin directories in host precedence order.
-    pub plugin_directories: Option<Vec<String>>,
-    /// Seeds pre-migration enablement from installed records below explicit overrides.
-    pub seed_enabled_plugins_from_installed: bool,
-    /// Working directory for repository overlay and live marketplace resolution.
-    pub working_directory: String,
-}
-crate::record_serde::wire_record!(PluginInspectInventoryRequest { config_override: "configOverride", include_uninstalled: "includeUninstalled" if is_none, managed_settings: "managedSettings" if is_none, plugin_directories: "pluginDirectories" if is_none, seed_enabled_plugins_from_installed: "seedEnabledPluginsFromInstalled", working_directory: "workingDirectory" });
 
 /// A verified Agent Plugin installation plan was prepared.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PluginInstallationManagementOutcomeInstallPlanned {
     /// Agent Plugin installation management outcome discriminator.
     pub kind: PluginInstallationManagementOutcomeInstallPlannedKind,
     /// Prepared install plan.
     pub plan: PluginInstallPlan,
 }
-crate::record_serde::wire_record!(PluginInstallationManagementOutcomeInstallPlanned {
-    kind: "kind",
-    plan: "plan"
-});
 
 /// The request was refused without preparing a plan.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PluginInstallationManagementOutcomeRefused {
     /// Agent Plugin installation management outcome discriminator.
     pub kind: PluginInstallationManagementOutcomeRefusedKind,
     /// Bounded refusal reason.
     pub reason: PluginInstallationFailureReason,
     /// Whole seconds GitHub asked the caller to wait, present only with source-rate-limited.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub retry_after_seconds: Option<i64>,
 }
-crate::record_serde::wire_record!(PluginInstallationManagementOutcomeRefused { kind: "kind", reason: "reason", retry_after_seconds: "retryAfterSeconds" if is_none });
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -5340,7 +4213,8 @@ pub struct PluginInstallationManagementResultOutcome {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PluginInstallationSummary {
     /// Catalogue identity retained at install time.
     pub catalogue: InstallationCatalogueIdentity,
@@ -5357,68 +4231,52 @@ pub struct PluginInstallationSummary {
     /// Install location without an absolute host path.
     pub target: PluginInstallationLocation,
 }
-crate::record_serde::wire_record!(PluginInstallationSummary {
-    catalogue: "catalogue",
-    enabled: "enabled",
-    installed_at: "installedAt",
-    name: "name",
-    operation_id: "operationId",
-    source: "source",
-    target: "target"
-});
 
 /// The verified plugin was registered disabled.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PluginInstallationOutcomeInstalled {
     /// Installed plugin summary.
     pub installation: PluginInstallationSummary,
     /// Terminal Agent Plugin installation outcome discriminator.
     pub kind: PluginInstallationOutcomeInstalledKind,
 }
-crate::record_serde::wire_record!(PluginInstallationOutcomeInstalled {
-    installation: "installation",
-    kind: "kind"
-});
 
 /// The user declined the confirmation request.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PluginInstallationOutcomeDeclined {
     /// Terminal Agent Plugin installation outcome discriminator.
     pub kind: PluginInstallationOutcomeDeclinedKind,
     /// Original operation identity.
     pub operation_id: String,
 }
-crate::record_serde::wire_record!(PluginInstallationOutcomeDeclined {
-    kind: "kind",
-    operation_id: "operationId"
-});
 
 /// The confirmation was cancelled before any change.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PluginInstallationOutcomeCancelled {
     /// Terminal Agent Plugin installation outcome discriminator.
     pub kind: PluginInstallationOutcomeCancelledKind,
     /// Original operation identity.
     pub operation_id: String,
 }
-crate::record_serde::wire_record!(PluginInstallationOutcomeCancelled {
-    kind: "kind",
-    operation_id: "operationId"
-});
 
 /// The operation was refused and nothing was installed.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PluginInstallationOutcomeRefused {
     /// Terminal Agent Plugin installation outcome discriminator.
     pub kind: PluginInstallationOutcomeRefusedKind,
     /// Present once an operation has been allocated.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_id: Option<String>,
     /// Bounded refusal reason.
     pub reason: PluginInstallationFailureReason,
     /// Whole seconds GitHub asked the caller to wait, present only with source-rate-limited.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub retry_after_seconds: Option<i64>,
 }
-crate::record_serde::wire_record!(PluginInstallationOutcomeRefused { kind: "kind", operation_id: "operationId" if is_none, reason: "reason", retry_after_seconds: "retryAfterSeconds" if is_none });
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -5439,13 +4297,15 @@ pub struct PluginInstallationResultOutcome {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PluginInstallationReview {
     /// Exact reviewed Agent Plugin installation action.
     pub action: PluginInstallationReviewAction,
     /// Catalogue identity retained from the bound candidate, or verified data for a reference.
     pub catalogue: InstallationCatalogueIdentity,
     /// Manifest description when present.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     /// Reviewed files and digests.
     pub files: Vec<PluginInstallationFileReview>,
@@ -5458,6 +4318,7 @@ pub struct PluginInstallationReview {
     pub manifest_path: String,
     /// MCP servers the verified files declare, exactly as an install of these files loads
     /// them. Omitted when the plugin declares none.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub mcp_servers: Option<Vec<PluginInstallationMcpServerReview>>,
     /// Installed plugin name, derived from the verified manifest exactly as a direct install derives it.
     pub name: String,
@@ -5468,9 +4329,9 @@ pub struct PluginInstallationReview {
     /// Total reviewed payload size in bytes.
     pub total_bytes: i64,
     /// Manifest version when present.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
 }
-crate::record_serde::wire_record!(PluginInstallationReview { action: "action", catalogue: "catalogue", description: "description" if is_none, files: "files", installs_disabled: "installsDisabled", manifest_content: "manifestContent", manifest_path: "manifestPath", mcp_servers: "mcpServers" if is_none, name: "name", source: "source", target: "target", total_bytes: "totalBytes", version: "version" if is_none });
 
 /// Result of installing a plugin.
 ///
@@ -5480,63 +4341,26 @@ crate::record_serde::wire_record!(PluginInstallationReview { action: "action", c
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PluginInstallResult {
     /// Set when the install path is deprecated (e.g. direct repo / URL / local installs). Callers should surface this to end users.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub deprecation_warning: Option<String>,
     /// The newly installed plugin's metadata
     pub plugin: InstalledPluginInfo,
     /// Optional post-install message provided by the plugin (e.g. setup instructions)
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub post_install_message: Option<String>,
     /// Number of skills discovered and installed from the plugin
     pub skills_installed: i64,
     /// Where the completed plugin tree was staged before atomic promotion
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub staging_mode: Option<PluginInstallStagingMode>,
-    /// Warnings raised while reading the plugin's manifest: a field the manifest's schema does not define, which the loader ignores, or the reason the loader rejects the whole manifest. Callers should surface these to end users: a plugin whose skills sit behind an ignored field, or whose manifest is rejected, otherwise installs, lists, and contributes nothing, with no signal to its author. Absent when the manifest raised none.
+    /// Report-and-ignore warnings raised while reading the plugin's manifest, such as a field the manifest's schema does not define and the loader therefore ignored. Callers should surface these to end users: a plugin whose skills sit behind an ignored field otherwise installs, lists, and contributes nothing, with no signal to its author. Absent when the manifest raised none.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub warnings: Option<Vec<String>>,
 }
-crate::record_serde::wire_record!(PluginInstallResult { deprecation_warning: "deprecationWarning" if is_none, plugin: "plugin", post_install_message: "postInstallMessage" if is_none, skills_installed: "skillsInstalled", staging_mode: "stagingMode" if is_none, warnings: "warnings" if is_none });
-
-/// One plugin in a host invocation's complete merged inventory.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct PluginInvocationInventoryEntry {
-    /// Whether an explicit host directory supplies this plugin.
-    pub external: bool,
-    /// Plugin metadata and effective activation.
-    pub plugin: InstalledPluginInfo,
-}
-crate::record_serde::wire_record!(PluginInvocationInventoryEntry {
-    external: "external",
-    plugin: "plugin"
-});
-
-/// Persisted, live, built-in, and host-directory plugins with canonical shadowing and scan diagnostics.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct PluginInvocationInventoryResult {
-    /// Merged inventory in canonical precedence order.
-    #[doc(hidden)]
-    pub(crate) plugins: Vec<PluginInvocationInventoryEntry>,
-    /// Directory scan warnings in source order.
-    pub warnings: Vec<String>,
-}
-crate::record_serde::wire_record!(PluginInvocationInventoryResult {
-    plugins: "plugins",
-    warnings: "warnings"
-});
 
 /// Plugins installed for the session, with their enabled state and version metadata.
 ///
@@ -5546,12 +4370,12 @@ crate::record_serde::wire_record!(PluginInvocationInventoryResult {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PluginList {
     /// Installed plugins
     pub plugins: Vec<Plugin>,
 }
-crate::record_serde::wire_record!(PluginList { plugins: "plugins" });
 
 /// Plugins installed in user/global state.
 ///
@@ -5561,66 +4385,12 @@ crate::record_serde::wire_record!(PluginList { plugins: "plugins" });
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PluginListResult {
     /// Installed plugins
     pub plugins: Vec<InstalledPluginInfo>,
-    /// Existing discovery warnings for an invocation-context query. Omitted on legacy calls without workingDirectory or pluginDirectories. Display text can contain untrusted paths and must be sanitized before terminal output.
-    pub warnings: Option<Vec<String>>,
 }
-crate::record_serde::wire_record!(PluginListResult { plugins: "plugins", warnings: "warnings" if is_none });
-
-/// Identifies a marketplace to probe without refreshing its checkout.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct PluginMarketplaceCheckUpdateRequest {
-    /// Configured marketplace name.
-    pub name: String,
-}
-crate::record_serde::wire_record!(PluginMarketplaceCheckUpdateRequest { name: "name" });
-
-/// Searches all configured plugin marketplaces, not the Agent Finder catalog.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct PluginMarketplaceSearchRequest {
-    /// Refreshes the configured marketplace checkouts before the search. Defaults to false.
-    pub force_refresh: Option<bool>,
-    /// Case-insensitive substring matched against plugin names and descriptions.
-    pub query: String,
-}
-crate::record_serde::wire_record!(PluginMarketplaceSearchRequest { force_refresh: "forceRefresh" if is_none, query: "query" });
-
-/// Matching plugins across configured marketplaces, with partial failures.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct PluginMarketplaceSearchResult {
-    /// Catalog or installation-inventory failures that did not prevent other results.
-    pub errors: Vec<PluginMarketplaceSearchError>,
-    /// Matching catalog entries in configured marketplace order.
-    pub plugins: Vec<PluginMarketplaceSearchEntry>,
-}
-crate::record_serde::wire_record!(PluginMarketplaceSearchResult {
-    errors: "errors",
-    plugins: "plugins"
-});
 
 /// Side-effect-free planning of one Agent Plugin search candidate through its Agent Finder materialisation.
 ///
@@ -5630,7 +4400,8 @@ crate::record_serde::wire_record!(PluginMarketplaceSearchResult {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PluginPlanInstallRequest {
     /// Fresh single-use Agent Plugin candidate handle returned by a bound catalogue search.
     pub candidate_handle: String,
@@ -5639,157 +4410,6 @@ pub struct PluginPlanInstallRequest {
     /// Existing local session attached to this connection.
     pub policy_session_id: String,
 }
-crate::record_serde::wire_record!(PluginPlanInstallRequest {
-    candidate_handle: "candidateHandle",
-    contract: "contract",
-    policy_session_id: "policySessionId"
-});
-
-/// Resolves plugin policy through the requesting connection's original credential owner.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct PluginPolicyResolveInvocationRequest {
-    /// Optional active account identity; credentials still resolve through the original owner.
-    pub auth_info: Option<AuthIdentity>,
-    /// Reads account and server policy from local caches without network access.
-    pub cache_only: bool,
-    /// Host client identity supplied to the policy helper.
-    pub client_name: String,
-    /// Host home directory for policy and cache locations.
-    pub home_directory: String,
-    /// Host platform in Node platform spelling.
-    pub platform: String,
-    /// Whether a configured policy helper may run.
-    pub policy_helper_enabled: bool,
-    /// Retains authoritative source layers for subsequent guarded mutations.
-    pub retain_policy: Option<bool>,
-    /// Stops on ingestion exceptions instead of reloading the device layer.
-    pub strict: bool,
-    /// Host user agent supplied to policy retrieval.
-    pub user_agent: String,
-    /// Working directory used by a directory-sensitive policy helper.
-    pub working_directory: String,
-}
-crate::record_serde::wire_record!(PluginPolicyResolveInvocationRequest { auth_info: "authInfo" if is_none, cache_only: "cacheOnly", client_name: "clientName", home_directory: "homeDirectory", platform: "platform", policy_helper_enabled: "policyHelperEnabled", retain_policy: "retainPolicy" if is_none, strict: "strict", user_agent: "userAgent", working_directory: "workingDirectory" });
-
-/// Resolved plugin policy and authoritative failure posture. Fresh successful resolutions retain the original policy layers for mutation guards; cache-only inspection never changes retained policy.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct PluginPolicyResolveInvocationResult {
-    /// Resolution diagnostics in source order.
-    #[doc(hidden)]
-    pub(crate) diagnostics: Vec<PluginPolicyDiagnostic>,
-    /// Whether this host has a configured helper.
-    pub policy_helper_configured: bool,
-    /// Whether helper failure requires refusal.
-    pub policy_helper_fail_closed: bool,
-    /// Whether the helper failed.
-    pub policy_helper_load_failed: bool,
-    /// Server resolution error, when present.
-    pub server_fetch_error: Option<String>,
-    /// Whether the server policy could not be resolved.
-    pub server_fetch_failed: bool,
-    /// Whether required fresh confirmation failed and the caller must refuse.
-    pub server_forced_refresh_failure: bool,
-    /// Raw server policy for hosts that inspect the account layer alone.
-    pub server_response: Option<serde_json::Value>,
-    /// Whether no usable credential was available.
-    pub server_token_unavailable: bool,
-    /// Effective device, server, and helper settings when available.
-    pub settings: Option<serde_json::Value>,
-}
-crate::record_serde::wire_record!(PluginPolicyResolveInvocationResult { diagnostics: "diagnostics", policy_helper_configured: "policyHelperConfigured", policy_helper_fail_closed: "policyHelperFailClosed", policy_helper_load_failed: "policyHelperLoadFailed", server_fetch_error: "serverFetchError" if is_none, server_fetch_failed: "serverFetchFailed", server_forced_refresh_failure: "serverForcedRefreshFailure", server_response: "serverResponse" if is_none, server_token_unavailable: "serverTokenUnavailable", settings: "settings" if is_none });
-
-/// Built-in plugin to activate.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct PluginsActivateRequest {
-    /// Name of a built-in plugin of this server, for example "browser-use".
-    pub name: String,
-}
-crate::record_serde::wire_record!(PluginsActivateRequest { name: "name" });
-
-/// The result of a built-in plugin activation.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct PluginsActivateResult {
-    /// The hook error. Present only when status is failed.
-    pub message: Option<String>,
-    /// Whether the plugin's sessionStart hooks ran, or why they did not run.
-    pub status: PluginActivationStatus,
-}
-crate::record_serde::wire_record!(PluginsActivateResult { message: "message" if is_none, status: "status" });
-
-/// Resolve managed Browser activation through the connection's original credential owner.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct PluginsBuiltinResolveActivationRequest {
-    /// Existing launch populations for the policy-helper gate.
-    #[doc(hidden)]
-    pub(crate) audience: McpInvocationAudience,
-    /// Embedding client identity for the policy helper.
-    pub client_name: String,
-    /// Effective user and trusted repository settings.
-    pub user_settings: serde_json::Value,
-    /// Working directory for the policy helper.
-    pub working_directory: String,
-}
-crate::record_serde::wire_record!(PluginsBuiltinResolveActivationRequest {
-    audience: "audience",
-    client_name: "clientName",
-    user_settings: "userSettings",
-    working_directory: "workingDirectory"
-});
-
-/// Browser activation after the managed-over-user whole-plugin policy.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct PluginsBuiltinResolveActivationResult {
-    /// Whether the bundled Browser may contribute MCP servers.
-    pub browser_enabled: bool,
-    /// Whether policy resolution exceeded the existing two-second budget.
-    pub timed_out: bool,
-}
-crate::record_serde::wire_record!(PluginsBuiltinResolveActivationResult {
-    browser_enabled: "browserEnabled",
-    timed_out: "timedOut"
-});
 
 /// Trusted built-in plugin directories to use for this runtime process.
 ///
@@ -5799,12 +4419,12 @@ crate::record_serde::wire_record!(PluginsBuiltinResolveActivationResult {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PluginsBuiltinSetRequest {
     /// Complete replacement set of trusted built-in plugin directories. Every entry must be an absolute local filesystem path no longer than 4096 characters.
     pub paths: Vec<String>,
 }
-crate::record_serde::wire_record!(PluginsBuiltinSetRequest { paths: "paths" });
 
 /// Plugin names (or specs) to disable, plus the optional working directory the repository-controlled guard is evaluated against.
 ///
@@ -5814,14 +4434,15 @@ crate::record_serde::wire_record!(PluginsBuiltinSetRequest { paths: "paths" });
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PluginsDisableRequest {
     /// Plugin names, "plugin@marketplace" specs, or opaque directSourceId values from inventory to disable. Use directSourceId to distinguish same-named direct installations. Unknown targets and session-only plugin-directory mounts are ignored. Direct-install decisions persist on the installation record. Plugin-owned MCP servers are stopped in active sessions immediately; other plugin contributions remain available until each session reloads plugins.
     pub names: Vec<String>,
     /// Working directory whose repository `enabledPlugins` overlay decides whether this mutation is repository-controlled. Hosts that serve sessions across several repositories (the SDK server) should pass the session's directory; otherwise the guard is evaluated against the server process's own working directory, which may belong to a different repository. Defaults to the server's current working directory.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub working_directory: Option<String>,
 }
-crate::record_serde::wire_record!(PluginsDisableRequest { names: "names", working_directory: "workingDirectory" if is_none });
 
 /// Plugin names (or specs) to enable, plus the optional working directory the repository-controlled guard is evaluated against.
 ///
@@ -5831,14 +4452,15 @@ crate::record_serde::wire_record!(PluginsDisableRequest { names: "names", workin
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PluginsEnableRequest {
     /// Plugin names, "plugin@marketplace" specs, or opaque directSourceId values from inventory to enable. Use directSourceId to distinguish same-named direct installations. Unknown targets and session-only plugin-directory mounts are ignored. Direct-install decisions persist on the installation record; active sessions must reload plugins to load newly enabled contributions.
     pub names: Vec<String>,
     /// Working directory whose repository `enabledPlugins` overlay decides whether this mutation is repository-controlled. Hosts that serve sessions across several repositories (the SDK server) should pass the session's directory; otherwise the guard is evaluated against the server process's own working directory, which may belong to a different repository. Defaults to the server's current working directory.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub working_directory: Option<String>,
 }
-crate::record_serde::wire_record!(PluginsEnableRequest { names: "names", working_directory: "workingDirectory" if is_none });
 
 /// Plugin source and optional working directory for relative-path resolution.
 ///
@@ -5848,50 +4470,15 @@ crate::record_serde::wire_record!(PluginsEnableRequest { names: "names", working
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PluginsInstallRequest {
     /// Plugin install spec. Accepts the same forms as the CLI: "plugin@marketplace" (marketplace install), "owner/repo" or "owner/repo:subpath" (GitHub direct), an http/https/ssh URL, or a local path. Direct (non-marketplace) installs are deprecated and will produce a deprecationWarning in the result.
     pub source: String,
     /// Working directory used to resolve relative local paths in `source`. Defaults to the server's current working directory.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub working_directory: Option<String>,
 }
-crate::record_serde::wire_record!(PluginsInstallRequest { source: "source", working_directory: "workingDirectory" if is_none });
-
-/// Optional workspace settings for a plugin catalog or bulk update through the original caller's runtime. Omission retains the server's configuration.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct PluginsInvocationRequest {
-    /// Effective user and repository settings for this invocation. Runtime-owned managed restrictions still apply.
-    pub config_override: Option<serde_json::Value>,
-    /// Managed settings supplied by the host for canonical plugin policy evaluation. This value does not select a credential owner.
-    pub managed_settings: Option<serde_json::Value>,
-    /// Working directory whose repository settings and plugin sources apply to this invocation.
-    pub working_directory: Option<String>,
-}
-crate::record_serde::wire_record!(PluginsInvocationRequest { config_override: "configOverride" if is_none, managed_settings: "managedSettings" if is_none, working_directory: "workingDirectory" if is_none });
-
-/// Optional read-only plugin discovery context. The runtime resolves account, policy, and workspace trust. This query does not change settings.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct PluginsListRequest {
-    /// External plugin directories mounted for this query only. Relative paths resolve against workingDirectory. These directories do not become trusted built-ins.
-    pub plugin_directories: Option<Vec<String>>,
-    /// Working directory for repository overlays and live marketplaces. Defaults to the server working directory.
-    pub working_directory: Option<String>,
-}
-crate::record_serde::wire_record!(PluginsListRequest { plugin_directories: "pluginDirectories" if is_none, working_directory: "workingDirectory" if is_none });
 
 /// Marketplace source and optional working directory for relative-path resolution.
 ///
@@ -5901,14 +4488,15 @@ crate::record_serde::wire_record!(PluginsListRequest { plugin_directories: "plug
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PluginsMarketplacesAddRequest {
     /// Marketplace source. Accepts the same forms as the CLI: "owner/repo" or "owner/repo#ref" (GitHub), an http/https/ssh URL (optionally with #ref), a git scp-style URL (user@host:path), or a local path. The marketplace's own name (from its manifest) is used as the registration key.
     pub source: String,
     /// Working directory used to resolve relative local paths in `source`. Defaults to the server's current working directory.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub working_directory: Option<String>,
 }
-crate::record_serde::wire_record!(PluginsMarketplacesAddRequest { source: "source", working_directory: "workingDirectory" if is_none });
 
 /// Name of the marketplace whose plugin catalog to fetch.
 ///
@@ -5918,12 +4506,12 @@ crate::record_serde::wire_record!(PluginsMarketplacesAddRequest { source: "sourc
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PluginsMarketplacesBrowseRequest {
     /// Marketplace name to browse
     pub name: String,
 }
-crate::record_serde::wire_record!(PluginsMarketplacesBrowseRequest { name: "name" });
 
 /// Optional marketplace name; omit to refresh all.
 ///
@@ -5933,12 +4521,13 @@ crate::record_serde::wire_record!(PluginsMarketplacesBrowseRequest { name: "name
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PluginsMarketplacesRefreshRequest {
     /// Marketplace name to refresh. When omitted, every registered marketplace is refreshed.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
 }
-crate::record_serde::wire_record!(PluginsMarketplacesRefreshRequest { name: "name" if is_none });
 
 /// Name of the marketplace to remove and an optional force flag.
 ///
@@ -5948,56 +4537,15 @@ crate::record_serde::wire_record!(PluginsMarketplacesRefreshRequest { name: "nam
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PluginsMarketplacesRemoveRequest {
     /// When true, also uninstall every plugin sourced from this marketplace. When false (default), removal is a no-op if any plugin from this marketplace is installed and the dependent plugin names are returned in the result.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub force: Option<bool>,
     /// Marketplace name to remove
     pub name: String,
 }
-crate::record_serde::wire_record!(PluginsMarketplacesRemoveRequest { force: "force" if is_none, name: "name" });
-
-/// Resolves active plugin sources with runtime-owned folder trust and managed policy.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct PluginSourcesResolveRequest {
-    /// Configuration root for user settings and persisted installations.
-    pub config_dir: String,
-    /// Explicit plugin directories in host precedence order.
-    pub plugin_directories: Option<Vec<String>>,
-    /// Working directory for trusted repository overlays and live marketplaces.
-    pub working_directory: String,
-}
-crate::record_serde::wire_record!(PluginSourcesResolveRequest { config_dir: "configDir", plugin_directories: "pluginDirectories" if is_none, working_directory: "workingDirectory" });
-
-/// Active plugins and the separate persisted inventory, without persisting live directory records.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct PluginSourcesResolveResult {
-    /// Live directory records, including inactive records that still own their names.
-    pub live_plugins: Option<Vec<serde_json::Value>>,
-    /// Whether this pass confirmed the live tier instead of using persisted fallback.
-    pub live_tier_known: Option<bool>,
-    /// Persisted ambient records, including disabled or shadowed installations.
-    pub persisted_plugins: Vec<serde_json::Value>,
-    /// Active records, including trusted live marketplaces and explicit directories.
-    pub plugins: Vec<serde_json::Value>,
-    /// Scanner and live-marketplace warnings for this exact source pass.
-    pub warnings: Vec<String>,
-}
-crate::record_serde::wire_record!(PluginSourcesResolveResult { live_plugins: "livePlugins" if is_none, live_tier_known: "liveTierKnown" if is_none, persisted_plugins: "persistedPlugins", plugins: "plugins", warnings: "warnings" });
 
 /// Optional flags controlling which side effects the reload performs.
 ///
@@ -6007,41 +4555,25 @@ crate::record_serde::wire_record!(PluginSourcesResolveResult { live_plugins: "li
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PluginsReloadRequest {
     /// When true, skip repo-level hooks during the hook reload. Use before folder trust is confirmed; load them post-trust via `sessions.loadDeferredRepoHooks`.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub defer_repo_hooks: Option<bool>,
     /// Re-run custom-agent discovery after refreshing plugins. Defaults to true.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub reload_custom_agents: Option<bool>,
     /// Re-discover and relaunch subprocess extensions (including plugin-shipped extensions) after refreshing plugins. Defaults to true. Has no effect when the session has no active extension controller (e.g. extensions were not requested for the session).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub reload_extensions: Option<bool>,
     /// Re-load user, plugin, and (subject to `deferRepoHooks`) repo hooks. Defaults to true. Has no effect when the host has not registered a hook reloader (e.g. remote sessions).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub reload_hooks: Option<bool>,
     /// Reload MCP server connections after refreshing plugins. Defaults to true.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub reload_mcp: Option<bool>,
 }
-crate::record_serde::wire_record!(PluginsReloadRequest { defer_repo_hooks: "deferRepoHooks" if is_none, reload_custom_agents: "reloadCustomAgents" if is_none, reload_extensions: "reloadExtensions" if is_none, reload_hooks: "reloadHooks" if is_none, reload_mcp: "reloadMcp" if is_none });
-
-/// Canonical activation after workspace consent and plugin policy reconciliation.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct PluginsResolveActivationResult {
-    /// Current activation, or null before activation resolves.
-    pub snapshot: Option<UIPluginActivationSnapshot>,
-    /// Whether the runtime trusts the workspace.
-    pub trusted: bool,
-    /// Current working directory of the session.
-    pub working_directory: String,
-    /// Authoritative workspace root, when known.
-    pub workspace_root: Option<String>,
-}
-crate::record_serde::wire_record!(PluginsResolveActivationResult { snapshot: "snapshot" if is_none, trusted: "trusted", working_directory: "workingDirectory", workspace_root: "workspaceRoot" if is_none });
 
 /// Name (or spec) of the plugin to uninstall.
 ///
@@ -6051,14 +4583,15 @@ crate::record_serde::wire_record!(PluginsResolveActivationResult { snapshot: "sn
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PluginsUninstallRequest {
     /// Stable source identity for a direct (non-marketplace) install. Disambiguates uninstall when multiple installed plugins share the same name.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub direct_source_id: Option<String>,
     /// Plugin name or "plugin@marketplace" spec to uninstall. When ambiguous, prefer the fully-qualified spec.
     pub name: String,
 }
-crate::record_serde::wire_record!(PluginsUninstallRequest { direct_source_id: "directSourceId" if is_none, name: "name" });
 
 /// Name (or spec) of the plugin to update.
 ///
@@ -6068,12 +4601,12 @@ crate::record_serde::wire_record!(PluginsUninstallRequest { direct_source_id: "d
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PluginsUpdateRequest {
     /// Plugin name or "plugin@marketplace" spec to update.
     pub name: String,
 }
-crate::record_serde::wire_record!(PluginsUpdateRequest { name: "name" });
 
 /// Per-plugin result from updating all plugins, with versions, skills installed, success flag, and optional error.
 ///
@@ -6083,26 +4616,28 @@ crate::record_serde::wire_record!(PluginsUpdateRequest { name: "name" });
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PluginUpdateAllEntry {
     /// Error message (failure only)
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     /// Marketplace the plugin came from. Empty string ("") for direct installs.
     pub marketplace: String,
     /// Plugin name that was updated
     pub name: String,
     /// Version after the update, when available
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub new_version: Option<String>,
     /// Previously installed version, when available
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub previous_version: Option<String>,
     /// Number of skills installed after the update (success only)
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub skills_installed: Option<i64>,
     /// Whether the update succeeded for this plugin
     pub success: bool,
-    /// Warnings from the updated plugin's manifest, including ignored fields or the reason the loader rejects the plugin. Callers should surface these to end users. Absent when the manifest raised none.
-    pub warnings: Option<Vec<String>>,
 }
-crate::record_serde::wire_record!(PluginUpdateAllEntry { error: "error" if is_none, marketplace: "marketplace", name: "name", new_version: "newVersion" if is_none, previous_version: "previousVersion" if is_none, skills_installed: "skillsInstalled" if is_none, success: "success", warnings: "warnings" if is_none });
 
 /// Result of updating all installed plugins.
 ///
@@ -6112,35 +4647,12 @@ crate::record_serde::wire_record!(PluginUpdateAllEntry { error: "error" if is_no
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PluginUpdateAllResult {
     /// Per-plugin update results in deterministic order.
     pub results: Vec<PluginUpdateAllEntry>,
 }
-crate::record_serde::wire_record!(PluginUpdateAllResult { results: "results" });
-
-/// Update availability without installation or checkout mutation. An error means availability is unknown.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct PluginUpdateCheckResult {
-    /// Explanation when availability cannot be established.
-    pub error: Option<String>,
-    /// Installed plugin version, when known.
-    pub installed_version: Option<String>,
-    /// Cached catalog version, when known.
-    pub latest_version: Option<String>,
-    /// True when a marketplace has no cached checkout yet.
-    pub not_fetched: Option<bool>,
-    /// True only when the probe establishes an available update.
-    pub update_available: bool,
-}
-crate::record_serde::wire_record!(PluginUpdateCheckResult { error: "error" if is_none, installed_version: "installedVersion" if is_none, latest_version: "latestVersion" if is_none, not_fetched: "notFetched" if is_none, update_available: "updateAvailable" });
 
 /// Result of updating a single plugin.
 ///
@@ -6150,18 +4662,18 @@ crate::record_serde::wire_record!(PluginUpdateCheckResult { error: "error" if is
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PluginUpdateResult {
     /// Version after the update, when reported by the plugin manifest
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub new_version: Option<String>,
     /// Version that was previously installed, when available
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub previous_version: Option<String>,
     /// Number of skills discovered and installed after the update
     pub skills_installed: i64,
-    /// Warnings from the updated plugin's manifest, including ignored fields or the reason the loader rejects the plugin. Callers should surface these to end users. Absent when the manifest raised none.
-    pub warnings: Option<Vec<String>>,
 }
-crate::record_serde::wire_record!(PluginUpdateResult { new_version: "newVersion" if is_none, previous_version: "previousVersion" if is_none, skills_installed: "skillsInstalled", warnings: "warnings" if is_none });
 
 /// Applies exactly one retained verified Skill installation plan.
 ///
@@ -6171,7 +4683,8 @@ crate::record_serde::wire_record!(PluginUpdateResult { new_version: "newVersion"
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillApplyInstallRequest {
     /// Required authenticated bound catalogue and Skill installation capabilities.
     pub contract: CatalogClientContract,
@@ -6180,11 +4693,6 @@ pub struct SkillApplyInstallRequest {
     /// Same existing selected session as planning.
     pub policy_session_id: String,
 }
-crate::record_serde::wire_record!(SkillApplyInstallRequest {
-    contract: "contract",
-    plan_handle: "planHandle",
-    policy_session_id: "policySessionId"
-});
 
 /// One-use application of the exact retained Skill removal plan.
 ///
@@ -6194,7 +4702,8 @@ crate::record_serde::wire_record!(SkillApplyInstallRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillApplyUninstallRequest {
     /// Required authenticated bound installation contract.
     pub contract: CatalogClientContract,
@@ -6203,11 +4712,6 @@ pub struct SkillApplyUninstallRequest {
     /// Same existing selected session as removal preparation.
     pub policy_session_id: String,
 }
-crate::record_serde::wire_record!(SkillApplyUninstallRequest {
-    contract: "contract",
-    plan_handle: "planHandle",
-    policy_session_id: "policySessionId"
-});
 
 /// Canonical directory where skills can be discovered or created, with scope, preference, and optional project path.
 ///
@@ -6217,18 +4721,19 @@ crate::record_serde::wire_record!(SkillApplyUninstallRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillDiscoveryPath {
     /// Absolute path of the create/discovery target (may not exist on disk yet)
     pub path: String,
     /// Whether this is the canonical directory to create a new skill in its tier. At most one entry per tier is preferred; the `personal-agents` and `custom` scopes are never preferred.
     pub preferred_for_creation: bool,
     /// The input project path this directory was derived from (only for project scope)
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub project_path: Option<String>,
     /// Which tier this directory belongs to
     pub scope: SkillDiscoveryScope,
 }
-crate::record_serde::wire_record!(SkillDiscoveryPath { path: "path", preferred_for_creation: "preferredForCreation", project_path: "projectPath" if is_none, scope: "scope" });
 
 /// Canonical locations where skills can be created so the runtime will recognize them.
 ///
@@ -6238,22 +4743,20 @@ crate::record_serde::wire_record!(SkillDiscoveryPath { path: "path", preferred_f
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillDiscoveryPathList {
     /// Canonical skill create/discovery directories, in priority order
     pub paths: Vec<SkillDiscoveryPath>,
 }
-crate::record_serde::wire_record!(SkillDiscoveryPathList { paths: "paths" });
 
 /// Already-confirmed durable work must be reconciled before new mutations or inventory.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillInstallationManagementOutcomeRecoveryRequired {
     /// Skill installation management outcome discriminator.
     pub kind: SkillInstallationManagementOutcomeRecoveryRequiredKind,
 }
-crate::record_serde::wire_record!(SkillInstallationManagementOutcomeRecoveryRequired {
-    kind: "kind"
-});
 
 /// A verified Skill installation plan was prepared.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -6266,46 +4769,37 @@ pub struct SkillInstallationManagementOutcomeInstallPlanned {
 }
 
 /// Owned Skill installations were listed.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillInstallationManagementOutcomeListed {
     /// Owned Skill installation summaries.
     pub installations: Vec<SkillInstallationSummary>,
     /// Skill installation management outcome discriminator.
     pub kind: SkillInstallationManagementOutcomeListedKind,
 }
-crate::record_serde::wire_record!(SkillInstallationManagementOutcomeListed {
-    installations: "installations",
-    kind: "kind"
-});
 
 /// Recovery completed and inventory was inspected.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillInstallationManagementOutcomeRecovered {
     /// Owned Skill installation summaries after recovery.
     pub installations: Vec<SkillInstallationSummary>,
     /// Skill installation management outcome discriminator.
     pub kind: SkillInstallationManagementOutcomeRecoveredKind,
 }
-crate::record_serde::wire_record!(SkillInstallationManagementOutcomeRecovered {
-    installations: "installations",
-    kind: "kind"
-});
 
 /// Interrupted work was safely compensated and the pending marker was cleared.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillInstallationManagementOutcomeRolledBack {
     /// Skill installation management outcome discriminator.
     pub kind: SkillInstallationManagementOutcomeRolledBackKind,
     /// Original operation identity.
+    #[serde(rename = "operation_id")]
     pub operation_id: String,
     /// Cause of the compensation.
     pub reason: SkillInstallationFailureReason,
 }
-crate::record_serde::wire_record!(SkillInstallationManagementOutcomeRolledBack {
-    kind: "kind",
-    operation_id: "operation_id",
-    reason: "reason"
-});
 
 /// A computed Skill uninstall plan. Nothing has been removed.
 ///
@@ -6341,7 +4835,8 @@ pub struct SkillInstallationManagementOutcomeUninstallPlanned {
 }
 
 /// Original operation progress discriminator.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillInstallationOperationStatusPreparing {
     /// Whether cancellation has been requested.
     pub cancellation_requested: bool,
@@ -6349,14 +4844,10 @@ pub struct SkillInstallationOperationStatusPreparing {
     pub operation_id: String,
     pub phase: SkillInstallationOperationStatusPreparingPhase,
 }
-crate::record_serde::wire_record!(SkillInstallationOperationStatusPreparing {
-    cancellation_requested: "cancellationRequested",
-    operation_id: "operationId",
-    phase: "phase"
-});
 
 /// Original operation progress discriminator.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillInstallationOperationStatusPrepared {
     /// Whether cancellation has been requested.
     pub cancellation_requested: bool,
@@ -6364,14 +4855,10 @@ pub struct SkillInstallationOperationStatusPrepared {
     pub operation_id: String,
     pub phase: SkillInstallationOperationStatusPreparedPhase,
 }
-crate::record_serde::wire_record!(SkillInstallationOperationStatusPrepared {
-    cancellation_requested: "cancellationRequested",
-    operation_id: "operationId",
-    phase: "phase"
-});
 
 /// Original operation progress discriminator.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillInstallationOperationStatusAwaitingConfirmation {
     /// Whether cancellation has been requested.
     pub cancellation_requested: bool,
@@ -6379,14 +4866,10 @@ pub struct SkillInstallationOperationStatusAwaitingConfirmation {
     pub operation_id: String,
     pub phase: SkillInstallationOperationStatusAwaitingConfirmationPhase,
 }
-crate::record_serde::wire_record!(SkillInstallationOperationStatusAwaitingConfirmation {
-    cancellation_requested: "cancellationRequested",
-    operation_id: "operationId",
-    phase: "phase"
-});
 
 /// Original operation progress discriminator.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillInstallationOperationStatusRevalidating {
     /// Whether cancellation has been requested.
     pub cancellation_requested: bool,
@@ -6394,14 +4877,10 @@ pub struct SkillInstallationOperationStatusRevalidating {
     pub operation_id: String,
     pub phase: SkillInstallationOperationStatusRevalidatingPhase,
 }
-crate::record_serde::wire_record!(SkillInstallationOperationStatusRevalidating {
-    cancellation_requested: "cancellationRequested",
-    operation_id: "operationId",
-    phase: "phase"
-});
 
 /// Original operation progress discriminator.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillInstallationOperationStatusApplying {
     /// Whether cancellation has been requested; already-started effects require recovery.
     pub cancellation_requested: bool,
@@ -6409,27 +4888,20 @@ pub struct SkillInstallationOperationStatusApplying {
     pub operation_id: String,
     pub phase: SkillInstallationOperationStatusApplyingPhase,
 }
-crate::record_serde::wire_record!(SkillInstallationOperationStatusApplying {
-    cancellation_requested: "cancellationRequested",
-    operation_id: "operationId",
-    phase: "phase"
-});
 
 /// The verified Skill was installed disabled.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillInstallationOutcomeInstalled {
     /// Durable installed Skill summary.
     pub installation: SkillInstallationSummary,
     /// Terminal Skill installation outcome discriminator.
     pub kind: SkillInstallationOutcomeInstalledKind,
 }
-crate::record_serde::wire_record!(SkillInstallationOutcomeInstalled {
-    installation: "installation",
-    kind: "kind"
-});
 
 /// The owned Skill was removed.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillInstallationOutcomeUninstalled {
     /// Removed installation identity.
     pub installation_id: String,
@@ -6438,14 +4910,10 @@ pub struct SkillInstallationOutcomeUninstalled {
     /// Original removal operation identity.
     pub operation_id: String,
 }
-crate::record_serde::wire_record!(SkillInstallationOutcomeUninstalled {
-    installation_id: "installationId",
-    kind: "kind",
-    operation_id: "operationId"
-});
 
 /// The durable transaction was aborted or fully compensated.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillInstallationOutcomeRolledBack {
     /// Terminal Skill installation outcome discriminator.
     pub kind: SkillInstallationOutcomeRolledBackKind,
@@ -6454,64 +4922,52 @@ pub struct SkillInstallationOutcomeRolledBack {
     /// Cause of the fully aborted or compensated operation.
     pub reason: SkillInstallationFailureReason,
 }
-crate::record_serde::wire_record!(SkillInstallationOutcomeRolledBack {
-    kind: "kind",
-    operation_id: "operationId",
-    reason: "reason"
-});
 
 /// A write may have completed. Recover and inspect durable state before retrying.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillInstallationOutcomeRecoveryRequired {
     /// Terminal Skill installation outcome discriminator.
     pub kind: SkillInstallationOutcomeRecoveryRequiredKind,
     /// Operation whose durable result must be recovered and inspected.
     pub operation_id: String,
 }
-crate::record_serde::wire_record!(SkillInstallationOutcomeRecoveryRequired {
-    kind: "kind",
-    operation_id: "operationId"
-});
 
 /// The user declined the confirmation request.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillInstallationOutcomeDeclined {
     /// Terminal Skill installation outcome discriminator.
     pub kind: SkillInstallationOutcomeDeclinedKind,
     /// Original operation identity.
     pub operation_id: String,
 }
-crate::record_serde::wire_record!(SkillInstallationOutcomeDeclined {
-    kind: "kind",
-    operation_id: "operationId"
-});
 
 /// The operation was cancelled before a terminal mutation.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillInstallationOutcomeCancelled {
     /// Terminal Skill installation outcome discriminator.
     pub kind: SkillInstallationOutcomeCancelledKind,
     /// Original operation identity.
     pub operation_id: String,
 }
-crate::record_serde::wire_record!(SkillInstallationOutcomeCancelled {
-    kind: "kind",
-    operation_id: "operationId"
-});
 
 /// The operation was refused without applying changes.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillInstallationOutcomeRefused {
     /// Terminal Skill installation outcome discriminator.
     pub kind: SkillInstallationOutcomeRefusedKind,
     /// Present once an operation has been allocated.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_id: Option<String>,
     /// Bounded refusal reason.
     pub reason: SkillInstallationFailureReason,
     /// Whole seconds GitHub asked the caller to wait, present only with source-rate-limited.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub retry_after_seconds: Option<i64>,
 }
-crate::record_serde::wire_record!(SkillInstallationOutcomeRefused { kind: "kind", operation_id: "operationId" if is_none, reason: "reason", retry_after_seconds: "retryAfterSeconds" if is_none });
 
 /// Original operation progress discriminator.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -6537,7 +4993,8 @@ pub struct SkillInstallationManagementOutcomeOperation {
 }
 
 /// Enablement changed and the selected session was reconciled.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillInstallationManagementOutcomeEnabledChanged {
     /// Safe reload or reconciliation diagnostics.
     pub diagnostics: Vec<String>,
@@ -6546,23 +5003,19 @@ pub struct SkillInstallationManagementOutcomeEnabledChanged {
     /// Skill installation management outcome discriminator.
     pub kind: SkillInstallationManagementOutcomeEnabledChangedKind,
 }
-crate::record_serde::wire_record!(SkillInstallationManagementOutcomeEnabledChanged {
-    diagnostics: "diagnostics",
-    installation: "installation",
-    kind: "kind"
-});
 
 /// The management request was refused.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillInstallationManagementOutcomeRefused {
     /// Skill installation management outcome discriminator.
     pub kind: SkillInstallationManagementOutcomeRefusedKind,
     /// Bounded refusal reason.
     pub reason: SkillInstallationFailureReason,
     /// Whole seconds GitHub asked the caller to wait, present only with source-rate-limited.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub retry_after_seconds: Option<i64>,
 }
-crate::record_serde::wire_record!(SkillInstallationManagementOutcomeRefused { kind: "kind", reason: "reason", retry_after_seconds: "retryAfterSeconds" if is_none });
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -6583,17 +5036,14 @@ pub struct SkillInstallationManagementResultOutcome {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillInstallationOperationRequest {
     /// Required authenticated bound Skill installation capability.
     pub contract: CatalogClientContract,
     /// Exact runtime-issued operation ID on the original connection.
     pub operation_id: String,
 }
-crate::record_serde::wire_record!(SkillInstallationOperationRequest {
-    contract: "contract",
-    operation_id: "operationId"
-});
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -6614,17 +5064,14 @@ pub struct SkillInstallationResultOutcome {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillInstallationsRequest {
     /// Required authenticated bound installation contract.
     pub contract: CatalogClientContract,
     /// Existing selected local session on this connection.
     pub policy_session_id: String,
 }
-crate::record_serde::wire_record!(SkillInstallationsRequest {
-    contract: "contract",
-    policy_session_id: "policySessionId"
-});
 
 /// Skills available to the session, with their enabled state.
 ///
@@ -6634,12 +5081,12 @@ crate::record_serde::wire_record!(SkillInstallationsRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillList {
     /// Available skills
     pub skills: Vec<Skill>,
 }
-crate::record_serde::wire_record!(SkillList { skills: "skills" });
 
 /// Side-effect-free planning of one verified Agent Finder Skill candidate.
 ///
@@ -6649,7 +5096,8 @@ crate::record_serde::wire_record!(SkillList { skills: "skills" });
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillPlanInstallRequest {
     /// Fresh single-use AI skill candidate handle returned by a bound catalogue search.
     pub candidate_handle: String,
@@ -6658,11 +5106,6 @@ pub struct SkillPlanInstallRequest {
     /// Existing local session attached to this connection.
     pub policy_session_id: String,
 }
-crate::record_serde::wire_record!(SkillPlanInstallRequest {
-    candidate_handle: "candidateHandle",
-    contract: "contract",
-    policy_session_id: "policySessionId"
-});
 
 /// Read-only preparation of one owned Skill removal under fresh selected-session authority.
 ///
@@ -6672,7 +5115,8 @@ crate::record_serde::wire_record!(SkillPlanInstallRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillPlanUninstallRequest {
     /// Required authenticated bound installation contract.
     pub contract: CatalogClientContract,
@@ -6681,11 +5125,6 @@ pub struct SkillPlanUninstallRequest {
     /// Existing selected local session on this connection.
     pub policy_session_id: String,
 }
-crate::record_serde::wire_record!(SkillPlanUninstallRequest {
-    contract: "contract",
-    installation_id: "installationId",
-    policy_session_id: "policySessionId"
-});
 
 /// Authoritative catalog metadata for one SDK-provided skill. The skill's SKILL.md text is fetched separately and lazily.
 ///
@@ -6695,22 +5134,26 @@ crate::record_serde::wire_record!(SkillPlanUninstallRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillProviderDescriptor {
     /// Optional freeform argument hint used by slash-command catalogs.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub argument_hint: Option<String>,
     /// Description used in skill catalogs without fetching content.
     pub description: String,
     /// Absolute path to the folder that holds the skill's supporting files (scripts, references, templates, assets), in the session's path conventions: the host OS for local disk, or the registered SessionFs conventions. When the skill is activated the runtime lists the folder's files for the model through the session's filesystem, with the same rules as a file-based skill's folder; it never reads or copies them. On local disk the folder becomes a read-only skill root, like a configured skill directory. It is not shown in skill catalogs.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub directory: Option<String>,
     /// Whether model invocation is disabled. Defaults to false.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub disable_model_invocation: Option<bool>,
     /// Invocation and display name.
     pub name: String,
     /// Whether users may invoke the skill directly. Defaults to true.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub user_invocable: Option<bool>,
 }
-crate::record_serde::wire_record!(SkillProviderDescriptor { argument_hint: "argumentHint" if is_none, description: "description", directory: "directory" if is_none, disable_model_invocation: "disableModelInvocation" if is_none, name: "name", user_invocable: "userInvocable" if is_none });
 
 /// Catalog metadata returned by an SDK session's skill provider. Catalogs are limited to 1024 descriptors and 1 MiB of aggregate metadata.
 ///
@@ -6720,12 +5163,12 @@ crate::record_serde::wire_record!(SkillProviderDescriptor { argument_hint: "argu
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct SkillProviderListResult {
     /// Skill descriptors in provider order. Invocation names must be unique under case-insensitive comparison.
     pub skills: Vec<SkillProviderDescriptor>,
 }
-crate::record_serde::wire_record!(SkillProviderListResult { skills: "skills" });
 
 /// Identifies one SDK-provided skill by invocation name.
 ///
@@ -6735,17 +5178,14 @@ crate::record_serde::wire_record!(SkillProviderListResult { skills: "skills" });
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct SkillProviderReadRequest {
     /// Target session identifier
     pub session_id: SessionId,
     /// Invocation name of the skill to read.
     pub name: String,
 }
-crate::record_serde::wire_record!(SkillProviderReadRequest {
-    session_id: "sessionId",
-    name: "name"
-});
 
 /// SKILL.md content returned by an SDK session's skill provider. YAML frontmatter is optional: fields it omits come from the catalog descriptor, fields it declares must match the descriptor, and `allowed-tools` is read only from frontmatter. Supporting files come from the descriptor's `directory`.
 ///
@@ -6755,14 +5195,12 @@ crate::record_serde::wire_record!(SkillProviderReadRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct SkillProviderReadResult {
     /// SKILL.md text, with or without YAML frontmatter, or null when the provider has no skill with the requested name. The runtime enforces a 1 MiB UTF-8 byte limit.
     pub markdown: Option<String>,
 }
-crate::record_serde::wire_record!(SkillProviderReadResult {
-    markdown: "markdown"
-});
 
 /// One discovered local skill, without its content.
 ///
@@ -6772,7 +5210,8 @@ crate::record_serde::wire_record!(SkillProviderReadResult {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillRemoveSourceEntry {
     /// Discovery directory that owns the skill file.
     pub base_dir: String,
@@ -6781,182 +5220,6 @@ pub struct SkillRemoveSourceEntry {
     /// Original discovery source. Removal rejects unsupported or unowned sources.
     pub source: String,
 }
-crate::record_serde::wire_record!(SkillRemoveSourceEntry {
-    base_dir: "baseDir",
-    name: "name",
-    source: "source"
-});
-
-/// Host-owned paths and environment for standalone skill management.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct SkillResourceContext {
-    /// Settings paths and hook environment for the original host.
-    pub context: UserSettingsHostContext,
-    /// Workspace directory for repository sources and relative paths.
-    pub working_directory: String,
-}
-crate::record_serde::wire_record!(SkillResourceContext {
-    context: "context",
-    working_directory: "workingDirectory"
-});
-
-/// Loads full local skill records, including disabled records and command metadata.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct SkillResourceDiscoverRequest {
-    /// Host paths and working directory.
-    #[doc(hidden)]
-    pub(crate) host: SkillResourceContext,
-    /// Explicit plugin directories, appended after persisted and live plugin sources.
-    pub plugin_directories: Option<Vec<String>>,
-}
-crate::record_serde::wire_record!(SkillResourceDiscoverRequest { host: "host", plugin_directories: "pluginDirectories" if is_none });
-
-/// Full local skill inventory and report-and-ignore source diagnostics.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct SkillResourceDiscoverResult {
-    /// Sources that failed to load; the remaining inventory is incomplete.
-    pub errors: Vec<String>,
-    /// Local skill records with invocation identity, content paths, and command metadata.
-    pub skills: Vec<serde_json::Value>,
-    /// Explicit plugin scan warnings, separate from skill loader diagnostics.
-    pub source_warnings: Vec<String>,
-    /// Nonfatal loader and manifest warnings.
-    pub warnings: Vec<String>,
-}
-crate::record_serde::wire_record!(SkillResourceDiscoverResult {
-    errors: "errors",
-    skills: "skills",
-    source_warnings: "sourceWarnings",
-    warnings: "warnings"
-});
-
-/// Registers a skill directory or installs a local or HTTPS skill definition.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct SkillResourceInstallRequest {
-    /// Host paths and working directory.
-    #[doc(hidden)]
-    pub(crate) host: SkillResourceContext,
-    /// Use the preferred project creation directory instead of personal storage.
-    pub project: Option<bool>,
-    /// Local file, directory, or HTTPS source.
-    pub source: String,
-    /// User agent for the existing runtime HTTPS fetcher.
-    pub user_agent: Option<String>,
-}
-crate::record_serde::wire_record!(SkillResourceInstallRequest { host: "host", project: "project" if is_none, source: "source", user_agent: "userAgent" if is_none });
-
-/// The persisted result of a skill source installation.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct SkillResourceInstallResult {
-    /// Source classification.
-    pub kind: SkillResourceInstallKind,
-    /// Skill name, absent for a registered directory.
-    pub name: Option<String>,
-    /// Installed definition path or registered directory.
-    pub path: String,
-    /// Destination scope, absent for a registered directory.
-    pub scope: Option<SkillResourceInstallScope>,
-}
-crate::record_serde::wire_record!(SkillResourceInstallResult { kind: "kind", name: "name" if is_none, path: "path", scope: "scope" if is_none });
-
-/// Removes a personal or project skill, or unregisters a custom directory.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct SkillResourceRemoveRequest {
-    /// Host paths and working directory.
-    #[doc(hidden)]
-    pub(crate) host: SkillResourceContext,
-    /// Skill name or registered directory.
-    pub target: String,
-}
-crate::record_serde::wire_record!(SkillResourceRemoveRequest {
-    host: "host",
-    target: "target"
-});
-
-/// The completed skill removal, with conservative disabled-state cleanup.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct SkillResourceRemoveResult {
-    /// Removed storage tier.
-    pub kind: SkillResourceRemoveKind,
-    /// Removed skill name, absent for a registered directory.
-    pub name: Option<String>,
-    /// Removed definition path or unregistered directory.
-    pub path: String,
-}
-crate::record_serde::wire_record!(SkillResourceRemoveResult { kind: "kind", name: "name" if is_none, path: "path" });
-
-/// Atomically changes only one user's disabled skill entry under explicit host paths.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct SkillResourceSetEnabledRequest {
-    /// Desired user-scope enablement.
-    pub enabled: bool,
-    /// Host paths and working directory.
-    #[doc(hidden)]
-    pub(crate) host: SkillResourceContext,
-    /// Invocation name to enable or disable.
-    pub name: String,
-}
-crate::record_serde::wire_record!(SkillResourceSetEnabledRequest {
-    enabled: "enabled",
-    host: "host",
-    name: "name"
-});
 
 /// Skill names to mark as disabled in global configuration, replacing any previous list.
 ///
@@ -6966,14 +5229,12 @@ crate::record_serde::wire_record!(SkillResourceSetEnabledRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillsConfigSetDisabledSkillsRequest {
     /// List of skill names to disable
     pub disabled_skills: Vec<String>,
 }
-crate::record_serde::wire_record!(SkillsConfigSetDisabledSkillsRequest {
-    disabled_skills: "disabledSkills"
-});
 
 /// Adds or removes a single skill from the global disabled list, leaving every other entry untouched.
 ///
@@ -6983,55 +5244,13 @@ crate::record_serde::wire_record!(SkillsConfigSetDisabledSkillsRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillsConfigSetSkillDisabledRequest {
     /// True to disable the skill, false to enable it
     pub disabled: bool,
     /// Name of the skill to add to or remove from the disabled list
     pub name: String,
-}
-crate::record_serde::wire_record!(SkillsConfigSetSkillDisabledRequest {
-    disabled: "disabled",
-    name: "name"
-});
-
-/// Extensible [`SkillsConfigSetSkillDisabledRequest`], including inputs added after it was published.
-///
-/// Required inputs are [`SkillsConfigSetSkillDisabledOptions::new`] arguments; optional inputs have fluent setters.
-/// Input-only: it serialises to the flat wire request and is not deserialisable.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SkillsConfigSetSkillDisabledOptions {
-    #[serde(flatten)]
-    legacy: SkillsConfigSetSkillDisabledRequest,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    config_dir: Option<String>,
-}
-
-impl SkillsConfigSetSkillDisabledOptions {
-    /// Creates options with the required inputs.
-    pub fn new(name: impl Into<String>, disabled: bool) -> Self {
-        Self {
-            legacy: SkillsConfigSetSkillDisabledRequest {
-                name: name.into(),
-                disabled,
-            },
-            config_dir: None,
-        }
-    }
-
-    /// Configuration directory to update. Omit to use the server's configured directory.
-    pub fn config_dir(mut self, value: impl Into<String>) -> Self {
-        self.config_dir = Some(value.into());
-        self
-    }
 }
 
 /// Name of the skill to disable for the session.
@@ -7042,12 +5261,12 @@ impl SkillsConfigSetSkillDisabledOptions {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillsDisableRequest {
     /// Name of the skill to disable
     pub name: String,
 }
-crate::record_serde::wire_record!(SkillsDisableRequest { name: "name" });
 
 /// Optional project paths and additional skill directories to include in discovery.
 ///
@@ -7057,18 +5276,22 @@ crate::record_serde::wire_record!(SkillsDisableRequest { name: "name" });
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillsDiscoverRequest {
     /// When true, omit skills from the host's global sources (personal, custom, plugin, and built-in), returning only project-scoped skills. For multitenant deployments.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub exclude_host_skills: Option<bool>,
     /// Optional skill scan paths to exclude from discovery.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub ignored_skills_locations: Option<Vec<String>>,
     /// Optional list of project directory paths to scan for project-scoped skills
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub project_paths: Option<Vec<String>>,
     /// Explicit discovery-only skill roots, not filesystem grants. Available without ambient discovery, subject to skill/managed disables. Relative paths resolve against the request's effective working directory when supplied. Null and omission are equivalent; an empty array contributes no explicit roots.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub skill_directories: Option<Vec<String>>,
 }
-crate::record_serde::wire_record!(SkillsDiscoverRequest { exclude_host_skills: "excludeHostSkills" if is_none, ignored_skills_locations: "ignoredSkillsLocations" if is_none, project_paths: "projectPaths" if is_none, skill_directories: "skillDirectories" if is_none });
 
 /// Name of the skill to enable for the session.
 ///
@@ -7078,12 +5301,12 @@ crate::record_serde::wire_record!(SkillsDiscoverRequest { exclude_host_skills: "
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillsEnableRequest {
     /// Name of the skill to enable
     pub name: String,
 }
-crate::record_serde::wire_record!(SkillsEnableRequest { name: "name" });
 
 /// Persisted enablement update for one owned Skill installation.
 ///
@@ -7093,7 +5316,8 @@ crate::record_serde::wire_record!(SkillsEnableRequest { name: "name" });
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillSetEnabledRequest {
     /// Required authenticated bound Skill installation capability.
     pub contract: CatalogClientContract,
@@ -7104,12 +5328,6 @@ pub struct SkillSetEnabledRequest {
     /// Existing selected local session to reconcile after persistence.
     pub policy_session_id: String,
 }
-crate::record_serde::wire_record!(SkillSetEnabledRequest {
-    contract: "contract",
-    enabled: "enabled",
-    installation_id: "installationId",
-    policy_session_id: "policySessionId"
-});
 
 /// Optional project paths to enumerate.
 ///
@@ -7119,18 +5337,22 @@ crate::record_serde::wire_record!(SkillSetEnabledRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillsGetDiscoveryPathsRequest {
     /// When true, omit the host's personal and custom skill directories, leaving only project directories. For multitenant deployments.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub exclude_host_skills: Option<bool>,
     /// Optional skill scan paths to exclude from discovery.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub ignored_skills_locations: Option<Vec<String>>,
     /// Optional list of project directory paths. When omitted or empty, only personal and custom directories are returned.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub project_paths: Option<Vec<String>>,
     /// Explicit discovery-only skill roots to enumerate, including configured missing directories. Relative paths resolve against the request's effective working directory when supplied. These are not filesystem grants or preferred creation targets. Null and omission are equivalent.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub skill_directories: Option<Vec<String>>,
 }
-crate::record_serde::wire_record!(SkillsGetDiscoveryPathsRequest { exclude_host_skills: "excludeHostSkills" if is_none, ignored_skills_locations: "ignoredSkillsLocations" if is_none, project_paths: "projectPaths" if is_none, skill_directories: "skillDirectories" if is_none });
 
 /// Skills invoked during this session, ordered by invocation time (most recent last).
 ///
@@ -7140,12 +5362,12 @@ crate::record_serde::wire_record!(SkillsGetDiscoveryPathsRequest { exclude_host_
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillsGetInvokedResult {
     /// Skills invoked during this session, ordered by invocation time (most recent last)
     pub skills: Vec<SkillsInvokedSkill>,
 }
-crate::record_serde::wire_record!(SkillsGetInvokedResult { skills: "skills" });
 
 /// Installs a user-selected skill source without catalog plan semantics.
 ///
@@ -7155,7 +5377,8 @@ crate::record_serde::wire_record!(SkillsGetInvokedResult { skills: "skills" });
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillsInstallSourceRequest {
     /// Working directory for relative source paths.
     pub cwd: String,
@@ -7172,15 +5395,6 @@ pub struct SkillsInstallSourceRequest {
     /// User agent for runtime-owned HTTPS source requests.
     pub user_agent: String,
 }
-crate::record_serde::wire_record!(SkillsInstallSourceRequest {
-    cwd: "cwd",
-    personal_skills_dir: "personalSkillsDir",
-    project: "project",
-    project_skills_dir: "projectSkillsDir",
-    skill_directories: "skillDirectories",
-    source: "source",
-    user_agent: "userAgent"
-});
 
 /// Result of direct source installation. Catalog consent and defaults remain separate.
 ///
@@ -7190,20 +5404,22 @@ crate::record_serde::wire_record!(SkillsInstallSourceRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillsInstallSourceResult {
     /// Source acquisition used by this operation.
     pub kind: SkillInstallSourceKind,
     /// Skill name when a file was installed.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// Installed skill directory or registered discovery directory.
     pub path: String,
     /// File destination scope. Directory registration has no destination scope.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub scope: Option<SkillInstallSourceScope>,
     /// Updated discovery directories for the caller to persist.
     pub skill_directories: Vec<String>,
 }
-crate::record_serde::wire_record!(SkillsInstallSourceResult { kind: "kind", name: "name" if is_none, path: "path", scope: "scope" if is_none, skill_directories: "skillDirectories" });
 
 /// Diagnostics from reloading skill definitions, with warnings and errors as separate lists.
 ///
@@ -7213,17 +5429,14 @@ crate::record_serde::wire_record!(SkillsInstallSourceResult { kind: "kind", name
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillsLoadDiagnostics {
     /// Errors emitted while loading skills (e.g. skills that failed to load entirely)
     pub errors: Vec<String>,
     /// Warnings emitted while loading skills (e.g. skills that loaded but had issues)
     pub warnings: Vec<String>,
 }
-crate::record_serde::wire_record!(SkillsLoadDiagnostics {
-    errors: "errors",
-    warnings: "warnings"
-});
 
 /// Caller-owned inventory and storage roots for direct file removal.
 ///
@@ -7233,7 +5446,8 @@ crate::record_serde::wire_record!(SkillsLoadDiagnostics {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillsRemoveSourceInventory {
     /// Personal storage roots that the existing removal rules recognize.
     pub personal_skills_dirs: Vec<String>,
@@ -7242,19 +5456,14 @@ pub struct SkillsRemoveSourceInventory {
     /// Local skills discovered before removal.
     pub skills: Vec<SkillRemoveSourceEntry>,
 }
-crate::record_serde::wire_record!(SkillsRemoveSourceInventory {
-    personal_skills_dirs: "personalSkillsDirs",
-    project_skills_dir: "projectSkillsDir",
-    skills: "skills"
-});
 
 /// No directory registration matched. No files or settings changed.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillsRemoveSourceOutcomeNeedsInventory {
     /// Direct source removal or an inventory request without mutation.
     pub kind: SkillsRemoveSourceOutcomeNeedsInventoryKind,
 }
-crate::record_serde::wire_record!(SkillsRemoveSourceOutcomeNeedsInventory { kind: "kind" });
 
 /// Direct removal result. The caller persists discovery and disabled settings.
 ///
@@ -7264,31 +5473,29 @@ crate::record_serde::wire_record!(SkillsRemoveSourceOutcomeNeedsInventory { kind
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillsRemoveSourceResult {
     /// Resource removed by this operation.
     pub kind: SkillRemoveSourceKind,
     /// Skill name when a skill file was removed.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// Removed skill path or unregistered discovery directory.
     pub path: String,
     /// Updated discovery directories for the caller to persist.
     pub skill_directories: Vec<String>,
 }
-crate::record_serde::wire_record!(SkillsRemoveSourceResult { kind: "kind", name: "name" if is_none, path: "path", skill_directories: "skillDirectories" });
 
 /// The existing source removal rules resolved and removed the target.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillsRemoveSourceOutcomeRemoved {
     /// Direct source removal or an inventory request without mutation.
     pub kind: SkillsRemoveSourceOutcomeRemovedKind,
     /// Removal result and updated discovery directories.
     pub result: SkillsRemoveSourceResult,
 }
-crate::record_serde::wire_record!(SkillsRemoveSourceOutcomeRemoved {
-    kind: "kind",
-    result: "result"
-});
 
 /// Removes a user-selected source without changing verified catalog removal.
 ///
@@ -7298,425 +5505,19 @@ crate::record_serde::wire_record!(SkillsRemoveSourceOutcomeRemoved {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillsRemoveSourceRequest {
     /// Working directory for relative removal paths.
     pub cwd: String,
     /// Required for file removal, but not for directory registration removal.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub inventory: Option<SkillsRemoveSourceInventory>,
     /// Current discovery directories. Removal returns an updated copy.
     pub skill_directories: Vec<String>,
     /// Local skill name, file path, or registered discovery directory.
     pub target: String,
 }
-crate::record_serde::wire_record!(SkillsRemoveSourceRequest { cwd: "cwd", inventory: "inventory" if is_none, skill_directories: "skillDirectories", target: "target" });
-
-/// Explicit host approval for account-authenticated MCP endpoints.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct McpGitHubAuthPrepareRequest {
-    /// Additional MCP configuration before approved servers leave ordinary configuration.
-    pub additional_config_json: String,
-    /// Explicit server-name and exact-origin approvals from the host command line.
-    pub specifications: Vec<String>,
-}
-crate::record_serde::wire_record!(McpGitHubAuthPrepareRequest {
-    additional_config_json: "additionalConfigJson",
-    specifications: "specifications"
-});
-
-/// Configuration after the original engine retains approved account-authenticated servers.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct McpGitHubAuthPrepareResult {
-    /// Remaining ordinary MCP configuration. Approval grants never leave the engine.
-    pub additional_config_json: String,
-}
-crate::record_serde::wire_record!(McpGitHubAuthPrepareResult {
-    additional_config_json: "additionalConfigJson"
-});
-
-/// Resolved plugin policy and authoritative failure posture. Fresh successful resolutions retain the original policy layers for mutation guards; cache-only inspection never changes retained policy.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct PluginsPolicyResolveForInvocationResult {
-    /// Resolution diagnostics in source order.
-    #[doc(hidden)]
-    pub(crate) diagnostics: Vec<PluginPolicyDiagnostic>,
-    /// Whether this host has a configured helper.
-    pub policy_helper_configured: bool,
-    /// Whether helper failure requires refusal.
-    pub policy_helper_fail_closed: bool,
-    /// Whether the helper failed.
-    pub policy_helper_load_failed: bool,
-    /// Server resolution error, when present.
-    pub server_fetch_error: Option<String>,
-    /// Whether the server policy could not be resolved.
-    pub server_fetch_failed: bool,
-    /// Whether required fresh confirmation failed and the caller must refuse.
-    pub server_forced_refresh_failure: bool,
-    /// Raw server policy for hosts that inspect the account layer alone.
-    pub server_response: Option<serde_json::Value>,
-    /// Whether no usable credential was available.
-    pub server_token_unavailable: bool,
-    /// Effective device, server, and helper settings when available.
-    pub settings: Option<serde_json::Value>,
-}
-crate::record_serde::wire_record!(PluginsPolicyResolveForInvocationResult { diagnostics: "diagnostics", policy_helper_configured: "policyHelperConfigured", policy_helper_fail_closed: "policyHelperFailClosed", policy_helper_load_failed: "policyHelperLoadFailed", server_fetch_error: "serverFetchError" if is_none, server_fetch_failed: "serverFetchFailed", server_forced_refresh_failure: "serverForcedRefreshFailure", server_response: "serverResponse" if is_none, server_token_unavailable: "serverTokenUnavailable", settings: "settings" if is_none });
-
-/// Persisted, live, built-in, and host-directory plugins with canonical shadowing and scan diagnostics.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct PluginsInspectInventoryResult {
-    /// Merged inventory in canonical precedence order.
-    #[doc(hidden)]
-    pub(crate) plugins: Vec<PluginInvocationInventoryEntry>,
-    /// Directory scan warnings in source order.
-    pub warnings: Vec<String>,
-}
-crate::record_serde::wire_record!(PluginsInspectInventoryResult {
-    plugins: "plugins",
-    warnings: "warnings"
-});
-
-/// Plugins installed in user/global state.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct PluginsListResult {
-    /// Installed plugins
-    pub plugins: Vec<InstalledPluginInfo>,
-    /// Existing discovery warnings for an invocation-context query. Omitted on legacy calls without workingDirectory or pluginDirectories. Display text can contain untrusted paths and must be sanitized before terminal output.
-    pub warnings: Option<Vec<String>>,
-}
-crate::record_serde::wire_record!(PluginsListResult { plugins: "plugins", warnings: "warnings" if is_none });
-
-/// Result of installing a plugin.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct PluginsInstallResult {
-    /// Set when the install path is deprecated (e.g. direct repo / URL / local installs). Callers should surface this to end users.
-    pub deprecation_warning: Option<String>,
-    /// The newly installed plugin's metadata
-    pub plugin: InstalledPluginInfo,
-    /// Optional post-install message provided by the plugin (e.g. setup instructions)
-    pub post_install_message: Option<String>,
-    /// Number of skills discovered and installed from the plugin
-    pub skills_installed: i64,
-    /// Where the completed plugin tree was staged before atomic promotion
-    pub staging_mode: Option<PluginInstallStagingMode>,
-    /// Warnings raised while reading the plugin's manifest: a field the manifest's schema does not define, which the loader ignores, or the reason the loader rejects the whole manifest. Callers should surface these to end users: a plugin whose skills sit behind an ignored field, or whose manifest is rejected, otherwise installs, lists, and contributes nothing, with no signal to its author. Absent when the manifest raised none.
-    pub warnings: Option<Vec<String>>,
-}
-crate::record_serde::wire_record!(PluginsInstallResult { deprecation_warning: "deprecationWarning" if is_none, plugin: "plugin", post_install_message: "postInstallMessage" if is_none, skills_installed: "skillsInstalled", staging_mode: "stagingMode" if is_none, warnings: "warnings" if is_none });
-
-/// Result of updating a single plugin.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct PluginsUpdateResult {
-    /// Version after the update, when reported by the plugin manifest
-    pub new_version: Option<String>,
-    /// Version that was previously installed, when available
-    pub previous_version: Option<String>,
-    /// Number of skills discovered and installed after the update
-    pub skills_installed: i64,
-    /// Warnings from the updated plugin's manifest, including ignored fields or the reason the loader rejects the plugin. Callers should surface these to end users. Absent when the manifest raised none.
-    pub warnings: Option<Vec<String>>,
-}
-crate::record_serde::wire_record!(PluginsUpdateResult { new_version: "newVersion" if is_none, previous_version: "previousVersion" if is_none, skills_installed: "skillsInstalled", warnings: "warnings" if is_none });
-
-/// Result of updating all installed plugins.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct PluginsUpdateAllResult {
-    /// Per-plugin update results in deterministic order.
-    pub results: Vec<PluginUpdateAllEntry>,
-}
-crate::record_serde::wire_record!(PluginsUpdateAllResult { results: "results" });
-
-/// Bundled plugin records and diagnostics from the original manifest scanner.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct PluginsBuiltinDiscoverResult {
-    /// Scanned bundled records in host precedence order.
-    pub plugins: Vec<serde_json::Value>,
-    /// Manifest and filesystem diagnostics, including a missing required bundle.
-    pub warnings: Vec<String>,
-}
-crate::record_serde::wire_record!(PluginsBuiltinDiscoverResult {
-    plugins: "plugins",
-    warnings: "warnings"
-});
-
-/// All registered marketplaces, including built-in defaults.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct PluginsMarketplacesListResult {
-    /// Registered marketplaces
-    pub marketplaces: Vec<MarketplaceInfo>,
-}
-crate::record_serde::wire_record!(PluginsMarketplacesListResult {
-    marketplaces: "marketplaces"
-});
-
-/// The retired marketplace migration result for the runtime's configured profile.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct PluginsMarketplacesMigrateRetiredDefaultResult {
-    /// The marketplace registered by this call. Present only when status is migrated.
-    pub marketplace: Option<String>,
-    /// Whether the migration changed the profile or why it left the profile unchanged.
-    pub status: MarketplaceMigrationStatus,
-}
-crate::record_serde::wire_record!(PluginsMarketplacesMigrateRetiredDefaultResult { marketplace: "marketplace" if is_none, status: "status" });
-
-/// Result of registering a new marketplace.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct PluginsMarketplacesAddResult {
-    /// Final name of the marketplace as resolved from its manifest
-    pub name: String,
-}
-crate::record_serde::wire_record!(PluginsMarketplacesAddResult { name: "name" });
-
-/// Outcome of the remove attempt, including dependent-plugin info when applicable.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct PluginsMarketplacesRemoveResult {
-    /// Names of installed plugins that prevented removal. Populated only when `removed=false`.
-    pub dependent_plugins: Option<Vec<String>>,
-    /// True when the marketplace was actually removed. False when removal was skipped because the marketplace has dependent plugins and `force` was not set.
-    pub removed: bool,
-}
-crate::record_serde::wire_record!(PluginsMarketplacesRemoveResult { dependent_plugins: "dependentPlugins" if is_none, removed: "removed" });
-
-/// Plugins advertised by the marketplace.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct PluginsMarketplacesBrowseResult {
-    /// Plugins advertised by the marketplace
-    pub plugins: Vec<MarketplacePluginInfo>,
-}
-crate::record_serde::wire_record!(PluginsMarketplacesBrowseResult { plugins: "plugins" });
-
-/// Result of refreshing one or more marketplace catalogs.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct PluginsMarketplacesRefreshResult {
-    /// Per-marketplace refresh results in deterministic order.
-    pub results: Vec<MarketplaceRefreshEntry>,
-}
-crate::record_serde::wire_record!(PluginsMarketplacesRefreshResult { results: "results" });
-
-/// Active plugins and the separate persisted inventory, without persisting live directory records.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct PluginsSourcesResolveResult {
-    /// Live directory records, including inactive records that still own their names.
-    pub live_plugins: Option<Vec<serde_json::Value>>,
-    /// Whether this pass confirmed the live tier instead of using persisted fallback.
-    pub live_tier_known: Option<bool>,
-    /// Persisted ambient records, including disabled or shadowed installations.
-    pub persisted_plugins: Vec<serde_json::Value>,
-    /// Active records, including trusted live marketplaces and explicit directories.
-    pub plugins: Vec<serde_json::Value>,
-    /// Scanner and live-marketplace warnings for this exact source pass.
-    pub warnings: Vec<String>,
-}
-crate::record_serde::wire_record!(PluginsSourcesResolveResult { live_plugins: "livePlugins" if is_none, live_tier_known: "liveTierKnown" if is_none, persisted_plugins: "persistedPlugins", plugins: "plugins", warnings: "warnings" });
-
-/// Full local skill inventory and report-and-ignore source diagnostics.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct SkillsResourcesDiscoverResult {
-    /// Sources that failed to load; the remaining inventory is incomplete.
-    pub errors: Vec<String>,
-    /// Local skill records with invocation identity, content paths, and command metadata.
-    pub skills: Vec<serde_json::Value>,
-    /// Explicit plugin scan warnings, separate from skill loader diagnostics.
-    pub source_warnings: Vec<String>,
-    /// Nonfatal loader and manifest warnings.
-    pub warnings: Vec<String>,
-}
-crate::record_serde::wire_record!(SkillsResourcesDiscoverResult {
-    errors: "errors",
-    skills: "skills",
-    source_warnings: "sourceWarnings",
-    warnings: "warnings"
-});
-
-/// The persisted result of a skill source installation.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct SkillsResourcesInstallResult {
-    /// Source classification.
-    pub kind: SkillResourceInstallKind,
-    /// Skill name, absent for a registered directory.
-    pub name: Option<String>,
-    /// Installed definition path or registered directory.
-    pub path: String,
-    /// Destination scope, absent for a registered directory.
-    pub scope: Option<SkillResourceInstallScope>,
-}
-crate::record_serde::wire_record!(SkillsResourcesInstallResult { kind: "kind", name: "name" if is_none, path: "path", scope: "scope" if is_none });
-
-/// The completed skill removal, with conservative disabled-state cleanup.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct SkillsResourcesRemoveResult {
-    /// Removed storage tier.
-    pub kind: SkillResourceRemoveKind,
-    /// Removed skill name, absent for a registered directory.
-    pub name: Option<String>,
-    /// Removed definition path or unregistered directory.
-    pub path: String,
-}
-crate::record_serde::wire_record!(SkillsResourcesRemoveResult { kind: "kind", name: "name" if is_none, path: "path" });
-
-/// Skills discovered across global and project sources.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct SkillsDiscoverResult {
-    /// Messages for skills that failed to load (e.g. malformed SKILL.md). Empty when host skills are excluded so host-local paths are not disclosed to multitenant callers.
-    pub errors: Option<Vec<String>>,
-    /// All discovered skills across all sources
-    pub skills: Vec<ServerSkill>,
-}
-crate::record_serde::wire_record!(SkillsDiscoverResult { errors: "errors" if is_none, skills: "skills" });
-
-/// Canonical locations where skills can be created so the runtime will recognize them.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct SkillsGetDiscoveryPathsResult {
-    /// Canonical skill create/discovery directories, in priority order
-    pub paths: Vec<SkillDiscoveryPath>,
-}
-crate::record_serde::wire_record!(SkillsGetDiscoveryPathsResult { paths: "paths" });
 
 /// User-configured MCP servers, keyed by server name.
 ///
@@ -7726,27 +5527,12 @@ crate::record_serde::wire_record!(SkillsGetDiscoveryPathsResult { paths: "paths"
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpConfigListResult {
     /// All MCP servers from user config, keyed by name
     pub servers: HashMap<String, serde_json::Value>,
 }
-crate::record_serde::wire_record!(McpConfigListResult { servers: "servers" });
-
-/// Fresh user MCP server names, including invalid entries but excluding installation-owned entries. This read does not change the validated configuration cache.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct McpConfigUserServerNamesForConfigDirResult {
-    /// User-owned persisted server names, including entries that validation skips.
-    pub names: Vec<String>,
-}
-crate::record_serde::wire_record!(McpConfigUserServerNamesForConfigDirResult { names: "names" });
 
 /// Request id naming a cancellable registry search.
 ///
@@ -7756,33 +5542,12 @@ crate::record_serde::wire_record!(McpConfigUserServerNamesForConfigDirResult { n
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct McpRegistryAllocateRequestIdResult {
     /// Request ID for `mcp.registry.search` and `mcp.registry.cancel`. It serves one search. Allocation can reclaim unused IDs at the 1,024-ID reservation limit.
     pub request_id: i64,
 }
-crate::record_serde::wire_record!(McpRegistryAllocateRequestIdResult {
-    request_id: "requestId"
-});
-
-/// A secret-free GitHub descriptor, an ordinary signed-out result, or a bounded degraded result.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct McpGitHubResolveForInvocationResult {
-    /// Built-in descriptor without authentication headers; absent when unavailable.
-    pub server: Option<serde_json::Value>,
-    /// Whether the existing two-second resolution budget expired.
-    pub timed_out: bool,
-    /// Resolution failure detail, distinct from an ordinary signed-out result.
-    pub warning: Option<String>,
-}
-crate::record_serde::wire_record!(McpGitHubResolveForInvocationResult { server: "server" if is_none, timed_out: "timedOut", warning: "warning" if is_none });
 
 /// Extensions discovered from persisted Copilot home state and their effective loading mode. Launch-scoped additional plugins are not included.
 ///
@@ -7792,19 +5557,16 @@ crate::record_serde::wire_record!(McpGitHubResolveForInvocationResult { server: 
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ExtensionsDiscoverResult {
     /// Discovered user and enabled installed-plugin extensions from persisted Copilot home state
     pub extensions: Vec<DiscoveredExtension>,
     /// Effective extension loading mode. Defaults to load_and_augment when unset.
     pub mode: DiscoveredExtensionMode,
 }
-crate::record_serde::wire_record!(ExtensionsDiscoverResult {
-    extensions: "extensions",
-    mode: "mode"
-});
 
-/// Configuration after the original engine retains approved account-authenticated servers.
+/// Skills discovered across global and project sources.
 ///
 /// <div class="warning">
 ///
@@ -7812,14 +5574,188 @@ crate::record_serde::wire_record!(ExtensionsDiscoverResult {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
-pub(crate) struct McpSourcePrepareGitHubAuthResult {
-    /// Remaining ordinary MCP configuration. Approval grants never leave the engine.
-    pub additional_config_json: String,
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillsDiscoverResult {
+    /// Messages for skills that failed to load (e.g. malformed SKILL.md). Empty when host skills are excluded so host-local paths are not disclosed to multitenant callers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub errors: Option<Vec<String>>,
+    /// All discovered skills across all sources
+    pub skills: Vec<ServerSkill>,
 }
-crate::record_serde::wire_record!(McpSourcePrepareGitHubAuthResult {
-    additional_config_json: "additionalConfigJson"
-});
+
+/// Canonical locations where skills can be created so the runtime will recognize them.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillsGetDiscoveryPathsResult {
+    /// Canonical skill create/discovery directories, in priority order
+    pub paths: Vec<SkillDiscoveryPath>,
+}
+
+/// Plugins installed in user/global state.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginsListResult {
+    /// Installed plugins
+    pub plugins: Vec<InstalledPluginInfo>,
+}
+
+/// Result of installing a plugin.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginsInstallResult {
+    /// Set when the install path is deprecated (e.g. direct repo / URL / local installs). Callers should surface this to end users.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deprecation_warning: Option<String>,
+    /// The newly installed plugin's metadata
+    pub plugin: InstalledPluginInfo,
+    /// Optional post-install message provided by the plugin (e.g. setup instructions)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_install_message: Option<String>,
+    /// Number of skills discovered and installed from the plugin
+    pub skills_installed: i64,
+    /// Where the completed plugin tree was staged before atomic promotion
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub staging_mode: Option<PluginInstallStagingMode>,
+    /// Report-and-ignore warnings raised while reading the plugin's manifest, such as a field the manifest's schema does not define and the loader therefore ignored. Callers should surface these to end users: a plugin whose skills sit behind an ignored field otherwise installs, lists, and contributes nothing, with no signal to its author. Absent when the manifest raised none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warnings: Option<Vec<String>>,
+}
+
+/// Result of updating a single plugin.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginsUpdateResult {
+    /// Version after the update, when reported by the plugin manifest
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_version: Option<String>,
+    /// Version that was previously installed, when available
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_version: Option<String>,
+    /// Number of skills discovered and installed after the update
+    pub skills_installed: i64,
+}
+
+/// Result of updating all installed plugins.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginsUpdateAllResult {
+    /// Per-plugin update results in deterministic order.
+    pub results: Vec<PluginUpdateAllEntry>,
+}
+
+/// All registered marketplaces, including built-in defaults.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginsMarketplacesListResult {
+    /// Registered marketplaces
+    pub marketplaces: Vec<MarketplaceInfo>,
+}
+
+/// Result of registering a new marketplace.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginsMarketplacesAddResult {
+    /// Final name of the marketplace as resolved from its manifest
+    pub name: String,
+}
+
+/// Outcome of the remove attempt, including dependent-plugin info when applicable.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginsMarketplacesRemoveResult {
+    /// Names of installed plugins that prevented removal. Populated only when `removed=false`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dependent_plugins: Option<Vec<String>>,
+    /// True when the marketplace was actually removed. False when removal was skipped because the marketplace has dependent plugins and `force` was not set.
+    pub removed: bool,
+}
+
+/// Plugins advertised by the marketplace.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginsMarketplacesBrowseResult {
+    /// Plugins advertised by the marketplace
+    pub plugins: Vec<MarketplacePluginInfo>,
+}
+
+/// Result of refreshing one or more marketplace catalogs.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginsMarketplacesRefreshResult {
+    /// Per-marketplace refresh results in deterministic order.
+    pub results: Vec<MarketplaceRefreshEntry>,
+}
 
 /// Identifies the target session.
 ///
@@ -7829,14 +5765,12 @@ crate::record_serde::wire_record!(McpSourcePrepareGitHubAuthResult {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillProviderListParams {
     /// Target session identifier
     pub session_id: SessionId,
 }
-crate::record_serde::wire_record!(SkillProviderListParams {
-    session_id: "sessionId"
-});
 
 /// Canvas open result returned by the provider.
 ///
@@ -7846,16 +5780,19 @@ crate::record_serde::wire_record!(SkillProviderListParams {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CanvasOpenResult {
     /// Provider-supplied status text
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
     /// Provider-supplied title
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     /// URL for web-rendered canvases
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
 }
-crate::record_serde::wire_record!(CanvasOpenResult { status: "status" if is_none, title: "title" if is_none, url: "url" if is_none });
 
 /// A standard MCP tool result, or null when the IDE is disconnected.
 ///
@@ -7885,7 +5822,7 @@ pub type McpPlanSecretReference = String;
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CardDigestAlgorithm {
     /// SHA-256 over RFC 8785 canonical JSON encoded as UTF-8.
     #[serde(rename = "sha256-rfc8785")]
@@ -7894,20 +5831,6 @@ pub enum CardDigestAlgorithm {
     #[default]
     #[serde(other)]
     Unknown,
-}
-impl<'de> Deserialize<'de> for CardDigestAlgorithm {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "CardDigestAlgorithm",
-            &["sha256-rfc8785", "Unknown"],
-            Some(1),
-        )?;
-        Ok(match index {
-            0 => Self::Sha256Rfc8785,
-            _ => Self::Unknown,
-        })
-    }
 }
 
 /// Which kind of opaque handle was presented
@@ -7918,7 +5841,7 @@ impl<'de> Deserialize<'de> for CardDigestAlgorithm {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CatalogHandleType {
     /// A search candidate handle.
     #[serde(rename = "candidate")]
@@ -7934,40 +5857,13 @@ pub enum CatalogHandleType {
     #[serde(other)]
     Unknown,
 }
-impl<'de> Deserialize<'de> for CatalogHandleType {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "CatalogHandleType",
-            &["candidate", "plan", "selection", "Unknown"],
-            Some(3),
-        )?;
-        Ok(match index {
-            0 => Self::Candidate,
-            1 => Self::Plan,
-            2 => Self::Selection,
-            _ => Self::Unknown,
-        })
-    }
-}
 
 /// Discriminator: a handle was rejected
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CatalogHandleRejectedErrorKind {
     #[serde(rename = "handle-rejected")]
     #[default]
     HandleRejected,
-}
-impl<'de> Deserialize<'de> for CatalogHandleRejectedErrorKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "CatalogHandleRejectedErrorKind",
-            &["handle-rejected"],
-            None,
-        )?;
-        Ok(Self::HandleRejected)
-    }
 }
 
 /// Why a presented handle was rejected
@@ -7978,7 +5874,7 @@ impl<'de> Deserialize<'de> for CatalogHandleRejectedErrorKind {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CatalogHandleRejectionReason {
     /// The handle is unparseable or unknown.
     #[serde(rename = "invalid")]
@@ -8003,51 +5899,13 @@ pub enum CatalogHandleRejectionReason {
     #[serde(other)]
     Unknown,
 }
-impl<'de> Deserialize<'de> for CatalogHandleRejectionReason {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "CatalogHandleRejectionReason",
-            &[
-                "invalid",
-                "stale",
-                "replayed",
-                "foreign",
-                "wrong-kind",
-                "search-mismatch",
-                "Unknown",
-            ],
-            Some(6),
-        )?;
-        Ok(match index {
-            0 => Self::Invalid,
-            1 => Self::Stale,
-            2 => Self::Replayed,
-            3 => Self::Foreign,
-            4 => Self::WrongKind,
-            5 => Self::SearchMismatch,
-            _ => Self::Unknown,
-        })
-    }
-}
 
 /// Discriminator: the candidate cannot be installed
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CatalogNotInstallableErrorKind {
     #[serde(rename = "not-installable")]
     #[default]
     NotInstallable,
-}
-impl<'de> Deserialize<'de> for CatalogNotInstallableErrorKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "CatalogNotInstallableErrorKind",
-            &["not-installable"],
-            None,
-        )?;
-        Ok(Self::NotInstallable)
-    }
 }
 
 /// Why a discoverable candidate cannot be installed
@@ -8058,7 +5916,7 @@ impl<'de> Deserialize<'de> for CatalogNotInstallableErrorKind {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CatalogNotInstallableReason {
     /// This kind of resource is not installable through this surface.
     #[serde(rename = "kind-not-installable")]
@@ -8074,45 +5932,13 @@ pub enum CatalogNotInstallableReason {
     #[serde(other)]
     Unknown,
 }
-impl<'de> Deserialize<'de> for CatalogNotInstallableReason {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "CatalogNotInstallableReason",
-            &[
-                "kind-not-installable",
-                "ai-skill-not-installable",
-                "policy-forbids",
-                "Unknown",
-            ],
-            Some(3),
-        )?;
-        Ok(match index {
-            0 => Self::KindNotInstallable,
-            1 => Self::AiSkillNotInstallable,
-            2 => Self::PolicyForbids,
-            _ => Self::Unknown,
-        })
-    }
-}
 
 /// Discriminator: no usable transport is available
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CatalogUnavailableTransportErrorKind {
     #[serde(rename = "unavailable-transport")]
     #[default]
     UnavailableTransport,
-}
-impl<'de> Deserialize<'de> for CatalogUnavailableTransportErrorKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "CatalogUnavailableTransportErrorKind",
-            &["unavailable-transport"],
-            None,
-        )?;
-        Ok(Self::UnavailableTransport)
-    }
 }
 
 /// Why no usable transport could be offered
@@ -8123,7 +5949,7 @@ impl<'de> Deserialize<'de> for CatalogUnavailableTransportErrorKind {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CatalogUnavailableTransportReason {
     /// The card advertises no transport this runtime can use.
     #[serde(rename = "no-eligible-transport")]
@@ -8139,27 +5965,6 @@ pub enum CatalogUnavailableTransportReason {
     #[serde(other)]
     Unknown,
 }
-impl<'de> Deserialize<'de> for CatalogUnavailableTransportReason {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "CatalogUnavailableTransportReason",
-            &[
-                "no-eligible-transport",
-                "transport-not-supported",
-                "remote-enumeration-unavailable",
-                "Unknown",
-            ],
-            Some(3),
-        )?;
-        Ok(match index {
-            0 => Self::NoEligibleTransport,
-            1 => Self::TransportNotSupported,
-            2 => Self::RemoteEnumerationUnavailable,
-            _ => Self::Unknown,
-        })
-    }
-}
 
 /// Server transport type: stdio, http, sse (deprecated), or memory
 ///
@@ -8169,7 +5974,7 @@ impl<'de> Deserialize<'de> for CatalogUnavailableTransportReason {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DiscoveredMcpServerType {
     /// Server communicates over stdio with a local child process.
     #[serde(rename = "stdio")]
@@ -8188,79 +5993,29 @@ pub enum DiscoveredMcpServerType {
     #[serde(other)]
     Unknown,
 }
-impl<'de> Deserialize<'de> for DiscoveredMcpServerType {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "DiscoveredMcpServerType",
-            &["stdio", "http", "sse", "memory", "Unknown"],
-            Some(4),
-        )?;
-        Ok(match index {
-            0 => Self::Stdio,
-            1 => Self::Http,
-            2 => Self::Sse,
-            3 => Self::Memory,
-            _ => Self::Unknown,
-        })
-    }
-}
 
 /// Attachment type discriminator
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ExtensionContextPushInputType {
     #[serde(rename = "extension_context")]
     #[default]
     ExtensionContext,
 }
-impl<'de> Deserialize<'de> for ExtensionContextPushInputType {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "ExtensionContextPushInputType",
-            &["extension_context"],
-            None,
-        )?;
-        Ok(Self::ExtensionContext)
-    }
-}
 
 /// Reviewed resource discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InstallationReviewMcpResource {
     #[serde(rename = "mcp")]
     #[default]
     Mcp,
 }
-impl<'de> Deserialize<'de> for InstallationReviewMcpResource {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "InstallationReviewMcpResource",
-            &["mcp"],
-            None,
-        )?;
-        Ok(Self::Mcp)
-    }
-}
 
 /// Exact reviewed installation action.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpInstallationReviewInstallAction {
     #[serde(rename = "install")]
     #[default]
     Install,
-}
-impl<'de> Deserialize<'de> for McpInstallationReviewInstallAction {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpInstallationReviewInstallAction",
-            &["install"],
-            None,
-        )?;
-        Ok(Self::Install)
-    }
 }
 
 /// Whether a planned configuration change would create or modify an entry
@@ -8271,7 +6026,7 @@ impl<'de> Deserialize<'de> for McpInstallationReviewInstallAction {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpPlanConfigurationOperation {
     /// Creates a configuration entry that does not exist yet.
     #[serde(rename = "add")]
@@ -8284,21 +6039,6 @@ pub enum McpPlanConfigurationOperation {
     #[serde(other)]
     Unknown,
 }
-impl<'de> Deserialize<'de> for McpPlanConfigurationOperation {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpPlanConfigurationOperation",
-            &["add", "update", "Unknown"],
-            Some(2),
-        )?;
-        Ok(match index {
-            0 => Self::Add,
-            1 => Self::Update,
-            _ => Self::Unknown,
-        })
-    }
-}
 
 /// Configuration scope an MCP install plan targets
 ///
@@ -8308,7 +6048,7 @@ impl<'de> Deserialize<'de> for McpPlanConfigurationOperation {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpPlanScope {
     /// The user's own MCP configuration.
     #[serde(rename = "user")]
@@ -8317,20 +6057,6 @@ pub enum McpPlanScope {
     #[default]
     #[serde(other)]
     Unknown,
-}
-impl<'de> Deserialize<'de> for McpPlanScope {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpPlanScope",
-            &["user", "Unknown"],
-            Some(1),
-        )?;
-        Ok(match index {
-            0 => Self::User,
-            _ => Self::Unknown,
-        })
-    }
 }
 
 /// Transport exposed by a remote endpoint
@@ -8341,7 +6067,7 @@ impl<'de> Deserialize<'de> for McpPlanScope {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpPlanRemoteTransport {
     /// An HTTP endpoint.
     #[serde(rename = "http")]
@@ -8357,22 +6083,6 @@ pub enum McpPlanRemoteTransport {
     #[serde(other)]
     Unknown,
 }
-impl<'de> Deserialize<'de> for McpPlanRemoteTransport {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpPlanRemoteTransport",
-            &["http", "streamable-http", "sse", "Unknown"],
-            Some(3),
-        )?;
-        Ok(match index {
-            0 => Self::Http,
-            1 => Self::StreamableHttp,
-            2 => Self::Sse,
-            _ => Self::Unknown,
-        })
-    }
-}
 
 /// Where a required value is applied when the planned server is launched
 ///
@@ -8382,7 +6092,7 @@ impl<'de> Deserialize<'de> for McpPlanRemoteTransport {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpPlanValueCategory {
     /// Set as an environment variable on the launched process.
     #[serde(rename = "environment-variable")]
@@ -8404,31 +6114,6 @@ pub enum McpPlanValueCategory {
     #[serde(other)]
     Unknown,
 }
-impl<'de> Deserialize<'de> for McpPlanValueCategory {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpPlanValueCategory",
-            &[
-                "environment-variable",
-                "runtime-argument",
-                "package-argument",
-                "header",
-                "url-variable",
-                "Unknown",
-            ],
-            Some(5),
-        )?;
-        Ok(match index {
-            0 => Self::EnvironmentVariable,
-            1 => Self::RuntimeArgument,
-            2 => Self::PackageArgument,
-            3 => Self::Header,
-            4 => Self::UrlVariable,
-            _ => Self::Unknown,
-        })
-    }
-}
 
 /// What policy decided for a planned server
 ///
@@ -8438,7 +6123,7 @@ impl<'de> Deserialize<'de> for McpPlanValueCategory {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpPlanPolicyDecision {
     /// Policy permits the server.
     #[serde(rename = "allowed")]
@@ -8454,22 +6139,6 @@ pub enum McpPlanPolicyDecision {
     #[serde(other)]
     Unknown,
 }
-impl<'de> Deserialize<'de> for McpPlanPolicyDecision {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpPlanPolicyDecision",
-            &["allowed", "blocked", "requires-approval", "Unknown"],
-            Some(3),
-        )?;
-        Ok(match index {
-            0 => Self::Allowed,
-            1 => Self::Blocked,
-            2 => Self::RequiresApproval,
-            _ => Self::Unknown,
-        })
-    }
-}
 
 /// Explicit backend selection is part of the final review; failures never switch backends.
 ///
@@ -8479,7 +6148,7 @@ impl<'de> Deserialize<'de> for McpPlanPolicyDecision {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpInstallationSecretStorage {
     /// The selected operating-system keychain, without fallback to file storage.
     #[serde(rename = "keychain")]
@@ -8492,21 +6161,6 @@ pub enum McpInstallationSecretStorage {
     #[serde(other)]
     Unknown,
 }
-impl<'de> Deserialize<'de> for McpInstallationSecretStorage {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpInstallationSecretStorage",
-            &["keychain", "private-file", "Unknown"],
-            Some(2),
-        )?;
-        Ok(match index {
-            0 => Self::Keychain,
-            1 => Self::PrivateFile,
-            _ => Self::Unknown,
-        })
-    }
-}
 
 /// Discriminator for a package-backed transport choice
 ///
@@ -8516,7 +6170,7 @@ impl<'de> Deserialize<'de> for McpInstallationSecretStorage {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpPlanPackageInstallMethod {
     /// Install and run a local package.
     #[serde(rename = "package")]
@@ -8525,20 +6179,6 @@ pub enum McpPlanPackageInstallMethod {
     #[default]
     #[serde(other)]
     Unknown,
-}
-impl<'de> Deserialize<'de> for McpPlanPackageInstallMethod {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpPlanPackageInstallMethod",
-            &["package", "Unknown"],
-            Some(1),
-        )?;
-        Ok(match index {
-            0 => Self::Package,
-            _ => Self::Unknown,
-        })
-    }
 }
 
 /// Discriminator for a scalar required value
@@ -8549,7 +6189,7 @@ impl<'de> Deserialize<'de> for McpPlanPackageInstallMethod {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpPlanRequiredValueScalarKind {
     /// The value uses one scalar type.
     #[serde(rename = "scalar")]
@@ -8558,20 +6198,6 @@ pub enum McpPlanRequiredValueScalarKind {
     #[default]
     #[serde(other)]
     Unknown,
-}
-impl<'de> Deserialize<'de> for McpPlanRequiredValueScalarKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpPlanRequiredValueScalarKind",
-            &["scalar", "Unknown"],
-            Some(1),
-        )?;
-        Ok(match index {
-            0 => Self::Scalar,
-            _ => Self::Unknown,
-        })
-    }
 }
 
 /// Scalar type a required value must conform to
@@ -8582,7 +6208,7 @@ impl<'de> Deserialize<'de> for McpPlanRequiredValueScalarKind {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpPlanScalarValueType {
     /// Free text.
     #[serde(rename = "string")]
@@ -8601,23 +6227,6 @@ pub enum McpPlanScalarValueType {
     #[serde(other)]
     Unknown,
 }
-impl<'de> Deserialize<'de> for McpPlanScalarValueType {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpPlanScalarValueType",
-            &["string", "number", "boolean", "path", "Unknown"],
-            Some(4),
-        )?;
-        Ok(match index {
-            0 => Self::String,
-            1 => Self::Number,
-            2 => Self::Boolean,
-            3 => Self::Path,
-            _ => Self::Unknown,
-        })
-    }
-}
 
 /// Discriminator for an enumerated required value
 ///
@@ -8627,7 +6236,7 @@ impl<'de> Deserialize<'de> for McpPlanScalarValueType {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpPlanRequiredValueEnumKind {
     /// The value uses a fixed non-empty enumeration.
     #[serde(rename = "enum")]
@@ -8637,20 +6246,6 @@ pub enum McpPlanRequiredValueEnumKind {
     #[serde(other)]
     Unknown,
 }
-impl<'de> Deserialize<'de> for McpPlanRequiredValueEnumKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpPlanRequiredValueEnumKind",
-            &["enum", "Unknown"],
-            Some(1),
-        )?;
-        Ok(match index {
-            0 => Self::Enum,
-            _ => Self::Unknown,
-        })
-    }
-}
 
 /// Discriminator for an enumerated required value
 ///
@@ -8660,7 +6255,7 @@ impl<'de> Deserialize<'de> for McpPlanRequiredValueEnumKind {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpPlanEnumValueType {
     /// One of a fixed, non-empty set of permitted values.
     #[serde(rename = "enum")]
@@ -8669,20 +6264,6 @@ pub enum McpPlanEnumValueType {
     #[default]
     #[serde(other)]
     Unknown,
-}
-impl<'de> Deserialize<'de> for McpPlanEnumValueType {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpPlanEnumValueType",
-            &["enum", "Unknown"],
-            Some(1),
-        )?;
-        Ok(match index {
-            0 => Self::Enum,
-            _ => Self::Unknown,
-        })
-    }
 }
 
 /// One non-secret value a transport choice needs, represented as a scalar or enumerated variant so enum values cannot be missing or attached to another type.
@@ -8708,7 +6289,7 @@ pub enum McpPlanRequiredValue {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpPlanPackageTransport {
     /// A locally launched process spoken to over standard input and output.
     #[serde(rename = "stdio")]
@@ -8717,20 +6298,6 @@ pub enum McpPlanPackageTransport {
     #[default]
     #[serde(other)]
     Unknown,
-}
-impl<'de> Deserialize<'de> for McpPlanPackageTransport {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpPlanPackageTransport",
-            &["stdio", "Unknown"],
-            Some(1),
-        )?;
-        Ok(match index {
-            0 => Self::Stdio,
-            _ => Self::Unknown,
-        })
-    }
 }
 
 /// Discriminator for a remote-endpoint transport choice
@@ -8741,7 +6308,7 @@ impl<'de> Deserialize<'de> for McpPlanPackageTransport {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpPlanRemoteInstallMethod {
     /// Connect to a remote endpoint.
     #[serde(rename = "remote")]
@@ -8750,20 +6317,6 @@ pub enum McpPlanRemoteInstallMethod {
     #[default]
     #[serde(other)]
     Unknown,
-}
-impl<'de> Deserialize<'de> for McpPlanRemoteInstallMethod {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpPlanRemoteInstallMethod",
-            &["remote", "Unknown"],
-            Some(1),
-        )?;
-        Ok(match index {
-            0 => Self::Remote,
-            _ => Self::Unknown,
-        })
-    }
 }
 
 /// One eligible way to run the server, represented as a tagged package or remote variant so package identity and endpoint states cannot contradict the install method.
@@ -8782,22 +6335,11 @@ pub enum McpPlanTransportChoice {
 }
 
 /// Exact reviewed installation action.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpInstallationReviewUninstallAction {
     #[serde(rename = "uninstall")]
     #[default]
     Uninstall,
-}
-impl<'de> Deserialize<'de> for McpInstallationReviewUninstallAction {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpInstallationReviewUninstallAction",
-            &["uninstall"],
-            None,
-        )?;
-        Ok(Self::Uninstall)
-    }
 }
 
 /// Safe MCP review fields. No raw card, retrieval URL, plan handle or secret value.
@@ -8809,60 +6351,27 @@ pub enum McpInstallationReview {
 }
 
 /// Reviewed resource discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InstallationReviewSkillResource {
     #[serde(rename = "skill")]
     #[default]
     Skill,
 }
-impl<'de> Deserialize<'de> for InstallationReviewSkillResource {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "InstallationReviewSkillResource",
-            &["skill"],
-            None,
-        )?;
-        Ok(Self::Skill)
-    }
-}
 
 /// Reviewed resource discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InstallationReviewPluginResource {
     #[serde(rename = "plugin")]
     #[default]
     Plugin,
 }
-impl<'de> Deserialize<'de> for InstallationReviewPluginResource {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "InstallationReviewPluginResource",
-            &["plugin"],
-            None,
-        )?;
-        Ok(Self::Plugin)
-    }
-}
 
 /// Exact reviewed Agent Plugin installation action.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InstallationReviewPluginReviewAction {
     #[serde(rename = "install")]
     #[default]
     Install,
-}
-impl<'de> Deserialize<'de> for InstallationReviewPluginReviewAction {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "InstallationReviewPluginReviewAction",
-            &["install"],
-            None,
-        )?;
-        Ok(Self::Install)
-    }
 }
 
 /// Only resource kinds with an implemented installation engine have a review variant.
@@ -8875,7 +6384,7 @@ pub enum InstallationReview {
 }
 
 /// Explicit user decisions, never inferred from a permission grant or model response.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InstallationDecision {
     /// The user explicitly approved the exact review on this request.
     #[serde(rename = "confirm")]
@@ -8891,75 +6400,6 @@ pub enum InstallationDecision {
     #[serde(other)]
     Unknown,
 }
-impl<'de> Deserialize<'de> for InstallationDecision {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "InstallationDecision",
-            &["confirm", "decline", "cancel", "Unknown"],
-            Some(3),
-        )?;
-        Ok(match index {
-            0 => Self::Confirm,
-            1 => Self::Decline,
-            2 => Self::Cancel,
-            _ => Self::Unknown,
-        })
-    }
-}
-
-/// The source format: inline JSON or a host file.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-pub enum McpAdditionalConfigSourceJsonKind {
-    #[serde(rename = "json")]
-    #[default]
-    Json,
-}
-impl<'de> Deserialize<'de> for McpAdditionalConfigSourceJsonKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpAdditionalConfigSourceJsonKind",
-            &["json"],
-            None,
-        )?;
-        Ok(Self::Json)
-    }
-}
-
-/// The source format: inline JSON or a host file.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-pub enum McpAdditionalConfigSourceFileKind {
-    #[serde(rename = "file")]
-    #[default]
-    File,
-}
-impl<'de> Deserialize<'de> for McpAdditionalConfigSourceFileKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpAdditionalConfigSourceFileKind",
-            &["file"],
-            None,
-        )?;
-        Ok(Self::File)
-    }
-}
-
-/// An additional MCP document supplied as JSON text or a host file.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum McpAdditionalConfigSource {
-    Json(McpAdditionalConfigSourceJson),
-    File(McpAdditionalConfigSourceFile),
-}
 
 /// Allowed values for the `McpAppsSetHostContextDetailsAvailableDisplayMode` enumeration.
 ///
@@ -8969,7 +6409,7 @@ pub enum McpAdditionalConfigSource {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpAppsSetHostContextDetailsAvailableDisplayMode {
     /// Rendered inline within the host conversation surface
     #[serde(rename = "inline")]
@@ -8985,22 +6425,6 @@ pub enum McpAppsSetHostContextDetailsAvailableDisplayMode {
     #[serde(other)]
     Unknown,
 }
-impl<'de> Deserialize<'de> for McpAppsSetHostContextDetailsAvailableDisplayMode {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpAppsSetHostContextDetailsAvailableDisplayMode",
-            &["inline", "fullscreen", "pip", "Unknown"],
-            Some(3),
-        )?;
-        Ok(match index {
-            0 => Self::Inline,
-            1 => Self::Fullscreen,
-            2 => Self::Pip,
-            _ => Self::Unknown,
-        })
-    }
-}
 
 /// Current display mode (SEP-1865)
 ///
@@ -9010,7 +6434,7 @@ impl<'de> Deserialize<'de> for McpAppsSetHostContextDetailsAvailableDisplayMode 
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpAppsSetHostContextDetailsDisplayMode {
     /// Rendered inline within the host conversation surface
     #[serde(rename = "inline")]
@@ -9026,22 +6450,6 @@ pub enum McpAppsSetHostContextDetailsDisplayMode {
     #[serde(other)]
     Unknown,
 }
-impl<'de> Deserialize<'de> for McpAppsSetHostContextDetailsDisplayMode {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpAppsSetHostContextDetailsDisplayMode",
-            &["inline", "fullscreen", "pip", "Unknown"],
-            Some(3),
-        )?;
-        Ok(match index {
-            0 => Self::Inline,
-            1 => Self::Fullscreen,
-            2 => Self::Pip,
-            _ => Self::Unknown,
-        })
-    }
-}
 
 /// Platform type for responsive design
 ///
@@ -9051,7 +6459,7 @@ impl<'de> Deserialize<'de> for McpAppsSetHostContextDetailsDisplayMode {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpAppsSetHostContextDetailsPlatform {
     /// Host runs in a web browser
     #[serde(rename = "web")]
@@ -9067,22 +6475,6 @@ pub enum McpAppsSetHostContextDetailsPlatform {
     #[serde(other)]
     Unknown,
 }
-impl<'de> Deserialize<'de> for McpAppsSetHostContextDetailsPlatform {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpAppsSetHostContextDetailsPlatform",
-            &["web", "desktop", "mobile", "Unknown"],
-            Some(3),
-        )?;
-        Ok(match index {
-            0 => Self::Web,
-            1 => Self::Desktop,
-            2 => Self::Mobile,
-            _ => Self::Unknown,
-        })
-    }
-}
 
 /// UI theme preference per SEP-1865
 ///
@@ -9092,7 +6484,7 @@ impl<'de> Deserialize<'de> for McpAppsSetHostContextDetailsPlatform {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpAppsSetHostContextDetailsTheme {
     /// Light UI theme
     #[serde(rename = "light")]
@@ -9105,133 +6497,29 @@ pub enum McpAppsSetHostContextDetailsTheme {
     #[serde(other)]
     Unknown,
 }
-impl<'de> Deserialize<'de> for McpAppsSetHostContextDetailsTheme {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpAppsSetHostContextDetailsTheme",
-            &["light", "dark", "Unknown"],
-            Some(2),
-        )?;
-        Ok(match index {
-            0 => Self::Light,
-            1 => Self::Dark,
-            _ => Self::Unknown,
-        })
-    }
-}
-
-/// Controls if tools provided by this server can be loaded on demand via tool search (auto) or always included in the initial tool list (never)
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-pub enum McpServerConfigDeferTools {
-    /// Tools may be deferred under certain conditions
-    #[serde(rename = "auto")]
-    Auto,
-    /// Tools are always included in the initial tool list, even when tool search is enabled.
-    #[serde(rename = "never")]
-    Never,
-    /// Unknown variant for forward compatibility.
-    #[default]
-    #[serde(other)]
-    Unknown,
-}
-impl<'de> Deserialize<'de> for McpServerConfigDeferTools {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpServerConfigDeferTools",
-            &["auto", "never", "Unknown"],
-            Some(2),
-        )?;
-        Ok(match index {
-            0 => Self::Auto,
-            1 => Self::Never,
-            _ => Self::Unknown,
-        })
-    }
-}
-
-/// In-process MCP transport.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-pub enum McpDiscoveryMemoryConfigType {
-    #[serde(rename = "memory")]
-    #[default]
-    Memory,
-}
-impl<'de> Deserialize<'de> for McpDiscoveryMemoryConfigType {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpDiscoveryMemoryConfigType",
-            &["memory"],
-            None,
-        )?;
-        Ok(Self::Memory)
-    }
-}
 
 /// Headers-refresh response variant discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpHeadersHandlePendingHeadersRefreshRequestHeadersKind {
     #[serde(rename = "headers")]
     #[default]
     Headers,
 }
-impl<'de> Deserialize<'de> for McpHeadersHandlePendingHeadersRefreshRequestHeadersKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpHeadersHandlePendingHeadersRefreshRequestHeadersKind",
-            &["headers"],
-            None,
-        )?;
-        Ok(Self::Headers)
-    }
-}
 
 /// Headers-refresh response variant discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpHeadersHandlePendingHeadersRefreshRequestNoneKind {
     #[serde(rename = "none")]
     #[default]
     None,
 }
-impl<'de> Deserialize<'de> for McpHeadersHandlePendingHeadersRefreshRequestNoneKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpHeadersHandlePendingHeadersRefreshRequestNoneKind",
-            &["none"],
-            None,
-        )?;
-        Ok(Self::None)
-    }
-}
 
 /// Headers-refresh response variant discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpHeadersHandlePendingHeadersRefreshRequestErrorKind {
     #[serde(rename = "error")]
     #[default]
     Error,
-}
-impl<'de> Deserialize<'de> for McpHeadersHandlePendingHeadersRefreshRequestErrorKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpHeadersHandlePendingHeadersRefreshRequestErrorKind",
-            &["error"],
-            None,
-        )?;
-        Ok(Self::Error)
-    }
 }
 
 /// Host response: supply dynamic headers or decline this refresh.
@@ -9258,7 +6546,7 @@ pub enum McpHeadersHandlePendingHeadersRefreshRequest {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpInstallationFailureReason {
     /// The selected choice or request is unsupported or malformed.
     #[serde(rename = "invalid-request")]
@@ -9334,104 +6622,21 @@ pub enum McpInstallationFailureReason {
     #[serde(other)]
     Unknown,
 }
-impl<'de> Deserialize<'de> for McpInstallationFailureReason {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpInstallationFailureReason",
-            &[
-                "invalid-request",
-                "operation-limit",
-                "cancelled",
-                "capability-required",
-                "confirmation-unavailable",
-                "confirmation-invalid",
-                "policy-context-unavailable",
-                "policy-changed",
-                "policy-denied",
-                "configuration-changed",
-                "configuration-modified",
-                "resource-not-found",
-                "plan-expired",
-                "plan-replayed",
-                "foreign-runtime",
-                "replan-required",
-                "source-revalidation-unavailable",
-                "source-changed",
-                "source-unavailable",
-                "registry-unavailable",
-                "secret-store-unavailable",
-                "lifecycle-unavailable",
-                "write-failed",
-                "Unknown",
-            ],
-            Some(23),
-        )?;
-        Ok(match index {
-            0 => Self::InvalidRequest,
-            1 => Self::OperationLimit,
-            2 => Self::Cancelled,
-            3 => Self::CapabilityRequired,
-            4 => Self::ConfirmationUnavailable,
-            5 => Self::ConfirmationInvalid,
-            6 => Self::PolicyContextUnavailable,
-            7 => Self::PolicyChanged,
-            8 => Self::PolicyDenied,
-            9 => Self::ConfigurationChanged,
-            10 => Self::ConfigurationModified,
-            11 => Self::ResourceNotFound,
-            12 => Self::PlanExpired,
-            13 => Self::PlanReplayed,
-            14 => Self::ForeignRuntime,
-            15 => Self::ReplanRequired,
-            16 => Self::SourceRevalidationUnavailable,
-            17 => Self::SourceChanged,
-            18 => Self::SourceUnavailable,
-            19 => Self::RegistryUnavailable,
-            20 => Self::SecretStoreUnavailable,
-            21 => Self::LifecycleUnavailable,
-            22 => Self::WriteFailed,
-            _ => Self::Unknown,
-        })
-    }
-}
 
 /// Installation management outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpInstallationManagementOutcomeRecoveryRequiredKind {
     #[serde(rename = "recovery-required")]
     #[default]
     RecoveryRequired,
 }
-impl<'de> Deserialize<'de> for McpInstallationManagementOutcomeRecoveryRequiredKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpInstallationManagementOutcomeRecoveryRequiredKind",
-            &["recovery-required"],
-            None,
-        )?;
-        Ok(Self::RecoveryRequired)
-    }
-}
 
 /// Installation management outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpInstallationManagementOutcomeInstallPreparedKind {
     #[serde(rename = "install-prepared")]
     #[default]
     InstallPrepared,
-}
-impl<'de> Deserialize<'de> for McpInstallationManagementOutcomeInstallPreparedKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpInstallationManagementOutcomeInstallPreparedKind",
-            &["install-prepared"],
-            None,
-        )?;
-        Ok(Self::InstallPrepared)
-    }
 }
 
 /// Configuration ownership and setup observations, distinct from tool permissions.
@@ -9442,7 +6647,7 @@ impl<'de> Deserialize<'de> for McpInstallationManagementOutcomeInstallPreparedKi
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpInstallationState {
     /// Owned configuration exists; inventory alone does not grant activation.
     #[serde(rename = "needs-setup")]
@@ -9467,336 +6672,133 @@ pub enum McpInstallationState {
     #[serde(other)]
     Unknown,
 }
-impl<'de> Deserialize<'de> for McpInstallationState {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpInstallationState",
-            &[
-                "needs-setup",
-                "active",
-                "authentication-required",
-                "activation-failed",
-                "configuration-modified",
-                "recovery-required",
-                "Unknown",
-            ],
-            Some(6),
-        )?;
-        Ok(match index {
-            0 => Self::NeedsSetup,
-            1 => Self::Active,
-            2 => Self::AuthenticationRequired,
-            3 => Self::ActivationFailed,
-            4 => Self::ConfigurationModified,
-            5 => Self::RecoveryRequired,
-            _ => Self::Unknown,
-        })
-    }
-}
 
 /// Installation management outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpInstallationManagementOutcomeListedKind {
     #[serde(rename = "listed")]
     #[default]
     Listed,
 }
-impl<'de> Deserialize<'de> for McpInstallationManagementOutcomeListedKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpInstallationManagementOutcomeListedKind",
-            &["listed"],
-            None,
-        )?;
-        Ok(Self::Listed)
-    }
-}
 
 /// Installation management outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpInstallationManagementOutcomeRecoveredKind {
     #[serde(rename = "recovered")]
     #[default]
     Recovered,
 }
-impl<'de> Deserialize<'de> for McpInstallationManagementOutcomeRecoveredKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpInstallationManagementOutcomeRecoveredKind",
-            &["recovered"],
-            None,
-        )?;
-        Ok(Self::Recovered)
-    }
-}
 
 /// Installation management outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpInstallationManagementOutcomeUninstallPlannedKind {
     #[serde(rename = "uninstall-planned")]
     #[default]
     UninstallPlanned,
 }
-impl<'de> Deserialize<'de> for McpInstallationManagementOutcomeUninstallPlannedKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpInstallationManagementOutcomeUninstallPlannedKind",
-            &["uninstall-planned"],
-            None,
-        )?;
-        Ok(Self::UninstallPlanned)
-    }
-}
 
 /// Installation management outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpInstallationManagementOutcomeOperationKind {
     #[serde(rename = "operation")]
     #[default]
     Operation,
 }
-impl<'de> Deserialize<'de> for McpInstallationManagementOutcomeOperationKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpInstallationManagementOutcomeOperationKind",
-            &["operation"],
-            None,
-        )?;
-        Ok(Self::Operation)
-    }
-}
 
 /// Original operation progress discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpInstallationOperationStatusPreparingPhase {
     #[serde(rename = "preparing")]
     #[default]
     Preparing,
 }
-impl<'de> Deserialize<'de> for McpInstallationOperationStatusPreparingPhase {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpInstallationOperationStatusPreparingPhase",
-            &["preparing"],
-            None,
-        )?;
-        Ok(Self::Preparing)
-    }
-}
 
 /// Original operation progress discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpInstallationOperationStatusPreparedPhase {
     #[serde(rename = "prepared")]
     #[default]
     Prepared,
 }
-impl<'de> Deserialize<'de> for McpInstallationOperationStatusPreparedPhase {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpInstallationOperationStatusPreparedPhase",
-            &["prepared"],
-            None,
-        )?;
-        Ok(Self::Prepared)
-    }
-}
 
 /// Original operation progress discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpInstallationOperationStatusAwaitingConfirmationPhase {
     #[serde(rename = "awaiting-confirmation")]
     #[default]
     AwaitingConfirmation,
 }
-impl<'de> Deserialize<'de> for McpInstallationOperationStatusAwaitingConfirmationPhase {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpInstallationOperationStatusAwaitingConfirmationPhase",
-            &["awaiting-confirmation"],
-            None,
-        )?;
-        Ok(Self::AwaitingConfirmation)
-    }
-}
 
 /// Original operation progress discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpInstallationOperationStatusRevalidatingPhase {
     #[serde(rename = "revalidating")]
     #[default]
     Revalidating,
 }
-impl<'de> Deserialize<'de> for McpInstallationOperationStatusRevalidatingPhase {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpInstallationOperationStatusRevalidatingPhase",
-            &["revalidating"],
-            None,
-        )?;
-        Ok(Self::Revalidating)
-    }
-}
 
 /// Original operation progress discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpInstallationOperationStatusApplyingPhase {
     #[serde(rename = "applying")]
     #[default]
     Applying,
 }
-impl<'de> Deserialize<'de> for McpInstallationOperationStatusApplyingPhase {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpInstallationOperationStatusApplyingPhase",
-            &["applying"],
-            None,
-        )?;
-        Ok(Self::Applying)
-    }
-}
 
 /// Terminal installation outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpInstallationOutcomeInstalledKind {
     #[serde(rename = "installed")]
     #[default]
     Installed,
 }
-impl<'de> Deserialize<'de> for McpInstallationOutcomeInstalledKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpInstallationOutcomeInstalledKind",
-            &["installed"],
-            None,
-        )?;
-        Ok(Self::Installed)
-    }
-}
 
 /// Terminal installation outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpInstallationOutcomeUninstalledKind {
     #[serde(rename = "uninstalled")]
     #[default]
     Uninstalled,
 }
-impl<'de> Deserialize<'de> for McpInstallationOutcomeUninstalledKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpInstallationOutcomeUninstalledKind",
-            &["uninstalled"],
-            None,
-        )?;
-        Ok(Self::Uninstalled)
-    }
-}
 
 /// Terminal installation outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpInstallationOutcomeRolledBackKind {
     #[serde(rename = "rolled-back")]
     #[default]
     RolledBack,
 }
-impl<'de> Deserialize<'de> for McpInstallationOutcomeRolledBackKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpInstallationOutcomeRolledBackKind",
-            &["rolled-back"],
-            None,
-        )?;
-        Ok(Self::RolledBack)
-    }
-}
 
 /// Terminal installation outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpInstallationOutcomeRecoveryRequiredKind {
     #[serde(rename = "recovery-required")]
     #[default]
     RecoveryRequired,
 }
-impl<'de> Deserialize<'de> for McpInstallationOutcomeRecoveryRequiredKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpInstallationOutcomeRecoveryRequiredKind",
-            &["recovery-required"],
-            None,
-        )?;
-        Ok(Self::RecoveryRequired)
-    }
-}
 
 /// Terminal installation outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpInstallationOutcomeDeclinedKind {
     #[serde(rename = "declined")]
     #[default]
     Declined,
 }
-impl<'de> Deserialize<'de> for McpInstallationOutcomeDeclinedKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpInstallationOutcomeDeclinedKind",
-            &["declined"],
-            None,
-        )?;
-        Ok(Self::Declined)
-    }
-}
 
 /// Terminal installation outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpInstallationOutcomeCancelledKind {
     #[serde(rename = "cancelled")]
     #[default]
     Cancelled,
 }
-impl<'de> Deserialize<'de> for McpInstallationOutcomeCancelledKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpInstallationOutcomeCancelledKind",
-            &["cancelled"],
-            None,
-        )?;
-        Ok(Self::Cancelled)
-    }
-}
 
 /// Terminal installation outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpInstallationOutcomeRefusedKind {
     #[serde(rename = "refused")]
     #[default]
     Refused,
-}
-impl<'de> Deserialize<'de> for McpInstallationOutcomeRefusedKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpInstallationOutcomeRefusedKind",
-            &["refused"],
-            None,
-        )?;
-        Ok(Self::Refused)
-    }
 }
 
 /// Terminal mutation result. Uncertainty is not approval, rollback or permission to replay.
@@ -9820,22 +6822,11 @@ pub enum McpInstallationOutcome {
 }
 
 /// Original operation progress discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpInstallationOperationStatusCompletedPhase {
     #[serde(rename = "completed")]
     #[default]
     Completed,
-}
-impl<'de> Deserialize<'de> for McpInstallationOperationStatusCompletedPhase {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpInstallationOperationStatusCompletedPhase",
-            &["completed"],
-            None,
-        )?;
-        Ok(Self::Completed)
-    }
 }
 
 /// Status snapshot from the original connection, independent of new-work account availability.
@@ -9858,22 +6849,11 @@ pub enum McpInstallationOperationStatus {
 }
 
 /// Installation management outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpInstallationManagementOutcomeRefusedKind {
     #[serde(rename = "refused")]
     #[default]
     Refused,
-}
-impl<'de> Deserialize<'de> for McpInstallationManagementOutcomeRefusedKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpInstallationManagementOutcomeRefusedKind",
-            &["refused"],
-            None,
-        )?;
-        Ok(Self::Refused)
-    }
 }
 
 /// Read-only or recovery management result, never permission to activate or replay.
@@ -9897,22 +6877,11 @@ pub enum McpInstallationManagementOutcome {
 }
 
 /// A handled management outcome with an honoured contract.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpInstallationManagementResultOutcomeKind {
     #[serde(rename = "outcome")]
     #[default]
     Outcome,
-}
-impl<'de> Deserialize<'de> for McpInstallationManagementResultOutcomeKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpInstallationManagementResultOutcomeKind",
-            &["outcome"],
-            None,
-        )?;
-        Ok(Self::Outcome)
-    }
 }
 
 /// Management result with contract receipt, or a typed request/negotiation refusal.
@@ -9932,22 +6901,11 @@ pub enum McpInstallationManagementResult {
 }
 
 /// A handled operation outcome with an honoured contract.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpInstallationResultOutcomeKind {
     #[serde(rename = "outcome")]
     #[default]
     Outcome,
-}
-impl<'de> Deserialize<'de> for McpInstallationResultOutcomeKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpInstallationResultOutcomeKind",
-            &["outcome"],
-            None,
-        )?;
-        Ok(Self::Outcome)
-    }
 }
 
 /// An installation result together with the exact honoured contract, or a negotiation refusal.
@@ -9967,60 +6925,27 @@ pub enum McpInstallationResult {
 }
 
 /// OAuth response variant discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpOauthPendingRequestResponseTokenKind {
     #[serde(rename = "token")]
     #[default]
     Token,
 }
-impl<'de> Deserialize<'de> for McpOauthPendingRequestResponseTokenKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpOauthPendingRequestResponseTokenKind",
-            &["token"],
-            None,
-        )?;
-        Ok(Self::Token)
-    }
-}
 
 /// OAuth response variant discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpOauthPendingRequestResponseCancelledKind {
     #[serde(rename = "cancelled")]
     #[default]
     Cancelled,
 }
-impl<'de> Deserialize<'de> for McpOauthPendingRequestResponseCancelledKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpOauthPendingRequestResponseCancelledKind",
-            &["cancelled"],
-            None,
-        )?;
-        Ok(Self::Cancelled)
-    }
-}
 
 /// OAuth response variant discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpOauthPendingRequestResponseRuntimeRefreshKind {
     #[serde(rename = "runtimeRefresh")]
     #[default]
     RuntimeRefresh,
-}
-impl<'de> Deserialize<'de> for McpOauthPendingRequestResponseRuntimeRefreshKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpOauthPendingRequestResponseRuntimeRefreshKind",
-            &["runtimeRefresh"],
-            None,
-        )?;
-        Ok(Self::RuntimeRefresh)
-    }
 }
 
 /// Host response to the pending OAuth request.
@@ -10047,7 +6972,7 @@ pub enum McpOauthPendingRequestResponse {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpOauthProbeNeedsAuthReason {
     /// No token was sent and the server requires authentication.
     #[serde(rename = "initial")]
@@ -10063,97 +6988,37 @@ pub enum McpOauthProbeNeedsAuthReason {
     #[serde(other)]
     Unknown,
 }
-impl<'de> Deserialize<'de> for McpOauthProbeNeedsAuthReason {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpOauthProbeNeedsAuthReason",
-            &["initial", "refresh", "upscope", "Unknown"],
-            Some(3),
-        )?;
-        Ok(match index {
-            0 => Self::Initial,
-            1 => Self::Refresh,
-            2 => Self::Upscope,
-            _ => Self::Unknown,
-        })
-    }
-}
 
 /// Probe outcome variant discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpOauthProbeResultNoAuthRequiredStatus {
     #[serde(rename = "no-auth-required")]
     #[default]
     NoAuthRequired,
 }
-impl<'de> Deserialize<'de> for McpOauthProbeResultNoAuthRequiredStatus {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpOauthProbeResultNoAuthRequiredStatus",
-            &["no-auth-required"],
-            None,
-        )?;
-        Ok(Self::NoAuthRequired)
-    }
-}
 
 /// Probe outcome variant discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpOauthProbeResultAuthenticatedStatus {
     #[serde(rename = "authenticated")]
     #[default]
     Authenticated,
 }
-impl<'de> Deserialize<'de> for McpOauthProbeResultAuthenticatedStatus {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpOauthProbeResultAuthenticatedStatus",
-            &["authenticated"],
-            None,
-        )?;
-        Ok(Self::Authenticated)
-    }
-}
 
 /// Probe outcome variant discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpOauthProbeResultNeedsAuthStatus {
     #[serde(rename = "needs-auth")]
     #[default]
     NeedsAuth,
 }
-impl<'de> Deserialize<'de> for McpOauthProbeResultNeedsAuthStatus {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpOauthProbeResultNeedsAuthStatus",
-            &["needs-auth"],
-            None,
-        )?;
-        Ok(Self::NeedsAuth)
-    }
-}
 
 /// Probe outcome variant discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpOauthProbeResultFailedStatus {
     #[serde(rename = "failed")]
     #[default]
     Failed,
-}
-impl<'de> Deserialize<'de> for McpOauthProbeResultFailedStatus {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpOauthProbeResultFailedStatus",
-            &["failed"],
-            None,
-        )?;
-        Ok(Self::Failed)
-    }
 }
 
 /// Passive MCP OAuth probe result. `authenticated` means the server accepted the probe request while an OAuth-origin access token was attached; it does not prove the server required or independently validated that token. The probe does not make a second unauthenticated request. Failed is an expected probe-domain outcome; JSON-RPC errors are reserved for API-call failures.
@@ -10181,7 +7046,7 @@ pub enum McpOauthProbeResult {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpServerConfigHttpOauthGrantType {
     /// Interactive browser-based authorization code flow with PKCE.
     #[serde(rename = "authorization_code")]
@@ -10194,74 +7059,26 @@ pub enum McpServerConfigHttpOauthGrantType {
     #[serde(other)]
     Unknown,
 }
-impl<'de> Deserialize<'de> for McpServerConfigHttpOauthGrantType {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpServerConfigHttpOauthGrantType",
-            &["authorization_code", "client_credentials", "Unknown"],
-            Some(2),
-        )?;
-        Ok(match index {
-            0 => Self::AuthorizationCode,
-            1 => Self::ClientCredentials,
-            _ => Self::Unknown,
-        })
-    }
-}
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpOauthTestConnectionResultConnectedStatus {
     #[serde(rename = "connected")]
     #[default]
     Connected,
 }
-impl<'de> Deserialize<'de> for McpOauthTestConnectionResultConnectedStatus {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpOauthTestConnectionResultConnectedStatus",
-            &["connected"],
-            None,
-        )?;
-        Ok(Self::Connected)
-    }
-}
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpOauthTestConnectionResultNeedsAuthStatus {
     #[serde(rename = "needs-auth")]
     #[default]
     NeedsAuth,
 }
-impl<'de> Deserialize<'de> for McpOauthTestConnectionResultNeedsAuthStatus {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpOauthTestConnectionResultNeedsAuthStatus",
-            &["needs-auth"],
-            None,
-        )?;
-        Ok(Self::NeedsAuth)
-    }
-}
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpOauthTestConnectionResultFailedStatus {
     #[serde(rename = "failed")]
     #[default]
     Failed,
-}
-impl<'de> Deserialize<'de> for McpOauthTestConnectionResultFailedStatus {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpOauthTestConnectionResultFailedStatus",
-            &["failed"],
-            None,
-        )?;
-        Ok(Self::Failed)
-    }
 }
 
 /// Outcome of the tokenless handshake, with the original challenge when available.
@@ -10281,22 +7098,11 @@ pub(crate) enum McpOauthTestConnectionResult {
 }
 
 /// Discriminator: a plan was computed and nothing was changed
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpPlanInstallPlannedKind {
     #[serde(rename = "planned")]
     #[default]
     Planned,
-}
-impl<'de> Deserialize<'de> for McpPlanInstallPlannedKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpPlanInstallPlannedKind",
-            &["planned"],
-            None,
-        )?;
-        Ok(Self::Planned)
-    }
 }
 
 /// Discriminator for a candidate-backed install-plan source
@@ -10307,7 +7113,7 @@ impl<'de> Deserialize<'de> for McpPlanInstallPlannedKind {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpPlanInstallSourceCandidateKind {
     /// Plan from a candidate returned by catalog search.
     #[serde(rename = "candidate")]
@@ -10316,20 +7122,6 @@ pub enum McpPlanInstallSourceCandidateKind {
     #[default]
     #[serde(other)]
     Unknown,
-}
-impl<'de> Deserialize<'de> for McpPlanInstallSourceCandidateKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpPlanInstallSourceCandidateKind",
-            &["candidate", "Unknown"],
-            Some(1),
-        )?;
-        Ok(match index {
-            0 => Self::Candidate,
-            _ => Self::Unknown,
-        })
-    }
 }
 
 /// Discriminator for a URL-backed MCP server card
@@ -10340,7 +7132,7 @@ impl<'de> Deserialize<'de> for McpPlanInstallSourceCandidateKind {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpServerCardUrlKind {
     /// Retrieve the card from its URL.
     #[serde(rename = "url")]
@@ -10349,20 +7141,6 @@ pub enum McpServerCardUrlKind {
     #[default]
     #[serde(other)]
     Unknown,
-}
-impl<'de> Deserialize<'de> for McpServerCardUrlKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpServerCardUrlKind",
-            &["url", "Unknown"],
-            Some(1),
-        )?;
-        Ok(match index {
-            0 => Self::Url,
-            _ => Self::Unknown,
-        })
-    }
 }
 
 /// Discriminator for an embedded MCP server card
@@ -10373,7 +7151,7 @@ impl<'de> Deserialize<'de> for McpServerCardUrlKind {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpServerCardEmbeddedKind {
     /// Use the embedded card document.
     #[serde(rename = "embedded")]
@@ -10382,20 +7160,6 @@ pub enum McpServerCardEmbeddedKind {
     #[default]
     #[serde(other)]
     Unknown,
-}
-impl<'de> Deserialize<'de> for McpServerCardEmbeddedKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpServerCardEmbeddedKind",
-            &["embedded", "Unknown"],
-            Some(1),
-        )?;
-        Ok(match index {
-            0 => Self::Embedded,
-            _ => Self::Unknown,
-        })
-    }
 }
 
 /// A card supplied directly by the caller. Exactly one of a URL or embedded data, encoded structurally so neither both nor neither can be expressed.
@@ -10421,7 +7185,7 @@ pub enum McpServerCardReference {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpPlanInstallSourceCardKind {
     /// Plan directly from a caller-supplied card.
     #[serde(rename = "card")]
@@ -10430,20 +7194,6 @@ pub enum McpPlanInstallSourceCardKind {
     #[default]
     #[serde(other)]
     Unknown,
-}
-impl<'de> Deserialize<'de> for McpPlanInstallSourceCardKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpPlanInstallSourceCardKind",
-            &["card", "Unknown"],
-            Some(1),
-        )?;
-        Ok(match index {
-            0 => Self::Card,
-            _ => Self::Unknown,
-        })
-    }
 }
 
 /// What an install plan is computed from: a candidate handle from a previous search, or a card supplied directly.
@@ -10487,6 +7237,28 @@ pub enum McpPlanInstallResult {
     Unavailable(CatalogUnavailableError),
 }
 
+/// Controls if tools provided by this server can be loaded on demand via tool search (auto) or always included in the initial tool list (never)
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum McpServerConfigDeferTools {
+    /// Tools may be deferred under certain conditions
+    #[serde(rename = "auto")]
+    Auto,
+    /// Tools are always included in the initial tool list, even when tool search is enabled.
+    #[serde(rename = "never")]
+    Never,
+    /// Unknown variant for forward compatibility.
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+
 /// Remote transport type. Defaults to "http" when omitted.
 ///
 /// <div class="warning">
@@ -10495,7 +7267,7 @@ pub enum McpPlanInstallResult {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpServerConfigHttpType {
     /// Streamable HTTP transport.
     #[serde(rename = "http")]
@@ -10508,21 +7280,6 @@ pub enum McpServerConfigHttpType {
     #[serde(other)]
     Unknown,
 }
-impl<'de> Deserialize<'de> for McpServerConfigHttpType {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpServerConfigHttpType",
-            &["http", "sse", "Unknown"],
-            Some(2),
-        )?;
-        Ok(match index {
-            0 => Self::Http,
-            1 => Self::Sse,
-            _ => Self::Unknown,
-        })
-    }
-}
 
 /// Local transport for a session-owned IDE endpoint.
 ///
@@ -10532,7 +7289,7 @@ impl<'de> Deserialize<'de> for McpServerConfigHttpType {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpServerConfigLocalType {
     /// Existing Unix socket or Windows named pipe.
     #[serde(rename = "local-http")]
@@ -10541,20 +7298,6 @@ pub enum McpServerConfigLocalType {
     #[default]
     #[serde(other)]
     Unknown,
-}
-impl<'de> Deserialize<'de> for McpServerConfigLocalType {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpServerConfigLocalType",
-            &["local-http", "Unknown"],
-            Some(1),
-        )?;
-        Ok(match index {
-            0 => Self::LocalHttp,
-            _ => Self::Unknown,
-        })
-    }
 }
 
 /// In-process MCP transport type.
@@ -10565,7 +7308,7 @@ impl<'de> Deserialize<'de> for McpServerConfigLocalType {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum McpServerConfigMemoryType {
     #[serde(rename = "memory")]
     Memory,
@@ -10573,20 +7316,6 @@ pub(crate) enum McpServerConfigMemoryType {
     #[default]
     #[serde(other)]
     Unknown,
-}
-impl<'de> Deserialize<'de> for McpServerConfigMemoryType {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpServerConfigMemoryType",
-            &["memory", "Unknown"],
-            Some(1),
-        )?;
-        Ok(match index {
-            0 => Self::Memory,
-            _ => Self::Unknown,
-        })
-    }
 }
 
 /// Local MCP transport type.
@@ -10597,7 +7326,7 @@ impl<'de> Deserialize<'de> for McpServerConfigMemoryType {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpServerConfigStdioType {
     /// Legacy alias for the local stdio transport.
     #[serde(rename = "local")]
@@ -10610,82 +7339,6 @@ pub enum McpServerConfigStdioType {
     #[serde(other)]
     Unknown,
 }
-impl<'de> Deserialize<'de> for McpServerConfigStdioType {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "McpServerConfigStdioType",
-            &["local", "stdio", "Unknown"],
-            Some(2),
-        )?;
-        Ok(match index {
-            0 => Self::Local,
-            1 => Self::Stdio,
-            _ => Self::Unknown,
-        })
-    }
-}
-
-/// The result of a built-in plugin activation.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-pub enum PluginActivationStatus {
-    /// Every enabled sessionStart hook of the plugin completed.
-    #[serde(rename = "activated")]
-    Activated,
-    /// This server has no built-in plugin with the requested name.
-    #[serde(rename = "notFound")]
-    NotFound,
-    /// Settings or managed policy turn off the plugin or its hooks, or managed policy turns on the sandbox. No hook ran.
-    #[serde(rename = "disabled")]
-    Disabled,
-    /// The plugin has no enabled sessionStart hook.
-    #[serde(rename = "noHooks")]
-    NoHooks,
-    /// A hook failed. Later hooks did not run.
-    #[serde(rename = "failed")]
-    Failed,
-    /// A hook did not complete in its timeout. Later hooks did not run.
-    #[serde(rename = "timedOut")]
-    TimedOut,
-    /// Unknown variant for forward compatibility.
-    #[default]
-    #[serde(other)]
-    Unknown,
-}
-impl<'de> Deserialize<'de> for PluginActivationStatus {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "PluginActivationStatus",
-            &[
-                "activated",
-                "notFound",
-                "disabled",
-                "noHooks",
-                "failed",
-                "timedOut",
-                "Unknown",
-            ],
-            Some(6),
-        )?;
-        Ok(match index {
-            0 => Self::Activated,
-            1 => Self::NotFound,
-            2 => Self::Disabled,
-            3 => Self::NoHooks,
-            4 => Self::Failed,
-            5 => Self::TimedOut,
-            _ => Self::Unknown,
-        })
-    }
-}
 
 /// Bounded refusal categories for verified Agent Plugin installation.
 ///
@@ -10695,7 +7348,7 @@ impl<'de> Deserialize<'de> for PluginActivationStatus {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PluginInstallationFailureReason {
     /// The selected session does not have the Agent Finder plugin installation feature flag enabled.
     #[serde(rename = "feature-disabled")]
@@ -10795,120 +7448,21 @@ pub enum PluginInstallationFailureReason {
     #[serde(other)]
     Unknown,
 }
-impl<'de> Deserialize<'de> for PluginInstallationFailureReason {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "PluginInstallationFailureReason",
-            &[
-                "feature-disabled",
-                "invalid-request",
-                "confirmation-unavailable",
-                "confirmation-invalid",
-                "policy-context-unavailable",
-                "policy-changed",
-                "policy-blocked",
-                "plan-expired",
-                "plan-replayed",
-                "foreign-runtime",
-                "wrong-kind",
-                "search-mismatch",
-                "expired",
-                "invalid-candidate",
-                "descriptor-unavailable",
-                "descriptor-not-found",
-                "descriptor-withdrawn",
-                "descriptor-invalid",
-                "digest-mismatch",
-                "unsupported-resource",
-                "entrypoint-unavailable",
-                "invalid-plugin",
-                "review-too-large",
-                "payload-unavailable",
-                "payload-mismatch",
-                "source-rate-limited",
-                "no-credential",
-                "credential-rejected",
-                "busy",
-                "already-installed",
-                "write-failed",
-                "Unknown",
-            ],
-            Some(31),
-        )?;
-        Ok(match index {
-            0 => Self::FeatureDisabled,
-            1 => Self::InvalidRequest,
-            2 => Self::ConfirmationUnavailable,
-            3 => Self::ConfirmationInvalid,
-            4 => Self::PolicyContextUnavailable,
-            5 => Self::PolicyChanged,
-            6 => Self::PolicyBlocked,
-            7 => Self::PlanExpired,
-            8 => Self::PlanReplayed,
-            9 => Self::ForeignRuntime,
-            10 => Self::WrongKind,
-            11 => Self::SearchMismatch,
-            12 => Self::Expired,
-            13 => Self::InvalidCandidate,
-            14 => Self::DescriptorUnavailable,
-            15 => Self::DescriptorNotFound,
-            16 => Self::DescriptorWithdrawn,
-            17 => Self::DescriptorInvalid,
-            18 => Self::DigestMismatch,
-            19 => Self::UnsupportedResource,
-            20 => Self::EntrypointUnavailable,
-            21 => Self::InvalidPlugin,
-            22 => Self::ReviewTooLarge,
-            23 => Self::PayloadUnavailable,
-            24 => Self::PayloadMismatch,
-            25 => Self::SourceRateLimited,
-            26 => Self::NoCredential,
-            27 => Self::CredentialRejected,
-            28 => Self::Busy,
-            29 => Self::AlreadyInstalled,
-            30 => Self::WriteFailed,
-            _ => Self::Unknown,
-        })
-    }
-}
 
 /// Agent Plugin installation management outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PluginInstallationManagementOutcomeInstallPlannedKind {
     #[serde(rename = "install-planned")]
     #[default]
     InstallPlanned,
 }
-impl<'de> Deserialize<'de> for PluginInstallationManagementOutcomeInstallPlannedKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "PluginInstallationManagementOutcomeInstallPlannedKind",
-            &["install-planned"],
-            None,
-        )?;
-        Ok(Self::InstallPlanned)
-    }
-}
 
 /// Agent Plugin installation management outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PluginInstallationManagementOutcomeRefusedKind {
     #[serde(rename = "refused")]
     #[default]
     Refused,
-}
-impl<'de> Deserialize<'de> for PluginInstallationManagementOutcomeRefusedKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "PluginInstallationManagementOutcomeRefusedKind",
-            &["refused"],
-            None,
-        )?;
-        Ok(Self::Refused)
-    }
 }
 
 /// Management outcome for verified Agent Plugin installation planning.
@@ -10927,22 +7481,11 @@ pub enum PluginInstallationManagementOutcome {
 }
 
 /// Discriminator: handled management outcome.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PluginInstallationManagementResultOutcomeKind {
     #[serde(rename = "outcome")]
     #[default]
     Outcome,
-}
-impl<'de> Deserialize<'de> for PluginInstallationManagementResultOutcomeKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "PluginInstallationManagementResultOutcomeKind",
-            &["outcome"],
-            None,
-        )?;
-        Ok(Self::Outcome)
-    }
 }
 
 /// Agent Plugin installation planning result with the honoured contract, or a typed refusal.
@@ -10963,79 +7506,35 @@ pub enum PluginInstallationManagementResult {
 }
 
 /// Terminal Agent Plugin installation outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PluginInstallationOutcomeInstalledKind {
     #[serde(rename = "installed")]
     #[default]
     Installed,
 }
-impl<'de> Deserialize<'de> for PluginInstallationOutcomeInstalledKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "PluginInstallationOutcomeInstalledKind",
-            &["installed"],
-            None,
-        )?;
-        Ok(Self::Installed)
-    }
-}
 
 /// Terminal Agent Plugin installation outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PluginInstallationOutcomeDeclinedKind {
     #[serde(rename = "declined")]
     #[default]
     Declined,
 }
-impl<'de> Deserialize<'de> for PluginInstallationOutcomeDeclinedKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "PluginInstallationOutcomeDeclinedKind",
-            &["declined"],
-            None,
-        )?;
-        Ok(Self::Declined)
-    }
-}
 
 /// Terminal Agent Plugin installation outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PluginInstallationOutcomeCancelledKind {
     #[serde(rename = "cancelled")]
     #[default]
     Cancelled,
 }
-impl<'de> Deserialize<'de> for PluginInstallationOutcomeCancelledKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "PluginInstallationOutcomeCancelledKind",
-            &["cancelled"],
-            None,
-        )?;
-        Ok(Self::Cancelled)
-    }
-}
 
 /// Terminal Agent Plugin installation outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PluginInstallationOutcomeRefusedKind {
     #[serde(rename = "refused")]
     #[default]
     Refused,
-}
-impl<'de> Deserialize<'de> for PluginInstallationOutcomeRefusedKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "PluginInstallationOutcomeRefusedKind",
-            &["refused"],
-            None,
-        )?;
-        Ok(Self::Refused)
-    }
 }
 
 /// Terminal verified Agent Plugin installation result.
@@ -11056,22 +7555,11 @@ pub enum PluginInstallationOutcome {
 }
 
 /// Discriminator: handled operation outcome.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PluginInstallationResultOutcomeKind {
     #[serde(rename = "outcome")]
     #[default]
     Outcome,
-}
-impl<'de> Deserialize<'de> for PluginInstallationResultOutcomeKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "PluginInstallationResultOutcomeKind",
-            &["outcome"],
-            None,
-        )?;
-        Ok(Self::Outcome)
-    }
 }
 
 /// Agent Plugin installation result with the honoured contract, or a typed request/negotiation refusal.
@@ -11092,22 +7580,11 @@ pub enum PluginInstallationResult {
 }
 
 /// Exact reviewed Agent Plugin installation action.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PluginInstallationReviewAction {
     #[serde(rename = "install")]
     #[default]
     Install,
-}
-impl<'de> Deserialize<'de> for PluginInstallationReviewAction {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "PluginInstallationReviewAction",
-            &["install"],
-            None,
-        )?;
-        Ok(Self::Install)
-    }
 }
 
 /// Which tier this directory belongs to
@@ -11118,7 +7595,7 @@ impl<'de> Deserialize<'de> for PluginInstallationReviewAction {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillDiscoveryScope {
     /// A project's repository skill directory.
     #[serde(rename = "project")]
@@ -11137,29 +7614,6 @@ pub enum SkillDiscoveryScope {
     #[serde(other)]
     Unknown,
 }
-impl<'de> Deserialize<'de> for SkillDiscoveryScope {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "SkillDiscoveryScope",
-            &[
-                "project",
-                "personal-copilot",
-                "personal-agents",
-                "custom",
-                "Unknown",
-            ],
-            Some(4),
-        )?;
-        Ok(match index {
-            0 => Self::Project,
-            1 => Self::PersonalCopilot,
-            2 => Self::PersonalAgents,
-            3 => Self::Custom,
-            _ => Self::Unknown,
-        })
-    }
-}
 
 /// Bounded refusal categories for verified Skill installation management.
 ///
@@ -11169,7 +7623,7 @@ impl<'de> Deserialize<'de> for SkillDiscoveryScope {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillInstallationFailureReason {
     /// The selected session does not have the Agent Finder Skill installation feature flag enabled for acquisition.
     #[serde(rename = "feature-disabled")]
@@ -11275,442 +7729,152 @@ pub enum SkillInstallationFailureReason {
     #[serde(other)]
     Unknown,
 }
-impl<'de> Deserialize<'de> for SkillInstallationFailureReason {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "SkillInstallationFailureReason",
-            &[
-                "feature-disabled",
-                "invalid-request",
-                "operation-limit",
-                "cancelled",
-                "confirmation-unavailable",
-                "confirmation-invalid",
-                "policy-context-unavailable",
-                "policy-changed",
-                "resource-not-found",
-                "plan-expired",
-                "plan-replayed",
-                "foreign-runtime",
-                "wrong-kind",
-                "search-mismatch",
-                "expired",
-                "invalid-candidate",
-                "descriptor-unavailable",
-                "descriptor-invalid",
-                "entrypoint-unavailable",
-                "invalid-skill",
-                "payload-unavailable",
-                "payload-mismatch",
-                "source-rate-limited",
-                "no-credential",
-                "credential-rejected",
-                "source-changed",
-                "lifecycle-unavailable",
-                "recovery-required",
-                "review-too-large",
-                "busy",
-                "already-installed",
-                "configuration-modified",
-                "write-failed",
-                "Unknown",
-            ],
-            Some(33),
-        )?;
-        Ok(match index {
-            0 => Self::FeatureDisabled,
-            1 => Self::InvalidRequest,
-            2 => Self::OperationLimit,
-            3 => Self::Cancelled,
-            4 => Self::ConfirmationUnavailable,
-            5 => Self::ConfirmationInvalid,
-            6 => Self::PolicyContextUnavailable,
-            7 => Self::PolicyChanged,
-            8 => Self::ResourceNotFound,
-            9 => Self::PlanExpired,
-            10 => Self::PlanReplayed,
-            11 => Self::ForeignRuntime,
-            12 => Self::WrongKind,
-            13 => Self::SearchMismatch,
-            14 => Self::Expired,
-            15 => Self::InvalidCandidate,
-            16 => Self::DescriptorUnavailable,
-            17 => Self::DescriptorInvalid,
-            18 => Self::EntrypointUnavailable,
-            19 => Self::InvalidSkill,
-            20 => Self::PayloadUnavailable,
-            21 => Self::PayloadMismatch,
-            22 => Self::SourceRateLimited,
-            23 => Self::NoCredential,
-            24 => Self::CredentialRejected,
-            25 => Self::SourceChanged,
-            26 => Self::LifecycleUnavailable,
-            27 => Self::RecoveryRequired,
-            28 => Self::ReviewTooLarge,
-            29 => Self::Busy,
-            30 => Self::AlreadyInstalled,
-            31 => Self::ConfigurationModified,
-            32 => Self::WriteFailed,
-            _ => Self::Unknown,
-        })
-    }
-}
 
 /// Skill installation management outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillInstallationManagementOutcomeRecoveryRequiredKind {
     #[serde(rename = "recovery-required")]
     #[default]
     RecoveryRequired,
 }
-impl<'de> Deserialize<'de> for SkillInstallationManagementOutcomeRecoveryRequiredKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "SkillInstallationManagementOutcomeRecoveryRequiredKind",
-            &["recovery-required"],
-            None,
-        )?;
-        Ok(Self::RecoveryRequired)
-    }
-}
 
 /// Skill installation management outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillInstallationManagementOutcomeInstallPlannedKind {
     #[serde(rename = "install-planned")]
     #[default]
     InstallPlanned,
 }
-impl<'de> Deserialize<'de> for SkillInstallationManagementOutcomeInstallPlannedKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "SkillInstallationManagementOutcomeInstallPlannedKind",
-            &["install-planned"],
-            None,
-        )?;
-        Ok(Self::InstallPlanned)
-    }
-}
 
 /// Skill installation management outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillInstallationManagementOutcomeListedKind {
     #[serde(rename = "listed")]
     #[default]
     Listed,
 }
-impl<'de> Deserialize<'de> for SkillInstallationManagementOutcomeListedKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "SkillInstallationManagementOutcomeListedKind",
-            &["listed"],
-            None,
-        )?;
-        Ok(Self::Listed)
-    }
-}
 
 /// Skill installation management outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillInstallationManagementOutcomeRecoveredKind {
     #[serde(rename = "recovered")]
     #[default]
     Recovered,
 }
-impl<'de> Deserialize<'de> for SkillInstallationManagementOutcomeRecoveredKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "SkillInstallationManagementOutcomeRecoveredKind",
-            &["recovered"],
-            None,
-        )?;
-        Ok(Self::Recovered)
-    }
-}
 
 /// Skill installation management outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillInstallationManagementOutcomeRolledBackKind {
     #[serde(rename = "rolled-back")]
     #[default]
     RolledBack,
 }
-impl<'de> Deserialize<'de> for SkillInstallationManagementOutcomeRolledBackKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "SkillInstallationManagementOutcomeRolledBackKind",
-            &["rolled-back"],
-            None,
-        )?;
-        Ok(Self::RolledBack)
-    }
-}
 
 /// Skill installation management outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillInstallationManagementOutcomeUninstallPlannedKind {
     #[serde(rename = "uninstall-planned")]
     #[default]
     UninstallPlanned,
 }
-impl<'de> Deserialize<'de> for SkillInstallationManagementOutcomeUninstallPlannedKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "SkillInstallationManagementOutcomeUninstallPlannedKind",
-            &["uninstall-planned"],
-            None,
-        )?;
-        Ok(Self::UninstallPlanned)
-    }
-}
 
 /// Skill installation management outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillInstallationManagementOutcomeOperationKind {
     #[serde(rename = "operation")]
     #[default]
     Operation,
 }
-impl<'de> Deserialize<'de> for SkillInstallationManagementOutcomeOperationKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "SkillInstallationManagementOutcomeOperationKind",
-            &["operation"],
-            None,
-        )?;
-        Ok(Self::Operation)
-    }
-}
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillInstallationOperationStatusPreparingPhase {
     #[serde(rename = "preparing")]
     #[default]
     Preparing,
 }
-impl<'de> Deserialize<'de> for SkillInstallationOperationStatusPreparingPhase {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "SkillInstallationOperationStatusPreparingPhase",
-            &["preparing"],
-            None,
-        )?;
-        Ok(Self::Preparing)
-    }
-}
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillInstallationOperationStatusPreparedPhase {
     #[serde(rename = "prepared")]
     #[default]
     Prepared,
 }
-impl<'de> Deserialize<'de> for SkillInstallationOperationStatusPreparedPhase {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "SkillInstallationOperationStatusPreparedPhase",
-            &["prepared"],
-            None,
-        )?;
-        Ok(Self::Prepared)
-    }
-}
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillInstallationOperationStatusAwaitingConfirmationPhase {
     #[serde(rename = "awaiting-confirmation")]
     #[default]
     AwaitingConfirmation,
 }
-impl<'de> Deserialize<'de> for SkillInstallationOperationStatusAwaitingConfirmationPhase {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "SkillInstallationOperationStatusAwaitingConfirmationPhase",
-            &["awaiting-confirmation"],
-            None,
-        )?;
-        Ok(Self::AwaitingConfirmation)
-    }
-}
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillInstallationOperationStatusRevalidatingPhase {
     #[serde(rename = "revalidating")]
     #[default]
     Revalidating,
 }
-impl<'de> Deserialize<'de> for SkillInstallationOperationStatusRevalidatingPhase {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "SkillInstallationOperationStatusRevalidatingPhase",
-            &["revalidating"],
-            None,
-        )?;
-        Ok(Self::Revalidating)
-    }
-}
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillInstallationOperationStatusApplyingPhase {
     #[serde(rename = "applying")]
     #[default]
     Applying,
 }
-impl<'de> Deserialize<'de> for SkillInstallationOperationStatusApplyingPhase {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "SkillInstallationOperationStatusApplyingPhase",
-            &["applying"],
-            None,
-        )?;
-        Ok(Self::Applying)
-    }
-}
 
 /// Terminal Skill installation outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillInstallationOutcomeInstalledKind {
     #[serde(rename = "installed")]
     #[default]
     Installed,
 }
-impl<'de> Deserialize<'de> for SkillInstallationOutcomeInstalledKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "SkillInstallationOutcomeInstalledKind",
-            &["installed"],
-            None,
-        )?;
-        Ok(Self::Installed)
-    }
-}
 
 /// Terminal Skill installation outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillInstallationOutcomeUninstalledKind {
     #[serde(rename = "uninstalled")]
     #[default]
     Uninstalled,
 }
-impl<'de> Deserialize<'de> for SkillInstallationOutcomeUninstalledKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "SkillInstallationOutcomeUninstalledKind",
-            &["uninstalled"],
-            None,
-        )?;
-        Ok(Self::Uninstalled)
-    }
-}
 
 /// Terminal Skill installation outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillInstallationOutcomeRolledBackKind {
     #[serde(rename = "rolled-back")]
     #[default]
     RolledBack,
 }
-impl<'de> Deserialize<'de> for SkillInstallationOutcomeRolledBackKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "SkillInstallationOutcomeRolledBackKind",
-            &["rolled-back"],
-            None,
-        )?;
-        Ok(Self::RolledBack)
-    }
-}
 
 /// Terminal Skill installation outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillInstallationOutcomeRecoveryRequiredKind {
     #[serde(rename = "recovery-required")]
     #[default]
     RecoveryRequired,
 }
-impl<'de> Deserialize<'de> for SkillInstallationOutcomeRecoveryRequiredKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "SkillInstallationOutcomeRecoveryRequiredKind",
-            &["recovery-required"],
-            None,
-        )?;
-        Ok(Self::RecoveryRequired)
-    }
-}
 
 /// Terminal Skill installation outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillInstallationOutcomeDeclinedKind {
     #[serde(rename = "declined")]
     #[default]
     Declined,
 }
-impl<'de> Deserialize<'de> for SkillInstallationOutcomeDeclinedKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "SkillInstallationOutcomeDeclinedKind",
-            &["declined"],
-            None,
-        )?;
-        Ok(Self::Declined)
-    }
-}
 
 /// Terminal Skill installation outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillInstallationOutcomeCancelledKind {
     #[serde(rename = "cancelled")]
     #[default]
     Cancelled,
 }
-impl<'de> Deserialize<'de> for SkillInstallationOutcomeCancelledKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "SkillInstallationOutcomeCancelledKind",
-            &["cancelled"],
-            None,
-        )?;
-        Ok(Self::Cancelled)
-    }
-}
 
 /// Terminal Skill installation outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillInstallationOutcomeRefusedKind {
     #[serde(rename = "refused")]
     #[default]
     Refused,
-}
-impl<'de> Deserialize<'de> for SkillInstallationOutcomeRefusedKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "SkillInstallationOutcomeRefusedKind",
-            &["refused"],
-            None,
-        )?;
-        Ok(Self::Refused)
-    }
 }
 
 /// Terminal verified Skill mutation result.
@@ -11733,22 +7897,11 @@ pub enum SkillInstallationOutcome {
     Refused(SkillInstallationOutcomeRefused),
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillInstallationOperationStatusCompletedPhase {
     #[serde(rename = "completed")]
     #[default]
     Completed,
-}
-impl<'de> Deserialize<'de> for SkillInstallationOperationStatusCompletedPhase {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "SkillInstallationOperationStatusCompletedPhase",
-            &["completed"],
-            None,
-        )?;
-        Ok(Self::Completed)
-    }
 }
 
 /// Status snapshot from the original connection, independent of new-work account availability.
@@ -11771,41 +7924,19 @@ pub enum SkillInstallationOperationStatus {
 }
 
 /// Skill installation management outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillInstallationManagementOutcomeEnabledChangedKind {
     #[serde(rename = "enabled-changed")]
     #[default]
     EnabledChanged,
 }
-impl<'de> Deserialize<'de> for SkillInstallationManagementOutcomeEnabledChangedKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "SkillInstallationManagementOutcomeEnabledChangedKind",
-            &["enabled-changed"],
-            None,
-        )?;
-        Ok(Self::EnabledChanged)
-    }
-}
 
 /// Skill installation management outcome discriminator.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillInstallationManagementOutcomeRefusedKind {
     #[serde(rename = "refused")]
     #[default]
     Refused,
-}
-impl<'de> Deserialize<'de> for SkillInstallationManagementOutcomeRefusedKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "SkillInstallationManagementOutcomeRefusedKind",
-            &["refused"],
-            None,
-        )?;
-        Ok(Self::Refused)
-    }
 }
 
 /// Management outcome for verified Skill inventory, planning and removal.
@@ -11831,22 +7962,11 @@ pub enum SkillInstallationManagementOutcome {
 }
 
 /// Discriminator: handled management outcome.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillInstallationManagementResultOutcomeKind {
     #[serde(rename = "outcome")]
     #[default]
     Outcome,
-}
-impl<'de> Deserialize<'de> for SkillInstallationManagementResultOutcomeKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "SkillInstallationManagementResultOutcomeKind",
-            &["outcome"],
-            None,
-        )?;
-        Ok(Self::Outcome)
-    }
 }
 
 /// Skill installation management result with the honoured contract, or a typed refusal.
@@ -11867,22 +7987,11 @@ pub enum SkillInstallationManagementResult {
 }
 
 /// Discriminator: handled operation outcome.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillInstallationResultOutcomeKind {
     #[serde(rename = "outcome")]
     #[default]
     Outcome,
-}
-impl<'de> Deserialize<'de> for SkillInstallationResultOutcomeKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "SkillInstallationResultOutcomeKind",
-            &["outcome"],
-            None,
-        )?;
-        Ok(Self::Outcome)
-    }
 }
 
 /// Skill installation result with the honoured contract, or a typed request/negotiation refusal.
@@ -11910,7 +8019,7 @@ pub enum SkillInstallationResult {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillInstallSourceKind {
     /// A skill file retrieved through HTTPS.
     #[serde(rename = "url")]
@@ -11926,22 +8035,6 @@ pub enum SkillInstallSourceKind {
     #[serde(other)]
     Unknown,
 }
-impl<'de> Deserialize<'de> for SkillInstallSourceKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "SkillInstallSourceKind",
-            &["url", "file", "directory", "Unknown"],
-            Some(3),
-        )?;
-        Ok(match index {
-            0 => Self::Url,
-            1 => Self::File,
-            2 => Self::Directory,
-            _ => Self::Unknown,
-        })
-    }
-}
 
 /// Destination scope for a directly installed skill file.
 ///
@@ -11951,7 +8044,7 @@ impl<'de> Deserialize<'de> for SkillInstallSourceKind {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillInstallSourceScope {
     /// Personal skill storage.
     #[serde(rename = "personal")]
@@ -11964,21 +8057,6 @@ pub enum SkillInstallSourceScope {
     #[serde(other)]
     Unknown,
 }
-impl<'de> Deserialize<'de> for SkillInstallSourceScope {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "SkillInstallSourceScope",
-            &["personal", "project", "Unknown"],
-            Some(2),
-        )?;
-        Ok(match index {
-            0 => Self::Personal,
-            1 => Self::Project,
-            _ => Self::Unknown,
-        })
-    }
-}
 
 /// Resource removed by a direct-source operation.
 ///
@@ -11988,7 +8066,7 @@ impl<'de> Deserialize<'de> for SkillInstallSourceScope {
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillRemoveSourceKind {
     /// A discovery registration removed without deleting its contents.
     #[serde(rename = "directory")]
@@ -12004,59 +8082,21 @@ pub enum SkillRemoveSourceKind {
     #[serde(other)]
     Unknown,
 }
-impl<'de> Deserialize<'de> for SkillRemoveSourceKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "SkillRemoveSourceKind",
-            &["directory", "personal", "project", "Unknown"],
-            Some(3),
-        )?;
-        Ok(match index {
-            0 => Self::Directory,
-            1 => Self::Personal,
-            2 => Self::Project,
-            _ => Self::Unknown,
-        })
-    }
-}
 
 /// Direct source removal or an inventory request without mutation.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillsRemoveSourceOutcomeNeedsInventoryKind {
     #[serde(rename = "needs-inventory")]
     #[default]
     NeedsInventory,
 }
-impl<'de> Deserialize<'de> for SkillsRemoveSourceOutcomeNeedsInventoryKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "SkillsRemoveSourceOutcomeNeedsInventoryKind",
-            &["needs-inventory"],
-            None,
-        )?;
-        Ok(Self::NeedsInventory)
-    }
-}
 
 /// Direct source removal or an inventory request without mutation.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillsRemoveSourceOutcomeRemovedKind {
     #[serde(rename = "removed")]
     #[default]
     Removed,
-}
-impl<'de> Deserialize<'de> for SkillsRemoveSourceOutcomeRemovedKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::enum_serde::deserialize_variant(
-            deserializer,
-            "SkillsRemoveSourceOutcomeRemovedKind",
-            &["removed"],
-            None,
-        )?;
-        Ok(Self::Removed)
-    }
 }
 
 /// Direct removal or a request for the inventory needed to resolve a file.

@@ -1,6 +1,6 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 
-#if NET
+#if NET8_0_OR_GREATER
 using Microsoft.Copilot.Rpc;
 using Xunit;
 

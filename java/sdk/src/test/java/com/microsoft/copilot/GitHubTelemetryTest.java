@@ -388,11 +388,7 @@ class GitHubTelemetryTest {
         }
 
         void sendTelemetry(Object params) throws Exception {
-            sendNotification("gitHubTelemetry.event", params);
-        }
-
-        void sendNotification(String method, Object params) throws Exception {
-            ready.get(15, TimeUnit.SECONDS).notify(method, params);
+            ready.get(15, TimeUnit.SECONDS).notify("gitHubTelemetry.event", params);
         }
 
         private void acceptLoop() {
@@ -403,8 +399,6 @@ class GitHubTelemetryTest {
                         connectParams.complete(params);
                         respond(rpc, id, Map.of("protocolVersion", 4));
                     });
-                    rpc.registerMethodHandler("ping", (id, params) -> respond(rpc, id,
-                            Map.of("message", "callback", "timestamp", "2026-01-01T00:00:00Z")));
                     rpc.registerMethodHandler("session.create", (id, params) -> {
                         createParams.complete(params);
                         respond(rpc, id, Map.of("sessionId", params.path("sessionId").asText("created"),

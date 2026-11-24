@@ -9,8 +9,6 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.math.BigDecimal;
-import java.math.BigInteger;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -20,7 +18,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -31,10 +28,8 @@ import java.util.logging.Logger;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
-import com.fasterxml.jackson.annotation.JsonValue;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -43,7 +38,6 @@ import com.microsoft.copilot.generated.SessionEvent;
 import com.microsoft.copilot.generated.SessionIdleEvent;
 import com.microsoft.copilot.generated.rpc.FeatureFlagAssignmentsUpdate;
 import com.microsoft.copilot.generated.rpc.ServerRpc;
-import com.microsoft.copilot.generated.rpc.UserSettingsSetParams;
 import com.microsoft.copilot.generated.rpc.ShellBuildInteractiveEnvironmentParams;
 import com.microsoft.copilot.generated.rpc.TaskAnalyticsClassifyTrajectoryParams;
 import com.microsoft.copilot.generated.rpc.LocalModelsWatchParams;
@@ -58,65 +52,6 @@ import com.microsoft.copilot.generated.rpc.SessionMcpStartServerParams;
 class JsonRpcClientTest {
 
     private static final ObjectMapper MAPPER = JsonRpcClient.getObjectMapper();
-
-    private static final class SettingsIntegerValue {
-        private final BigInteger value;
-        private int calls;
-
-        private SettingsIntegerValue(String value) {
-            this.value = new BigInteger(value);
-        }
-
-        @JsonValue
-        public BigInteger serialize() {
-            calls++;
-            return value;
-        }
-    }
-
-    @ParameterizedTest
-    @ValueSource(strings = {"-9223372036854775809", "18446744073709551617"})
-    void settingsSetRejectsNestedOversizedCustomValuesBeforeSending(String integer) throws Exception {
-        try (var pair = createSocketPair()) {
-            var value = new SettingsIntegerValue(integer);
-            var rpc = new ServerRpc(pair.client::invoke);
-            var result = rpc.user.settings.set(UserSettingsSetParams.builder()
-                    .settings(Map.of("nested", List.of(Map.of("value", value)))).build());
-            assertTrue(result.isCompletedExceptionally());
-            var error = assertThrows(ExecutionException.class, () -> result.get(5, TimeUnit.SECONDS));
-            assertInstanceOf(IOException.class, error.getCause());
-            assertEquals(1, value.calls);
-            assertEquals(integer, value.value.toString());
-            assertReaderResponsive(pair);
-        }
-    }
-
-    @Test
-    void settingsSetPreservesSupportedNumbersAndSerializesCustomValuesOnce() throws Exception {
-        try (var pair = createSocketPair()) {
-            var maximum = new SettingsIntegerValue("18446744073709551615");
-            var settings = new LinkedHashMap<String, Object>();
-            settings.put("minimum", BigInteger.valueOf(Long.MIN_VALUE));
-            settings.put("maximum", maximum);
-            settings.put("floating", new BigDecimal("1e100"));
-            settings.put("text", "18446744073709551617");
-            settings.put("empty", null);
-            var rpc = new ServerRpc(pair.client::invoke);
-            var result = rpc.user.settings.set(UserSettingsSetParams.builder().settings(settings).build());
-            var request = MAPPER.readTree(readRpcMessage(pair.serverSide.getInputStream()));
-            var sent = request.path("params").path("settings");
-            assertEquals(BigInteger.valueOf(Long.MIN_VALUE), sent.path("minimum").bigIntegerValue());
-            assertEquals(maximum.value, sent.path("maximum").bigIntegerValue());
-            assertEquals(1e100, sent.path("floating").doubleValue());
-            assertEquals("18446744073709551617", sent.path("text").textValue());
-            assertTrue(sent.path("empty").isNull());
-            assertEquals(1, maximum.calls);
-            assertSame(maximum, settings.get("maximum"));
-            writeRpcMessage(pair.serverSide.getOutputStream(),
-                    "{\"jsonrpc\":\"2.0\",\"id\":" + request.path("id") + ",\"result\":null}");
-            result.get(5, TimeUnit.SECONDS);
-        }
-    }
 
     @Test
     void testLocalModelWatchCancellationAndTimeoutRetireTheOriginalRequest() throws Exception {
@@ -290,25 +225,6 @@ class JsonRpcClientTest {
             request = MAPPER.readTree(readRpcMessage(pair.serverSide.getInputStream()));
             assertFalse(request.has("id"));
             assertFalse(request.has("params"));
-        }
-    }
-
-    @Test
-    void cancellingWaitUsesItsRequestIdAndKeepsOtherRequestsWorking() throws Exception {
-        for (var method : List.of("session.sendAndWait", "feedback.upload.read", "fixture.pending")) {
-            try (var pair = createSocketPair()) {
-                pair.serverSide.setSoTimeout(5000);
-                var pending = pair.client.invoke(method, Map.of(), JsonNode.class);
-                var request = MAPPER.readTree(readRpcMessage(pair.serverSide.getInputStream()));
-                assertTrue(pending.cancel(false));
-                if (!method.equals("fixture.pending")) {
-                    var cancellation = MAPPER.readTree(readRpcMessage(pair.serverSide.getInputStream()));
-                    assertEquals("$/cancelRequest", cancellation.path("method").asText());
-                    assertEquals(request.get("id"), cancellation.path("params").get("id"));
-                    assertFalse(cancellation.has("id"));
-                }
-                assertReaderResponsive(pair);
-            }
         }
     }
 
@@ -591,215 +507,6 @@ class JsonRpcClientTest {
                         "Returned environment values must not appear in generated string representations");
             }
             assertEquals(environment, params.hostEnvironment());
-        } finally {
-            logger.removeHandler(handler);
-            logger.setLevel(previousLevel);
-        }
-    }
-
-    @Test
-    void testSecretProcessingRequestsAreRedactedWithoutChangingWireParams() throws Exception {
-        var requests = new LinkedHashMap<String, Object>();
-        requests.put("secrets.filter", Map.of("text", "opaque-sensitive-filter"));
-        requests.put("secrets.removeFilterValues", Map.of("values", List.of("opaque-sensitive-remove")));
-        requests.put("logging.file.write",
-                Map.of("logId", "fixture-log", "operation", "log", "message", "opaque-sensitive-write"));
-        requests.put("logging.file.open", Map.of("secretValues", List.of("opaque-sensitive-open")));
-        requests.put("sessions.import", Map.of("jsonl", "{\"token\":\"opaque-sensitive-session-import\"}\n"));
-        requests.put("memories.import", Map.of("jsonl", "{\"token\":\"opaque-sensitive-memory-import\"}\n"));
-        var sent = new LinkedHashMap<String, CompletableFuture<String>>();
-        requests.keySet().forEach(method -> sent.put(method, new CompletableFuture<>()));
-        Thread sender = Thread.currentThread();
-        Logger logger = Logger.getLogger(JsonRpcClient.class.getName());
-        Level previousLevel = logger.getLevel();
-        Handler handler = new Handler() {
-            @Override
-            public void publish(LogRecord record) {
-                String message = record.getMessage();
-                if (Thread.currentThread() == sender && message != null && message.startsWith("Sent: ")) {
-                    sent.forEach((method, diagnostic) -> {
-                        if (message.contains("\"method\":\"" + method + "\"")) {
-                            diagnostic.complete(message.substring("Sent: ".length()));
-                        }
-                    });
-                }
-            }
-
-            @Override
-            public void flush() {
-            }
-
-            @Override
-            public void close() {
-            }
-        };
-        handler.setLevel(Level.ALL);
-        logger.addHandler(handler);
-        logger.setLevel(Level.FINE);
-        try (var pair = createSocketPair()) {
-            pair.serverSide.setSoTimeout(5_000);
-            for (var entry : requests.entrySet()) {
-                var result = pair.client.invoke(entry.getKey(), entry.getValue(), Void.class);
-                JsonNode request = MAPPER.readTree(readRpcMessage(pair.serverSide.getInputStream()));
-                assertEquals(entry.getKey(), request.path("method").asText());
-                assertEquals(MAPPER.valueToTree(entry.getValue()), request.path("params"));
-                writeRpcMessage(pair.serverSide.getOutputStream(),
-                        "{\"jsonrpc\":\"2.0\",\"id\":" + request.path("id") + ",\"result\":null}");
-                result.get(5, TimeUnit.SECONDS);
-
-                String diagnostic = sent.get(entry.getKey()).get(5, TimeUnit.SECONDS);
-                assertFalse(diagnostic.contains("opaque-sensitive-"),
-                        entry.getKey() + " must not disclose its payload in diagnostics");
-                JsonNode rendered = MAPPER.readTree(diagnostic);
-                assertEquals("<redacted>", rendered.path("params").asText());
-                assertEquals(request.path("method"), rendered.path("method"));
-                assertEquals(request.path("id"), rendered.path("id"));
-            }
-        } finally {
-            logger.removeHandler(handler);
-            logger.setLevel(previousLevel);
-        }
-    }
-
-    @ParameterizedTest
-    @ValueSource(booleans = {false, true})
-    void testSecretFilterResponsesAreRedactedWithoutChangingWireValues(boolean cancelBeforeReply) throws Exception {
-        String sensitive = "opaque-sensitive-filter-response";
-        var received = new LinkedBlockingQueue<String>();
-        Logger logger = Logger.getLogger(JsonRpcClient.class.getName());
-        Level previousLevel = logger.getLevel();
-        Handler handler = new Handler() {
-            @Override
-            public void publish(LogRecord record) {
-                String message = record.getMessage();
-                if (message != null && message.startsWith("Received: ")) {
-                    received.add(message.substring("Received: ".length()));
-                }
-            }
-
-            @Override
-            public void flush() {
-            }
-
-            @Override
-            public void close() {
-            }
-        };
-        handler.setLevel(Level.ALL);
-        logger.addHandler(handler);
-        logger.setLevel(Level.FINE);
-        try (var pair = createSocketPair()) {
-            pair.serverSide.setSoTimeout(5_000);
-            var filtered = pair.client.invoke("secrets.filter", Map.of("text", sensitive), JsonNode.class);
-            JsonNode filterRequest = MAPPER.readTree(readRpcMessage(pair.serverSide.getInputStream()));
-            var ordinary = pair.client.invoke("fixture.echo", Map.of(), JsonNode.class);
-            JsonNode ordinaryRequest = MAPPER.readTree(readRpcMessage(pair.serverSide.getInputStream()));
-            writeRpcMessage(pair.serverSide.getOutputStream(), "{\"jsonrpc\":\"2.0\",\"id\":"
-                    + ordinaryRequest.path("id") + ",\"result\":{\"value\":\"visible-response\"}}");
-            assertEquals("visible-response", ordinary.get(5, TimeUnit.SECONDS).path("value").asText());
-            String ordinaryDiagnostic = received.poll(5, TimeUnit.SECONDS);
-            assertNotNull(ordinaryDiagnostic);
-            assertEquals("visible-response", MAPPER.readTree(ordinaryDiagnostic).at("/result/value").asText());
-            if (cancelBeforeReply) {
-                assertTrue(filtered.cancel(false));
-            }
-            writeRpcMessage(pair.serverSide.getOutputStream(), "{\"jsonrpc\":\"2.0\",\"id\":" + filterRequest.path("id")
-                    + ",\"result\":{\"value\":\"" + sensitive + "\",\"changed\":false}}");
-            String diagnostic = received.poll(5, TimeUnit.SECONDS);
-            assertNotNull(diagnostic);
-            assertFalse(diagnostic.contains(sensitive), "Filter responses must not disclose unchanged input");
-            JsonNode rendered = MAPPER.readTree(diagnostic);
-            assertEquals(filterRequest.path("id"), rendered.path("id"));
-            if (cancelBeforeReply) {
-                assertEquals("<redacted>", rendered.path("result").asText());
-                assertTrue(filtered.isCancelled());
-            } else {
-                assertEquals("<redacted>", rendered.at("/result/value").asText());
-                assertFalse(rendered.at("/result/changed").asBoolean());
-                JsonNode result = filtered.get(5, TimeUnit.SECONDS);
-                assertEquals(sensitive, result.path("value").asText());
-                assertFalse(result.path("changed").asBoolean());
-            }
-        } finally {
-            logger.removeHandler(handler);
-            logger.setLevel(previousLevel);
-        }
-    }
-
-    @ParameterizedTest
-    @CsvSource({"sessions.import,false,false", "sessions.import,false,true", "sessions.import,true,false",
-            "sessions.import,true,true", "memories.import,false,false", "memories.import,false,true",
-            "memories.import,true,false", "memories.import,true,true"})
-    void testImportResponsesAreRedactedWithoutChangingWireValues(String method, boolean cancelBeforeReply,
-            boolean errorResponse) throws Exception {
-        String sensitive = "opaque-sensitive-import-response";
-        var received = new LinkedBlockingQueue<String>();
-        var diagnostics = new LinkedBlockingQueue<LogRecord>();
-        Logger logger = Logger.getLogger(JsonRpcClient.class.getName());
-        Level previousLevel = logger.getLevel();
-        Handler handler = new Handler() {
-            @Override
-            public void publish(LogRecord record) {
-                diagnostics.add(record);
-                String message = record.getMessage();
-                if (message != null && message.startsWith("Received: ")) {
-                    received.add(message.substring("Received: ".length()));
-                }
-            }
-
-            @Override
-            public void flush() {
-            }
-
-            @Override
-            public void close() {
-            }
-        };
-        handler.setLevel(Level.ALL);
-        logger.addHandler(handler);
-        logger.setLevel(Level.FINE);
-        try (var pair = createSocketPair()) {
-            pair.serverSide.setSoTimeout(5_000);
-            var imported = pair.client.invoke(method, Map.of("jsonl", "{}\n"), JsonNode.class);
-            JsonNode request = MAPPER.readTree(readRpcMessage(pair.serverSide.getInputStream()));
-            var ordinary = pair.client.invoke("fixture.echo", Map.of(), JsonNode.class);
-            JsonNode ordinaryRequest = MAPPER.readTree(readRpcMessage(pair.serverSide.getInputStream()));
-            writeRpcMessage(pair.serverSide.getOutputStream(), "{\"jsonrpc\":\"2.0\",\"id\":"
-                    + ordinaryRequest.path("id") + ",\"result\":{\"value\":\"visible-response\"}}");
-            assertEquals("visible-response", ordinary.get(5, TimeUnit.SECONDS).path("value").asText());
-            String ordinaryDiagnostic = received.poll(5, TimeUnit.SECONDS);
-            assertNotNull(ordinaryDiagnostic);
-            assertEquals("visible-response", MAPPER.readTree(ordinaryDiagnostic).at("/result/value").asText());
-            if (cancelBeforeReply) {
-                assertTrue(imported.cancel(false));
-            }
-            String payloadKey = errorResponse ? "error" : "result";
-            var payload = errorResponse
-                    ? Map.of("code", -32602, "message", sensitive, "data", Map.of("externalId", sensitive))
-                    : Map.of("diagnostics", List.of(Map.of("message", sensitive)), "externalId", sensitive);
-            writeRpcMessage(pair.serverSide.getOutputStream(),
-                    MAPPER.writeValueAsString(Map.of("jsonrpc", "2.0", "id", request.path("id"), payloadKey, payload)));
-            String diagnostic = received.poll(5, TimeUnit.SECONDS);
-            assertNotNull(diagnostic);
-            assertFalse(diagnostic.contains(sensitive), "Import replies must not disclose input or external IDs");
-            JsonNode rendered = MAPPER.readTree(diagnostic);
-            assertEquals(request.path("id"), rendered.path("id"));
-            assertEquals("<redacted>", rendered.path(payloadKey).asText());
-            if (cancelBeforeReply) {
-                assertTrue(imported.isCancelled());
-            } else if (errorResponse) {
-                var error = assertThrows(ExecutionException.class, () -> imported.get(5, TimeUnit.SECONDS));
-                assertTrue(error.getCause().getMessage().contains(sensitive));
-            } else {
-                assertEquals(MAPPER.valueToTree(payload), imported.get(5, TimeUnit.SECONDS));
-            }
-            for (LogRecord record : diagnostics) {
-                assertFalse(record.getMessage().contains(sensitive), "Import payloads must not appear in logs");
-                if (record.getThrown() != null) {
-                    assertFalse(record.getThrown().toString().contains(sensitive),
-                            "Import errors must not expose payloads through logged exceptions");
-                }
-            }
         } finally {
             logger.removeHandler(handler);
             logger.setLevel(previousLevel);

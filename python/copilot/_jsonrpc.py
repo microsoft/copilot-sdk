@@ -52,30 +52,6 @@ class _RequestCancelledError(Exception):
     """Raised when the peer cancels an incoming request."""
 
 
-def _is_dispatch_cancellation(error: BaseException) -> bool:
-    """Whether ``error`` cancels the running dispatch task rather than reports a handler failure.
-
-    A CancelledError raised by a handler itself, for example from awaiting a future
-    that its owner cancelled, is a handler failure that still needs an answer.
-    """
-    task = asyncio.current_task()
-    return isinstance(error, asyncio.CancelledError) and task is not None and task.cancelling() > 0
-
-
-def _propagates_unanswered(error: BaseException) -> bool:
-    """Whether a dispatch re-raises ``error`` instead of answering its request with a failure.
-
-    A cancellation of the running dispatch task, an exit or interrupt (``SystemExit``,
-    ``KeyboardInterrupt``) and the coroutine being closed (``GeneratorExit``) propagate.
-    Anything else a handler raises is a handler failure that still needs an answer,
-    including a ``BaseException`` that is not an ``Exception``, such as the one
-    ``pytest.fail()`` raises.
-    """
-    return isinstance(
-        error, (KeyboardInterrupt, SystemExit, GeneratorExit)
-    ) or _is_dispatch_cancellation(error)
-
-
 RequestHandler = Callable[[dict], dict | None | Awaitable[dict | None]]
 RawRequestHandler = Callable[[dict], None | Awaitable[None]]
 
@@ -297,9 +273,7 @@ class JsonRpcClient:
                 "session.sendAndWait",
                 "session.featureFlags.read",
                 "localModels.watch",
-                "feedback.upload.read",
                 "taskAnalytics.classifyTrajectory",
-                "session.resume",
             )
             else None
         )
@@ -331,7 +305,7 @@ class JsonRpcClient:
                 method,
                 request_id,
                 "failed",
-                exc_info=method not in ("sessions.import", "memories.import"),
+                exc_info=True,
             )
             raise
         else:
@@ -758,9 +732,7 @@ class JsonRpcClient:
     ) -> None:
         try:
             outcome = handler(message.get("params", {}))
-        except BaseException as error:  # pylint: disable=broad-except
-            if _propagates_unanswered(error):
-                raise
+        except Exception as error:
 
             async def failed(error=error):
                 raise error
@@ -810,11 +782,7 @@ class JsonRpcClient:
             outcome = handler(message)
             if inspect.isawaitable(outcome):
                 await outcome
-        except BaseException as exc:  # pylint: disable=broad-except
-            # A handler's own CancelledError or another BaseException that is not an
-            # Exception still needs an answer, or the runtime waits for it forever.
-            if _propagates_unanswered(exc):
-                raise
+        except Exception:  # pylint: disable=broad-except
             logger.debug(
                 "Error handling raw JSON-RPC method %s",
                 message.get("method", ""),
@@ -867,22 +835,6 @@ class JsonRpcClient:
                 exc_info=True,
             )
             await self._send_error_response(message["id"], -32603, str(exc), None)
-        except BaseException as exc:  # pylint: disable=broad-except
-            # A handler's own CancelledError (from awaiting a future that its owner
-            # cancelled, say) or another BaseException that is not an Exception still
-            # needs an answer, or the runtime waits for this request forever.
-            if _propagates_unanswered(exc):
-                raise
-            logger.debug(
-                "Error handling JSON-RPC method %s: %s",
-                message.get("method", ""),
-                type(exc).__name__,
-                exc_info=True,
-            )
-            if not self._transport_closed:
-                await self._send_error_response(
-                    message["id"], -32603, str(exc) or type(exc).__name__, None
-                )
         finally:
             if cancellation_id is not None:
                 with self._pending_lock:

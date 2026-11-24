@@ -10,7 +10,6 @@ package com.microsoft.copilot.generated;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.microsoft.copilot.CopilotExperimental;
 import javax.annotation.processing.Generated;
 
 /**
@@ -42,10 +41,7 @@ public final class AssistantToolCallDeltaEvent extends SessionEvent {
         /** Tool call type, when known from the stream */
         @JsonProperty("toolType") AssistantMessageToolRequestType toolType,
         /** Raw provider tool input fragment to append for this tool call. Function/tool-use providers stream serialized JSON argument text (so newlines inside JSON string values may appear as escaped `\n` until the accumulated JSON is parsed); custom tool calls stream raw custom input. */
-        @JsonProperty("inputDelta") String inputDelta,
-        /** Experimental HydraFusion phase attribution. Present without a `commitId` while a staged root phase streams provisional output that the orchestrator may still discard. */
-        @CopilotExperimental
-        @JsonProperty("fusion") FusionAttribution fusion
+        @JsonProperty("inputDelta") String inputDelta
     ) {
 
         /**
@@ -71,7 +67,6 @@ public final class AssistantToolCallDeltaEvent extends SessionEvent {
             private String toolName;
             private AssistantMessageToolRequestType toolType;
             private String inputDelta;
-            private FusionAttribution fusion;
 
             /**
              * Sets the {@code toolCallId} property.
@@ -118,18 +113,6 @@ public final class AssistantToolCallDeltaEvent extends SessionEvent {
             }
 
             /**
-             * Sets the {@code fusion} property.
-             * @param value the property value
-             * @return this builder
-             * @since 2.0.0
-             */
-            @com.microsoft.copilot.CopilotExperimental
-            public Builder fusion(FusionAttribution value) {
-                this.fusion = value;
-                return this;
-            }
-
-            /**
              * Builds a record after checking required property presence.
              * @return a new record
              * @throws IllegalStateException if a required property is missing
@@ -138,7 +121,7 @@ public final class AssistantToolCallDeltaEvent extends SessionEvent {
             public AssistantToolCallDeltaEventData build() {
                 if (toolCallId == null) throw new IllegalStateException("Missing required property: toolCallId");
                 if (inputDelta == null) throw new IllegalStateException("Missing required property: inputDelta");
-                return new AssistantToolCallDeltaEventData(toolCallId, toolName, toolType, inputDelta, fusion);
+                return new AssistantToolCallDeltaEventData(toolCallId, toolName, toolType, inputDelta);
             }
         }
     }

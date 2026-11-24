@@ -28,37 +28,13 @@ public final class ServerPluginsMarketplacesApi {
 
     /**
      * Lists all registered marketplaces (defaults + user-added).
-     * <p>
-     * Invokes the method with no params, applying the runtime defaults.
      *
      * @apiNote This method is experimental and may change in a future version.
      * @since 1.0.0
      */
     @CopilotExperimental
     public CompletableFuture<PluginsMarketplacesListResult> list() {
-        return list(null);
-    }
-
-    /**
-     * Lists all registered marketplaces (defaults + user-added).
-     *
-     * @apiNote This method is experimental and may change in a future version.
-     * @since 1.0.0
-     */
-    @CopilotExperimental
-    public CompletableFuture<PluginsMarketplacesListResult> list(PluginsMarketplacesListParams params) {
-        return caller.invoke("plugins.marketplaces.list", params == null ? java.util.Map.of() : params, PluginsMarketplacesListResult.class);
-    }
-
-    /**
-     * Restores a retired default marketplace in the runtime's configured profile when a retained plugin install still needs it. Uses retained managed policy without fetching catalogs or policy. Returns the persisted result so a launcher can report the settings change before opening a session or running a plugin command. Repeated calls are guarded per profile; malformed settings and write failures reject the call.
-     *
-     * @apiNote This method is experimental and may change in a future version.
-     * @since 1.0.0
-     */
-    @CopilotExperimental
-    public CompletableFuture<PluginsMarketplacesMigrateRetiredDefaultResult> migrateRetiredDefault() {
-        return caller.invoke("plugins.marketplaces.migrateRetiredDefault", java.util.Map.of(), PluginsMarketplacesMigrateRetiredDefaultResult.class);
+        return caller.invoke("plugins.marketplaces.list", java.util.Map.of(), PluginsMarketplacesListResult.class);
     }
 
     /**

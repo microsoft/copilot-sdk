@@ -2,7 +2,7 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
-#if NET
+#if NET8_0_OR_GREATER
 #pragma warning disable MCPSDK001 // Live tool replacement is intentionally experimental.
 
 using Microsoft.Extensions.AI;
@@ -104,26 +104,6 @@ public sealed class SetToolsTests
                 Assert.False(empty.TryGetProperty("metadata", out _));
                 Assert.False(empty.TryGetProperty("namespace", out _));
             });
-    }
-
-    [Fact]
-    public async Task SetToolsAsync_Leaves_Out_Numeric_Defaults_The_Runtime_Would_Round()
-    {
-        await using var server = await SetToolsFakeServer.StartAsync();
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions());
-        server.ClearRequests();
-
-        await session.SetToolsAsync([
-            CopilotTool.DefineTool(
-                (decimal rounded = 18446744073709551617m, decimal exact = 18446744073709551615m) => "ok",
-                factoryOptions: new AIFunctionFactoryOptions { Name = "numeric_defaults" }),
-        ]);
-
-        var request = Assert.Single(server.Requests, request => request.Method == "session.tools.set");
-        var properties = request.Params.GetProperty("tools")[0].GetProperty("parameters").GetProperty("properties");
-        Assert.False(properties.GetProperty("rounded").TryGetProperty("default", out _));
-        Assert.Equal("18446744073709551615", properties.GetProperty("exact").GetProperty("default").GetRawText());
     }
 
     [Fact]
@@ -404,14 +384,11 @@ public sealed class SetToolsTests
     {
         var logger = new SetToolsResponseLogger();
         var exception = includeException ? new IOException("Tool replacement failed.") : null;
-        if (logger.IsEnabled(LogLevel.Warning))
+        logger.Log(LogLevel.Warning, default, new KeyValuePair<string, object?>[]
         {
-            logger.Log(LogLevel.Warning, default, new KeyValuePair<string, object?>[]
-            {
-                new("Method", "session.tools.set"),
-                new("Status", status),
-            }, exception, static (_, _) => string.Empty);
-        }
+            new("Method", "session.tools.set"),
+            new("Status", status),
+        }, exception, static (_, _) => string.Empty);
 
         Assert.True(logger.ResponseReceived.Task.IsFaulted);
         if (exception is not null)

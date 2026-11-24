@@ -305,6 +305,7 @@ class SkillProviderTest {
                     .get(30, TimeUnit.SECONDS);
             List<Skill> before = first.getRpc().skills.list().get(30, TimeUnit.SECONDS).skills();
             assertTrue(before.stream().anyMatch(s -> "unbound-lookup".equals(s.name())));
+            int callsBeforeResume = provider.callCount();
 
             CopilotSession session = client
                     .resumeSession(first.getSessionId(),
@@ -313,13 +314,11 @@ class SkillProviderTest {
                     .get(30, TimeUnit.SECONDS);
 
             try {
-                // Old-owner callbacks may still finish during the handoff. Observe the
-                // completed reload instead of counting those callbacks.
-                var reloaded = session.getRpc().skills.reload().get(30, TimeUnit.SECONDS);
+                session.getRpc().skills.reload().get(30, TimeUnit.SECONDS);
                 List<Skill> skills = session.getRpc().skills.list().get(30, TimeUnit.SECONDS).skills();
 
-                assertEquals(List.of(), reloaded.errors());
                 assertEquals(List.of(), sdkSkills(skills));
+                assertEquals(callsBeforeResume, provider.callCount());
             } finally {
                 session.close();
             }

@@ -21,33 +21,16 @@ public final class ServerPluginsApi {
 
     private final RpcCaller caller;
 
-    /** API methods for the {@code plugins.policy} sub-namespace. */
-    final ServerPluginsPolicyApi policy;
     /** API methods for the {@code plugins.builtin} sub-namespace. */
     public final ServerPluginsBuiltinApi builtin;
     /** API methods for the {@code plugins.marketplaces} sub-namespace. */
     public final ServerPluginsMarketplacesApi marketplaces;
-    /** API methods for the {@code plugins.sources} sub-namespace. */
-    final ServerPluginsSourcesApi sources;
 
     /** @param caller the RPC transport function */
     ServerPluginsApi(RpcCaller caller) {
         this.caller = caller;
-        this.policy = new ServerPluginsPolicyApi(caller);
         this.builtin = new ServerPluginsBuiltinApi(caller);
         this.marketplaces = new ServerPluginsMarketplacesApi(caller);
-        this.sources = new ServerPluginsSourcesApi(caller);
-    }
-
-    /**
-     * Lists plugin inventory with invocation settings and policy without changing the existing plugin list operation.
-     *
-     * @apiNote This method is experimental and may change in a future version.
-     * @since 1.0.0
-     */
-    @CopilotExperimental
-    CompletableFuture<PluginInvocationInventoryResult> inspectInventory(PluginsInspectInventoryParams params) {
-        return caller.invoke("plugins.inspectInventory", params, PluginInvocationInventoryResult.class);
     }
 
     /**
@@ -74,26 +57,13 @@ public final class ServerPluginsApi {
 
     /**
      * Lists plugins installed in user/global state.
-     * <p>
-     * Invokes the method with no params, applying the runtime defaults.
      *
      * @apiNote This method is experimental and may change in a future version.
      * @since 1.0.0
      */
     @CopilotExperimental
     public CompletableFuture<PluginsListResult> list() {
-        return list(null);
-    }
-
-    /**
-     * Lists plugins installed in user/global state.
-     *
-     * @apiNote This method is experimental and may change in a future version.
-     * @since 1.0.0
-     */
-    @CopilotExperimental
-    public CompletableFuture<PluginsListResult> list(PluginsListParams params) {
-        return caller.invoke("plugins.list", params == null ? java.util.Map.of() : params, PluginsListResult.class);
+        return caller.invoke("plugins.list", java.util.Map.of(), PluginsListResult.class);
     }
 
     /**
@@ -131,26 +101,13 @@ public final class ServerPluginsApi {
 
     /**
      * Updates every installed plugin to its latest published version.
-     * <p>
-     * Invokes the method with no params, applying the runtime defaults.
      *
      * @apiNote This method is experimental and may change in a future version.
      * @since 1.0.0
      */
     @CopilotExperimental
     public CompletableFuture<PluginsUpdateAllResult> updateAll() {
-        return updateAll(null);
-    }
-
-    /**
-     * Updates every installed plugin to its latest published version.
-     *
-     * @apiNote This method is experimental and may change in a future version.
-     * @since 1.0.0
-     */
-    @CopilotExperimental
-    public CompletableFuture<PluginsUpdateAllResult> updateAll(PluginsUpdateAllParams params) {
-        return caller.invoke("plugins.updateAll", params == null ? java.util.Map.of() : params, PluginsUpdateAllResult.class);
+        return caller.invoke("plugins.updateAll", java.util.Map.of(), PluginsUpdateAllResult.class);
     }
 
     /**
@@ -173,17 +130,6 @@ public final class ServerPluginsApi {
     @CopilotExperimental
     public CompletableFuture<Void> disable(PluginsDisableParams params) {
         return caller.invoke("plugins.disable", params, Void.class);
-    }
-
-    /**
-     * Runs the sessionStart hooks of one built-in plugin without a session, so that the plugin can do its host setup before the first turn. Settings and managed policy that turn off the plugin or its hooks apply. The hooks run on the host, not in a session sandbox, so managed policy that turns on the sandbox prevents activation. The call fails when managed policy cannot be determined. Extension callers cannot use this method.
-     *
-     * @apiNote This method is experimental and may change in a future version.
-     * @since 1.0.0
-     */
-    @CopilotExperimental
-    public CompletableFuture<PluginsActivateResult> activate(PluginsActivateParams params) {
-        return caller.invoke("plugins.activate", params, PluginsActivateResult.class);
     }
 
 }

@@ -10,7 +10,6 @@ package com.microsoft.copilot.generated.rpc;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import java.util.List;
 import javax.annotation.processing.Generated;
 
 /**
@@ -27,9 +26,7 @@ public record SandboxConfigUserPolicy(
     /** Network rules to merge into the base policy. */
     @JsonProperty("network") SandboxConfigUserPolicyNetwork network,
     /** macOS seatbelt options to merge into the base policy. */
-    @JsonProperty("seatbelt") SandboxConfigUserPolicySeatbelt seatbelt,
-    /** Additional Windows OS capability names. Default: ["packageQuery"]; set [] to opt out. Only packageQuery is accepted; other names are ignored. Applies to every sandboxed child and its descendants, including sandboxed MCP, LSP and extension processes. Does not grant filesystem access to returned package locations. Managed lists constrain default and requested names by exact intersection; an empty managed list denies all additional capabilities. Ignored on other platforms. Learning-mode capabilities are not accepted. */
-    @JsonProperty("capabilities") List<String> capabilities
+    @JsonProperty("seatbelt") SandboxConfigUserPolicySeatbelt seatbelt
 ) {
 
     /**
@@ -54,7 +51,6 @@ public record SandboxConfigUserPolicy(
         private SandboxConfigUserPolicyFilesystem filesystem;
         private SandboxConfigUserPolicyNetwork network;
         private SandboxConfigUserPolicySeatbelt seatbelt;
-        private List<String> capabilities;
 
         /**
          * Sets the {@code filesystem} property.
@@ -90,24 +86,13 @@ public record SandboxConfigUserPolicy(
         }
 
         /**
-         * Sets the {@code capabilities} property.
-         * @param value the property value
-         * @return this builder
-         * @since 2.0.0
-         */
-        public Builder capabilities(List<String> value) {
-            this.capabilities = value;
-            return this;
-        }
-
-        /**
          * Builds a record after checking required property presence.
          * @return a new record
          * @throws IllegalStateException if a required property is missing
          * @since 2.0.0
          */
         public SandboxConfigUserPolicy build() {
-            return new SandboxConfigUserPolicy(filesystem, network, seatbelt, capabilities);
+            return new SandboxConfigUserPolicy(filesystem, network, seatbelt);
         }
     }
 }

@@ -21,8 +21,6 @@ public final class ServerSkillsApi {
 
     private final RpcCaller caller;
 
-    /** API methods for the {@code skills.resources} sub-namespace. */
-    final ServerSkillsResourcesApi resources;
     /** API methods for the {@code skills.installations} sub-namespace. */
     public final ServerSkillsInstallationsApi installations;
     /** API methods for the {@code skills.config} sub-namespace. */
@@ -31,7 +29,6 @@ public final class ServerSkillsApi {
     /** @param caller the RPC transport function */
     ServerSkillsApi(RpcCaller caller) {
         this.caller = caller;
-        this.resources = new ServerSkillsResourcesApi(caller);
         this.installations = new ServerSkillsInstallationsApi(caller);
         this.config = new ServerSkillsConfigApi(caller);
     }

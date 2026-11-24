@@ -304,7 +304,7 @@ asyncio.run(main())
 ```
 
 In `"empty"` mode, set `skills={"enabled": True}`; otherwise the provider is bound but
-dormant. Providers are ephemeral and are not persisted, so pass `skills={"provider": ...}`
+dormant. Providers are ephemeral and are not persisted, so pass `skill_provider=`
 again to `resume_session()`. Cloud sessions do not support skill providers.
 Providers must be safe for concurrent calls because the runtime may list or read
 skills from multiple agent paths at the same time. When the runtime cancels a
@@ -663,7 +663,7 @@ session = await client.create_session(github={"token_provider": provide_github_t
 
 Initial acquisition runs during session creation or resume. Cancellation, provider errors, and invalid token responses reject that operation instead of falling back to ambient authentication. Idle sessions refresh only before their next credential-consuming operation; there is no background refresh timer.
 
-- `tools.available_tools` / `tools.excluded_tools` / `agents.default.excluded_tools` / `agents.definitions[].tools`: MCP tools registered from `mcp.servers` are exposed to the runtime as `<server-key>-<tool-name>`. For `tools.available_tools` and `tools.excluded_tools`, prefer `ToolSet().add_mcp("<server-key>-<tool-name>")` or the raw `mcp:<server-key>-<tool-name>` form. For `agents.definitions[].tools` and `agents.default.excluded_tools`, use `<server-key>-<tool-name>` directly.
+- `tools.available_tools` / `tools.excluded_tools` / `default_agent.excluded_tools` / custom-agent `tools.definitions`: MCP tools registered from `mcp.servers` are exposed to the runtime as `<server-key>-<tool-name>`. For `tools.available_tools` and `tools.excluded_tools`, prefer `ToolSet().add_mcp("<server-key>-<tool-name>")` or the raw `mcp:<server-key>-<tool-name>` form. For custom-agent `tools.definitions` and `default_agent.excluded_tools`, use `<server-key>-<tool-name>` directly.
 
 **Session Lifecycle Methods:**
 
@@ -698,27 +698,6 @@ unsubscribe()
 - `session.updated` - A session was updated
 - `session.foreground` - A session became the foreground session in TUI
 - `session.background` - A session is no longer the foreground session
-
-### Agent usage metrics
-
-Call `await session.rpc.usage.get_metrics()` to read accumulated usage. Its
-`agent_metrics` dictionary aggregates invocations by configured agent name, not
-invocation ID. Plugin namespace separators `/` normalize to `:` first:
-`plugin/helper` is looked up as `plugin:helper`. The aggregate's `agent_name`
-uses that normalized spelling too.
-
-The `main` key is reserved for the parent conversation, and `unknown` for unnamed
-subagents. Configured names equal to either reserved key or beginning with
-`agent:` receive an additional `agent:` prefix: an agent named `main` uses
-`agent:main`, `unknown` uses `agent:unknown`, and `agent:reviewer` uses
-`agent:agent:reviewer`. Escaping follows normalization, so `agent/main` also uses
-`agent:agent:main`. Looking up `main` returns the parent, not an agent configured
-with that name.
-
-Each aggregate's `invocation_count` counts distinct launches, not model API
-requests. It is omitted for `main` and may be absent from legacy metrics, appearing
-as `None` in Python. `agent_display_name` remains readable for legacy data but is
-omitted from new aggregates because invocation task descriptions can differ.
 
 ### Tools
 
@@ -1071,7 +1050,7 @@ await session.set_auto_tier(None)
 
 `set_model()` accepts the same preference through its `auto_tier` argument, which stages the tier atomically with selecting `auto`. Pass `None` to return to provider-default routing, or omit the argument to leave the current preference unchanged.
 
-For Copilot Fusion, use the CLI's names: `model="fusion"` with `github={"capi": {"fusion_tier": "high"}}` on create or resume, `set_model("fusion", fusion_tier="high")`, or `set_fusion_tier("high")`. The tiers are `"standard"`, `"high"`, and `"max"`. The routing identifiers these replace (`balance`, `hydrafusion`, and `hydrafusion-max`, and the `hydrafusion` and `hydrafusion-max` model IDs) remain accepted but are deprecated. See [Copilot Fusion names](../docs/features/session-persistence.md#copilot-fusion-names).
+For Copilot Fusion, use the CLI's names: `model="fusion"` with `capi={"fusion_tier": "high"}` on create or resume, `set_model("fusion", fusion_tier="high")`, or `set_fusion_tier("high")`. The tiers are `"standard"`, `"high"`, and `"max"`. The routing identifiers these replace (`balance`, `hydrafusion`, and `hydrafusion-max`, and the `hydrafusion` and `hydrafusion-max` model IDs) remain accepted but are deprecated. See [Copilot Fusion names](../docs/features/session-persistence.md#copilot-fusion-names).
 
 See [Auto tier persistence](../docs/features/session-persistence.md#auto-tier-persistence) for the full lifecycle rules.
 
@@ -1274,7 +1253,7 @@ async def main():
 asyncio.run(main())
 ```
 
-When `events={"streaming": True}`:
+When `streaming=True`:
 
 - `assistant.message_delta` events are sent with `delta_content` containing incremental text
 - `assistant.reasoning_delta` events are sent with `delta_content` for reasoning/chain-of-thought (model-dependent)
@@ -1906,7 +1885,7 @@ async with await client.create_session(
     ...
 ```
 
-Commands can also be provided when resuming a session via `resume_session(session_id, interaction={"commands": [...]})`.
+Commands can also be provided when resuming a session via `resume_session(commands=[...])`.
 
 ## UI Elicitation
 

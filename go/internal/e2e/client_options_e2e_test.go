@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"encoding/json"
-	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -20,23 +19,29 @@ import (
 // in package-level unit tests.
 func TestClientOptionsE2E(t *testing.T) {
 	t.Parallel()
-	t.Run("should fail when configured TCP port is in use", func(t *testing.T) {
+	t.Run("should listen on configured TCP port", func(t *testing.T) {
 		ctx := testharness.NewTestContext(t)
-		listener, err := net.Listen("tcp4", "127.0.0.1:0")
-		if err != nil {
-			t.Fatalf("Listen failed: %v", err)
-		}
-		t.Cleanup(func() { listener.Close() })
-		port := listener.Addr().(*net.TCPAddr).Port
+		port := getAvailableTCPPort(t)
 
 		client := ctx.NewClient(func(opts *copilot.ClientOptions) {
 			useTCP(opts, port, "")
 		})
 		t.Cleanup(func() { client.ForceStop() })
 
-		want := fmt.Sprintf("failed to bind TCP server at 127.0.0.1:%d:", port)
-		if err := client.Start(t.Context()); err == nil || !strings.Contains(err.Error(), want) {
-			t.Fatalf("Start error = %v, want a failure containing %q", err, want)
+		if err := client.Start(t.Context()); err != nil {
+			t.Fatalf("Start failed: %v", err)
+		}
+		if got := client.RuntimePort(); got != port {
+			t.Errorf("Expected RuntimePort=%d, got %d", port, got)
+		}
+
+		// Ping over the connection to confirm it is usable.
+		pingResp, err := client.Ping(t.Context(), "fixed-port")
+		if err != nil {
+			t.Fatalf("Ping failed: %v", err)
+		}
+		if !strings.Contains(pingResp.Message, "fixed-port") {
+			t.Errorf("Expected ping response to echo 'fixed-port', got %q", pingResp.Message)
 		}
 	})
 
@@ -697,6 +702,16 @@ func TestClientOptionsUnit(t *testing.T) {
 			t.Errorf("Expected SessionIdleTimeoutSeconds=600, got %d", opts.Runtime.(copilot.SpawnedStdioConnection).SessionIdleTimeoutSeconds)
 		}
 	})
+}
+
+func getAvailableTCPPort(t *testing.T) int {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to listen on a free TCP port: %v", err)
+	}
+	defer listener.Close()
+	return listener.Addr().(*net.TCPAddr).Port
 }
 
 func assertPanics(t *testing.T, fn func()) {

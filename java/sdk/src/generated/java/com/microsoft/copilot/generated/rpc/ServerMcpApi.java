@@ -8,7 +8,6 @@
 package com.microsoft.copilot.generated.rpc;
 
 import com.microsoft.copilot.CopilotExperimental;
-import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import javax.annotation.processing.Generated;
 
@@ -30,10 +29,6 @@ public final class ServerMcpApi {
     final ServerMcpOauthApi oauth;
     /** API methods for the {@code mcp.installations} sub-namespace. */
     public final ServerMcpInstallationsApi installations;
-    /** API methods for the {@code mcp.github} sub-namespace. */
-    final ServerMcpGithubApi github;
-    /** API methods for the {@code mcp.computerUse} sub-namespace. */
-    final ServerMcpComputerUseApi computerUse;
 
     /** @param caller the RPC transport function */
     ServerMcpApi(RpcCaller caller) {
@@ -42,8 +37,6 @@ public final class ServerMcpApi {
         this.registry = new ServerMcpRegistryApi(caller);
         this.oauth = new ServerMcpOauthApi(caller);
         this.installations = new ServerMcpInstallationsApi(caller);
-        this.github = new ServerMcpGithubApi(caller);
-        this.computerUse = new ServerMcpComputerUseApi(caller);
     }
 
     /**
@@ -58,19 +51,6 @@ public final class ServerMcpApi {
     }
 
     /**
-     * Discovers MCP servers from user, workspace, plugin, and builtin sources.
-     * <p>
-     * Accepts the extensible request, including inputs added after the params record.
-     *
-     * @apiNote This method is experimental and may change in a future version.
-     * @since 1.0.0
-     */
-    @CopilotExperimental
-    public CompletableFuture<McpDiscoverResult> discoverWithOptions(McpDiscoverRequest request) {
-        return caller.invoke("mcp.discover", Objects.requireNonNull(request, "request"), McpDiscoverResult.class);
-    }
-
-    /**
      * Lists the MCP servers the runtime supplies itself, so a host that disables the built-ins wholesale suppresses exactly the set the runtime would otherwise add. The names are fixed for a build and depend on no configuration, session or account.
      *
      * @apiNote This method is experimental and may change in a future version.
@@ -79,17 +59,6 @@ public final class ServerMcpApi {
     @CopilotExperimental
     CompletableFuture<McpListBuiltinServerNamesResult> listBuiltinServerNames() {
         return caller.invoke("mcp.listBuiltinServerNames", java.util.Map.of(), McpListBuiltinServerNamesResult.class);
-    }
-
-    /**
-     * Resolves built-in GitHub MCP exposure, source attribution, and workspace restrictions. Optionally builds a secretless descriptor through the calling connection's authentication owner. IDE and ACP hosts use this before session creation. Policy-only requests do not resolve credentials or probe the host.
-     *
-     * @apiNote This method is experimental and may change in a future version.
-     * @since 1.0.0
-     */
-    @CopilotExperimental
-    CompletableFuture<McpResolveGitHubConfigResult> resolveGitHubConfig(McpResolveGitHubConfigParams params) {
-        return caller.invoke("mcp.resolveGitHubConfig", params, McpResolveGitHubConfigResult.class);
     }
 
     /**

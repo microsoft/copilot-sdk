@@ -355,8 +355,6 @@ public sealed partial class CopilotSession : IAsyncDisposable
 
     internal void StartProcessingEvents()
     {
-        // The reader outlives the caller that creates or resumes the session.
-        using var flow = ExecutionContextHelpers.SuppressFlow();
         _ = ProcessEventsAsync();
     }
 
@@ -892,11 +890,9 @@ public sealed partial class CopilotSession : IAsyncDisposable
     /// </summary>
     private async Task ProcessEventsAsync()
     {
-        // Yield so even queued events run outside the launch's ExecutionContext suppression scope.
-        Debug.Assert(ExecutionContext.IsFlowSuppressed());
-        await Task.Yield();
-        Debug.Assert(Activity.Current is null);
-
+        // Event handlers run in this loop's context for the session's lifetime, so they must not
+        // inherit the Activity that was current when the session was created or resumed.
+        Activity.Current = null;
         await foreach (var sessionEvent in _eventChannel.Reader.ReadAllAsync())
         {
             if (_eventDispatchStopped.Task.IsCompleted)
@@ -1897,12 +1893,8 @@ public sealed partial class CopilotSession : IAsyncDisposable
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !pending.IsCancellationRequested)
         {
-            if (_logger.IsEnabled(LogLevel.Error))
-            {
-                // The exception's message could contain the answer, so only its type is logged.
-                var exceptionType = ex.GetType().FullName ?? ex.GetType().Name;
-                LogShellAuthenticationHandlerFailed(exceptionType, SessionId, request.RequestId);
-            }
+            // The exception's message could contain the answer, so only its type is logged.
+            LogShellAuthenticationHandlerFailed(ex.GetType().FullName ?? ex.GetType().Name, SessionId, request.RequestId);
             return ShellAuthenticationResponse.Cancel();
         }
         catch (OperationCanceledException)

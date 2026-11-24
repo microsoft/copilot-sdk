@@ -28,9 +28,7 @@ public record SessionsLoadDeferredRepoHooksResult(
     /** Repo-level startup prompts queued from repo hook configs. Empty on resume, when no repo configs were pending, or when disableAllHooks is set. */
     @JsonProperty("startupPrompts") List<String> startupPrompts,
     /** Total hook command count (user + plugin + repo) loaded for the session by this call. Captured atomically with startupPrompts so callers don't need to read a separate counter. */
-    @JsonProperty("hookCount") Long hookCount,
-    /** Workspace directory captured by the native hook load that produced this result, not the directory current when the response is consumed. Present after a completed load and required for nonempty startupPrompts. */
-    @JsonProperty("sourceWorkspace") String sourceWorkspace
+    @JsonProperty("hookCount") Long hookCount
 ) {
 
     /**
@@ -54,7 +52,6 @@ public record SessionsLoadDeferredRepoHooksResult(
         private Builder() {}
         private List<String> startupPrompts;
         private Long hookCount;
-        private String sourceWorkspace;
 
         /**
          * Sets the {@code startupPrompts} property.
@@ -79,17 +76,6 @@ public record SessionsLoadDeferredRepoHooksResult(
         }
 
         /**
-         * Sets the {@code sourceWorkspace} property.
-         * @param value the property value
-         * @return this builder
-         * @since 2.0.0
-         */
-        public Builder sourceWorkspace(String value) {
-            this.sourceWorkspace = value;
-            return this;
-        }
-
-        /**
          * Builds a record after checking required property presence.
          * @return a new record
          * @throws IllegalStateException if a required property is missing
@@ -98,7 +84,7 @@ public record SessionsLoadDeferredRepoHooksResult(
         public SessionsLoadDeferredRepoHooksResult build() {
             if (startupPrompts == null) throw new IllegalStateException("Missing required property: startupPrompts");
             if (hookCount == null) throw new IllegalStateException("Missing required property: hookCount");
-            return new SessionsLoadDeferredRepoHooksResult(startupPrompts, hookCount, sourceWorkspace);
+            return new SessionsLoadDeferredRepoHooksResult(startupPrompts, hookCount);
         }
     }
 }
