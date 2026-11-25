@@ -31905,6 +31905,17 @@ type SessionNameGenerateResult struct {
 	Value *string `json:"value,omitempty"`
 }
 
+// Persisted name candidate, not a guarantee of valid history or successful resume.
+// Experimental: SessionNameMatch is part of an experimental API and may change or be
+// removed.
+type SessionNameMatch struct {
+	// Original decoded name from the persisted workspace metadata, without normalization or
+	// trimming.
+	Name string `json:"name"`
+	// Session directory identifier. The candidate need not have a UUID or event history.
+	SessionID string `json:"sessionId"`
+}
+
 // Experimental: SessionNameSetResult is part of an experimental API and may change or be
 // removed.
 type SessionNameSetResult struct {
@@ -33688,6 +33699,28 @@ type SessionSettingsValidationSnapshot struct {
 	SecretScanningEnabled *bool `json:"secretScanningEnabled,omitempty"`
 	// General validation timeout budget in seconds.
 	Timeout *float64 `json:"timeout,omitempty"`
+}
+
+// Friendly name to find in the configured or explicitly selected session profile.
+// Experimental: SessionsFindByNameRequest is part of an experimental API and may change or
+// be removed.
+type SessionsFindByNameRequest struct {
+	// Configuration directory containing the session state. Omitted or empty to use the
+	// server's configured home. The lookup does not change the server's storage context.
+	ConfigDir *string `json:"configDir,omitempty"`
+	// Exact persisted name to match after ECMAScript whitespace trimming of the query, Unicode
+	// case folding, and canonical composition. Stored names are not trimmed. A blank query
+	// returns no matches without scanning.
+	Name string `json:"name"`
+}
+
+// All local persisted name candidates, including candidates without resumable history.
+// Experimental: SessionsFindByNameResult is part of an experimental API and may change or
+// be removed.
+type SessionsFindByNameResult struct {
+	// Every match in directory enumeration order, without sorting, deduplication, or a limit.
+	// Order is not stable across calls.
+	Matches []SessionNameMatch `json:"matches"`
 }
 
 // UUID prefix to resolve to a unique session ID.
@@ -52920,6 +52953,31 @@ func (a *ServerSessionsAPI) EnrichMetadata(ctx context.Context, params *Sessions
 		return nil, err
 	}
 	var result SessionEnrichMetadataResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// FindByName finds all exact friendly-name candidates in the configured or explicitly
+// selected local session profile without opening sessions or reading history. Matches
+// persisted workspace names, not deprecated summaries. Unreadable or malformed candidate
+// metadata is skipped. A missing store returns no matches; other store enumeration errors
+// fail the request.
+//
+// RPC method: sessions.findByName.
+//
+// Parameters: Friendly name to find in the configured or explicitly selected session
+// profile.
+//
+// Returns: All local persisted name candidates, including candidates without resumable
+// history.
+func (a *ServerSessionsAPI) FindByName(ctx context.Context, params *SessionsFindByNameRequest) (*SessionsFindByNameResult, error) {
+	raw, err := a.client.Request(ctx, "sessions.findByName", params)
+	if err != nil {
+		return nil, err
+	}
+	var result SessionsFindByNameResult
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return nil, err
 	}

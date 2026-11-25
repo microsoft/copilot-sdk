@@ -2907,6 +2907,25 @@ func TestClient_ForwardsToolOwnershipToSessionRequests(t *testing.T) {
 	}
 }
 
+func newClientWithSessionCreateCapture(t *testing.T) (*Client, *jsonrpc2.Client, <-chan json.RawMessage) {
+	t.Helper()
+	rpcClient, server, _ := newRuntimeShutdownRpcPair(t)
+	t.Cleanup(server.Stop)
+	client := &Client{
+		client:   rpcClient,
+		RPC:      rpc.NewServerRPC(rpcClient),
+		sessions: make(map[string]*Session),
+	}
+
+	createParams := make(chan json.RawMessage, 1)
+	server.SetRequestHandler("session.create", func(params json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
+		createParams <- append(json.RawMessage(nil), params...)
+		sessionID := sessionIDFromParams(t, params)
+		return []byte(`{"sessionId":"` + sessionID + `","workspacePath":"/workspace"}`), nil
+	})
+	return client, server, createParams
+}
+
 func TestClient_ForwardsCapiOptionsToSessionRequests(t *testing.T) {
 	tests := []struct {
 		name string
@@ -2927,20 +2946,7 @@ func TestClient_ForwardsCapiOptionsToSessionRequests(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rpcClient, server, _ := newRuntimeShutdownRpcPair(t)
-			t.Cleanup(server.Stop)
-			client := &Client{
-				client:   rpcClient,
-				RPC:      rpc.NewServerRPC(rpcClient),
-				sessions: make(map[string]*Session),
-			}
-
-			createParams := make(chan json.RawMessage, 1)
-			server.SetRequestHandler("session.create", func(params json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
-				createParams <- append(json.RawMessage(nil), params...)
-				sessionID := sessionIDFromParams(t, params)
-				return []byte(`{"sessionId":"` + sessionID + `","workspacePath":"/workspace"}`), nil
-			})
+			client, server, createParams := newClientWithSessionCreateCapture(t)
 
 			_, err := client.CreateSession(t.Context(), &CreateSessionOptions{Model: "auto", GitHub: SessionGitHubOptions{Capi: tt.capi}})
 			if err != nil {
@@ -2975,20 +2981,7 @@ func TestClient_ForwardsInteractiveUserToSessionRequests(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rpcClient, server, _ := newRuntimeShutdownRpcPair(t)
-			t.Cleanup(server.Stop)
-			client := &Client{
-				client:   rpcClient,
-				RPC:      rpc.NewServerRPC(rpcClient),
-				sessions: make(map[string]*Session),
-			}
-
-			createParams := make(chan json.RawMessage, 1)
-			server.SetRequestHandler("session.create", func(params json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
-				createParams <- append(json.RawMessage(nil), params...)
-				sessionID := sessionIDFromParams(t, params)
-				return []byte(`{"sessionId":"` + sessionID + `","workspacePath":"/workspace"}`), nil
-			})
+			client, server, createParams := newClientWithSessionCreateCapture(t)
 
 			_, err := client.CreateSession(t.Context(), &CreateSessionOptions{GitHub: SessionGitHubOptions{InteractiveUser: tt.value}})
 			if err != nil {
@@ -3437,20 +3430,7 @@ func assertAskUserVariant(t *testing.T, params json.RawMessage, want string) {
 }
 
 func TestClient_ForwardsAdditionalDirectoriesToSessionRequests(t *testing.T) {
-	rpcClient, server, _ := newRuntimeShutdownRpcPair(t)
-	t.Cleanup(server.Stop)
-	client := &Client{
-		client:   rpcClient,
-		RPC:      rpc.NewServerRPC(rpcClient),
-		sessions: make(map[string]*Session),
-	}
-
-	createParams := make(chan json.RawMessage, 1)
-	server.SetRequestHandler("session.create", func(params json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
-		createParams <- append(json.RawMessage(nil), params...)
-		sessionID := sessionIDFromParams(t, params)
-		return []byte(`{"sessionId":"` + sessionID + `","workspacePath":"/workspace"}`), nil
-	})
+	client, server, createParams := newClientWithSessionCreateCapture(t)
 
 	_, err := client.CreateSession(t.Context(), &CreateSessionOptions{Filesystem: CreateSessionFilesystemOptions{AdditionalDirectories: []string{"/repo/shared", "/repo/generated"}}})
 	if err != nil {
@@ -3491,20 +3471,7 @@ func assertAdditionalDirectories(t *testing.T, params json.RawMessage, want []st
 }
 
 func TestClient_ForwardsCanvasProviderToSessionRequests(t *testing.T) {
-	rpcClient, server, _ := newRuntimeShutdownRpcPair(t)
-	t.Cleanup(server.Stop)
-	client := &Client{
-		client:   rpcClient,
-		RPC:      rpc.NewServerRPC(rpcClient),
-		sessions: make(map[string]*Session),
-	}
-
-	createParams := make(chan json.RawMessage, 1)
-	server.SetRequestHandler("session.create", func(params json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
-		createParams <- append(json.RawMessage(nil), params...)
-		sessionID := sessionIDFromParams(t, params)
-		return []byte(`{"sessionId":"` + sessionID + `","workspacePath":"/workspace"}`), nil
-	})
+	client, server, createParams := newClientWithSessionCreateCapture(t)
 
 	_, err := client.CreateSession(t.Context(), &CreateSessionOptions{Extensions: SessionExtensionOptions{Identity: &ExtensionInfo{Source: "github-app", Name: "counter-provider"}}, Canvases: SessionCanvasOptions{Provider: &CanvasProviderIdentity{ID: "app:builtin:window-1", Name: String("Built-in")}}})
 	if err != nil {
@@ -3563,20 +3530,7 @@ func assertCanvasProviderForwarded(t *testing.T, params json.RawMessage, wantID,
 
 func TestClient_ForwardsNewSessionOptionsToSessionRequests(t *testing.T) {
 	zeroContinues, twoContinues := int64(0), int64(2)
-	rpcClient, server, _ := newRuntimeShutdownRpcPair(t)
-	t.Cleanup(server.Stop)
-	client := &Client{
-		client:   rpcClient,
-		RPC:      rpc.NewServerRPC(rpcClient),
-		sessions: make(map[string]*Session),
-	}
-
-	createParams := make(chan json.RawMessage, 1)
-	server.SetRequestHandler("session.create", func(params json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
-		createParams <- append(json.RawMessage(nil), params...)
-		sessionID := sessionIDFromParams(t, params)
-		return []byte(`{"sessionId":"` + sessionID + `","workspacePath":"/workspace"}`), nil
-	})
+	client, server, createParams := newClientWithSessionCreateCapture(t)
 
 	_, err := client.CreateSession(t.Context(), &CreateSessionOptions{Agents: SessionAgentOptions{ExcludedBuiltinAgents: []string{"explore"}}, Inference: SessionInferenceOptions{AllowMultipleToolCalls: Bool(false), EnableCitations: Bool(true)}, Filesystem: CreateSessionFilesystemOptions{TrackFileChanges: Bool(true)}, Execution: SessionExecutionOptions{Limits: &rpc.SessionLimitsConfig{MaxAiCredits: float64Ptr(30)}, Autopilot: &rpc.AutopilotOptions{ContinuationEnabled: Bool(false), MaxContinues: &zeroContinues}}, Permissions: SessionPermissionOptions{Sandbox: &rpc.SandboxConfig{
 		Enabled:                    true,
@@ -5566,20 +5520,7 @@ func TestClient_ForwardsCustomAgentsPresenceToSessionRequests(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rpcClient, server, _ := newRuntimeShutdownRpcPair(t)
-			t.Cleanup(server.Stop)
-			client := &Client{
-				client:   rpcClient,
-				RPC:      rpc.NewServerRPC(rpcClient),
-				sessions: make(map[string]*Session),
-			}
-
-			createParams := make(chan json.RawMessage, 1)
-			server.SetRequestHandler("session.create", func(params json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
-				createParams <- append(json.RawMessage(nil), params...)
-				sessionID := sessionIDFromParams(t, params)
-				return []byte(`{"sessionId":"` + sessionID + `","workspacePath":"/workspace"}`), nil
-			})
+			client, server, createParams := newClientWithSessionCreateCapture(t)
 
 			if _, err := client.CreateSession(t.Context(), &CreateSessionOptions{Model: "auto", Agents: SessionAgentOptions{Definitions: tt.agents}}); err != nil {
 				t.Fatalf("CreateSession failed: %v", err)
@@ -5635,20 +5576,7 @@ func TestClient_ForwardsMCPServersPresenceToSessionRequests(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rpcClient, server, _ := newRuntimeShutdownRpcPair(t)
-			t.Cleanup(server.Stop)
-			client := &Client{
-				client:   rpcClient,
-				RPC:      rpc.NewServerRPC(rpcClient),
-				sessions: make(map[string]*Session),
-			}
-
-			createParams := make(chan json.RawMessage, 1)
-			server.SetRequestHandler("session.create", func(params json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
-				createParams <- append(json.RawMessage(nil), params...)
-				sessionID := sessionIDFromParams(t, params)
-				return []byte(`{"sessionId":"` + sessionID + `","workspacePath":"/workspace"}`), nil
-			})
+			client, server, createParams := newClientWithSessionCreateCapture(t)
 
 			if _, err := client.CreateSession(t.Context(), &CreateSessionOptions{Model: "auto", MCP: SessionMCPOptions{Servers: tt.servers}}); err != nil {
 				t.Fatalf("CreateSession failed: %v", err)
@@ -5704,20 +5632,7 @@ func TestClient_ForwardsToolsPresenceToSessionRequests(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rpcClient, server, _ := newRuntimeShutdownRpcPair(t)
-			t.Cleanup(server.Stop)
-			client := &Client{
-				client:   rpcClient,
-				RPC:      rpc.NewServerRPC(rpcClient),
-				sessions: make(map[string]*Session),
-			}
-
-			createParams := make(chan json.RawMessage, 1)
-			server.SetRequestHandler("session.create", func(params json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
-				createParams <- append(json.RawMessage(nil), params...)
-				sessionID := sessionIDFromParams(t, params)
-				return []byte(`{"sessionId":"` + sessionID + `","workspacePath":"/workspace"}`), nil
-			})
+			client, server, createParams := newClientWithSessionCreateCapture(t)
 
 			if _, err := client.CreateSession(t.Context(), &CreateSessionOptions{Model: "auto", Tools: SessionToolOptions{Definitions: tt.tools}}); err != nil {
 				t.Fatalf("CreateSession failed: %v", err)
@@ -5774,20 +5689,7 @@ func TestClient_ForwardsCommandsPresenceToSessionRequests(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rpcClient, server, _ := newRuntimeShutdownRpcPair(t)
-			t.Cleanup(server.Stop)
-			client := &Client{
-				client:   rpcClient,
-				RPC:      rpc.NewServerRPC(rpcClient),
-				sessions: make(map[string]*Session),
-			}
-
-			createParams := make(chan json.RawMessage, 1)
-			server.SetRequestHandler("session.create", func(params json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
-				createParams <- append(json.RawMessage(nil), params...)
-				sessionID := sessionIDFromParams(t, params)
-				return []byte(`{"sessionId":"` + sessionID + `","workspacePath":"/workspace"}`), nil
-			})
+			client, server, createParams := newClientWithSessionCreateCapture(t)
 
 			if _, err := client.CreateSession(t.Context(), &CreateSessionOptions{Model: "auto", Interaction: SessionInteractionOptions{Commands: tt.commands}}); err != nil {
 				t.Fatalf("CreateSession failed: %v", err)

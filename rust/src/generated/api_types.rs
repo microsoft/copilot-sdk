@@ -235,6 +235,8 @@ pub mod rpc_methods {
     pub const SESSIONS_FINDBYTASKID: &str = "sessions.findByTaskId";
     /// `sessions.findByPrefix`
     pub const SESSIONS_FINDBYPREFIX: &str = "sessions.findByPrefix";
+    /// `sessions.findByName`
+    pub const SESSIONS_FINDBYNAME: &str = "sessions.findByName";
     /// `sessions.getLastForContext`
     pub const SESSIONS_GETLASTFORCONTEXT: &str = "sessions.getLastForContext";
     /// `sessions.hasEvents`
@@ -2452,7 +2454,7 @@ pub use sdk_api_session::{
     SessionModelPriceCategory, SessionModelSetAllowedModelsResult,
     SessionModelSetReasoningEffortResult, SessionModelStartupAdmissionResult,
     SessionModelSwitchAutoTierResult, SessionModelSwitchFusionTierResult,
-    SessionModelSwitchToResult, SessionNameGetParams, SessionNameGetResult,
+    SessionModelSwitchToResult, SessionNameGetParams, SessionNameGetResult, SessionNameMatch,
     SessionNameSetAutoResult, SessionOpenAgentOptions, SessionOpenEventOptions,
     SessionOpenExecutionOptions, SessionOpenExperimentOptions, SessionOpenFilesystemOptions,
     SessionOpenGitHubOptions, SessionOpenGitOptions, SessionOpenHookOptions,
@@ -2607,19 +2609,20 @@ pub use sdk_api_session::{
     SessionsBulkDeleteResult, SessionsCheckInUseRequest, SessionsCheckInUseResult,
     SessionsCloseRequest, SessionsCloseResult, SessionsConnectResult,
     SessionsCreateWorkspaceRequest, SessionsCreateWorkspaceResult, SessionsDeleteRequest,
-    SessionsEnrichMetadataRequest, SessionsEnrichMetadataResult, SessionsFindByPrefixRequest,
-    SessionsFindByPrefixResult, SessionsFindByTaskIDRequest, SessionsFindByTaskIDResult,
-    SessionsFindByTaskIdResult, SessionsForgeProposalsFailStaleResult,
-    SessionsForgeProposalsReconcileResult, SessionsForgeProposalsWorkspaceBeforeResult,
-    SessionsForkRequest, SessionsForkResult, SessionsGetBoardEntryCountRequest,
-    SessionsGetBoardEntryCountResult, SessionsGetClientMetadataRequest,
-    SessionsGetClientMetadataResult, SessionsGetEventFilePathRequest,
-    SessionsGetEventFilePathResult, SessionsGetLastForContextRequest,
-    SessionsGetLastForContextResult, SessionsGetMetadataRequest, SessionsGetMetadataResult,
-    SessionsGetPersistedRemoteSteerableRequest, SessionsGetPersistedRemoteSteerableResult,
-    SessionsGetRemoteControlStatusResult, SessionsGetSizesResult, SessionsHasEventsRequest,
-    SessionsHasEventsResult, SessionsImportResult, SessionsImportSemanticRequest,
-    SessionsImportSemanticResult, SessionsListActiveResult, SessionsListNonEmptySessionIdsRequest,
+    SessionsEnrichMetadataRequest, SessionsEnrichMetadataResult, SessionsFindByNameRequest,
+    SessionsFindByNameResult, SessionsFindByPrefixRequest, SessionsFindByPrefixResult,
+    SessionsFindByTaskIDRequest, SessionsFindByTaskIDResult, SessionsFindByTaskIdResult,
+    SessionsForgeProposalsFailStaleResult, SessionsForgeProposalsReconcileResult,
+    SessionsForgeProposalsWorkspaceBeforeResult, SessionsForkRequest, SessionsForkResult,
+    SessionsGetBoardEntryCountRequest, SessionsGetBoardEntryCountResult,
+    SessionsGetClientMetadataRequest, SessionsGetClientMetadataResult,
+    SessionsGetEventFilePathRequest, SessionsGetEventFilePathResult,
+    SessionsGetLastForContextRequest, SessionsGetLastForContextResult, SessionsGetMetadataRequest,
+    SessionsGetMetadataResult, SessionsGetPersistedRemoteSteerableRequest,
+    SessionsGetPersistedRemoteSteerableResult, SessionsGetRemoteControlStatusResult,
+    SessionsGetSizesResult, SessionsHasEventsRequest, SessionsHasEventsResult,
+    SessionsImportResult, SessionsImportSemanticRequest, SessionsImportSemanticResult,
+    SessionsListActiveResult, SessionsListNonEmptySessionIdsRequest,
     SessionsListNonEmptySessionIdsResult, SessionsListRequest, SessionsListResult,
     SessionsLoadDeferredRepoHooksRequest, SessionsLoadDeferredRepoHooksResult,
     SessionsLoadWorkspaceRequest, SessionsLoadWorkspaceResult, SessionsOpenAttach,

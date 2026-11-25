@@ -357,7 +357,7 @@ class ConfigCloneTest {
     @Test
     @AllowCopilotExperimental
     void sessionConfigSkillProviderCloned() {
-        SkillProvider provider = testSkillProvider();
+        SkillProvider provider = new EmptySkillProvider();
         CreateSessionOptions original = new CreateSessionOptions()
                 .setSkills(new SessionSkillOptions().setProvider(provider));
 
@@ -411,7 +411,7 @@ class ConfigCloneTest {
     @Test
     @AllowCopilotExperimental
     void resumeSessionConfigSkillProviderCloned() {
-        SkillProvider provider = testSkillProvider();
+        SkillProvider provider = new EmptySkillProvider();
         ResumeSessionOptions original = new ResumeSessionOptions()
                 .setSkills(new SessionSkillOptions().setProvider(provider));
 
@@ -568,20 +568,5 @@ class ConfigCloneTest {
                 cloned.getInteraction().getOnExitPlanModeRequest());
         assertSame(original.getInteraction().getOnAutoModeSwitchRequest(),
                 cloned.getInteraction().getOnAutoModeSwitchRequest());
-    }
-
-    @AllowCopilotExperimental
-    private static SkillProvider testSkillProvider() {
-        return new SkillProvider() {
-            @Override
-            public CompletableFuture<List<SkillProviderDescriptor>> listSkills() {
-                return CompletableFuture.completedFuture(List.of());
-            }
-
-            @Override
-            public CompletableFuture<String> readSkill(String name) {
-                return CompletableFuture.completedFuture(null);
-            }
-        };
     }
 }

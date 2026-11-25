@@ -407,7 +407,7 @@ func TestToolResultPreservesLargeOutputPolicy(t *testing.T) {
 }
 
 func TestToolResultThatFailsToSendIsReportedAndAnsweredWithError(t *testing.T) {
-	logs := captureSkillProviderLog(t)
+	logs := captureStandardLog(t)
 	session, server := newSetToolsTestSession(t)
 	session.registerTools([]Tool{{Name: "record_note", Handler: func(ToolInvocation) (ToolResult, error) {
 		return ToolResult{TextResultForLLM: "ok"}, nil
@@ -443,7 +443,7 @@ func TestToolResultThatFailsToSendIsReportedAndAnsweredWithError(t *testing.T) {
 }
 
 func TestToolResultThatFailsToSendAfterDisconnectIsNotAnswered(t *testing.T) {
-	logs := captureSkillProviderLog(t)
+	logs := captureStandardLog(t)
 	session, server := newSetToolsTestSession(t)
 	session.registerTools([]Tool{{Name: "record_note", Handler: func(ToolInvocation) (ToolResult, error) {
 		return ToolResult{TextResultForLLM: "ok"}, nil
@@ -468,7 +468,7 @@ func TestToolResultThatFailsToSendAfterDisconnectIsNotAnswered(t *testing.T) {
 }
 
 func TestSetToolsTestSessionCleanupRetiresInFlightToolResult(t *testing.T) {
-	logs := captureSkillProviderLog(t)
+	logs := captureStandardLog(t)
 	invocations := make(chan context.Context, 1)
 	if !t.Run("fixture", func(t *testing.T) {
 		session, server := newSetToolsTestSession(t)

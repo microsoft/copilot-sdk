@@ -47214,6 +47214,23 @@ export interface SessionModelPriceCategory {
   priceCategory: ModelPickerPriceCategory;
 }
 /**
+ * Persisted name candidate, not a guarantee of valid history or successful resume.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "SessionNameMatch".
+ */
+/** @experimental */
+export interface SessionNameMatch {
+  /**
+   * Session directory identifier. The candidate need not have a UUID or event history.
+   */
+  sessionId: string;
+  /**
+   * Original decoded name from the persisted workspace metadata, without normalization or trimming.
+   */
+  name: string;
+}
+/**
  * Agent definitions, selection, and source filters.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
@@ -49222,6 +49239,36 @@ export interface SessionSettingsValidationSnapshot {
    * Whether the memory-vote tool is enabled.
    */
   memoryVoteEnabled?: boolean;
+}
+/**
+ * Friendly name to find in the configured or explicitly selected session profile.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "SessionsFindByNameRequest".
+ */
+/** @experimental */
+export interface SessionsFindByNameRequest {
+  /**
+   * Exact persisted name to match after ECMAScript whitespace trimming of the query, Unicode case folding, and canonical composition. Stored names are not trimmed. A blank query returns no matches without scanning.
+   */
+  name: string;
+  /**
+   * Configuration directory containing the session state. Omitted or empty to use the server's configured home. The lookup does not change the server's storage context.
+   */
+  configDir?: string;
+}
+/**
+ * All local persisted name candidates, including candidates without resumable history.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "SessionsFindByNameResult".
+ */
+/** @experimental */
+export interface SessionsFindByNameResult {
+  /**
+   * Every match in directory enumeration order, without sorting, deduplication, or a limit. Order is not stable across calls.
+   */
+  matches: SessionNameMatch[];
 }
 /**
  * UUID prefix to resolve to a unique session ID.
@@ -63270,6 +63317,15 @@ export function createServerRpc(connection: MessageConnection) {
              */
             findByPrefix: async (params: SessionsFindByPrefixRequest): Promise<SessionsFindByPrefixResult> =>
                 connection.sendRequest("sessions.findByPrefix", params),
+            /**
+             * Finds all exact friendly-name candidates in the configured or explicitly selected local session profile without opening sessions or reading history. Matches persisted workspace names, not deprecated summaries. Unreadable or malformed candidate metadata is skipped. A missing store returns no matches; other store enumeration errors fail the request.
+             *
+             * @param params Friendly name to find in the configured or explicitly selected session profile.
+             *
+             * @returns All local persisted name candidates, including candidates without resumable history.
+             */
+            findByName: async (params: SessionsFindByNameRequest): Promise<SessionsFindByNameResult> =>
+                connection.sendRequest("sessions.findByName", params),
             /**
              * Returns the most-relevant prior session for a given working-directory context.
              *

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log"
 	"strings"
 	"sync"
 	"testing"
@@ -340,7 +339,7 @@ func TestSkillProviderErrorEnvelopes(t *testing.T) {
 
 	for _, method := range []string{"skillProvider.list", "skillProvider.read"} {
 		t.Run(method+" provider failure", func(t *testing.T) {
-			output := captureSkillProviderLog(t)
+			output := captureStandardLog(t)
 			secret := errors.New("db-password-in-error")
 			provider := newTestSkillProvider()
 			operation := "listSkills"
@@ -375,7 +374,7 @@ func TestSkillProviderErrorEnvelopes(t *testing.T) {
 	}
 
 	t.Run("not-found classification panic", func(t *testing.T) {
-		captureSkillProviderLog(t)
+		captureStandardLog(t)
 		provider := newTestSkillProvider()
 		provider.readErr = panickyIsError{}
 		_, server, sessionID := skillProviderErrorHarness(t, provider)
@@ -397,7 +396,7 @@ func TestSkillProviderErrorEnvelopes(t *testing.T) {
 
 	for _, method := range []string{"skillProvider.list", "skillProvider.read"} {
 		t.Run(method+" provider panic", func(t *testing.T) {
-			output := captureSkillProviderLog(t)
+			output := captureStandardLog(t)
 			_, server, sessionID := skillProviderErrorHarness(t, panickingSkillProvider{})
 			params := map[string]any{"sessionId": sessionID}
 			wantMessage := "Skill provider listSkills failed"
@@ -596,15 +595,6 @@ type panickyIsError struct{}
 func (panickyIsError) Error() string { return "panicky" }
 
 func (panickyIsError) Is(error) bool { panic("classification panicked") }
-
-func captureSkillProviderLog(t *testing.T) *ahpTestLog {
-	t.Helper()
-	output := new(ahpTestLog)
-	previous := log.Writer()
-	log.SetOutput(output)
-	t.Cleanup(func() { log.SetOutput(previous) })
-	return output
-}
 
 func newSkillProviderClient(t *testing.T) (*Client, *jsonrpc2.Client) {
 	t.Helper()

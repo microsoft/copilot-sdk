@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -676,7 +677,7 @@ func TestSessionFSHandlerOperationsE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Readdir failed: %v", err)
 	}
-	if !sliceContains(entries, "file.txt") {
+	if !slices.Contains(entries, "file.txt") {
 		t.Errorf("Expected entries to contain 'file.txt', got %v", entries)
 	}
 
@@ -733,13 +734,4 @@ func TestSessionFSHandlerOperationsE2E(t *testing.T) {
 	if _, err := handler.Stat("/workspace/nested/missing.txt"); err == nil || !os.IsNotExist(err) {
 		t.Errorf("Expected os.ErrNotExist from Stat on missing file, got %v", err)
 	}
-}
-
-func sliceContains(slice []string, value string) bool {
-	for _, item := range slice {
-		if item == value {
-			return true
-		}
-	}
-	return false
 }

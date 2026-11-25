@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log"
 	"net"
 	"strings"
 	"sync"
@@ -90,16 +89,6 @@ func requestShellAuthentication(client *Client, request shellAuthenticationReque
 	return client.handleShellAuthenticationRequest(request)
 }
 
-// captureShellAuthenticationLog redirects the standard logger until the test ends.
-func captureShellAuthenticationLog(t *testing.T) *ahpTestLog {
-	t.Helper()
-	output := new(ahpTestLog)
-	previous := log.Writer()
-	log.SetOutput(output)
-	t.Cleanup(func() { log.SetOutput(previous) })
-	return output
-}
-
 func TestShellAuthenticationReturnsOnlyAWellFormedAnswer(t *testing.T) {
 	session := &Session{SessionID: "s1"}
 	client := &Client{sessions: map[string]*Session{"s1": session}}
@@ -150,7 +139,7 @@ func TestShellAuthenticationReturnsOnlyAWellFormedAnswer(t *testing.T) {
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			output := captureShellAuthenticationLog(t)
+			output := captureStandardLog(t)
 			session.registerShellAuthenticationHandler(tt.handler)
 			got, rpcErr := requestShellAuthentication(client, shellAuthenticationTestRequest())
 			if rpcErr != nil {
@@ -172,7 +161,7 @@ func TestShellAuthenticationReturnsOnlyAWellFormedAnswer(t *testing.T) {
 }
 
 func TestShellAuthenticationDoesNotLogAHandlerStoppedByItsCancelledPrompt(t *testing.T) {
-	output := captureShellAuthenticationLog(t)
+	output := captureStandardLog(t)
 	session := &Session{SessionID: "s1"}
 	client := &Client{sessions: map[string]*Session{"s1": session}}
 	started := make(chan struct{}, 1)

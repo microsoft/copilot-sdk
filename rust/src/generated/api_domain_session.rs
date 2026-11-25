@@ -4889,6 +4889,26 @@ pub struct SessionModelList {
 }
 crate::record_serde::wire_record!(SessionModelList { auto: "auto" if is_none, list: "list", model_price_categories: "modelPriceCategories" if is_none, providers: "providers" if is_none, quota_snapshots: "quotaSnapshots" if is_none });
 
+/// Persisted name candidate, not a guarantee of valid history or successful resume.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct SessionNameMatch {
+    /// Original decoded name from the persisted workspace metadata, without normalization or trimming.
+    pub name: String,
+    /// Session directory identifier. The candidate need not have a UUID or event history.
+    pub session_id: SessionId,
+}
+crate::record_serde::wire_record!(SessionNameMatch {
+    name: "name",
+    session_id: "sessionId"
+});
+
 /// Agent definitions, selection, and source filters.
 ///
 /// <div class="warning">
@@ -6648,6 +6668,38 @@ pub struct SessionSettingsSnapshot {
     pub version: Option<String>,
 }
 crate::record_serde::wire_record!(SessionSettingsSnapshot { client_name: "clientName" if is_none, job: "job", model: "model", online_evaluation: "onlineEvaluation", repo: "repo", start_time_ms: "startTimeMs" if is_none, timeout_ms: "timeoutMs" if is_none, validation: "validation", version: "version" if is_none });
+
+/// Friendly name to find in the configured or explicitly selected session profile.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct SessionsFindByNameRequest {
+    /// Configuration directory containing the session state. Omitted or empty to use the server's configured home. The lookup does not change the server's storage context.
+    pub config_dir: Option<String>,
+    /// Exact persisted name to match after ECMAScript whitespace trimming of the query, Unicode case folding, and canonical composition. Stored names are not trimmed. A blank query returns no matches without scanning.
+    pub name: String,
+}
+crate::record_serde::wire_record!(SessionsFindByNameRequest { config_dir: "configDir" if is_none, name: "name" });
+
+/// All local persisted name candidates, including candidates without resumable history.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct SessionsFindByNameResult {
+    /// Every match in directory enumeration order, without sorting, deduplication, or a limit. Order is not stable across calls.
+    pub matches: Vec<SessionNameMatch>,
+}
+crate::record_serde::wire_record!(SessionsFindByNameResult { matches: "matches" });
 
 /// UUID prefix to resolve to a unique session ID.
 ///

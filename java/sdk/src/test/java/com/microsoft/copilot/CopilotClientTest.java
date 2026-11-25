@@ -316,7 +316,7 @@ public class CopilotClientTest {
                 .setRuntime(RuntimeConnection.forDefault().setBaseDirectory(System.getProperty("java.io.tmpdir"))));
         var rpc = mock(JsonRpcClient.class);
         setConnectionFuture(client, rpc, null);
-        SkillProvider provider = testSkillProvider();
+        SkillProvider provider = new EmptySkillProvider();
         var createRequest = new AtomicReference<CreateSessionRequest>();
         var optionsPatch = new AtomicReference<ObjectNode>();
 
@@ -406,7 +406,7 @@ public class CopilotClientTest {
                 .setRuntime(RuntimeConnection.forDefault().setBaseDirectory(System.getProperty("java.io.tmpdir"))));
         var rpc = mock(JsonRpcClient.class);
         setConnectionFuture(client, rpc, null);
-        SkillProvider resident = testSkillProvider();
+        SkillProvider resident = new EmptySkillProvider();
         when(rpc.invoke(eq("session.create"), any(), eq(CreateSessionResponse.class))).thenReturn(
                 CompletableFuture.completedFuture(new CreateSessionResponse("resident-session", null, null, null)));
         when(rpc.invoke(eq("session.options.update"), any(), eq(Void.class)))
@@ -420,7 +420,7 @@ public class CopilotClientTest {
 
             var resumeConfig = new ResumeSessionOptions()
                     .setPermissions(new SessionPermissionOptions().setOnRequest(PermissionHandler.APPROVE_ALL))
-                    .setSkills(new SessionSkillOptions().setProvider(testSkillProvider()));
+                    .setSkills(new SessionSkillOptions().setProvider(new EmptySkillProvider()));
             var error = assertThrows(ExecutionException.class,
                     () -> client.resumeSession("resident-session", resumeConfig).get());
 
@@ -451,12 +451,12 @@ public class CopilotClientTest {
         try {
             client.createSession(new CreateSessionOptions().setSessionId("shared-session")
                     .setPermissions(new SessionPermissionOptions().setOnRequest(PermissionHandler.APPROVE_ALL))
-                    .setSkills(new SessionSkillOptions().setProvider(testSkillProvider()))).get();
+                    .setSkills(new SessionSkillOptions().setProvider(new EmptySkillProvider()))).get();
             var failing = client.resumeSession("shared-session",
                     new ResumeSessionOptions()
                             .setPermissions(new SessionPermissionOptions().setOnRequest(PermissionHandler.APPROVE_ALL))
-                            .setSkills(new SessionSkillOptions().setProvider(testSkillProvider())));
-            SkillProvider winner = testSkillProvider();
+                            .setSkills(new SessionSkillOptions().setProvider(new EmptySkillProvider())));
+            SkillProvider winner = new EmptySkillProvider();
             client.resumeSession("shared-session",
                     new ResumeSessionOptions()
                             .setPermissions(new SessionPermissionOptions().setOnRequest(PermissionHandler.APPROVE_ALL))
@@ -2002,21 +2002,6 @@ public class CopilotClientTest {
         Field field = CopilotClient.class.getDeclaredField("connectionFuture");
         field.setAccessible(true);
         field.set(client, future);
-    }
-
-    @AllowCopilotExperimental
-    private static SkillProvider testSkillProvider() {
-        return new SkillProvider() {
-            @Override
-            public CompletableFuture<List<SkillProviderDescriptor>> listSkills() {
-                return CompletableFuture.completedFuture(List.of());
-            }
-
-            @Override
-            public CompletableFuture<String> readSkill(String name) {
-                return CompletableFuture.completedFuture(null);
-            }
-        };
     }
 
     @AllowCopilotExperimental

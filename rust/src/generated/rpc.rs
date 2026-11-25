@@ -13330,6 +13330,35 @@ impl<'a> ClientRpcSessions<'a> {
             .await
     }
 
+    /// Finds all exact friendly-name candidates in the configured or explicitly selected local session profile without opening sessions or reading history. Matches persisted workspace names, not deprecated summaries. Unreadable or malformed candidate metadata is skipped. A missing store returns no matches; other store enumeration errors fail the request.
+    ///
+    /// Wire method: `sessions.findByName`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - Friendly name to find in the configured or explicitly selected session profile.
+    ///
+    /// # Returns
+    ///
+    /// All local persisted name candidates, including candidates without resumable history.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub async fn find_by_name(
+        &self,
+        params: SessionsFindByNameRequest,
+    ) -> Result<SessionsFindByNameResult, Error> {
+        let wire_params = serde_json::to_value(params)?;
+        self.client
+            .call_typed(rpc_methods::SESSIONS_FINDBYNAME, Some(wire_params))
+            .await
+    }
+
     /// Returns the most-relevant prior session for a given working-directory context.
     ///
     /// Wire method: `sessions.getLastForContext`.

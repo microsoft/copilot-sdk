@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -266,7 +267,7 @@ func TestSessionE2E(t *testing.T) {
 		if len(toolNames) != 2 {
 			t.Errorf("Expected exactly 2 tools, got %d: %v", len(toolNames), toolNames)
 		}
-		if !contains(toolNames, "view") || !contains(toolNames, "edit") {
+		if !slices.Contains(toolNames, "view") || !slices.Contains(toolNames, "edit") {
 			t.Errorf("Expected tools to contain 'view' and 'edit', got %v", toolNames)
 		}
 	})
@@ -288,10 +289,10 @@ func TestSessionE2E(t *testing.T) {
 		// Validate that excluded tool is not present but others are
 		traffic := ctx.WaitForExchanges(t, 1)
 		toolNames := getToolNames(traffic[0])
-		if contains(toolNames, "view") {
+		if slices.Contains(toolNames, "view") {
 			t.Errorf("Expected 'view' to be excluded, got %v", toolNames)
 		}
-		if !contains(toolNames, "edit") || !contains(toolNames, "grep") {
+		if !slices.Contains(toolNames, "edit") || !slices.Contains(toolNames, "grep") {
 			t.Errorf("Expected 'edit' and 'grep' to be present, got %v", toolNames)
 		}
 	})
@@ -328,7 +329,7 @@ func TestSessionE2E(t *testing.T) {
 		// The real assertion: verify the runtime excluded the tool from the CAPI request
 		traffic := ctx.WaitForExchanges(t, 1)
 		toolNames := getToolNames(traffic[0])
-		if contains(toolNames, "secret_tool") {
+		if slices.Contains(toolNames, "secret_tool") {
 			t.Errorf("Expected 'secret_tool' to be excluded from default agent, got %v", toolNames)
 		}
 	})
@@ -910,10 +911,10 @@ func TestSessionE2E(t *testing.T) {
 		}
 
 		// Verify both sessions are in the list
-		if !contains(sessionIDs, session1.SessionID) {
+		if !slices.Contains(sessionIDs, session1.SessionID) {
 			t.Errorf("Expected session1 ID %s to be in sessions list %v", session1.SessionID, sessionIDs)
 		}
-		if !contains(sessionIDs, session2.SessionID) {
+		if !slices.Contains(sessionIDs, session2.SessionID) {
 			t.Errorf("Expected session2 ID %s to be in sessions list %v", session2.SessionID, sessionIDs)
 		}
 
@@ -965,7 +966,7 @@ func TestSessionE2E(t *testing.T) {
 			sessionIDs[i] = s.SessionID
 		}
 
-		if !contains(sessionIDs, sessionID) {
+		if !slices.Contains(sessionIDs, sessionID) {
 			t.Errorf("Expected session ID %s to be in sessions list before delete", sessionID)
 		}
 
@@ -986,7 +987,7 @@ func TestSessionE2E(t *testing.T) {
 			sessionIDsAfter[i] = s.SessionID
 		}
 
-		if contains(sessionIDsAfter, sessionID) {
+		if slices.Contains(sessionIDsAfter, sessionID) {
 			t.Errorf("Expected session ID %s to NOT be in sessions list after delete", sessionID)
 		}
 
@@ -1191,15 +1192,6 @@ func getToolNames(exchange testharness.ParsedHttpExchange) []string {
 		names = append(names, tool.Function.Name)
 	}
 	return names
-}
-
-func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
 }
 
 func TestSessionLogE2E(t *testing.T) {

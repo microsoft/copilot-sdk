@@ -6,6 +6,7 @@ package e2e
 
 import (
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -160,7 +161,7 @@ func TestBYOKBearerTokenProvider(t *testing.T) {
 
 		// The runtime acquired a token via the callback and applied it verbatim
 		// as the bearer credential on the outbound model request.
-		if !containsString(rt.authHeaders(), "Bearer "+sentinel) {
+		if !slices.Contains(rt.authHeaders(), "Bearer "+sentinel) {
 			t.Fatalf("Expected captured Authorization headers to contain %q, got %v", "Bearer "+sentinel, rt.authHeaders())
 		}
 		mu.Lock()
@@ -279,7 +280,7 @@ func TestBYOKBearerTokenProvider(t *testing.T) {
 		mu.Lock()
 		got := append([]string(nil), acquiredFor...)
 		mu.Unlock()
-		if !containsString(got, "red") || !containsString(got, "blue") {
+		if !slices.Contains(got, "red") || !slices.Contains(got, "blue") {
 			t.Fatalf("Expected both providers to acquire tokens, got %v", got)
 		}
 	})

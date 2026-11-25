@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -132,11 +133,11 @@ func TestClientOptionsE2E(t *testing.T) {
 		args := capture.Args
 
 		assertArgValue(t, args, "--log-level", "debug")
-		if !containsStringE(args, "--stdio") {
+		if !slices.Contains(args, "--stdio") {
 			t.Errorf("Expected --stdio in args, got %v", args)
 		}
 		assertArgValue(t, args, "--auth-token-env", "COPILOT_SDK_AUTH_TOKEN")
-		if !containsStringE(args, "--no-auto-login") {
+		if !slices.Contains(args, "--no-auto-login") {
 			t.Errorf("Expected --no-auto-login in args, got %v", args)
 		}
 		assertArgValue(t, args, "--session-idle-timeout", "17")
@@ -707,15 +708,6 @@ func assertPanics(t *testing.T, fn func()) {
 		}
 	}()
 	fn()
-}
-
-func containsStringE(slice []string, s string) bool {
-	for _, v := range slice {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }
 
 func assertArgValue(t *testing.T, args []string, name, expected string) {

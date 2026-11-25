@@ -1783,58 +1783,60 @@ export class CopilotClient {
                 RUNTIME_SHUTDOWN_TIMEOUT_MS
             );
         });
-        for (const session of activeSessions) {
-            const sessionId = session.sessionId;
-            let lastError: Error | null = null;
-            let attempts = 0;
+        const sessionErrors = await Promise.all(
+            activeSessions.map(async (session) => {
+                const sessionId = session.sessionId;
+                let lastError: Error | null = null;
+                let attempts = 0;
 
-            // Try up to 3 times with exponential backoff
-            for (let attempt = 1; attempt <= 3; attempt++) {
-                // Closure retires sessions after notification draining, so this
-                // snapshot may outlive the connection that could disconnect it.
-                if (this.connectionClosed) {
-                    lastError = null;
-                    break;
-                }
-                attempts = attempt;
-                try {
-                    const outcome = await Promise.race([
-                        session.disconnect().then(() => "disconnected" as const),
-                        sessionCleanupDeadline,
-                    ]);
-                    if (outcome === "timeout") {
-                        // The detach is still in flight, which makes another
-                        // disconnect() a no-op, so do not retry it.
-                        lastError = new Error(
-                            `session.detach did not complete within the ${RUNTIME_SHUTDOWN_TIMEOUT_MS}ms shutdown timeout`
-                        );
-                        break;
-                    }
-                    lastError = null;
-                    break; // Success
-                } catch (error) {
+                // Try up to 3 times with exponential backoff
+                for (let attempt = 1; attempt <= 3; attempt++) {
+                    // Closure retires sessions after notification draining, so this
+                    // snapshot may outlive the connection that could disconnect it.
                     if (this.connectionClosed) {
                         lastError = null;
                         break;
                     }
-                    lastError = error instanceof Error ? error : new Error(String(error));
+                    attempts = attempt;
+                    try {
+                        const outcome = await Promise.race([
+                            session.disconnect().then(() => "disconnected" as const),
+                            sessionCleanupDeadline,
+                        ]);
+                        if (outcome === "timeout") {
+                            // The detach is still in flight, which makes another
+                            // disconnect() a no-op, so do not retry it.
+                            lastError = new Error(
+                                `session.detach did not complete within the ${RUNTIME_SHUTDOWN_TIMEOUT_MS}ms shutdown timeout`
+                            );
+                            break;
+                        }
+                        lastError = null;
+                        break; // Success
+                    } catch (error) {
+                        if (this.connectionClosed) {
+                            lastError = null;
+                            break;
+                        }
+                        lastError = error instanceof Error ? error : new Error(String(error));
 
-                    if (attempt < 3) {
-                        // Exponential backoff: 100ms, 200ms
-                        const delay = 100 * Math.pow(2, attempt - 1);
-                        await new Promise((resolve) => setTimeout(resolve, delay));
+                        if (attempt < 3) {
+                            // Exponential backoff: 100ms, 200ms
+                            const delay = 100 * Math.pow(2, attempt - 1);
+                            await new Promise((resolve) => setTimeout(resolve, delay));
+                        }
                     }
                 }
-            }
 
-            if (lastError) {
-                errors.push(
-                    new Error(
+                if (lastError) {
+                    return new Error(
                         `Failed to disconnect session ${sessionId} after ${attempts} ${attempts === 1 ? "attempt" : "attempts"}: ${lastError.message}`
-                    )
-                );
-            }
-        }
+                    );
+                }
+                return null;
+            })
+        );
+        errors.push(...sessionErrors.filter((error) => error !== null));
         clearTimeout(sessionCleanupDeadlineTimer);
         for (const session of new Set([...activeSessions, ...this.sessions.values()])) {
             session._markDisconnected();

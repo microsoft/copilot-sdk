@@ -3,6 +3,7 @@ package e2e
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -457,7 +458,7 @@ func TestPendingWorkResumeE2E(t *testing.T) {
 						t.Context(),
 						&rpc.SessionsCheckInUseRequest{SessionIDs: []string{sessionID}},
 					)
-					return err == nil && containsString(result.InUse, sessionID), err
+					return err == nil && slices.Contains(result.InUse, sessionID), err
 				})
 
 				suspendedClient.ForceStop()
@@ -467,7 +468,7 @@ func TestPendingWorkResumeE2E(t *testing.T) {
 						t.Context(),
 						&rpc.SessionsCheckInUseRequest{SessionIDs: []string{sessionID}},
 					)
-					return err == nil && !containsString(result.InUse, sessionID), err
+					return err == nil && !slices.Contains(result.InUse, sessionID), err
 				})
 			}
 

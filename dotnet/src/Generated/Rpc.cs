@@ -10120,6 +10120,42 @@ internal sealed class SessionsFindByPrefixRequest
     public string Prefix { get; set; } = string.Empty;
 }
 
+/// <summary>Persisted name candidate, not a guarantee of valid history or successful resume.</summary>
+[Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+public sealed class SessionNameMatch
+{
+    /// <summary>Original decoded name from the persisted workspace metadata, without normalization or trimming.</summary>
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>Session directory identifier. The candidate need not have a UUID or event history.</summary>
+    [JsonPropertyName("sessionId")]
+    public string SessionId { get; set; } = string.Empty;
+}
+
+/// <summary>All local persisted name candidates, including candidates without resumable history.</summary>
+[Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+public sealed class SessionsFindByNameResult
+{
+    /// <summary>Every match in directory enumeration order, without sorting, deduplication, or a limit. Order is not stable across calls.</summary>
+    [JsonPropertyName("matches")]
+    public IList<SessionNameMatch> Matches { get => field ??= []; set; }
+}
+
+/// <summary>Friendly name to find in the configured or explicitly selected session profile.</summary>
+[Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+internal sealed class SessionsFindByNameRequest
+{
+    /// <summary>Configuration directory containing the session state. Omitted or empty to use the server's configured home. The lookup does not change the server's storage context.</summary>
+    [JsonPropertyName("configDir")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ConfigDir { get; set; }
+
+    /// <summary>Exact persisted name to match after ECMAScript whitespace trimming of the query, Unicode case folding, and canonical composition. Stored names are not trimmed. A blank query returns no matches without scanning.</summary>
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+}
+
 /// <summary>Most-relevant session ID for the supplied context, or omitted when no sessions exist.</summary>
 [Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
 public sealed class SessionsGetLastForContextResult
@@ -77434,6 +77470,19 @@ public sealed class ServerSessionsApi
         return await CopilotClient.InvokeRpcAsync<SessionsFindByPrefixResult>(_rpc, "sessions.findByPrefix", [request], cancellationToken);
     }
 
+    /// <summary>Finds all exact friendly-name candidates in the configured or explicitly selected local session profile without opening sessions or reading history. Matches persisted workspace names, not deprecated summaries. Unreadable or malformed candidate metadata is skipped. A missing store returns no matches; other store enumeration errors fail the request.</summary>
+    /// <param name="name">Exact persisted name to match after ECMAScript whitespace trimming of the query, Unicode case folding, and canonical composition. Stored names are not trimmed. A blank query returns no matches without scanning.</param>
+    /// <param name="configDir">Configuration directory containing the session state. Omitted or empty to use the server's configured home. The lookup does not change the server's storage context.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>All local persisted name candidates, including candidates without resumable history.</returns>
+    public async Task<SessionsFindByNameResult> FindByNameAsync(string name, string? configDir = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+
+        var request = new SessionsFindByNameRequest { Name = name, ConfigDir = configDir };
+        return await CopilotClient.InvokeRpcAsync<SessionsFindByNameResult>(_rpc, "sessions.findByName", [request], cancellationToken);
+    }
+
     /// <summary>Returns the most-relevant prior session for a given working-directory context.</summary>
     /// <param name="context">Optional working-directory context used to score session relevance. When omitted the most-recently-modified session wins.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
@@ -93464,6 +93513,7 @@ internal static class ClientGlobalApiRegistration
 [JsonSerializable(typeof(SessionNameGenerateRequest))]
 [JsonSerializable(typeof(SessionNameGenerateResult))]
 [JsonSerializable(typeof(SessionNameGetRequest))]
+[JsonSerializable(typeof(SessionNameMatch))]
 [JsonSerializable(typeof(SessionOpenAgentOptions))]
 [JsonSerializable(typeof(SessionOpenEventOptions))]
 [JsonSerializable(typeof(SessionOpenExecutionOptions))]
@@ -93652,6 +93702,8 @@ internal static class ClientGlobalApiRegistration
 [JsonSerializable(typeof(SessionsCreateWorkspaceResult))]
 [JsonSerializable(typeof(SessionsDeleteRequest))]
 [JsonSerializable(typeof(SessionsEnrichMetadataRequest))]
+[JsonSerializable(typeof(SessionsFindByNameRequest))]
+[JsonSerializable(typeof(SessionsFindByNameResult))]
 [JsonSerializable(typeof(SessionsFindByPrefixRequest))]
 [JsonSerializable(typeof(SessionsFindByPrefixResult))]
 [JsonSerializable(typeof(SessionsFindByTaskIDRequest))]

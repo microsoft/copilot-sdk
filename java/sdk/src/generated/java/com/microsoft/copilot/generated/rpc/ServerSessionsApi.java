@@ -211,6 +211,17 @@ public final class ServerSessionsApi {
     }
 
     /**
+     * Finds all exact friendly-name candidates in the configured or explicitly selected local session profile without opening sessions or reading history. Matches persisted workspace names, not deprecated summaries. Unreadable or malformed candidate metadata is skipped. A missing store returns no matches; other store enumeration errors fail the request.
+     *
+     * @apiNote This method is experimental and may change in a future version.
+     * @since 1.0.0
+     */
+    @CopilotExperimental
+    public CompletableFuture<SessionsFindByNameResult> findByName(SessionsFindByNameParams params) {
+        return caller.invoke("sessions.findByName", params, SessionsFindByNameResult.class);
+    }
+
+    /**
      * Returns the most-relevant prior session for a given working-directory context.
      *
      * @apiNote This method is experimental and may change in a future version.

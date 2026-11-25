@@ -333,7 +333,7 @@ public class SessionRequestBuilderTest {
     @Test
     @AllowCopilotExperimental
     void skillProviderFlagIsForwardedAndSerializedForCreateAndResume() throws Exception {
-        SkillProvider provider = testSkillProvider();
+        SkillProvider provider = new EmptySkillProvider();
         var mapper = JsonRpcClient.getObjectMapper();
 
         var createRequest = SessionRequestBuilder.buildCreateRequest(
@@ -1139,7 +1139,7 @@ public class SessionRequestBuilderTest {
     @AllowCopilotExperimental
     void configureSessionWithSkillProvider_registersProvider() {
         CopilotSession session = new CopilotSession("session-1", null);
-        SkillProvider provider = testSkillProvider();
+        SkillProvider provider = new EmptySkillProvider();
 
         SessionRequestBuilder.configureSession(session,
                 new CreateSessionOptions().setSkills(new SessionSkillOptions().setProvider(provider)));
@@ -1227,7 +1227,7 @@ public class SessionRequestBuilderTest {
     @AllowCopilotExperimental
     void configureResumedSessionWithSkillProvider_registersProvider() {
         CopilotSession session = new CopilotSession("session-1", null);
-        SkillProvider provider = testSkillProvider();
+        SkillProvider provider = new EmptySkillProvider();
 
         SessionRequestBuilder.configureSession(session,
                 new ResumeSessionOptions().setSkills(new SessionSkillOptions().setProvider(provider)));
@@ -1692,20 +1692,5 @@ public class SessionRequestBuilderTest {
         }
         assertNull(mapper.readValue("{\"sessionId\":\"s1\"}", CreateSessionResponse.class).permissionModeResult());
         assertNull(new ResumeSessionResponse("s1", null, null, null, null).permissionModeResult());
-    }
-
-    @AllowCopilotExperimental
-    private static SkillProvider testSkillProvider() {
-        return new SkillProvider() {
-            @Override
-            public CompletableFuture<List<SkillProviderDescriptor>> listSkills() {
-                return CompletableFuture.completedFuture(List.of());
-            }
-
-            @Override
-            public CompletableFuture<String> readSkill(String name) {
-                return CompletableFuture.completedFuture(null);
-            }
-        };
     }
 }

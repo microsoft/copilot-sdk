@@ -34,6 +34,16 @@ func (b *ahpTestLog) text() string {
 	return b.String()
 }
 
+// captureStandardLog changes the process-wide logger until cleanup, so callers must run serially.
+func captureStandardLog(t *testing.T) *ahpTestLog {
+	t.Helper()
+	output := new(ahpTestLog)
+	previous := log.Writer()
+	log.SetOutput(output)
+	t.Cleanup(func() { log.SetOutput(previous) })
+	return output
+}
+
 func TestAhpHostRequiresExplicitTransport(t *testing.T) {
 	for _, options := range []*AhpHostOptions{nil, {}} {
 		client := NewClient(&ClientOptions{Mode: ModeCodingAgent})

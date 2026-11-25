@@ -28,15 +28,6 @@ func assistantContent(t *testing.T, event *copilot.SessionEvent) string {
 	return data.Content
 }
 
-func containsString(slice []string, value string) bool {
-	for _, entry := range slice {
-		if entry == value {
-			return true
-		}
-	}
-	return false
-}
-
 func waitForMatchingEvent(session *copilot.Session, eventType copilot.SessionEventType, predicate func(copilot.SessionEvent) bool, description string) func() (*copilot.SessionEvent, error) {
 	result := make(chan *copilot.SessionEvent, 1)
 	errCh := make(chan error, 1)

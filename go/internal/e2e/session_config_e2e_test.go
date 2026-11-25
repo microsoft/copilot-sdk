@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -167,15 +168,6 @@ func getTaskAgentTypes(t *testing.T, ctx *testharness.TestContext, exchange test
 	}
 	t.Fatal("Expected a captured provider request")
 	return nil
-}
-
-func containsAgentType(values []string, needle string) bool {
-	for _, value := range values {
-		if value == needle {
-			return true
-		}
-	}
-	return false
 }
 
 func createPDFAttachment() copilot.Attachment {
@@ -412,7 +404,7 @@ func TestSessionConfigNewOptionsE2E(t *testing.T) {
 			t.Fatalf("CreateSession baseline failed: %v", err)
 		}
 		baselineExchange := sendAndGetNextExchange(t, ctx, baseline, prompt)
-		if !containsAgentType(getTaskAgentTypes(t, ctx, baselineExchange), excludedAgent) {
+		if !slices.Contains(getTaskAgentTypes(t, ctx, baselineExchange), excludedAgent) {
 			t.Fatalf("Expected baseline task agents to include %q", excludedAgent)
 		}
 		_ = baseline.Disconnect()
@@ -428,7 +420,7 @@ func TestSessionConfigNewOptionsE2E(t *testing.T) {
 		if len(agentTypes) == 0 {
 			t.Fatal("Expected task tool agent types")
 		}
-		if containsAgentType(agentTypes, excludedAgent) {
+		if slices.Contains(agentTypes, excludedAgent) {
 			t.Fatalf("Expected excluded task agents not to include %q; got %v", excludedAgent, agentTypes)
 		}
 	})
@@ -454,7 +446,7 @@ func TestSessionConfigNewOptionsE2E(t *testing.T) {
 		if len(agentTypes) == 0 {
 			t.Fatal("Expected task tool agent types")
 		}
-		if containsAgentType(agentTypes, excludedAgent) {
+		if slices.Contains(agentTypes, excludedAgent) {
 			t.Fatalf("Expected excluded task agents not to include %q; got %v", excludedAgent, agentTypes)
 		}
 	})

@@ -142,7 +142,7 @@ func TestMemoryStoreDispatch(t *testing.T) {
 	})
 
 	t.Run("callback error is generic", func(t *testing.T) {
-		captureSkillProviderLog(t)
+		captureStandardLog(t)
 		client, server := newSkillProviderClient(t)
 		session := newSession("failing-memory-session", client.client, "", false)
 		session.memoryStore = func(context.Context, StoredMemory) error {
