@@ -563,7 +563,7 @@ func hostlessRuntimePath(name, runtimePlatform, wrapperName string) (string, boo
 		return "", false
 	}
 	for _, part := range parts {
-		if part == "mediaremote-adapter" {
+		if part == "mediaremote-adapter" || isCLIVoiceArtifact(part) {
 			return "", false
 		}
 	}
@@ -574,6 +574,14 @@ func hostlessRuntimePath(name, runtimePlatform, wrapperName string) (string, boo
 		return strings.Join(parts[2:], "/"), true
 	}
 	return relative, true
+}
+
+// isCLIVoiceArtifact matches the CLI voice service, its .path references, and
+// its native asset generations. SDK clients have no voice API.
+func isCLIVoiceArtifact(part string) bool {
+	return part == "copilot-voice" ||
+		strings.HasPrefix(part, "copilot-voice.") ||
+		strings.HasPrefix(part, "copilot-voice-assets.")
 }
 
 func createRuntimeAssetsArchive(tarballPath, outputPath string, info platformInfo) error {

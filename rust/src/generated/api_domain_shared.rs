@@ -5305,7 +5305,7 @@ pub struct PermissionDecisionContext {
     pub source: PermissionDecisionSource,
     /// Client surface that submitted the response.
     pub surface: PermissionDecisionSurface,
-    /// Optional user-authored explanation of this decision, independent of approval scope. Collected only in restricted telemetry for accepted human responses to Assisted Permissions prompts. Never persisted in session history, sent to the agent or judge, or used to create approval rules. Existing rejection feedback is separate.
+    /// Optional user-authored explanation of this decision, independent of approval scope. Collected for accepted human responses to Assisted Permissions prompts: in restricted telemetry, or, when the prompt's `assistedApproval.userFeedbackUpload` is true, uploaded to GitHub with the redacted session event log after the user consents. Never persisted in session history, sent to the agent or judge, or used to create approval rules. Existing rejection feedback is separate.
     pub user_feedback: Option<String>,
 }
 crate::record_serde::wire_record!(PermissionDecisionContext { outcome: "outcome", response_capability: "responseCapability" if is_none, source: "source", surface: "surface", user_feedback: "userFeedback" if is_none });

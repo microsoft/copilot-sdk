@@ -28,6 +28,8 @@ import javax.annotation.processing.Generated;
 public record SessionSendParams(
     /** Target session identifier */
     @JsonProperty("sessionId") String sessionId,
+    /** Overrides the maximum logical model turns for this request. Zero permits no model turns; needing another turn after the limit is an error. Not supported for immediate steering. */
+    @JsonProperty("maxToolTurns") Long maxToolTurns,
     /** The user message text */
     @JsonProperty("prompt") String prompt,
     /** If provided, this is shown in the timeline instead of `prompt` */
@@ -151,6 +153,7 @@ public record SessionSendParams(
     public static final class Builder {
         private Builder() {}
         private String sessionId;
+        private Long maxToolTurns;
         private String prompt;
         private String displayPrompt;
         private List<Object> attachments;
@@ -177,6 +180,18 @@ public record SessionSendParams(
         @com.microsoft.copilot.CopilotExperimental
         public Builder sessionId(String value) {
             this.sessionId = value;
+            return this;
+        }
+
+        /**
+         * Sets the {@code maxToolTurns} property.
+         * @param value the property value
+         * @return this builder
+         * @since 2.0.0
+         */
+        @com.microsoft.copilot.CopilotExperimental
+        public Builder maxToolTurns(Long value) {
+            this.maxToolTurns = value;
             return this;
         }
 
@@ -380,7 +395,7 @@ public record SessionSendParams(
          */
         public SessionSendParams build() {
             if (prompt == null) throw new IllegalStateException("Missing required property: prompt");
-            return new SessionSendParams(sessionId, prompt, displayPrompt, attachments, mode, prepend, billable, requiredTool, source, agentAuthored, agentMode, requestHeaders, responseFormat, traceparent, tracestate, clientTurnId, wait_);
+            return new SessionSendParams(sessionId, maxToolTurns, prompt, displayPrompt, attachments, mode, prepend, billable, requiredTool, source, agentAuthored, agentMode, requestHeaders, responseFormat, traceparent, tracestate, clientTurnId, wait_);
         }
     }
 }

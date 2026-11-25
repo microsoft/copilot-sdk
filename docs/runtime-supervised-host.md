@@ -626,8 +626,8 @@ directly to the real listener. The existing CAPI replay proxy handles only
 inference traffic and has no AHP orchestration routes or state.
 
 Install the existing Node SDK and replay-harness test dependencies before these
-suites (`npm --prefix nodejs ci --ignore-scripts` and
-`npm --prefix test/harness ci --ignore-scripts`, from `src/sdk`).
+suites (`pnpm --dir nodejs install --frozen-lockfile --ignore-scripts` and
+`pnpm --dir test/harness install --frozen-lockfile --ignore-scripts`, from `src/sdk`).
 Use a source-built runtime or integrated candidate, not the released runtime pin.
 As with the Node and Rust suites, set `COPILOT_RUNTIME_HOST_E2E=1` to enable them.
 Set `COPILOT_CLI_PATH` to that runtime's launcher and `GITHUB_ACTIONS=true` to

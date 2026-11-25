@@ -20,7 +20,17 @@ fn result_serializes_wire_fields_without_exposing_credentials_in_debug() {
     let identity = EntraTokenProviderResult::Identity {
         account_id: "host-account".to_owned(),
         username: Some("display-name".to_owned()),
+        tenant_id: "resource-tenant".to_owned(),
     };
+    assert_eq!(
+        serde_json::to_value(&identity).unwrap(),
+        serde_json::json!({
+            "kind": "identity",
+            "accountId": "host-account",
+            "tenantId": "resource-tenant",
+            "username": "display-name",
+        })
+    );
     assert_eq!(format!("{identity:?}"), "Identity { .. }");
     assert_eq!(
         serde_json::to_value(EntraTokenProviderResult::Cancelled).unwrap(),

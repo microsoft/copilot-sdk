@@ -1523,7 +1523,7 @@ export type PermissionRequest =
   | PermissionRequestHook
   | PermissionRequestExtensionManagement
   | PermissionRequestWorkflow
-  | PermissionRequestExtensionPermissionAccess
+  | PermissionRequestExtensionLaunch
   | PermissionRequestExtensionEnvAccess;
 /**
  * Access a sandbox path grant confers
@@ -1615,7 +1615,7 @@ export type PermissionPromptRequest =
   | PermissionPromptRequestHook
   | PermissionPromptRequestExtensionManagement
   | PermissionPromptRequestWorkflow
-  | PermissionPromptRequestExtensionPermissionAccess
+  | PermissionPromptRequestExtensionLaunch
   | PermissionPromptRequestExtensionEnvAccess;
 /**
  * Underlying permission kind that needs path approval
@@ -1667,7 +1667,7 @@ export type UserToolSessionApproval =
   | UserToolSessionApprovalCustomTool
   | UserToolSessionApprovalExtensionManagement
   | UserToolSessionApprovalWorkflow
-  | UserToolSessionApprovalExtensionPermissionAccess
+  | UserToolSessionApprovalExtensionLaunch
   | UserToolSessionApprovalExtensionEnvAccess;
 /**
  * Direction stored in a historical extractor claim. Current runtimes do not apply it.
@@ -2607,6 +2607,10 @@ export interface StartData {
    */
   githubMcpToolConfig?: GitHubMcpToolConfig;
   /**
+   * Default maximum logical model turns per request.
+   */
+  maxToolTurns?: number;
+  /**
    * Identifier of the software producing the events (e.g., "copilot-agent")
    */
   producer: string;
@@ -2815,6 +2819,10 @@ export interface ResumeData {
    * On-disk byte size of the session's persisted events.jsonl file at resume time; omitted when the file does not exist or cannot be stat'd
    */
   eventsFileSizeBytes?: number;
+  /**
+   * Default maximum logical model turns per request, when changed on resume.
+   */
+  maxToolTurns?: number;
   /**
    * Provider of selectedModel at resume time, when explicitly selected.
    */
@@ -8203,9 +8211,25 @@ export interface AssistantTurnStartData {
    */
   parentToolCallId?: string;
   /**
+   * Maximum and consumed logical model turns for the active request.
+   *
+   * @internal
+   */
+  toolTurnBudget?: ToolTurnBudget;
+  /**
    * Identifier for this turn within the agentic loop, typically a stringified turn number
    */
   turnId: string;
+}
+export interface ToolTurnBudget {
+  /**
+   * Maximum logical model turns allowed for this request.
+   */
+  limit: number;
+  /**
+   * Logical model turns already admitted for this request.
+   */
+  used: number;
 }
 /**
  * Session event "assistant.intent". Agent intent description for current activity or plan
@@ -11969,7 +11993,7 @@ export interface SubagentStartedData {
    */
   parentId?: string;
   /**
-   * Whether this sub-agent can be resumed. Currently always false.
+   * Whether a later session resume may continue this sub-agent if its session ends before it does.
    */
   resumable?: boolean;
   /**
@@ -13650,6 +13674,12 @@ export interface PermissionAssistedApproval {
    * The assisted-approval safety judge's outcome for this request.
    */
   recommendation: AssistedApprovalRecommendation;
+  /**
+   * True when the runtime shares a note the user gives with their answer (`userFeedback` in the decision context) with GitHub through the feedback upload, after asking the user's consent, instead of restricted telemetry. Set only for GitHub staff whose account does not allow restricted telemetry. Hosts that collect Assisted Permissions feedback show their feedback field when this is true.
+   *
+   * @experimental
+   */
+  userFeedbackUpload?: boolean;
 }
 /**
  * Bounded runtime attribution, independent of free-text rationale. Telemetry revalidates this vocabulary before standard collection.
@@ -13927,23 +13957,23 @@ export interface WorkflowPermissionPhase {
   title: string;
 }
 /**
- * Extension permission access request
+ * Request approval before starting an extension process.
  */
-export interface PermissionRequestExtensionPermissionAccess {
+export interface PermissionRequestExtensionLaunch {
   /**
-   * Capabilities the extension is requesting
+   * Contribution descriptions retained from historical capability-consent records. Absent for new launch requests.
    */
-  capabilities: string[];
+  capabilities?: string[];
   /**
-   * Name of the extension requesting permission access
+   * Source-qualified identity of the extension to launch.
    */
   extensionName: string;
   /**
    * Permission kind discriminator
    */
-  kind: "extension-permission-access";
+  kind: "extension-launch";
   /**
-   * Tool call ID that triggered this permission request
+   * Tool call that initiated the launch, when applicable.
    */
   toolCallId?: string;
 }
@@ -14464,29 +14494,29 @@ export interface PermissionPromptRequestWorkflow {
   toolCallId?: string;
 }
 /**
- * Extension permission access prompt
+ * Approval to run extension code and access the session before its process starts.
  */
-export interface PermissionPromptRequestExtensionPermissionAccess {
+export interface PermissionPromptRequestExtensionLaunch {
   /**
-   * Assisted-approval judge information for this request; present only in assisted mode.
+   * Assisted-approval information retained for this request, when present.
    *
    * @experimental
    */
   assistedApproval?: PermissionAssistedApproval;
   /**
-   * Capabilities the extension is requesting
+   * Contribution descriptions retained from historical capability-consent records. Absent for new launch requests.
    */
-  capabilities: string[];
+  capabilities?: string[];
   /**
-   * Name of the extension requesting permission access
+   * Source-qualified identity of the extension to launch.
    */
   extensionName: string;
   /**
    * Prompt kind discriminator
    */
-  kind: "extension-permission-access";
+  kind: "extension-launch";
   /**
-   * Tool call ID that triggered this permission request
+   * Tool call that initiated the launch, when applicable.
    */
   toolCallId?: string;
 }
@@ -14733,17 +14763,17 @@ export interface UserToolSessionApprovalWorkflow {
   kind: "workflow";
 }
 /**
- * Session-scoped tool-approval rule for an extension's permission-gated capability access, keyed by extension name.
+ * Reusable launch approval for one source-qualified extension identity.
  */
-export interface UserToolSessionApprovalExtensionPermissionAccess {
+export interface UserToolSessionApprovalExtensionLaunch {
   /**
-   * Extension name
+   * Source-qualified identity of the approved extension.
    */
   extensionName: string;
   /**
-   * Extension permission access approval kind
+   * Extension launch approval kind
    */
-  kind: "extension-permission-access";
+  kind: "extension-launch";
 }
 /**
  * Session-scoped tool-approval rule for an extension's access to sensitive environment variables, keyed by extension name and the exact set of variable names.

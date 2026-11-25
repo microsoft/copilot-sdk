@@ -448,7 +448,7 @@ class JsonRpcClient implements AutoCloseable {
         // can contain credentials under arbitrary names.
         return name.equals("accessToken") || name.equals("gitHubToken") || name.equals("bearerToken")
                 || name.equals("apiKey") || name.equals("token") || name.equals("password")
-                || name.equals("hostEnvironment") || name.equals("environment");
+                || name.equals("githubClientSecret") || name.equals("hostEnvironment") || name.equals("environment");
     }
 
     private void startReader() {

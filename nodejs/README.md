@@ -438,7 +438,7 @@ Create a new conversation session.
 - `github.telemetryEnabled?: boolean` - Disables internal session telemetry only when set to `false`. Omission or `true` enables it for eligible GitHub-authenticated sessions, including custom-provider (BYOK) sessions. Host and account policies still control uploads; this is separate from OpenTelemetry configuration.
 - `github.tokenProvider?: GitHubTokenProvider` - Acquires rotating, session-scoped GitHub tokens. Token results require an `expiresIn` value in seconds remaining when the callback completes, of which more than one hour must still remain after the runtime validates the token; production tokens typically last eight hours. Cannot be combined with `github.token`.
 - `inference.providers?: NamedProviderConfig[]` - Custom API provider configuration (BYOK - Bring Your Own Key). See [Custom Providers](#custom-providers) section.
-- `permissions.onRequest?: PermissionHandler` - Optional handler called before each tool execution to approve or deny it. When omitted, permission requests are emitted as events and left pending for manual resolution. `approveAll` approves requests when managed settings are disabled and throws when `github.fetchManagedSettings` is true. Custom handlers can inspect `managedApprovalRequired` for human-facing confirmation logic. See [Permission Handling](#permission-handling) section.
+- `permissions.onRequest?: PermissionHandler` - Optional handler for tool execution and extension launch approval. When omitted, permission requests are emitted as events and left pending for manual resolution. `approveAll` approves requests when managed settings are disabled and throws when `github.fetchManagedSettings` is true. Custom handlers can inspect `managedApprovalRequired` for human-facing confirmation logic. See [Permission Handling](#permission-handling) section.
 - `interaction.onUserInputRequest?: UserInputHandler` - Handler for legacy question-and-answer requests from the agent. Enables the legacy `ask_user` tool. See [User Input Requests](#user-input-requests) section.
 - `interaction.onShellAuthenticationRequest?: ShellAuthenticationHandler` - Handler for passwords and other answers that shell commands run by the agent ask for, such as `sudo -A`, `ssh`, and `git` over HTTPS. The answer goes only to the program that asked; the model never sees it. Without a handler, those commands fail as they do without a terminal. See [Shell password prompts](../docs/features/shell-password-prompts.md).
 - `interaction.askUserVariant?: "legacy" | "elicitation"` - Selects the model-facing `ask_user` tool shape when creating or cold-resuming a session. Defaults to `"legacy"`; use `"elicitation"` with `interaction.onElicitationRequest`.
@@ -2131,7 +2131,7 @@ Inbound trace context from the CLI is available on the `ToolInvocation` object p
 
 ## Permission Handling
 
-An `permissions.onRequest` handler is optional when you create or resume a session. When provided, it is called before the agent executes each tool (file writes, shell commands, custom tools, etc.) and returns a decision. When omitted, permission requests are emitted as events and left pending for the consumer to resolve with the pending permission RPC.
+`permissions.onRequest` handles tool and `extension-launch` approval. Replace `extension-permission-access` handler branches and approval objects with `extension-launch`. Existing reusable grants retain their scopes; historical one-time answers stay spent. Sensitive-variable consent remains separate. Without a handler, consumers resolve emitted requests through the pending-permission API.
 
 Callbacks receive optional derived prompt context as `invocation.promptRequest`. The raw request's `managedApprovalRequired` remains managed-policy provenance and enforces one-shot restrictions. Only derived `commands`, `read`, `write`, `url`, and `workflow` prompts can clear the human requirement after Assisted approval; for missing or other prompt kinds, keep the raw marker authoritative.
 
@@ -2679,13 +2679,13 @@ From the repository root:
 
 ```bash
 cd test/harness
-npm ci
+pnpm install --frozen-lockfile --ignore-scripts
 ```
 
 ```bash
 cd nodejs
-npm ci
-npm test
+pnpm install --frozen-lockfile --ignore-scripts
+pnpm test
 ```
 
 ### Internal feature-flag example

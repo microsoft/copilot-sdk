@@ -324,6 +324,7 @@ from .session_fs_provider import (
 from .tools import (
     Tool,
     ToolBinaryResult,
+    ToolExposure,
     ToolInvocation,
     ToolNamespace,
     ToolResult,
@@ -615,6 +616,7 @@ __all__ = [
     "TelemetryConfig",
     "Tool",
     "ToolBinaryResult",
+    "ToolExposure",
     "ToolInvocation",
     "ToolNamespace",
     "ToolResult",

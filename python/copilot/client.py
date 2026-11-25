@@ -1823,6 +1823,7 @@ _SESSION_WIRE_GROUPS: dict[str, tuple[str, ...]] = {
     "enableCitations": ("inference", "enableCitations"),
     "enableFileChangeTracking": ("filesystem", "trackFileChanges"),
     "sessionLimits": ("execution", "limits"),
+    "maxToolTurns": ("execution", "maxToolTurns"),
     "autopilot": ("execution", "autopilot"),
     "skipCustomInstructions": ("instructions", "skipCustomInstructions"),
     "customAgentsLocalOnly": ("agents", "localDiscoveryOnly"),
@@ -2097,6 +2098,8 @@ class SessionAgentOptions(TypedDict, total=False):
 
 
 class SessionExecutionOptions(TypedDict, total=False):
+    max_tool_turns: int
+    """Default maximum logical model turns per request. Zero prevents any primary model call."""
     """Options for session execution."""
 
     limits: SessionLimitsConfig | None
@@ -2296,6 +2299,8 @@ class ClientGitHubOptions(TypedDict, total=False):
     """Options for client github."""
 
     token: str | None
+    client_id: str | None
+    client_secret: str | None
     use_logged_in_user: bool | None
     on_telemetry: Callable[[GitHubTelemetryNotification], None | Awaitable[None]] | None
 
@@ -2434,6 +2439,10 @@ class CopilotClient:
                 the current env.
             github.token: GitHub token for authentication. Takes priority over
                 other auth methods.
+            github.client_id: GitHub OAuth app ID for runtime-managed GitHub.com sign-in
+                and Entra-to-GitHub token exchange. Requires ``github.client_secret``.
+            github.client_secret: Matching GitHub OAuth app secret. Leave both unset
+                to use the Copilot CLI OAuth app.
             runtime.base_directory: Base directory for Copilot data (session state,
                 config, etc.). Sets the ``COPILOT_HOME`` environment variable on
                 the spawned runtime. When ``None``, the runtime defaults to
@@ -2514,6 +2523,13 @@ class CopilotClient:
         runtime = runtime if runtime is not None else RuntimeConnection.for_default()
         log_level = (observability or {}).get("log_level")
         github_token = (github or {}).get("token", None)
+        client_id = (github or {}).get("client_id")
+        client_secret = (github or {}).get("client_secret")
+        if client_id is not None or client_secret is not None:
+            if not (client_id and client_id.strip() and client_secret and client_secret.strip()):
+                raise ValueError("github.client_id and github.client_secret must both be non-empty")
+        self._github_client_id = client_id
+        self._github_client_secret = client_secret
         base_directory = (
             runtime.base_directory if isinstance(runtime, OwnedRuntimeConnection) else None
         )
@@ -3798,6 +3814,7 @@ class CopilotClient:
         included_builtin_agents = (agents or {}).get("included_builtin_agents", None)
         session_limits = (execution or {}).get("limits", None)
         autopilot = (execution or {}).get("autopilot", None)
+        max_tool_turns = (execution or {}).get("max_tool_turns")
         skip_custom_instructions = (instructions or {}).get("skip_custom_instructions", None)
         refresh_custom_instructions = (instructions or {}).get("refresh_custom_instructions", None)
         trust_working_directory = (filesystem or {}).get("trust_working_directory", None)
@@ -4057,6 +4074,8 @@ class CopilotClient:
             payload["sessionLimits"] = _session_limits_to_wire(session_limits)
         if autopilot is not None:
             payload["autopilot"] = _autopilot_to_wire(autopilot)
+        if max_tool_turns is not None:
+            payload["maxToolTurns"] = max_tool_turns
         if refresh_custom_instructions is not None:
             payload["refreshCustomInstructions"] = refresh_custom_instructions
         if trust_working_directory is not None:
@@ -4959,6 +4978,7 @@ class CopilotClient:
         included_builtin_agents = (agents or {}).get("included_builtin_agents", None)
         session_limits = (execution or {}).get("limits", None)
         autopilot = (execution or {}).get("autopilot", None)
+        max_tool_turns = (execution or {}).get("max_tool_turns")
         skip_custom_instructions = (instructions or {}).get("skip_custom_instructions", None)
         custom_agents_local_only = (agents or {}).get("local_discovery_only", None)
         coauthor_enabled = (git or {}).get("coauthor_enabled", None)
@@ -5117,6 +5137,8 @@ class CopilotClient:
             payload["sessionLimits"] = _session_limits_to_wire(session_limits)
         if autopilot is not None:
             payload["autopilot"] = _autopilot_to_wire(autopilot)
+        if max_tool_turns is not None:
+            payload["maxToolTurns"] = max_tool_turns
         if model_capabilities:
             payload["modelCapabilities"] = model_capabilities.to_dict()
         if streaming is not None:
@@ -6094,6 +6116,9 @@ class CopilotClient:
                 connect_params["entra"] = self._options.entra.to_dict()
             if self._entra_token_provider is not None:
                 connect_params["entraTokenProvider"] = True
+            if self._github_client_id is not None:
+                connect_params["githubClientId"] = self._github_client_id
+                connect_params["githubClientSecret"] = self._github_client_secret
             if self._effective_connection_token is not None:
                 connect_params["token"] = self._effective_connection_token
             # Opt in to GitHub telemetry forwarding at the connection level when a
@@ -6121,6 +6146,10 @@ class CopilotClient:
                 )
         except JsonRpcError as err:
             if err.code == -32601 or err.message == "Unhandled method connect":
+                if self._github_client_id is not None:
+                    raise RuntimeError(
+                        "This runtime does not support GitHub OAuth client configuration."
+                    ) from err
                 if self._options.entra is not None:
                     raise RuntimeError(
                         "This runtime does not support Entra client configuration."
@@ -6260,6 +6289,8 @@ class CopilotClient:
             wire_agent["modelPolicy"] = agent["model_policy"]
         if "reasoning_effort" in agent:
             wire_agent["reasoningEffort"] = agent["reasoning_effort"]
+        if "max_tool_turns" in agent:
+            wire_agent["maxToolTurns"] = agent["max_tool_turns"]
         return wire_agent
 
     def _convert_default_agent_to_wire_format(

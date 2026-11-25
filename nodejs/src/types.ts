@@ -45,6 +45,7 @@ import type {
     OpenCanvasInstance,
     NamedProviderConfig as GeneratedNamedProviderConfig,
     ProviderConfigType,
+    ProtocolExternalToolExposure,
     ProtocolExternalToolNamespace,
     CurrentToolMetadata,
     NetworkAuthenticateBasicRequest,
@@ -924,6 +925,18 @@ export interface Tool<TArgs = unknown> {
      */
     defer?: "auto" | "never";
     /**
+     * Controls how agents receive this tool.
+     *
+     * `"automatic"` preserves normal selection: the default agent receives the
+     * tool, unrestricted custom agents inherit it, and custom agents with tool
+     * lists receive it only when listed. `"explicit"` exposes the tool only to
+     * custom agents whose `tools` list names it. This is not an execution
+     * permission.
+     *
+     * Defaults to `"automatic"`.
+     */
+    exposure?: ToolExposure;
+    /**
      * Opaque, host-defined metadata associated with the tool definition.
      *
      * Keys are namespaced and are not part of the stable public API. Values are
@@ -973,6 +986,7 @@ export interface Tool<TArgs = unknown> {
  * @experimental
  */
 export type ToolNamespace = ProtocolExternalToolNamespace;
+export type ToolExposure = ProtocolExternalToolExposure;
 
 /**
  * Helper to define a tool with Zod schema and get type inference for the handler.
@@ -988,6 +1002,7 @@ export function defineTool<T = unknown>(
         overridesBuiltInTool?: boolean;
         skipPermission?: boolean;
         defer?: "auto" | "never";
+        exposure?: ToolExposure;
         metadata?: Record<string, unknown>;
         isTerminal?: boolean;
         idempotent?: boolean;
@@ -2396,6 +2411,8 @@ export type MCPServerConfig = MCPStdioServerConfig | MCPHTTPServerConfig;
  * Configuration for a custom agent.
  */
 export interface CustomAgentConfig {
+    /** Maximum logical model turns per request as a local subagent. Overrides the inherited limit. */
+    maxToolTurns?: number;
     /** Declarative hook actions keyed by event name, active only for this agent. */
     hooks?: Record<string, Record<string, unknown>[]>;
     /**
@@ -3354,6 +3371,8 @@ export type MessageSource = "user" | "system" | `agent-${string}` | `automation-
 export type ExtensionContextAttachment = GeneratedExtensionContextAttachment;
 
 export interface MessageOptions {
+    /** Overrides the session's logical model-turn limit for this request. Not supported for immediate steering. */
+    maxToolTurns?: number;
     /**
      * The prompt/message to send
      */
@@ -3783,6 +3802,10 @@ export interface ClientObservabilityOptions {
 
 /** Owned-runtime GitHub authentication and first-party telemetry forwarding; not per-session identity. */
 export interface ClientGitHubOptions {
+    /** GitHub.com OAuth app client ID for runtime-managed sign-in and Entra/EMU exchange. Supply with `clientSecret`, or omit both to use the built-in app. */
+    clientId?: string;
+    /** Secret matching `clientId`. Not used for enterprise-host sign-in or for an already-issued GitHub token. */
+    clientSecret?: string;
     /**
      * GitHub token to use for authentication.
      * When provided, the token is passed to the runtime via environment variable.
@@ -4375,6 +4398,8 @@ export interface SessionFilesystemOptions {
 
 /** Accounting limits and autonomous continuation; autopilot policy does not select a session mode. */
 export interface SessionExecutionOptions {
+    /** Default maximum logical model turns per request. Zero prevents any primary model call. */
+    maxToolTurns?: number;
     /**
      * Limits applied to this session's current accounting window.
      *

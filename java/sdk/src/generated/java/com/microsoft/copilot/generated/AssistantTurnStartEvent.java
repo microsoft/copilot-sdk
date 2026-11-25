@@ -34,6 +34,8 @@ public final class AssistantTurnStartEvent extends SessionEvent {
     @JsonIgnoreProperties(ignoreUnknown = true)
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record AssistantTurnStartEventData(
+        /** Maximum and consumed logical model turns for the active request. */
+        @JsonProperty("toolTurnBudget") ToolTurnBudget toolTurnBudget,
         /** Identifier for this turn within the agentic loop, typically a stringified turn number */
         @JsonProperty("turnId") String turnId,
         /** Model identifier used for this turn, when known */
@@ -65,11 +67,23 @@ public final class AssistantTurnStartEvent extends SessionEvent {
          */
         public static final class Builder {
             private Builder() {}
+            private ToolTurnBudget toolTurnBudget;
             private String turnId;
             private String model;
             private String interactionId;
             private String parentToolCallId;
             private SessionMode agentMode;
+
+            /**
+             * Sets the {@code toolTurnBudget} property.
+             * @param value the property value
+             * @return this builder
+             * @since 2.0.0
+             */
+            public Builder toolTurnBudget(ToolTurnBudget value) {
+                this.toolTurnBudget = value;
+                return this;
+            }
 
             /**
              * Sets the {@code turnId} property.
@@ -134,7 +148,7 @@ public final class AssistantTurnStartEvent extends SessionEvent {
              */
             public AssistantTurnStartEventData build() {
                 if (turnId == null) throw new IllegalStateException("Missing required property: turnId");
-                return new AssistantTurnStartEventData(turnId, model, interactionId, parentToolCallId, agentMode);
+                return new AssistantTurnStartEventData(toolTurnBudget, turnId, model, interactionId, parentToolCallId, agentMode);
             }
         }
     }

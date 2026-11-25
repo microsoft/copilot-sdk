@@ -340,6 +340,7 @@ public class CopilotToolProcessor extends AbstractProcessor {
         boolean isTerminal = annotation.isTerminal();
         boolean idempotent = annotation.idempotent();
         com.microsoft.copilot.rpc.ToolDefer defer = annotation.defer();
+        com.microsoft.copilot.rpc.ToolExposure exposure = annotation.exposure();
 
         // Generate schema with @CopilotToolParam metadata (descriptions, names,
         // defaults)
@@ -353,6 +354,9 @@ public class CopilotToolProcessor extends AbstractProcessor {
         String skipPermArg = skipPermission ? "Boolean.TRUE" : "null";
         String isTerminalArg = isTerminal ? "Boolean.TRUE" : "null";
         String deferArg = defer != com.microsoft.copilot.rpc.ToolDefer.NONE ? "ToolDefer." + defer.name() : "null";
+        String exposureArg = exposure != com.microsoft.copilot.rpc.ToolExposure.AUTOMATIC
+                ? "com.microsoft.copilot.rpc.ToolExposure." + exposure.name()
+                : "null";
 
         out.println("            new ToolDefinition(");
         out.println("                \"" + escapeJava(toolName) + "\",");
@@ -369,7 +373,14 @@ public class CopilotToolProcessor extends AbstractProcessor {
             // Namespace is not expressible on the annotation, so it stays null.
             out.println("                " + isTerminalArg + ",");
             out.println("                null,");
-            out.println("                Boolean.TRUE");
+            out.println("                Boolean.TRUE,");
+            out.println("                " + exposureArg);
+        } else if (exposure != com.microsoft.copilot.rpc.ToolExposure.AUTOMATIC) {
+            // Namespace is not expressible on the annotation, so it stays null.
+            out.println("                " + isTerminalArg + ",");
+            out.println("                null,");
+            out.println("                null,");
+            out.println("                " + exposureArg);
         } else {
             out.println("                " + isTerminalArg);
         }

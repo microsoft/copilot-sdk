@@ -1532,6 +1532,9 @@ impl Session {
         if let Some(client_turn_id) = opts.client_turn_id {
             params["clientTurnId"] = serde_json::to_value(client_turn_id)?;
         }
+        if let Some(limit) = opts.max_tool_turns {
+            params["maxToolTurns"] = Value::from(limit);
+        }
         if let Some(schema) = opts.response_schema {
             params["responseFormat"] = serde_json::json!({
                 "type": "json_schema",
@@ -4818,7 +4821,7 @@ async fn handle_notification(
             let nested_startup_tasks = startup_tasks.cloned();
             let _ = spawn_startup_tracked(
                 async move {
-                    let cancel = ElicitationResult {
+                    let cancel = || ElicitationResult {
                         action: "cancel".to_string(),
                         content: None,
                     };
@@ -4859,7 +4862,7 @@ async fn handle_notification(
                         Err(error) if error.is_cancelled() => return,
                         Err(_) => AttributedResult::unattributed(
                             crate::types::ElicitationResultWithMetadata {
-                                result: cancel.clone(),
+                                result: cancel(),
                                 meta: None,
                             },
                         ),
@@ -4886,7 +4889,7 @@ async fn handle_notification(
                                 Some(serde_json::json!({
                                     "sessionId": sid,
                                     "requestId": request_id,
-                                    "result": cancel,
+                                    "result": cancel(),
                                 })),
                             )
                             .await;

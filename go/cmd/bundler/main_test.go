@@ -78,17 +78,22 @@ func TestCreateRuntimeAssetsArchiveRetainsUnknownAssetsAndFiltersCLIContent(t *t
 	source := filepath.Join(dir, "package.tgz")
 	output := filepath.Join(dir, "assets.tgz")
 	writeTarGz(t, source, map[string]string{
-		"package/prebuilds/linux-x64/runtime.node":    "runtime",
-		"package/prebuilds/linux-x64/copilot-runtime": "wrapper",
-		"package/ripgrep/bin/linux-x64/rg":            "ripgrep",
-		"package/definitions/future.json":             "{}",
-		"package/copilot-sdk/extension.js":            "extension",
-		"package/preloads/extension_bootstrap.mjs":    "preload",
-		"package/sdk/factory.js":                      "factory",
-		"package/app.js":                              "excluded",
-		"package/cli-main.js":                         "excluded",
-		"package/LICENSE.md":                          "excluded",
-		"package/README.md":                           "excluded",
+		"package/prebuilds/linux-x64/runtime.node":                                      "runtime",
+		"package/prebuilds/linux-x64/copilot-runtime":                                   "wrapper",
+		"package/ripgrep/bin/linux-x64/rg":                                              "ripgrep",
+		"package/definitions/future.json":                                               "{}",
+		"package/copilot-sdk/extension.js":                                              "extension",
+		"package/preloads/extension_bootstrap.mjs":                                      "preload",
+		"package/sdk/factory.js":                                                        "factory",
+		"package/app.js":                                                                "excluded",
+		"package/cli-main.js":                                                           "excluded",
+		"package/LICENSE.md":                                                            "excluded",
+		"package/README.md":                                                             "excluded",
+		"package/prebuilds/linux-x64/copilot-voice":                                     "excluded",
+		"package/prebuilds/linux-x64/copilot-voice.path":                                "excluded",
+		"package/prebuilds/linux-x64/copilot-voice.0123abcd.exe":                        "excluded",
+		"package/prebuilds/linux-x64/copilot-voice-assets.path":                         "excluded",
+		"package/prebuilds/linux-x64/copilot-voice-assets.0123abcd/libfoundry_local.so": "excluded",
 	})
 
 	if err := createRuntimeAssetsArchive(source, output, platformInfo{
@@ -108,6 +113,8 @@ func TestCreateRuntimeAssetsArchiveRetainsUnknownAssetsAndFiltersCLIContent(t *t
 	}
 	for _, excluded := range []string{
 		"runtime.node", "copilot-runtime", "app.js", "cli-main.js", "LICENSE.md", "README.md",
+		"copilot-voice", "copilot-voice.path", "copilot-voice.0123abcd.exe", "copilot-voice-assets.path",
+		"copilot-voice-assets.0123abcd/libfoundry_local.so",
 	} {
 		if _, ok := files[excluded]; ok {
 			t.Fatalf("excluded asset %q was retained", excluded)

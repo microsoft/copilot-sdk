@@ -106,6 +106,10 @@ class GeneratedBuilderEvolutionTest {
                     String.class, com.microsoft.copilot.generated.rpc.AutopilotObjectiveStatus.class, Long.class,
                     String.class, String.class, String.class,
                     com.microsoft.copilot.generated.rpc.AutopilotObjectiveCreditLimit.class};
+            case "com.microsoft.copilot.generated.rpc.ProtocolExternalToolDefinition" -> new Class<?>[]{String.class,
+                    String.class, String.class, Map.class, Boolean.class, Boolean.class, Boolean.class,
+                    com.microsoft.copilot.generated.rpc.ProtocolExternalToolDefer.class, Boolean.class, Boolean.class,
+                    Map.class, com.microsoft.copilot.generated.rpc.ProtocolExternalToolNamespace.class};
             case "com.microsoft.copilot.generated.rpc.SessionMetadataSnapshotResult" -> new Class<?>[]{String.class,
                     java.time.OffsetDateTime.class, java.time.OffsetDateTime.class, Boolean.class, Boolean.class,
                     String.class, String.class, String.class,
@@ -136,6 +140,21 @@ class GeneratedBuilderEvolutionTest {
     void legacySkillsLoadedConstructorPreservesAbsentDiagnostics() throws Exception {
         var data = new SessionSkillsLoadedEvent.SessionSkillsLoadedEventData(List.of());
         assertEquals(JSON.readTree("{\"skills\":[]}"), JSON.valueToTree(data));
+    }
+
+    @Test
+    @Tag("java-compatibility")
+    void legacyExternalToolConstructorPreservesAutomaticExposure() throws Exception {
+        var type = com.microsoft.copilot.generated.rpc.ProtocolExternalToolDefinition.class;
+        var constructor = type.getDeclaredConstructor(String.class, String.class, String.class, Map.class,
+                Boolean.class, Boolean.class, Boolean.class,
+                com.microsoft.copilot.generated.rpc.ProtocolExternalToolDefer.class, Boolean.class, Boolean.class,
+                Map.class, com.microsoft.copilot.generated.rpc.ProtocolExternalToolNamespace.class);
+        var definition = constructor.newInstance("lookup", "Description", null, Map.of("type", "object"), null, null,
+                true, com.microsoft.copilot.generated.rpc.ProtocolExternalToolDefer.NEVER, false, true, Map.of(), null);
+
+        assertNull(definition.exposure());
+        assertFalse(JSON.valueToTree(definition).has("exposure"));
     }
 
     @Test

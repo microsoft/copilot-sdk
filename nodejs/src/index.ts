@@ -539,6 +539,7 @@ export type {
     TraceContext,
     TraceContextProvider,
     Tool,
+    ToolExposure,
     ToolHandler,
     ToolInvocation,
     ToolNamespace,

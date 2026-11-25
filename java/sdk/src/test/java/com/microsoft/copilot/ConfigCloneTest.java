@@ -63,7 +63,8 @@ class ConfigCloneTest {
                 .setBaseDirectory("/custom/copilot/home").setSessionIdleTimeoutSeconds(600);
         original.setRuntime(runtime);
         original.setObservability(original.getObservability().setLogLevel("debug"));
-        original.setGitHub(original.getGitHub().setToken("ghp_test"));
+        original.setGitHub(original.getGitHub().setToken("ghp_test").setClientId("fixture-app")
+                .setClientSecret("fixture-oauth-credential"));
         original.setGitHub(original.getGitHub().setUseLoggedInUser(false));
         original.setRemote(true);
 
@@ -75,6 +76,8 @@ class ConfigCloneTest {
         assertEquals(original.getObservability().getLogLevel(), cloned.getObservability().getLogLevel());
         assertEquals(runtime.getPort(), clonedRuntime.getPort());
         assertEquals(original.getGitHub().getToken(), cloned.getGitHub().getToken());
+        assertEquals("fixture-app", cloned.getGitHub().getClientId());
+        assertEquals("fixture-oauth-credential", cloned.getGitHub().getClientSecret());
         assertEquals(original.getGitHub().getUseLoggedInUser(), cloned.getGitHub().getUseLoggedInUser());
         assertEquals(runtime.getBaseDirectory(), clonedRuntime.getBaseDirectory());
         assertEquals(original.isRemote(), cloned.isRemote());

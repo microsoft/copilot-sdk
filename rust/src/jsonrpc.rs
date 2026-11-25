@@ -277,8 +277,10 @@ impl<'de> Deserialize<'de> for JsonRpcMessage {
             .as_object_mut()
             .ok_or_else(|| serde::de::Error::custom("expected a JSON object"))?;
 
-        let has_id = obj.contains_key("id");
+        let id = obj.get("id");
+        let has_id = id.is_some();
         let has_method = obj.contains_key("method");
+        let uncorrelated = !has_method && matches!(id, Some(Value::Null));
 
         // Preserve the owned payload instead of rebuilding its JSON containers
         // while serde validates the envelope. Optional null payloads remain None.
@@ -296,7 +298,7 @@ impl<'de> Deserialize<'de> for JsonRpcMessage {
                     JsonRpcMessage::Request(request)
                 })
                 .map_err(serde::de::Error::custom)
-        } else if obj.get("id").is_some_and(Value::is_null) {
+        } else if uncorrelated {
             if !obj.get("jsonrpc").is_some_and(Value::is_string) {
                 return Err(serde::de::Error::custom(
                     "a response with a null id must name its jsonrpc version",

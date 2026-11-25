@@ -301,6 +301,7 @@ pub const SESSION_METHOD_PATHS: &[(&str, &[&str])] = &[
         "session.remote.attachMissionControl",
         &["remote", "attachMissionControl"],
     ),
+    ("session.remote.waitForStart", &["remote", "waitForStart"]),
     ("session.remote.enable", &["remote", "enable"]),
     ("session.remote.disable", &["remote", "disable"]),
     (
@@ -16697,6 +16698,36 @@ impl<'a> SessionRpc<'a> {
             .await
     }
 
+    /// Sends a user message to the session and returns its message ID.
+    ///
+    /// Wire method: `session.send`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - Parameters for sending a user message to the session
+    ///
+    /// # Returns
+    ///
+    /// Result of sending a user message
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    ///
+    /// Accepts [`SendOptions`], including inputs added after [`SendRequest`].
+    pub async fn send_with_options(&self, params: SendOptions) -> Result<SendResult, Error> {
+        let mut wire_params = serde_json::to_value(params)?;
+        wire_params["sessionId"] = serde_json::Value::String(self.session.id().to_string());
+        self.session
+            .client()
+            .call_typed(rpc_methods::SESSION_SEND, Some(wire_params))
+            .await
+    }
+
     /// Submits one message through normal admission and waits for its request-owned completion. Returns the exact root assistant event, or an explicit aborted/no-response outcome. Cancelling or timing out the wait does not abort agent work. Unsupported execution hosts reject the method before admitting the message.
     ///
     /// Wire method: `session.sendAndWait`.
@@ -16728,6 +16759,39 @@ impl<'a> SessionRpc<'a> {
             .await
     }
 
+    /// Submits one message through normal admission and waits for its request-owned completion. Returns the exact root assistant event, or an explicit aborted/no-response outcome. Cancelling or timing out the wait does not abort agent work. Unsupported execution hosts reject the method before admitting the message.
+    ///
+    /// Wire method: `session.sendAndWait`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - Parameters for sending a user message to the session
+    ///
+    /// # Returns
+    ///
+    /// Internal request-correlated completion of one submitted message.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    ///
+    /// Accepts [`SendOptions`], including inputs added after [`SendRequest`].
+    pub(crate) async fn send_and_wait_with_options(
+        &self,
+        params: SendOptions,
+    ) -> Result<SendAndWaitResult, Error> {
+        let mut wire_params = serde_json::to_value(params)?;
+        wire_params["sessionId"] = serde_json::Value::String(self.session.id().to_string());
+        self.session
+            .client()
+            .call_typed(rpc_methods::SESSION_SENDANDWAIT, Some(wire_params))
+            .await
+    }
+
     /// Sends zero or more user messages to the session in a single turn and returns their message IDs. All provided messages are appended to the conversation in order, then exactly one agent turn runs over the resulting history. When the list is empty, one turn runs over the existing history with no new user message. Remote-backed (Mission Control) sessions do not support this method and will return an error.
     ///
     /// Wire method: `session.sendMessages`.
@@ -16750,6 +16814,39 @@ impl<'a> SessionRpc<'a> {
     pub async fn send_messages(
         &self,
         params: SendMessagesRequest,
+    ) -> Result<SendMessagesResult, Error> {
+        let mut wire_params = serde_json::to_value(params)?;
+        wire_params["sessionId"] = serde_json::Value::String(self.session.id().to_string());
+        self.session
+            .client()
+            .call_typed(rpc_methods::SESSION_SENDMESSAGES, Some(wire_params))
+            .await
+    }
+
+    /// Sends zero or more user messages to the session in a single turn and returns their message IDs. All provided messages are appended to the conversation in order, then exactly one agent turn runs over the resulting history. When the list is empty, one turn runs over the existing history with no new user message. Remote-backed (Mission Control) sessions do not support this method and will return an error.
+    ///
+    /// Wire method: `session.sendMessages`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - Parameters for sending zero or more user messages to the session in a single turn. Remote-backed (Mission Control) sessions do not support this method and will return an error.
+    ///
+    /// # Returns
+    ///
+    /// Result of sending zero or more user messages
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    ///
+    /// Accepts [`SendMessagesOptions`], including inputs added after [`SendMessagesRequest`].
+    pub async fn send_messages_with_options(
+        &self,
+        params: SendMessagesOptions,
     ) -> Result<SendMessagesResult, Error> {
         let mut wire_params = serde_json::to_value(params)?;
         wire_params["sessionId"] = serde_json::Value::String(self.session.id().to_string());
@@ -27052,6 +27149,37 @@ impl<'a> SessionRpcRemote<'a> {
                 rpc_methods::SESSION_REMOTE_ATTACHMISSIONCONTROL,
                 Some(wire_params),
             )
+            .await
+    }
+
+    /// Waits for an attached cloud task to publish session.start. SDK hosts and ACP clients can distinguish an attached poller from a ready remote host. The caller retains timeout cleanup ownership.
+    ///
+    /// Wire method: `session.remote.waitForStart`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - Waits for the attached cloud task to publish session.start. Does not create a task or shut down the retained session.
+    ///
+    /// # Returns
+    ///
+    /// Reports cloud host readiness and the existing startup error when the host did not start. The caller retains cleanup ownership.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub(crate) async fn wait_for_start(
+        &self,
+        params: RemoteWaitForStartRequest,
+    ) -> Result<RemoteWaitForStartResult, Error> {
+        let mut wire_params = serde_json::to_value(params)?;
+        wire_params["sessionId"] = serde_json::Value::String(self.session.id().to_string());
+        self.session
+            .client()
+            .call_typed(rpc_methods::SESSION_REMOTE_WAITFORSTART, Some(wire_params))
             .await
     }
 

@@ -1935,12 +1935,12 @@ Development requires [.NET SDK 10+](https://dotnet.microsoft.com/download) and a
 
 ```bash
 cd nodejs
-npm ci
+pnpm install --frozen-lockfile --ignore-scripts
 ```
 
 ```bash
 cd test/harness
-npm ci
+pnpm install --frozen-lockfile --ignore-scripts
 ```
 
 ```bash

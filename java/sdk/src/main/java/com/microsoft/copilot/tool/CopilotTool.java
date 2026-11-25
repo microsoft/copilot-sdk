@@ -12,6 +12,7 @@ import java.lang.annotation.Target;
 
 import com.microsoft.copilot.CopilotExperimental;
 import com.microsoft.copilot.rpc.ToolDefer;
+import com.microsoft.copilot.rpc.ToolExposure;
 
 /**
  * Marks a method as a Copilot tool. The annotated method will be exposed to the
@@ -61,6 +62,13 @@ public @interface CopilotTool {
 
     /** Defer configuration for this tool. */
     ToolDefer defer() default ToolDefer.NONE;
+
+    /**
+     * Controls which agents automatically receive this tool. The default preserves
+     * today's behavior; {@link ToolExposure#EXPLICIT} requires a custom agent's
+     * tool list to explicitly name it.
+     */
+    ToolExposure exposure() default ToolExposure.AUTOMATIC;
 
     /**
      * Opaque, host-defined metadata for this tool. Keys are namespaced and not part

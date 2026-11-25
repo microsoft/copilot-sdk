@@ -28,6 +28,9 @@ public static class CopilotTool
     /// <summary>The key used in <see cref="AITool.AdditionalProperties"/> to carry the tool's <see cref="CopilotToolDefer"/> deferral mode.</summary>
     internal const string DeferKey = "defer";
 
+    /// <summary>The key used in <see cref="AITool.AdditionalProperties"/> to carry the tool's <see cref="CopilotToolExposure"/> mode.</summary>
+    internal const string ExposureKey = "exposure";
+
     /// <summary>The key used in <see cref="AITool.AdditionalProperties"/> to carry the tool's opaque host-defined metadata.</summary>
     internal const string MetadataKey = "metadata";
 
@@ -55,11 +58,20 @@ public static class CopilotTool
         ArgumentNullException.ThrowIfNull(method);
 
         factoryOptions ??= new();
+        var originalAdditionalProperties = factoryOptions.AdditionalProperties;
+        var originalConfigureParameterBinding = factoryOptions.ConfigureParameterBinding;
 
-        ApplyToolOptions(factoryOptions, toolOptions);
-        ApplyToolInvocationBinding(factoryOptions);
-
-        return AIFunctionFactory.Create(method, factoryOptions);
+        try
+        {
+            ApplyToolOptions(factoryOptions, toolOptions);
+            ApplyToolInvocationBinding(factoryOptions);
+            return AIFunctionFactory.Create(method, factoryOptions);
+        }
+        finally
+        {
+            factoryOptions.AdditionalProperties = originalAdditionalProperties;
+            factoryOptions.ConfigureParameterBinding = originalConfigureParameterBinding;
+        }
 
         static void ApplyToolInvocationBinding(AIFunctionFactoryOptions factoryOptions)
         {
@@ -101,7 +113,7 @@ public static class CopilotTool
 
         static void ApplyToolOptions(AIFunctionFactoryOptions factoryOptions, CopilotToolOptions? toolOptions)
         {
-            if (toolOptions is not null && (toolOptions.OverridesBuiltInTool || toolOptions.SkipPermission || toolOptions.IsTerminal || toolOptions.Idempotent || toolOptions.Defer is not null || toolOptions.Metadata is not null || toolOptions.Namespace is not null))
+            if (toolOptions is not null && (toolOptions.OverridesBuiltInTool || toolOptions.SkipPermission || toolOptions.IsTerminal || toolOptions.Idempotent || toolOptions.Defer is not null || toolOptions.Exposure is not null || toolOptions.Metadata is not null || toolOptions.Namespace is not null))
             {
                 Dictionary<string, object?> additionalProperties = new(StringComparer.Ordinal);
                 if (factoryOptions.AdditionalProperties is not null)
@@ -135,6 +147,11 @@ public static class CopilotTool
                 if (toolOptions.Defer is { } defer)
                 {
                     additionalProperties[DeferKey] = defer;
+                }
+
+                if (toolOptions.Exposure is { } exposure)
+                {
+                    additionalProperties[ExposureKey] = exposure;
                 }
 
                 if (toolOptions.Metadata is { } metadata)
@@ -207,6 +224,16 @@ public sealed class CopilotToolOptions
     public CopilotToolDefer? Defer { get; set; }
 
     /// <summary>
+    /// Gets or sets which agents automatically receive this tool.
+    /// </summary>
+    /// <remarks>
+    /// <see langword="null"/> or <see cref="CopilotToolExposure.Automatic"/> preserves the default behavior.
+    /// <see cref="CopilotToolExposure.Explicit"/> makes the tool available only to custom agents whose tool list
+    /// explicitly names it. This controls model visibility, not execution permission.
+    /// </remarks>
+    public CopilotToolExposure? Exposure { get; set; }
+
+    /// <summary>
     /// Gets or sets opaque, host-defined metadata associated with the tool definition.
     /// </summary>
     public IDictionary<string, JsonNode?>? Metadata { get; set; }
@@ -221,6 +248,21 @@ public sealed class CopilotToolOptions
     /// </remarks>
     [Experimental(Diagnostics.Experimental)]
     public ToolNamespace? Namespace { get; set; }
+}
+
+/// <summary>
+/// Controls which agents automatically receive a tool.
+/// </summary>
+[System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter<CopilotToolExposure>))]
+public enum CopilotToolExposure
+{
+    /// <summary>The tool is available to the default agent and unrestricted custom agents.</summary>
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("automatic")]
+    Automatic,
+
+    /// <summary>The tool is available only to custom agents whose tool list explicitly names it.</summary>
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("explicit")]
+    Explicit,
 }
 
 /// <summary>

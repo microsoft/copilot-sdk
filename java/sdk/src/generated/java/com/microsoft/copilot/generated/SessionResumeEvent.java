@@ -36,6 +36,8 @@ public final class SessionResumeEvent extends SessionEvent {
     @JsonInclude(JsonInclude.Include.NON_NULL)
     @com.fasterxml.jackson.databind.annotation.JsonDeserialize(using = SessionResumeEventData.$NullableDeserializer.class)
     public record SessionResumeEventData(
+        /** Default maximum logical model turns per request, when changed on resume. */
+        @JsonProperty("maxToolTurns") Long maxToolTurns,
         /** Credential-free effective model routing policy restored on cold resume. */
         @JsonProperty("providerRouting") Object providerRouting,
         /** ISO 8601 timestamp when the session was resumed */
@@ -104,8 +106,9 @@ public final class SessionResumeEvent extends SessionEvent {
          */
         public static final class Builder {
             private Builder() {}
+            private Long maxToolTurns;
             private Object providerRouting;
-            private boolean $presence0;
+            private boolean $presence1;
             private OffsetDateTime resumeTime;
             private Long eventCount;
             private Long eventsFileSizeBytes;
@@ -117,12 +120,12 @@ public final class SessionResumeEvent extends SessionEvent {
             private ReasoningSummary reasoningSummary;
             private Verbosity verbosity;
             private ContextTier contextTier;
-            private boolean $presence11;
+            private boolean $presence12;
             private Boolean contextTierManaged;
             private AutoTier autoTier;
             private Boolean autoTierManaged;
             private SessionLimitsConfig sessionLimits;
-            private boolean $presence15;
+            private boolean $presence16;
             private WorkingDirectoryContext context;
             private Boolean alreadyInUse;
             private Boolean sessionWasActive;
@@ -132,6 +135,17 @@ public final class SessionResumeEvent extends SessionEvent {
             private Boolean responsesReasoningOverridden;
 
             /**
+             * Sets the {@code maxToolTurns} property.
+             * @param value the property value
+             * @return this builder
+             * @since 2.0.0
+             */
+            public Builder maxToolTurns(Long value) {
+                this.maxToolTurns = value;
+                return this;
+            }
+
+            /**
              * Sets the {@code providerRouting} property.
              * @param value the property value
              * @return this builder
@@ -139,7 +153,7 @@ public final class SessionResumeEvent extends SessionEvent {
              */
             public Builder providerRouting(Object value) {
                 this.providerRouting = value;
-                this.$presence0 = true;
+                this.$presence1 = true;
                 return this;
             }
 
@@ -261,7 +275,7 @@ public final class SessionResumeEvent extends SessionEvent {
              */
             public Builder contextTier(ContextTier value) {
                 this.contextTier = value;
-                this.$presence11 = true;
+                this.$presence12 = true;
                 return this;
             }
 
@@ -306,7 +320,7 @@ public final class SessionResumeEvent extends SessionEvent {
              */
             public Builder sessionLimits(SessionLimitsConfig value) {
                 this.sessionLimits = value;
-                this.$presence15 = true;
+                this.$presence16 = true;
                 return this;
             }
 
@@ -397,10 +411,10 @@ public final class SessionResumeEvent extends SessionEvent {
                 if (resumeTime == null) throw new IllegalStateException("Missing required property: resumeTime");
                 if (eventCount == null) throw new IllegalStateException("Missing required property: eventCount");
                 java.util.Set<String> $explicitNulls = new java.util.LinkedHashSet<>();
-                if ($presence0 && providerRouting == null) $explicitNulls.add("providerRouting");
-                if ($presence11 && contextTier == null) $explicitNulls.add("contextTier");
-                if ($presence15 && sessionLimits == null) $explicitNulls.add("sessionLimits");
-                return new SessionResumeEventData(providerRouting, resumeTime, eventCount, eventsFileSizeBytes, selectedModel, providerId, reasoningEffort, reasoningEffortModel, reasoningEffortManaged, reasoningSummary, verbosity, contextTier, contextTierManaged, autoTier, autoTierManaged, sessionLimits, context, alreadyInUse, sessionWasActive, remoteSteerable, continuePendingWork, responsesReasoningKept, responsesReasoningOverridden, $explicitNulls);
+                if ($presence1 && providerRouting == null) $explicitNulls.add("providerRouting");
+                if ($presence12 && contextTier == null) $explicitNulls.add("contextTier");
+                if ($presence16 && sessionLimits == null) $explicitNulls.add("sessionLimits");
+                return new SessionResumeEventData(maxToolTurns, providerRouting, resumeTime, eventCount, eventsFileSizeBytes, selectedModel, providerId, reasoningEffort, reasoningEffortModel, reasoningEffortManaged, reasoningSummary, verbosity, contextTier, contextTierManaged, autoTier, autoTierManaged, sessionLimits, context, alreadyInUse, sessionWasActive, remoteSteerable, continuePendingWork, responsesReasoningKept, responsesReasoningOverridden, $explicitNulls);
             }
         }
 
@@ -424,7 +438,7 @@ public final class SessionResumeEvent extends SessionEvent {
                 if (tree.has("providerRouting") && tree.get("providerRouting").isNull()) $explicitNulls.add("providerRouting");
                 if (tree.has("contextTier") && tree.get("contextTier").isNull()) $explicitNulls.add("contextTier");
                 if (tree.has("sessionLimits") && tree.get("sessionLimits").isNull()) $explicitNulls.add("sessionLimits");
-                return new SessionResumeEventData(readProperty(context, tree, "providerRouting", new com.fasterxml.jackson.core.type.TypeReference<Object>() {}), readProperty(context, tree, "resumeTime", new com.fasterxml.jackson.core.type.TypeReference<OffsetDateTime>() {}), readProperty(context, tree, "eventCount", new com.fasterxml.jackson.core.type.TypeReference<Long>() {}), readProperty(context, tree, "eventsFileSizeBytes", new com.fasterxml.jackson.core.type.TypeReference<Long>() {}), readProperty(context, tree, "selectedModel", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "providerId", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "reasoningEffort", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "reasoningEffortModel", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "reasoningEffortManaged", new com.fasterxml.jackson.core.type.TypeReference<Boolean>() {}), readProperty(context, tree, "reasoningSummary", new com.fasterxml.jackson.core.type.TypeReference<ReasoningSummary>() {}), readProperty(context, tree, "verbosity", new com.fasterxml.jackson.core.type.TypeReference<Verbosity>() {}), readProperty(context, tree, "contextTier", new com.fasterxml.jackson.core.type.TypeReference<ContextTier>() {}), readProperty(context, tree, "contextTierManaged", new com.fasterxml.jackson.core.type.TypeReference<Boolean>() {}), readProperty(context, tree, "autoTier", new com.fasterxml.jackson.core.type.TypeReference<AutoTier>() {}), readProperty(context, tree, "autoTierManaged", new com.fasterxml.jackson.core.type.TypeReference<Boolean>() {}), readProperty(context, tree, "sessionLimits", new com.fasterxml.jackson.core.type.TypeReference<SessionLimitsConfig>() {}), readProperty(context, tree, "context", new com.fasterxml.jackson.core.type.TypeReference<WorkingDirectoryContext>() {}), readProperty(context, tree, "alreadyInUse", new com.fasterxml.jackson.core.type.TypeReference<Boolean>() {}), readProperty(context, tree, "sessionWasActive", new com.fasterxml.jackson.core.type.TypeReference<Boolean>() {}), readProperty(context, tree, "remoteSteerable", new com.fasterxml.jackson.core.type.TypeReference<Boolean>() {}), readProperty(context, tree, "continuePendingWork", new com.fasterxml.jackson.core.type.TypeReference<Boolean>() {}), readProperty(context, tree, "responsesReasoningKept", new com.fasterxml.jackson.core.type.TypeReference<Boolean>() {}), readProperty(context, tree, "responsesReasoningOverridden", new com.fasterxml.jackson.core.type.TypeReference<Boolean>() {}), $explicitNulls);
+                return new SessionResumeEventData(readProperty(context, tree, "maxToolTurns", new com.fasterxml.jackson.core.type.TypeReference<Long>() {}), readProperty(context, tree, "providerRouting", new com.fasterxml.jackson.core.type.TypeReference<Object>() {}), readProperty(context, tree, "resumeTime", new com.fasterxml.jackson.core.type.TypeReference<OffsetDateTime>() {}), readProperty(context, tree, "eventCount", new com.fasterxml.jackson.core.type.TypeReference<Long>() {}), readProperty(context, tree, "eventsFileSizeBytes", new com.fasterxml.jackson.core.type.TypeReference<Long>() {}), readProperty(context, tree, "selectedModel", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "providerId", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "reasoningEffort", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "reasoningEffortModel", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "reasoningEffortManaged", new com.fasterxml.jackson.core.type.TypeReference<Boolean>() {}), readProperty(context, tree, "reasoningSummary", new com.fasterxml.jackson.core.type.TypeReference<ReasoningSummary>() {}), readProperty(context, tree, "verbosity", new com.fasterxml.jackson.core.type.TypeReference<Verbosity>() {}), readProperty(context, tree, "contextTier", new com.fasterxml.jackson.core.type.TypeReference<ContextTier>() {}), readProperty(context, tree, "contextTierManaged", new com.fasterxml.jackson.core.type.TypeReference<Boolean>() {}), readProperty(context, tree, "autoTier", new com.fasterxml.jackson.core.type.TypeReference<AutoTier>() {}), readProperty(context, tree, "autoTierManaged", new com.fasterxml.jackson.core.type.TypeReference<Boolean>() {}), readProperty(context, tree, "sessionLimits", new com.fasterxml.jackson.core.type.TypeReference<SessionLimitsConfig>() {}), readProperty(context, tree, "context", new com.fasterxml.jackson.core.type.TypeReference<WorkingDirectoryContext>() {}), readProperty(context, tree, "alreadyInUse", new com.fasterxml.jackson.core.type.TypeReference<Boolean>() {}), readProperty(context, tree, "sessionWasActive", new com.fasterxml.jackson.core.type.TypeReference<Boolean>() {}), readProperty(context, tree, "remoteSteerable", new com.fasterxml.jackson.core.type.TypeReference<Boolean>() {}), readProperty(context, tree, "continuePendingWork", new com.fasterxml.jackson.core.type.TypeReference<Boolean>() {}), readProperty(context, tree, "responsesReasoningKept", new com.fasterxml.jackson.core.type.TypeReference<Boolean>() {}), readProperty(context, tree, "responsesReasoningOverridden", new com.fasterxml.jackson.core.type.TypeReference<Boolean>() {}), $explicitNulls);
             }
 
             private static <T> T readProperty(com.fasterxml.jackson.databind.DeserializationContext context,

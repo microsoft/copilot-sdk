@@ -54,7 +54,7 @@ func TestEntraTokenProviderTypedIdentityAndResource(t *testing.T) {
 	_, peer := entraHarness(t, func(ctx context.Context, request rpc.EntraTokenAcquireRequest) (rpc.EntraTokenAcquireResult, error) {
 		requests <- request
 		if request.Kind() == rpc.EntraTokenAcquireRequestKindIdentity {
-			return &rpc.EntraTokenAcquireResultIdentity{AccountID: "host-account"}, nil
+			return &rpc.EntraTokenAcquireResultIdentity{AccountID: "host-account", TenantID: "resource-tenant"}, nil
 		}
 		return &rpc.EntraTokenAcquireResultToken{AccountID: "host-account", AccessToken: "resource-token"}, nil
 	})
@@ -70,6 +70,9 @@ func TestEntraTokenProviderTypedIdentityAndResource(t *testing.T) {
 		}
 		if result["kind"] != kind || result["accountId"] != "host-account" {
 			t.Fatalf("unexpected result: %v", result)
+		}
+		if kind == "identity" && result["tenantId"] != "resource-tenant" {
+			t.Fatalf("tenant metadata was not forwarded: %v", result)
 		}
 		request := waitForEntraValue(t, requests)
 		encoded, err := json.Marshal(request)
@@ -104,7 +107,7 @@ func TestEntraTokenProviderCancellationRejectsLateSuccess(t *testing.T) {
 		entered <- ctx
 		<-ctx.Done()
 		defer close(finished)
-		return &rpc.EntraTokenAcquireResultIdentity{AccountID: "late-account"}, nil
+		return &rpc.EntraTokenAcquireResultIdentity{AccountID: "late-account", TenantID: "resource-tenant"}, nil
 	})
 	peer.request(101, "entraToken.getToken", entraParams("identity"))
 	ctx := waitForEntraValue(t, entered)

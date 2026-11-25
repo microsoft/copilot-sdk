@@ -2496,12 +2496,12 @@ Tests require a supported [Node.js version](../nodejs/README.md#prerequisites). 
 
 ```bash
 cd nodejs
-npm ci
+pnpm install --frozen-lockfile --ignore-scripts
 ```
 
 ```bash
 cd test/harness
-npm ci
+pnpm install --frozen-lockfile --ignore-scripts
 ```
 
 ```bash

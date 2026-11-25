@@ -8,6 +8,15 @@ Let users authenticate with their GitHub accounts to use Copilot through your ap
 
 You create a GitHub OAuth App (or GitHub App), users authorize it, and you pass their access token to the SDK. Copilot requests are made on behalf of each authenticated user, using their Copilot subscription.
 
+If the runtime handles sign-in instead, set both `github.clientId` and
+`github.clientSecret` in the client options to use your GitHub.com OAuth app.
+This applies to browser and device sign-in, and to exchanging or renewing an
+Entra token for a GitHub EMU credential. Omit both to use the built-in Copilot
+CLI app. The runtime selects the app when the client connects and uses that
+registration for the lifetime of the connection. These settings do not affect
+sign-in to a separately entered enterprise hostname or change the identity of
+a GitHub token your application already obtained.
+
 ```mermaid
 sequenceDiagram
     participant User

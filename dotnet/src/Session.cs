@@ -442,6 +442,7 @@ public sealed partial class CopilotSession : IAsyncDisposable
             Prompt = options.Prompt,
             DisplayPrompt = options.DisplayPrompt,
             ClientTurnId = options.ClientTurnId,
+            MaxToolTurns = options.MaxToolTurns,
             Attachments = options.Attachments,
             Mode = options.Mode,
             AgentMode = options.AgentMode,
@@ -1015,6 +1016,16 @@ public sealed partial class CopilotSession : IAsyncDisposable
                 CopilotToolDefer.Auto => ProtocolExternalToolDefer.Auto,
                 CopilotToolDefer.Never => ProtocolExternalToolDefer.Never,
                 _ => (ProtocolExternalToolDefer?)null,
+            },
+            Exposure = definition.Exposure switch
+            {
+                null => null,
+                CopilotToolExposure.Automatic => ProtocolExternalToolExposure.Automatic,
+                CopilotToolExposure.Explicit => ProtocolExternalToolExposure.Explicit,
+                _ => throw new ArgumentOutOfRangeException(
+                    nameof(function),
+                    definition.Exposure,
+                    "Unsupported tool exposure."),
             },
             Metadata = definition.Metadata is { } metadata ? ToJsonElementDictionary(metadata) : null,
             IsTerminal = definition.IsTerminal,
@@ -3355,6 +3366,7 @@ public sealed partial class CopilotSession : IAsyncDisposable
         public string Prompt { get; init; } = string.Empty;
         public string? DisplayPrompt { get; init; }
         public string? ClientTurnId { get; init; }
+        public uint? MaxToolTurns { get; init; }
         public IList<Attachment>? Attachments { get; init; }
         public string? Mode { get; init; }
         [JsonPropertyName("agentMode")]

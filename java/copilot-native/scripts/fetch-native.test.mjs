@@ -110,6 +110,35 @@ for (const classifier of [
     assertRestagingAttempted(fixture, result);
   });
 
+  test(`${classifier}: staged CLI voice assets are removed without restaging`, (t) => {
+    const fixture = createFixture(t, classifier);
+    const resourceDir = path.dirname(fixture.runtimePath);
+    const inventoryPath = path.join(resourceDir, 'runtime-assets.list');
+    const inventory = fs.readFileSync(inventoryPath, 'utf8');
+    fs.mkdirSync(path.join(resourceDir, 'copilot-voice-assets.0123abcd'));
+    fs.writeFileSync(path.join(resourceDir, 'copilot-voice-assets.0123abcd', 'libfoundry_local.so'), 'voice');
+    fs.writeFileSync(path.join(resourceDir, 'copilot-voice'), 'voice');
+    fs.writeFileSync(
+      inventoryPath,
+      `${inventory}755\tcopilot-voice\n644\tcopilot-voice-assets.0123abcd/libfoundry_local.so\n`,
+    );
+    const stampPath = path.join(fixture.stagingDir, classifier, '.version');
+    const stamp = fs.readFileSync(stampPath, 'utf8').trim().split('\n');
+    stamp[3] = digestTree(resourceDir);
+    fs.writeFileSync(stampPath, `${stamp.join('\n')}\n`);
+
+    const result = runScript(fixture);
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /already staged/);
+    assert.deepEqual(fs.readdirSync(resourceDir).filter((name) => name.startsWith('copilot-voice')), []);
+    assert.equal(fs.readFileSync(inventoryPath, 'utf8'), inventory);
+    assert.equal(fs.readFileSync(stampPath, 'utf8').trim().split('\n')[3], digestTree(resourceDir));
+    const rerun = runScript(fixture);
+    assert.equal(rerun.status, 0, rerun.stderr);
+    assert.match(rerun.stdout, /already staged/);
+  });
+
   test(`${classifier}: complete matching artifacts use incremental fast path`, (t) => {
     const fixture = createFixture(t, classifier);
 
@@ -142,6 +171,19 @@ test('stages retained package assets with a bounded number of archive passes', (
   fs.writeFileSync(path.join(packageRoot, 'cli-main.js'), 'excluded');
   fs.writeFileSync(path.join(packageRoot, 'LICENSE.md'), 'excluded');
   fs.writeFileSync(path.join(packageRoot, 'README.md'), 'excluded');
+  const voiceFiles = [
+    'copilot-voice',
+    'copilot-voice.path',
+    'copilot-voice.0123abcd.exe',
+    'copilot-voice-assets.path',
+    path.join('copilot-voice-assets.0123abcd', 'libfoundry_local.so'),
+  ];
+  for (const file of voiceFiles) {
+    for (const directory of [packageRoot, path.join(packageRoot, 'prebuilds', classifier)]) {
+      fs.mkdirSync(path.dirname(path.join(directory, file)), { recursive: true });
+      fs.writeFileSync(path.join(directory, file), 'excluded');
+    }
+  }
   const tarball = path.join(fixture.repoRoot, 'fixture.tgz');
   execFileSync('tar', ['-czf', path.basename(tarball), '-C', path.relative(fixture.repoRoot, path.dirname(packageRoot)), 'package'], {
     cwd: fixture.repoRoot,
@@ -192,6 +234,9 @@ test('stages retained package assets with a bounded number of archive passes', (
   assert.equal(fs.existsSync(path.join(resourceDir, 'copilot')), false);
   assert.equal(fs.existsSync(path.join(resourceDir, 'LICENSE.md')), false);
   assert.equal(fs.existsSync(path.join(resourceDir, 'README.md')), false);
+  for (const file of voiceFiles) {
+    assert.equal(fs.existsSync(path.join(resourceDir, file)), false, file);
+  }
   assert.match(fs.readFileSync(path.join(resourceDir, 'runtime-assets.list'), 'utf8'), /ripgrep\/bin\/linux-x64\/rg/);
   if (process.platform !== 'win32') {
     assert.match(fs.readFileSync(path.join(resourceDir, 'runtime-assets.list'), 'utf8'), /755\tripgrep\/bin\/linux-x64\/rg/);

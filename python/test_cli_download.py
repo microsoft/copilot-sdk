@@ -129,6 +129,21 @@ def test_hostless_runtime_path_rejects_traversal(member_name):
         _cli_download._hostless_runtime_path(member_name, "linux-x64")
 
 
+@pytest.mark.parametrize("prefix", ["package", "package/prebuilds/linux-x64"])
+@pytest.mark.parametrize(
+    "voice_path",
+    [
+        "copilot-voice",
+        "copilot-voice.path",
+        "copilot-voice.0123abcd.exe",
+        "copilot-voice-assets.path",
+        "copilot-voice-assets.0123abcd/libfoundry_local.so",
+    ],
+)
+def test_hostless_runtime_path_omits_cli_voice_artifacts(prefix, voice_path):
+    assert _cli_download._hostless_runtime_path(f"{prefix}/{voice_path}", "linux-x64") is None
+
+
 def test_rejects_release_package_checksum_mismatch(tmp_path):
     runtime_platform = "linux-x64"
     data = _release_package(runtime_platform)

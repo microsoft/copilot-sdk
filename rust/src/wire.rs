@@ -404,6 +404,8 @@ pub(crate) struct SessionPluginWire {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SessionExecutionWire {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tool_turns: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub limits: Option<SessionLimitsConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub autopilot: Option<AutopilotOptions>,

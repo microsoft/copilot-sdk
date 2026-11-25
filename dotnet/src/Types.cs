@@ -3847,6 +3847,10 @@ public sealed class McpHttpServerConfig : McpServerConfig
 /// </summary>
 public sealed class CustomAgentConfig
 {
+    /// <summary>Maximum logical model turns per request as a local subagent, overriding inheritance.</summary>
+    [JsonPropertyName("maxToolTurns")]
+    public uint? MaxToolTurns { get; set; }
+
     /// <summary>
     /// Declarative hook actions keyed by event name, active only for this agent.
     /// </summary>
@@ -4829,6 +4833,7 @@ public sealed class MessageOptions
         Prompt = other.Prompt;
         DisplayPrompt = other.DisplayPrompt;
         ClientTurnId = other.ClientTurnId;
+        MaxToolTurns = other.MaxToolTurns;
         ResponseSchema = other.ResponseSchema;
         RequestHeaders = other.RequestHeaders is not null
             ? new Dictionary<string, string>(other.RequestHeaders)
@@ -4876,6 +4881,9 @@ public sealed class MessageOptions
     /// restored on resume.
     /// </summary>
     public string? ClientTurnId { get; set; }
+
+    /// <summary>Overrides the session's logical model-turn limit for this request. Not supported for immediate steering.</summary>
+    public uint? MaxToolTurns { get; set; }
 
     /// <summary>
     /// Optional provider-native JSON Schema for this turn, including tool continuations.
@@ -5263,6 +5271,17 @@ public class ClientObservabilityOptions
 /// <summary>Options for github.</summary>
 public class ClientGitHubOptions
 {
+    /// <summary>
+    /// GitHub OAuth app ID for runtime-managed GitHub.com sign-in and Entra-to-GitHub token exchange.
+    /// Requires <see cref="ClientSecret"/>.
+    /// </summary>
+    [JsonPropertyName("clientId")]
+    public string? ClientId { get; set; }
+
+    /// <summary>Matching GitHub OAuth app secret. Leave both options unset to use the Copilot CLI OAuth app.</summary>
+    [JsonIgnore]
+    public string? ClientSecret { get; set; }
+
     /// <summary>
     /// GitHub token to use for authentication.
     /// When provided, the token is passed to the runtime via environment variable.
@@ -6270,6 +6289,10 @@ public class SessionPluginOptions
 /// <summary>Options for execution.</summary>
 public class SessionExecutionOptions
 {
+    /// <summary>Default maximum logical model turns per request. Zero prevents any primary model call.</summary>
+    [JsonPropertyName("maxToolTurns")]
+    public uint? MaxToolTurns { get; set; }
+
     /// <summary>
     /// Optional limits for the session's current accounting window.
     /// </summary>

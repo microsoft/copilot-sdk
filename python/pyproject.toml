@@ -41,8 +41,8 @@ telemetry = [
 
 [dependency-groups]
 dev = [
-    "ruff==0.17.4",
-    "ty>=0.0.2,<0.0.100",
+    "ruff==0.17.5",
+    "ty>=0.0.2,<0.0.106",
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
     "pytest-timeout>=2.0.0",
@@ -78,12 +78,12 @@ requires-dist = ["opentelemetry-api==1.45.2", "typing-extensions>=4.5.0"]
 
 [[tool.uv.dependency-metadata]]
 name = "ruff"
-version = "0.17.4"
+version = "0.17.5"
 requires-python = ">=3.7"
 
 [[tool.uv.dependency-metadata]]
 name = "ty"
-version = "0.0.99"
+version = "0.0.105"
 requires-python = ">=3.8"
 
 [tool.setuptools.packages.find]

@@ -343,11 +343,17 @@ def test_stalled(runner, cleanup):
         source.write(f"\nPHASE = {phase!r}\n")
     env = dict(os.environ)
     env["PYTHONPATH"] = str(Path(__file__).parent.resolve())
+    # This fixture owns its asyncio.Runner; unrelated plugins add startup and shutdown work.
+    env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
     result = subprocess.run(
         [
             sys.executable,
             "-m",
             "pytest",
+            "-p",
+            "xdist.plugin",
+            "-p",
+            "pytest_timeout",
             "-v",
             "-s",
             "-n",

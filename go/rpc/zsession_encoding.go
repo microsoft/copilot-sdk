@@ -2105,14 +2105,14 @@ func unmarshalPermissionRequest(data []byte) (PermissionRequest, error) {
 			return nil, err
 		}
 		return &d, nil
-	case PermissionRequestKindExtensionManagement:
-		var d PermissionRequestExtensionManagement
+	case PermissionRequestKindExtensionLaunch:
+		var d PermissionRequestExtensionLaunch
 		if err := json.Unmarshal(data, &d); err != nil {
 			return nil, err
 		}
 		return &d, nil
-	case PermissionRequestKindExtensionPermissionAccess:
-		var d PermissionRequestExtensionPermissionAccess
+	case PermissionRequestKindExtensionManagement:
+		var d PermissionRequestExtensionManagement
 		if err := json.Unmarshal(data, &d); err != nil {
 			return nil, err
 		}
@@ -2298,8 +2298,8 @@ func (r PermissionRequestExtensionEnvAccess) MarshalJSON() ([]byte, error) {
 	})
 }
 
-func (r PermissionRequestExtensionManagement) MarshalJSON() ([]byte, error) {
-	type alias PermissionRequestExtensionManagement
+func (r PermissionRequestExtensionLaunch) MarshalJSON() ([]byte, error) {
+	type alias PermissionRequestExtensionLaunch
 	return json.Marshal(struct {
 		Kind PermissionRequestKind `json:"kind"`
 		alias
@@ -2309,8 +2309,8 @@ func (r PermissionRequestExtensionManagement) MarshalJSON() ([]byte, error) {
 	})
 }
 
-func (r PermissionRequestExtensionPermissionAccess) MarshalJSON() ([]byte, error) {
-	type alias PermissionRequestExtensionPermissionAccess
+func (r PermissionRequestExtensionManagement) MarshalJSON() ([]byte, error) {
+	type alias PermissionRequestExtensionManagement
 	return json.Marshal(struct {
 		Kind PermissionRequestKind `json:"kind"`
 		alias
@@ -2439,14 +2439,14 @@ func unmarshalPermissionPromptRequest(data []byte) (PermissionPromptRequest, err
 			return nil, err
 		}
 		return &d, nil
-	case PermissionPromptRequestKindExtensionManagement:
-		var d PermissionPromptRequestExtensionManagement
+	case PermissionPromptRequestKindExtensionLaunch:
+		var d PermissionPromptRequestExtensionLaunch
 		if err := json.Unmarshal(data, &d); err != nil {
 			return nil, err
 		}
 		return &d, nil
-	case PermissionPromptRequestKindExtensionPermissionAccess:
-		var d PermissionPromptRequestExtensionPermissionAccess
+	case PermissionPromptRequestKindExtensionManagement:
+		var d PermissionPromptRequestExtensionManagement
 		if err := json.Unmarshal(data, &d); err != nil {
 			return nil, err
 		}
@@ -2548,8 +2548,8 @@ func (r PermissionPromptRequestExtensionEnvAccess) MarshalJSON() ([]byte, error)
 	})
 }
 
-func (r PermissionPromptRequestExtensionManagement) MarshalJSON() ([]byte, error) {
-	type alias PermissionPromptRequestExtensionManagement
+func (r PermissionPromptRequestExtensionLaunch) MarshalJSON() ([]byte, error) {
+	type alias PermissionPromptRequestExtensionLaunch
 	return json.Marshal(struct {
 		Kind PermissionPromptRequestKind `json:"kind"`
 		alias
@@ -2559,8 +2559,8 @@ func (r PermissionPromptRequestExtensionManagement) MarshalJSON() ([]byte, error
 	})
 }
 
-func (r PermissionPromptRequestExtensionPermissionAccess) MarshalJSON() ([]byte, error) {
-	type alias PermissionPromptRequestExtensionPermissionAccess
+func (r PermissionPromptRequestExtensionManagement) MarshalJSON() ([]byte, error) {
+	type alias PermissionPromptRequestExtensionManagement
 	return json.Marshal(struct {
 		Kind PermissionPromptRequestKind `json:"kind"`
 		alias

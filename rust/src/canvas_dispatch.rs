@@ -26,7 +26,7 @@ async fn respond<T: Serialize>(client: &Client, request_id: u64, result: T) {
                 client,
                 request_id,
                 error_codes::INTERNAL_ERROR,
-                "serialization failure",
+                "serialization failure".to_owned(),
                 None,
             )
             .await;
@@ -48,7 +48,7 @@ async fn send_error(
     client: &Client,
     request_id: u64,
     code: i32,
-    message: &str,
+    message: String,
     data: Option<Value>,
 ) {
     let _ = client
@@ -58,7 +58,7 @@ async fn send_error(
             result: None,
             error: Some(crate::JsonRpcError {
                 code: code.into(),
-                message: message.to_string(),
+                message,
                 data,
             }),
         })
@@ -66,16 +66,15 @@ async fn send_error(
 }
 
 async fn send_canvas_error(client: &Client, request_id: u64, error: CanvasError) {
-    let message = error.message.clone();
     let data = Some(serde_json::json!({
         "code": error.code,
-        "message": message,
+        "message": error.message,
     }));
     send_error(
         client,
         request_id,
         error_codes::INTERNAL_ERROR,
-        &error.message,
+        error.message,
         data,
     )
     .await;
@@ -96,7 +95,7 @@ async fn parse_params<T: serde::de::DeserializeOwned>(
                 client,
                 request.id,
                 error_codes::INVALID_PARAMS,
-                &format!("invalid params: {error}"),
+                format!("invalid params: {error}"),
                 None,
             )
             .await;
@@ -180,7 +179,7 @@ pub(crate) async fn dispatch(
                 client,
                 request.id,
                 error_codes::METHOD_NOT_FOUND,
-                &format!("unknown method: {method}"),
+                format!("unknown method: {method}"),
                 None,
             )
             .await;

@@ -2028,12 +2028,12 @@ Install [uv](https://docs.astral.sh/uv/) and a supported [Node.js version](../no
 
 ```bash
 cd nodejs
-npm ci
+pnpm install --frozen-lockfile --ignore-scripts
 ```
 
 ```bash
 cd test/harness
-npm ci
+pnpm install --frozen-lockfile --ignore-scripts
 ```
 
 ```bash

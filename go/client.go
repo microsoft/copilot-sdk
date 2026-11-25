@@ -1432,6 +1432,7 @@ func (c *Client) CreateSession(ctx context.Context, input *CreateSessionOptions)
 	req.EnableCitations = config.EnableCitations
 	req.EnableFileChangeTracking = config.EnableFileChangeTracking
 	req.SessionLimits = config.SessionLimits
+	req.MaxToolTurns = config.maxToolTurns
 	req.Autopilot = config.Autopilot
 	req.IsExperimentalMode = config.EnableExperimentalMode
 	req.SkipCustomInstructions = config.SkipCustomInstructions
@@ -1982,6 +1983,7 @@ func (c *Client) ResumeSession(ctx context.Context, sessionID string, input *Res
 	req.EnableCitations = config.EnableCitations
 	req.EnableFileChangeTracking = config.EnableFileChangeTracking
 	req.SessionLimits = config.SessionLimits
+	req.MaxToolTurns = config.maxToolTurns
 	req.Autopilot = config.Autopilot
 	if config.Streaming != nil {
 		req.Streaming = config.Streaming
@@ -2889,7 +2891,9 @@ func (c *Client) verifyProtocolVersion(ctx context.Context) error {
 		tokenPtr = &t
 	}
 	connectReq := &connectHandshakeRequest{
-		Token: tokenPtr,
+		GitHubClientID:     c.options.gitHubClientID,
+		GitHubClientSecret: c.options.gitHubClientSecret,
+		Token:              tokenPtr,
 		SupportedTaskKinds: []rpc.TaskKind{
 			rpc.TaskKindAgent,
 			rpc.TaskKindClient,
@@ -2921,6 +2925,9 @@ func (c *Client) verifyProtocolVersion(ctx context.Context) error {
 	if err != nil {
 		var rpcErr *jsonrpc2.Error
 		if errors.As(err, &rpcErr) && (rpcErr.Code == jsonrpc2.ErrMethodNotFound.Code || rpcErr.Message == "Unhandled method connect") {
+			if connectReq.GitHubClientID != "" {
+				return fmt.Errorf("this runtime does not support GitHub OAuth client configuration: %w", err)
+			}
 			if c.options.Entra != nil {
 				return fmt.Errorf("this runtime does not support Entra client configuration: %w", err)
 			}
@@ -2961,6 +2968,8 @@ func (c *Client) verifyProtocolVersion(ctx context.Context) error {
 }
 
 type connectHandshakeRequest struct {
+	GitHubClientID                  string                 `json:"githubClientId,omitempty"`
+	GitHubClientSecret              *string                `json:"githubClientSecret,omitempty"`
 	Entra                           *rpc.EntraAuthConfig   `json:"entra,omitempty"`
 	EntraTokenProvider              *bool                  `json:"entraTokenProvider,omitempty"`
 	Token                           *string                `json:"token,omitempty"`

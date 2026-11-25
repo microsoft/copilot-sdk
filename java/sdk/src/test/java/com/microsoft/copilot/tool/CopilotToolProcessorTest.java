@@ -118,6 +118,31 @@ class CopilotToolProcessorTest {
         assertTrue(generated.contains("\"grep\""), "Expected explicit name: grep");
     }
 
+    @Test
+    void generatesCompanion_whenHolderIsNamedToolExposure() {
+        String source = """
+                package test;
+                import com.microsoft.copilot.tool.CopilotTool;
+                public class ToolExposure {
+                    @CopilotTool("Lists tools")
+                    public String listTools() {
+                        return "tools";
+                    }
+                    @CopilotTool(value = "Lists explicit tools",
+                        exposure = com.microsoft.copilot.rpc.ToolExposure.EXPLICIT)
+                    public String listExplicitTools() {
+                        return "explicit tools";
+                    }
+                }
+                """;
+
+        CompilationResult result = compileWithProcessor(List.of(inMemorySource("test.ToolExposure", source)));
+
+        assertNoErrors(result);
+        String generated = result.getGeneratedSource("test.ToolExposure$$CopilotToolMeta");
+        assertTrue(generated.contains("com.microsoft.copilot.rpc.ToolExposure.EXPLICIT"));
+    }
+
     // ── Test: Compile error for private methods ─────────────────────────────────
 
     @Test
@@ -1650,10 +1675,9 @@ class CopilotToolProcessorTest {
         assertNoErrors(result);
         String generated = result.getGeneratedSource("test.HintTools$$CopilotToolMeta");
         String normalizedGenerated = generated.replace("\r\n", "\n").replace('\r', '\n');
-        assertTrue(
-                normalizedGenerated.contains(
-                        "                null,\n                null,\n                Boolean.TRUE\n            )"),
-                "Expected Boolean.TRUE for idempotent after isTerminal and namespace, got:\n" + generated);
+        assertTrue(normalizedGenerated.contains(
+                "                null,\n                null,\n                Boolean.TRUE,\n                null\n            )"),
+                "Expected Boolean.TRUE for idempotent before exposure, got:\n" + generated);
     }
 
     // ── Test: Combined flags all apply independently ────────────────────────────

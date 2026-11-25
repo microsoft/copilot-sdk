@@ -288,6 +288,16 @@ internal sealed class ConnectRequest
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? EntraTokenProvider { get; set; }
 
+    /// <summary>GitHub.com OAuth application client ID for runtime-managed sign-in and Entra token exchange.</summary>
+    [JsonPropertyName("githubClientId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? GitHubClientId { get; set; }
+
+    /// <summary>Matching OAuth application secret. Required whenever githubClientId is supplied. Omit both fields to use the built-in CLI registration.</summary>
+    [JsonPropertyName("githubClientSecret")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? GitHubClientSecret { get; set; }
+
     /// <summary>Task kinds this connection can decode when observing session tasks. Omit to retain agent and shell compatibility.</summary>
     [JsonPropertyName("supportedTaskKinds")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -7504,6 +7514,11 @@ public sealed class SessionOpenExecutionOptions
     [JsonPropertyName("limits")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public SessionLimitsConfig? Limits { get; set; }
+
+    /// <summary>Default maximum logical model turns per request. Zero permits no model turns. Needing another turn after the limit is an error.</summary>
+    [JsonPropertyName("maxToolTurns")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? MaxToolTurns { get; set; }
 }
 
 /// <summary>RPC data type for SessionFeatureFlagConfiguration operations.</summary>
@@ -27922,7 +27937,7 @@ public partial class ResponseFormatJsonSchema : ResponseFormat
 
 /// <summary>Parameters for sending a user message to the session.</summary>
 [Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
-internal sealed class SendRequest
+public sealed class SendRequest
 {
     /// <summary>Set by the host when an agent wrote this message and the host delivers it in the user role, such as the kickoff of a session another agent created. Copied to the resulting user.message event. Only automatic permission decisions read it: they treat the text as another agent's message, never as the user's own words or authorization. Delivery, history and the model's view of the message are unchanged. It can only withhold human authority, never add it. Remote sessions, hosted by Mission Control or over AHP, do not carry it: their transports deliver only the prompt, so there the message is judged as it would be without the mark.</summary>
     [JsonPropertyName("agentAuthored")]
@@ -27953,6 +27968,106 @@ internal sealed class SendRequest
     [JsonPropertyName("displayPrompt")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? DisplayPrompt { get; set; }
+
+    /// <summary>Overrides the maximum logical model turns for this request. Zero permits no model turns; needing another turn after the limit is an error. Not supported for immediate steering.</summary>
+    [JsonPropertyName("maxToolTurns")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? MaxToolTurns { get; set; }
+
+    /// <summary>How to deliver the message. `enqueue` (default) appends to the message queue. `immediate` interjects during an in-progress turn.</summary>
+    [JsonPropertyName("mode")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public SendMode? Mode { get; set; }
+
+    /// <summary>If true, adds the message to the front of the queue instead of the end.</summary>
+    [JsonPropertyName("prepend")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? Prepend { get; set; }
+
+    /// <summary>The user message text.</summary>
+    [JsonPropertyName("prompt")]
+    public required string Prompt { get; set; }
+
+    /// <summary>Custom HTTP headers to include in outbound model requests for this turn. Merged with session-level provider headers; per-turn headers augment and overwrite session-level headers with the same key.</summary>
+    [JsonPropertyName("requestHeaders")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IDictionary<string, string>? RequestHeaders { get; set; }
+
+    /// <summary>If set, the request will fail if the named tool is not available when this message is among the user messages at the start of the current exchange.</summary>
+    [JsonPropertyName("requiredTool")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? RequiredTool { get; set; }
+
+    /// <summary>Provider-native output format for this turn, including all tool-call iterations. Not inherited by later turns or subagents. Ordinary steering inherits the active format; specifying responseFormat with mode: immediate is an error, even while idle. Returned assistant content remains text; the runtime does not parse or validate it. Unsupported models or schemas produce provider errors.</summary>
+    [JsonPropertyName("responseFormat")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ResponseFormat? ResponseFormat { get; set; }
+
+    /// <summary>SDK-owned invocation identifier for an embedder.sendAdmission callback after canonical queue admission. Only the original trusted in-process host may request it. Does not change wait or turn completion semantics.</summary>
+    [JsonPropertyName("sendAdmissionId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? SendAdmissionId { get; set; }
+
+    /// <summary>Optional provenance tag copied to the resulting user.message event. Must be `user`, `system`, `command-&lt;command-id&gt;` for command-originated messages, `schedule-&lt;numeric-id&gt;` for scheduled prompts, `agent-&lt;agent-id&gt;` for prompts sent by another agent, or `automation-&lt;automation-id&gt;` for turns a host sends on behalf of an automation the user configured. An automation turn defines the session's task like a user message but carries no human authority.</summary>
+    [RegularExpression("^(user|system|command-.*|schedule-\\d+|agent-.+|automation-.+)$")]
+    [JsonPropertyName("source")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Source { get; set; }
+
+    /// <summary>W3C Trace Context traceparent header for distributed tracing of this agent turn.</summary>
+    [JsonPropertyName("traceparent")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Traceparent { get; set; }
+
+    /// <summary>W3C Trace Context tracestate header for distributed tracing.</summary>
+    [JsonPropertyName("tracestate")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Tracestate { get; set; }
+
+    /// <summary>If true, await completion of the agentic loop for this message before returning. Defaults to false (fire-and-forget). When true, the result still contains the same `messageId`; the caller can rely on the agent having processed the message before the call resolves. Transport-dependent tail semantics: on a LOCAL (in-process) session the wait additionally blocks until the completed turn's event tail has been dispatched to this session's in-process subscribers, so a subsequent read of subscriber state already reflects the turn; on a REMOTE session the wait resolves once the loop completes and mirrored delivery follows over the wire. Callers that need the stronger local guarantee on remote sessions should await the event stream explicitly.</summary>
+    [JsonPropertyName("wait")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? Wait { get; set; }
+}
+
+/// <summary>Parameters for sending a user message to the session.</summary>
+[Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+internal sealed class SendRequestWithSession
+{
+    /// <summary>Set by the host when an agent wrote this message and the host delivers it in the user role, such as the kickoff of a session another agent created. Copied to the resulting user.message event. Only automatic permission decisions read it: they treat the text as another agent's message, never as the user's own words or authorization. Delivery, history and the model's view of the message are unchanged. It can only withhold human authority, never add it. Remote sessions, hosted by Mission Control or over AHP, do not carry it: their transports deliver only the prompt, so there the message is judged as it would be without the mark.</summary>
+    [JsonPropertyName("agentAuthored")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? AgentAuthored { get; set; }
+
+    /// <summary>The UI mode the agent was in when this message was sent. Defaults to the session's current mode.</summary>
+    [JsonPropertyName("agentMode")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public SendAgentMode? AgentMode { get; set; }
+
+    /// <summary>Optional attachments (files, directories, selections, blobs, GitHub references) to include with the message.</summary>
+    [JsonPropertyName("attachments")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IList<Attachment>? Attachments { get; set; }
+
+    /// <summary>If false, this message will not trigger a Premium Request Unit charge. User messages default to billable.</summary>
+    [JsonPropertyName("billable")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? Billable { get; set; }
+
+    /// <summary>Opaque caller-chosen ID for the turn this message starts. The runtime copies it unchanged into `params._meta["com.github.copilot/turnId"]` on every MCP `tools/call` the agent makes while serving that turn, including calls from sub-agents it spawns and from Autopilot continuations of it. Visible user steering (`mode: "immediate"`) that a running turn consumes hands it to a successor turn: the steering's value replaces the running turn's from the next model call onward, and steering without one clears it. System and hidden steering leave it unchanged. A turn started without one, including one the runtime starts itself, carries no turn ID. The `user.message` event for each message the send delivers echoes it as `clientTurnId` when the message is consumed, and is persisted like other events; the value stamped on MCP calls is held in memory only and is not restored on resume.</summary>
+    [JsonPropertyName("clientTurnId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ClientTurnId { get; set; }
+
+    /// <summary>If provided, this is shown in the timeline instead of `prompt`.</summary>
+    [JsonPropertyName("displayPrompt")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? DisplayPrompt { get; set; }
+
+    /// <summary>Overrides the maximum logical model turns for this request. Zero permits no model turns; needing another turn after the limit is an error. Not supported for immediate steering.</summary>
+    [JsonPropertyName("maxToolTurns")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? MaxToolTurns { get; set; }
 
     /// <summary>How to deliver the message. `enqueue` (default) appends to the message queue. `immediate` interjects during an in-progress turn.</summary>
     [JsonPropertyName("mode")]
@@ -28087,7 +28202,7 @@ public sealed class SendMessageItem
 
 /// <summary>Parameters for sending zero or more user messages to the session in a single turn. Remote-backed (Mission Control) sessions do not support this method and will return an error.</summary>
 [Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
-internal sealed class SendMessagesRequest
+public sealed class SendMessagesRequest
 {
     /// <summary>The UI mode the agent was in when these messages were sent. Defaults to the session's current mode.</summary>
     [JsonPropertyName("agentMode")]
@@ -28098,6 +28213,70 @@ internal sealed class SendMessagesRequest
     [JsonPropertyName("clientTurnId")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? ClientTurnId { get; set; }
+
+    /// <summary>Overrides the maximum logical model turns for the entire batch, including an empty batch. Zero permits no model turns. Not supported for immediate steering.</summary>
+    [JsonPropertyName("maxToolTurns")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? MaxToolTurns { get; set; }
+
+    /// <summary>The user messages to append to the conversation, in order, before running one agent loop. When the batch starts a run, its final message is the primary initiating message; earlier messages provide context, not separate runs or replies. May be empty, in which case a single turn runs over the existing history with no new user message or originatingMessageId.</summary>
+    [JsonPropertyName("messages")]
+    public required IList<SendMessageItem> Messages { get; set; }
+
+    /// <summary>How to deliver the messages. `enqueue` (default) appends to the message queue. `immediate` interjects during an in-progress turn.</summary>
+    [JsonPropertyName("mode")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public SendMode? Mode { get; set; }
+
+    /// <summary>If true, adds the messages to the front of the queue instead of the end.</summary>
+    [JsonPropertyName("prepend")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? Prepend { get; set; }
+
+    /// <summary>Custom HTTP headers to include in outbound model requests for this turn. Merged with session-level provider headers; per-turn headers augment and overwrite session-level headers with the same key.</summary>
+    [JsonPropertyName("requestHeaders")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IDictionary<string, string>? RequestHeaders { get; set; }
+
+    /// <summary>Provider-native output format for the whole turn, including an empty message batch and all tool-call iterations. Not inherited by later turns or subagents. Ordinary steering inherits the active format; specifying responseFormat with mode: immediate is an error, even while idle. Returned assistant content remains text; the runtime does not parse or validate it. Unsupported models or schemas produce provider errors.</summary>
+    [JsonPropertyName("responseFormat")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ResponseFormat? ResponseFormat { get; set; }
+
+    /// <summary>W3C Trace Context traceparent header for distributed tracing of this agent turn.</summary>
+    [JsonPropertyName("traceparent")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Traceparent { get; set; }
+
+    /// <summary>W3C Trace Context tracestate header for distributed tracing.</summary>
+    [JsonPropertyName("tracestate")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Tracestate { get; set; }
+
+    /// <summary>If true, await completion of the agentic loop for this turn before returning. Defaults to false (fire-and-forget). When true, the result still contains the same `messageIds`; the caller can rely on the agent having processed the messages before the call resolves. Transport-dependent tail semantics: on a LOCAL (in-process) session the wait additionally blocks until the completed turn's event tail has been dispatched to this session's in-process subscribers, so a subsequent read of subscriber state already reflects the turn; on a REMOTE session the wait resolves once the loop completes and mirrored delivery follows over the wire. Callers that need the stronger local guarantee on remote sessions should await the event stream explicitly.</summary>
+    [JsonPropertyName("wait")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? Wait { get; set; }
+}
+
+/// <summary>Parameters for sending zero or more user messages to the session in a single turn. Remote-backed (Mission Control) sessions do not support this method and will return an error.</summary>
+[Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+internal sealed class SendMessagesRequestWithSession
+{
+    /// <summary>The UI mode the agent was in when these messages were sent. Defaults to the session's current mode.</summary>
+    [JsonPropertyName("agentMode")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public SendAgentMode? AgentMode { get; set; }
+
+    /// <summary>Opaque caller-chosen ID for the turn this batch starts. The runtime copies it unchanged into `params._meta["com.github.copilot/turnId"]` on every MCP `tools/call` the agent makes while serving that turn, including calls from sub-agents it spawns and from Autopilot continuations of it. Visible user steering (`mode: "immediate"`) that a running turn consumes hands it to a successor turn: the steering's value replaces the running turn's from the next model call onward, and steering without one clears it. System and hidden steering leave it unchanged. A turn started without one, including one the runtime starts itself, carries no turn ID. The `user.message` event for each message the send delivers echoes it as `clientTurnId` when the message is consumed, and is persisted like other events; the value stamped on MCP calls is held in memory only and is not restored on resume.</summary>
+    [JsonPropertyName("clientTurnId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ClientTurnId { get; set; }
+
+    /// <summary>Overrides the maximum logical model turns for the entire batch, including an empty batch. Zero permits no model turns. Not supported for immediate steering.</summary>
+    [JsonPropertyName("maxToolTurns")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? MaxToolTurns { get; set; }
 
     /// <summary>The user messages to append to the conversation, in order, before running one agent loop. When the batch starts a run, its final message is the primary initiating message; earlier messages provide context, not separate runs or replies. May be empty, in which case a single turn runs over the existing history with no new user message or originatingMessageId.</summary>
     [JsonPropertyName("messages")]
@@ -34265,6 +34444,34 @@ internal sealed class RemoteAttachMissionControlRequest
     public string TaskId { get; set; } = string.Empty;
 }
 
+/// <summary>Reports cloud host readiness and the existing startup error when the host did not start. The caller retains cleanup ownership.</summary>
+[Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+internal sealed class RemoteWaitForStartResult
+{
+    /// <summary>Startup error when started is false; absent on success.</summary>
+    [JsonPropertyName("errorMessage")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ErrorMessage { get; set; }
+
+    /// <summary>True only after the attached cloud task publishes session.start.</summary>
+    [JsonPropertyName("started")]
+    public bool Started { get; set; }
+}
+
+/// <summary>Waits for the attached cloud task to publish session.start. Does not create a task or shut down the retained session.</summary>
+[Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+internal sealed class RemoteWaitForStartRequest
+{
+    /// <summary>Target session identifier.</summary>
+    [JsonPropertyName("sessionId")]
+    public string SessionId { get; set; } = string.Empty;
+
+    /// <summary>Maximum wait in milliseconds; omission uses the cloud startup default.</summary>
+    [JsonPropertyName("timeoutMs")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? TimeoutMs { get; set; }
+}
+
 /// <summary>GitHub URL and remote export and steering state, with an optional warning when cloud session storage policy refuses export.</summary>
 [Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
 public sealed class RemoteEnableResult
@@ -35214,7 +35421,7 @@ public sealed class PermissionDecisionContext
     [JsonPropertyName("surface")]
     public PermissionDecisionSurface Surface { get; set; }
 
-    /// <summary>Optional user-authored explanation of this decision, independent of approval scope. Collected only in restricted telemetry for accepted human responses to Assisted Permissions prompts. Never persisted in session history, sent to the agent or judge, or used to create approval rules. Existing rejection feedback is separate.</summary>
+    /// <summary>Optional user-authored explanation of this decision, independent of approval scope. Collected for accepted human responses to Assisted Permissions prompts: in restricted telemetry, or, when the prompt's `assistedApproval.userFeedbackUpload` is true, uploaded to GitHub with the redacted session event log after the user consents. Never persisted in session history, sent to the agent or judge, or used to create approval rules. Existing rejection feedback is separate.</summary>
     [JsonPropertyName("userFeedback")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? UserFeedback { get; set; }
@@ -43677,6 +43884,16 @@ public sealed class ProtocolExternalToolDefinition
     public string Description { get; set; } = string.Empty;
 
     /// <summary>
+    /// Controls how agents receive this tool. Omitted or `automatic` preserves
+    /// normal tool selection. `explicit` makes the tool available only to custom
+    /// agents whose `tools` list names it. This controls model-visible exposure,
+    /// not permission to execute the tool.
+    /// </summary>
+    [JsonPropertyName("exposure")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ProtocolExternalToolExposure? Exposure { get; set; }
+
+    /// <summary>
     /// Whether the SDK has a local handler for this tool. Set by the SDK, not the model.
     /// On explicit continuation, an unanswered handler-backed call is interrupted
     /// when the resuming SDK also registers a handler; it is never replayed.
@@ -45746,7 +45963,7 @@ public partial class PermissionDecisionApproveOnce : PermissionDecision
 [JsonDerivedType(typeof(PermissionDecisionApproveForSessionApprovalCustomTool), "custom-tool")]
 [JsonDerivedType(typeof(PermissionDecisionApproveForSessionApprovalExtensionManagement), "extension-management")]
 [JsonDerivedType(typeof(PermissionDecisionApproveForSessionApprovalWorkflow), "workflow")]
-[JsonDerivedType(typeof(PermissionDecisionApproveForSessionApprovalExtensionPermissionAccess), "extension-permission-access")]
+[JsonDerivedType(typeof(PermissionDecisionApproveForSessionApprovalExtensionLaunch), "extension-launch")]
 [JsonDerivedType(typeof(PermissionDecisionApproveForSessionApprovalExtensionEnvAccess), "extension-env-access")]
 public partial class PermissionDecisionApproveForSessionApproval
 {
@@ -45877,16 +46094,16 @@ public partial class PermissionDecisionApproveForSessionApprovalWorkflow : Permi
     public string? ApprovalKey { get; set; }
 }
 
-/// <summary>Session-scoped approval details for an extension's permission-gated capability access, keyed by extension name.</summary>
-/// <remarks>The <c>extension-permission-access</c> variant of <see cref="PermissionDecisionApproveForSessionApproval"/>.</remarks>
+/// <summary>Session-scoped approval to launch an extension.</summary>
+/// <remarks>The <c>extension-launch</c> variant of <see cref="PermissionDecisionApproveForSessionApproval"/>.</remarks>
 [Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
-public partial class PermissionDecisionApproveForSessionApprovalExtensionPermissionAccess : PermissionDecisionApproveForSessionApproval
+public partial class PermissionDecisionApproveForSessionApprovalExtensionLaunch : PermissionDecisionApproveForSessionApproval
 {
     /// <inheritdoc />
     [JsonIgnore]
-    public override string Kind => "extension-permission-access";
+    public override string Kind => "extension-launch";
 
-    /// <summary>Extension name.</summary>
+    /// <summary>Source-qualified identity of the approved extension.</summary>
     [JsonPropertyName("extensionName")]
     public required string ExtensionName { get; set; }
 }
@@ -45963,7 +46180,7 @@ public partial class PermissionDecisionApproveReadOnlyForSession : PermissionDec
 [JsonDerivedType(typeof(PermissionDecisionApproveForLocationApprovalCustomTool), "custom-tool")]
 [JsonDerivedType(typeof(PermissionDecisionApproveForLocationApprovalExtensionManagement), "extension-management")]
 [JsonDerivedType(typeof(PermissionDecisionApproveForLocationApprovalWorkflow), "workflow")]
-[JsonDerivedType(typeof(PermissionDecisionApproveForLocationApprovalExtensionPermissionAccess), "extension-permission-access")]
+[JsonDerivedType(typeof(PermissionDecisionApproveForLocationApprovalExtensionLaunch), "extension-launch")]
 [JsonDerivedType(typeof(PermissionDecisionApproveForLocationApprovalExtensionEnvAccess), "extension-env-access")]
 public partial class PermissionDecisionApproveForLocationApproval
 {
@@ -46094,16 +46311,16 @@ public partial class PermissionDecisionApproveForLocationApprovalWorkflow : Perm
     public string? ApprovalKey { get; set; }
 }
 
-/// <summary>Location-scoped approval details for an extension's permission-gated capability access, keyed by extension name.</summary>
-/// <remarks>The <c>extension-permission-access</c> variant of <see cref="PermissionDecisionApproveForLocationApproval"/>.</remarks>
+/// <summary>Location-scoped approval to launch an extension.</summary>
+/// <remarks>The <c>extension-launch</c> variant of <see cref="PermissionDecisionApproveForLocationApproval"/>.</remarks>
 [Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
-public partial class PermissionDecisionApproveForLocationApprovalExtensionPermissionAccess : PermissionDecisionApproveForLocationApproval
+public partial class PermissionDecisionApproveForLocationApprovalExtensionLaunch : PermissionDecisionApproveForLocationApproval
 {
     /// <inheritdoc />
     [JsonIgnore]
-    public override string Kind => "extension-permission-access";
+    public override string Kind => "extension-launch";
 
-    /// <summary>Extension name.</summary>
+    /// <summary>Source-qualified identity of the approved extension.</summary>
     [JsonPropertyName("extensionName")]
     public required string ExtensionName { get; set; }
 }
@@ -46962,7 +47179,7 @@ public sealed class PermissionsLocationsAddToolApprovalResult
 [JsonDerivedType(typeof(PermissionsLocationsAddToolApprovalDetailsCustomTool), "custom-tool")]
 [JsonDerivedType(typeof(PermissionsLocationsAddToolApprovalDetailsExtensionManagement), "extension-management")]
 [JsonDerivedType(typeof(PermissionsLocationsAddToolApprovalDetailsWorkflow), "workflow")]
-[JsonDerivedType(typeof(PermissionsLocationsAddToolApprovalDetailsExtensionPermissionAccess), "extension-permission-access")]
+[JsonDerivedType(typeof(PermissionsLocationsAddToolApprovalDetailsExtensionLaunch), "extension-launch")]
 [JsonDerivedType(typeof(PermissionsLocationsAddToolApprovalDetailsExtensionEnvAccess), "extension-env-access")]
 public partial class PermissionsLocationsAddToolApprovalDetails
 {
@@ -47093,16 +47310,16 @@ public partial class PermissionsLocationsAddToolApprovalDetailsWorkflow : Permis
     public string? ApprovalKey { get; set; }
 }
 
-/// <summary>Location-persisted tool approval details for an extension's permission-gated capability access, keyed by extension name.</summary>
-/// <remarks>The <c>extension-permission-access</c> variant of <see cref="PermissionsLocationsAddToolApprovalDetails"/>.</remarks>
+/// <summary>Location-persisted approval to launch an extension.</summary>
+/// <remarks>The <c>extension-launch</c> variant of <see cref="PermissionsLocationsAddToolApprovalDetails"/>.</remarks>
 [Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
-public partial class PermissionsLocationsAddToolApprovalDetailsExtensionPermissionAccess : PermissionsLocationsAddToolApprovalDetails
+public partial class PermissionsLocationsAddToolApprovalDetailsExtensionLaunch : PermissionsLocationsAddToolApprovalDetails
 {
     /// <inheritdoc />
     [JsonIgnore]
-    public override string Kind => "extension-permission-access";
+    public override string Kind => "extension-launch";
 
-    /// <summary>Extension name.</summary>
+    /// <summary>Source-qualified identity of the approved extension.</summary>
     [JsonPropertyName("extensionName")]
     public required string ExtensionName { get; set; }
 }
@@ -51839,14 +52056,22 @@ public partial class EntraTokenAcquireResultIdentity : EntraTokenAcquireResult
     [JsonIgnore]
     public override string Kind => "identity";
 
-    /// <summary>Stable nonblank opaque account ID owned by the host.</summary>
+    /// <summary>Stable, account-specific opaque host ID, preserved exactly as the suffix of entra:&lt;accountId&gt; and echoed on later requests. Must remain stable across renewal, reauthentication, reconnect and restart. Nonblank, without control characters, and at most 480 UTF-8 bytes; hosts may namespace their IDs.</summary>
     [RegularExpression("\\S")]
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Safe for generated string properties: JSON Schema minLength/maxLength map to string length validation, not reflection over trimmed Count members")]
     [MinLength(1)]
+    [MaxLength(480)]
     [JsonPropertyName("accountId")]
     public required string AccountId { get; set; }
 
-    /// <summary>Optional display name; not an account identifier or credential.</summary>
+    /// <summary>Required Entra tenant ID, stored as non-secret parent-account metadata for service routing. Microsoft internal tenants use MSIT Loki; other tenants use production. Does not affect account identity.</summary>
+    [RegularExpression("\\S")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Safe for generated string properties: JSON Schema minLength/maxLength map to string length validation, not reflection over trimmed Count members")]
+    [MinLength(1)]
+    [JsonPropertyName("tenantId")]
+    public required string TenantId { get; set; }
+
+    /// <summary>Optional human-readable account label. Never used as account identity.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [JsonPropertyName("username")]
     public string? Username { get; set; }
@@ -72092,6 +72317,69 @@ public readonly struct ProtocolExternalToolDefer : IEquatable<ProtocolExternalTo
 }
 
 
+/// <summary>Controls how agents receive an external tool definition. This is a visibility policy, not an execution permission.</summary>
+[Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+[JsonConverter(typeof(Converter))]
+[DebuggerDisplay("{Value,nq}")]
+public readonly struct ProtocolExternalToolExposure : IEquatable<ProtocolExternalToolExposure>
+{
+    private readonly string? _value;
+
+    /// <summary>Initializes a new instance of the <see cref="ProtocolExternalToolExposure"/> struct.</summary>
+    /// <param name="value">The value to associate with this <see cref="ProtocolExternalToolExposure"/>.</param>
+    [JsonConstructor]
+    public ProtocolExternalToolExposure(string value)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(value);
+        _value = value;
+    }
+
+    /// <summary>Gets the value associated with this <see cref="ProtocolExternalToolExposure"/>.</summary>
+    public string Value => _value ?? string.Empty;
+
+    /// <summary>Use normal tool selection: the default agent receives the tool, unrestricted custom agents inherit it, and custom agents with tool lists receive it only when listed.</summary>
+    public static ProtocolExternalToolExposure Automatic { get; } = new("automatic");
+
+    /// <summary>Expose the tool only to custom agents whose tools list explicitly names it.</summary>
+    public static ProtocolExternalToolExposure Explicit { get; } = new("explicit");
+
+    /// <summary>Returns a value indicating whether two <see cref="ProtocolExternalToolExposure"/> instances are equivalent.</summary>
+    public static bool operator ==(ProtocolExternalToolExposure left, ProtocolExternalToolExposure right) => left.Equals(right);
+
+    /// <summary>Returns a value indicating whether two <see cref="ProtocolExternalToolExposure"/> instances are not equivalent.</summary>
+    public static bool operator !=(ProtocolExternalToolExposure left, ProtocolExternalToolExposure right) => !(left == right);
+
+    /// <inheritdoc />
+    public override bool Equals(object? obj) => obj is ProtocolExternalToolExposure other && Equals(other);
+
+    /// <inheritdoc />
+    public bool Equals(ProtocolExternalToolExposure other) => string.Equals(Value, other.Value, StringComparison.OrdinalIgnoreCase);
+
+    /// <inheritdoc />
+    public override int GetHashCode() => StringComparer.OrdinalIgnoreCase.GetHashCode(Value);
+
+    /// <inheritdoc />
+    public override string ToString() => Value;
+
+    /// <summary>Provides a <see cref="JsonConverter{ProtocolExternalToolExposure}"/> for serializing <see cref="ProtocolExternalToolExposure"/> instances.</summary>
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    public sealed class Converter : JsonConverter<ProtocolExternalToolExposure>
+    {
+        /// <inheritdoc />
+        public override ProtocolExternalToolExposure Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            return new(GeneratedStringEnumJson.ReadValue(ref reader, typeToConvert));
+        }
+
+        /// <inheritdoc />
+        public override void Write(Utf8JsonWriter writer, ProtocolExternalToolExposure value, JsonSerializerOptions options)
+        {
+            GeneratedStringEnumJson.WriteValue(writer, value.Value, typeof(ProtocolExternalToolExposure));
+        }
+    }
+}
+
+
 /// <summary>Context tier override for matching subagents.</summary>
 [Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
 [JsonConverter(typeof(Converter))]
@@ -75182,6 +75470,8 @@ public sealed class ServerRpc
     }
 
     /// <summary>Performs the SDK server connection handshake and validates the optional connection token. Marked internal because this is JSON-RPC transport plumbing invoked automatically by an SDK client's own `connect()` wrapper, not a user-facing method. Stays internal as long as the SDK client owns the handshake; would only become public if the SDK ever exposed the raw schema surface to consumers without a connection wrapper.</summary>
+    /// <param name="githubClientId">GitHub.com OAuth application client ID for runtime-managed sign-in and Entra token exchange.</param>
+    /// <param name="githubClientSecret">Matching OAuth application secret. Required whenever githubClientId is supplied. Omit both fields to use the built-in CLI registration.</param>
     /// <param name="entra">Entra application used by this client's authentication flows. Required to enable built-in Microsoft Entra sign-in and token renewal; other authentication methods remain available.</param>
     /// <param name="entraTokenProvider">Opt this connection in to host-owned Entra identity and token acquisition through entraToken.getToken. Requires entra.clientId and an explicit true acknowledgement in the response. SDKs set this internally when a callback is configured.</param>
     /// <param name="enableGitHubTelemetryForwarding">Opt this connection in to GitHub telemetry forwarding for its lifetime. When set, the runtime forwards this host's telemetry across all its sessions, its sessionless events, and explicitly process-wide events over the `gitHubTelemetry.event` notification. Connections intentionally sharing one server receive that server's events; independently embedded runtime hosts do not receive each other's host-owned events. Regular events are also written to the runtime's normal GitHub/CTS path (dual-write); host-only compatibility events are forward-only and intentionally skip that path. Intended for first-party hosts that re-emit the events into their own telemetry stores. Both unrestricted and restricted events are forwarded, each tagged with a `restricted` discriminator; a backstop drops restricted events when restricted telemetry is disabled — using the process-global gate for ordinary events and an explicit session-scoped decision for host-only events.</param>
@@ -75191,9 +75481,9 @@ public sealed class ServerRpc
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>Handshake result reporting the server's protocol version and package version on success.</returns>
     [Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
-    internal async Task<ConnectResult> ConnectAsync(EntraAuthConfig? entra = null, bool? entraTokenProvider = null, bool? enableGitHubTelemetryForwarding = null, ConnectClientInfo? clientInfo = null, IList<TaskKind>? supportedTaskKinds = null, string? token = null, CancellationToken cancellationToken = default)
+    internal async Task<ConnectResult> ConnectAsync(string? githubClientId = null, string? githubClientSecret = null, EntraAuthConfig? entra = null, bool? entraTokenProvider = null, bool? enableGitHubTelemetryForwarding = null, ConnectClientInfo? clientInfo = null, IList<TaskKind>? supportedTaskKinds = null, string? token = null, CancellationToken cancellationToken = default)
     {
-        var request = new ConnectRequest { Entra = entra, EntraTokenProvider = entraTokenProvider, EnableGitHubTelemetryForwarding = enableGitHubTelemetryForwarding, ClientInfo = clientInfo, SupportedTaskKinds = supportedTaskKinds, Token = token };
+        var request = new ConnectRequest { GitHubClientId = githubClientId, GitHubClientSecret = githubClientSecret, Entra = entra, EntraTokenProvider = entraTokenProvider, EnableGitHubTelemetryForwarding = enableGitHubTelemetryForwarding, ClientInfo = clientInfo, SupportedTaskKinds = supportedTaskKinds, Token = token };
         return await CopilotClient.InvokeRpcAsync<ConnectResult>(_rpc, "connect", [request], cancellationToken);
     }
 
@@ -83458,8 +83748,22 @@ public sealed class SessionRpc
         ArgumentNullException.ThrowIfNull(prompt);
         _session.ThrowIfDisposed();
 
-        var request = new SendRequest { SessionId = _session.SessionId, Prompt = prompt, DisplayPrompt = displayPrompt, Attachments = attachments, Mode = mode, Prepend = prepend, Billable = billable, RequiredTool = requiredTool, Source = source, AgentAuthored = agentAuthored, AgentMode = agentMode, RequestHeaders = requestHeaders, ResponseFormat = responseFormat, Traceparent = traceparent, Tracestate = tracestate, ClientTurnId = clientTurnId, SendAdmissionId = sendAdmissionId, Wait = wait };
+        var request = new SendRequestWithSession { SessionId = _session.SessionId, Prompt = prompt, DisplayPrompt = displayPrompt, Attachments = attachments, Mode = mode, Prepend = prepend, Billable = billable, RequiredTool = requiredTool, Source = source, AgentAuthored = agentAuthored, AgentMode = agentMode, RequestHeaders = requestHeaders, ResponseFormat = responseFormat, Traceparent = traceparent, Tracestate = tracestate, ClientTurnId = clientTurnId, SendAdmissionId = sendAdmissionId, Wait = wait };
         return await CopilotClient.InvokeRpcAsync<SendResult>(_session.Rpc, "session.send", [request], cancellationToken);
+    }
+
+    /// <summary>Sends a user message to the session and returns its message ID.</summary>
+    /// <param name="request">Parameters for sending a user message to the session.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>Result of sending a user message.</returns>
+    [Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+    public async Task<SendResult> SendAsync(SendRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(request.Prompt);
+        _session.ThrowIfDisposed();
+        var wireRequest = new SendRequestWithSession { SessionId = _session.SessionId, Prompt = request.Prompt, MaxToolTurns = request.MaxToolTurns, DisplayPrompt = request.DisplayPrompt, Attachments = request.Attachments, Mode = request.Mode, Prepend = request.Prepend, Billable = request.Billable, RequiredTool = request.RequiredTool, Source = request.Source, AgentAuthored = request.AgentAuthored, AgentMode = request.AgentMode, RequestHeaders = request.RequestHeaders, ResponseFormat = request.ResponseFormat, Traceparent = request.Traceparent, Tracestate = request.Tracestate, ClientTurnId = request.ClientTurnId, SendAdmissionId = request.SendAdmissionId, Wait = request.Wait };
+        return await CopilotClient.InvokeRpcAsync<SendResult>(_session.Rpc, "session.send", [wireRequest], cancellationToken);
     }
 
     /// <summary>Submits one message through normal admission and waits for its request-owned completion. Returns the exact root assistant event, or an explicit aborted/no-response outcome. Cancelling or timing out the wait does not abort agent work. Unsupported execution hosts reject the method before admitting the message.</summary>
@@ -83488,8 +83792,22 @@ public sealed class SessionRpc
         ArgumentNullException.ThrowIfNull(prompt);
         _session.ThrowIfDisposed();
 
-        var request = new SendRequest { SessionId = _session.SessionId, Prompt = prompt, DisplayPrompt = displayPrompt, Attachments = attachments, Mode = mode, Prepend = prepend, Billable = billable, RequiredTool = requiredTool, Source = source, AgentAuthored = agentAuthored, AgentMode = agentMode, RequestHeaders = requestHeaders, ResponseFormat = responseFormat, Traceparent = traceparent, Tracestate = tracestate, ClientTurnId = clientTurnId, SendAdmissionId = sendAdmissionId, Wait = wait };
+        var request = new SendRequestWithSession { SessionId = _session.SessionId, Prompt = prompt, DisplayPrompt = displayPrompt, Attachments = attachments, Mode = mode, Prepend = prepend, Billable = billable, RequiredTool = requiredTool, Source = source, AgentAuthored = agentAuthored, AgentMode = agentMode, RequestHeaders = requestHeaders, ResponseFormat = responseFormat, Traceparent = traceparent, Tracestate = tracestate, ClientTurnId = clientTurnId, SendAdmissionId = sendAdmissionId, Wait = wait };
         return await CopilotClient.InvokeRpcAsync<SendAndWaitResult>(_session.Rpc, "session.sendAndWait", [request], cancellationToken);
+    }
+
+    /// <summary>Submits one message through normal admission and waits for its request-owned completion. Returns the exact root assistant event, or an explicit aborted/no-response outcome. Cancelling or timing out the wait does not abort agent work. Unsupported execution hosts reject the method before admitting the message.</summary>
+    /// <param name="request">Parameters for sending a user message to the session.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>Internal request-correlated completion of one submitted message.</returns>
+    [Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+    internal async Task<SendAndWaitResult> SendAndWaitAsync(SendRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(request.Prompt);
+        _session.ThrowIfDisposed();
+        var wireRequest = new SendRequestWithSession { SessionId = _session.SessionId, Prompt = request.Prompt, MaxToolTurns = request.MaxToolTurns, DisplayPrompt = request.DisplayPrompt, Attachments = request.Attachments, Mode = request.Mode, Prepend = request.Prepend, Billable = request.Billable, RequiredTool = request.RequiredTool, Source = request.Source, AgentAuthored = request.AgentAuthored, AgentMode = request.AgentMode, RequestHeaders = request.RequestHeaders, ResponseFormat = request.ResponseFormat, Traceparent = request.Traceparent, Tracestate = request.Tracestate, ClientTurnId = request.ClientTurnId, SendAdmissionId = request.SendAdmissionId, Wait = request.Wait };
+        return await CopilotClient.InvokeRpcAsync<SendAndWaitResult>(_session.Rpc, "session.sendAndWait", [wireRequest], cancellationToken);
     }
 
     /// <summary>Sends zero or more user messages to the session in a single turn and returns their message IDs. All provided messages are appended to the conversation in order, then exactly one agent turn runs over the resulting history. When the list is empty, one turn runs over the existing history with no new user message. Remote-backed (Mission Control) sessions do not support this method and will return an error.</summary>
@@ -83511,8 +83829,22 @@ public sealed class SessionRpc
         ArgumentNullException.ThrowIfNull(messages);
         _session.ThrowIfDisposed();
 
-        var request = new SendMessagesRequest { SessionId = _session.SessionId, Messages = messages, Mode = mode, Prepend = prepend, AgentMode = agentMode, RequestHeaders = requestHeaders, ResponseFormat = responseFormat, Traceparent = traceparent, Tracestate = tracestate, ClientTurnId = clientTurnId, Wait = wait };
+        var request = new SendMessagesRequestWithSession { SessionId = _session.SessionId, Messages = messages, Mode = mode, Prepend = prepend, AgentMode = agentMode, RequestHeaders = requestHeaders, ResponseFormat = responseFormat, Traceparent = traceparent, Tracestate = tracestate, ClientTurnId = clientTurnId, Wait = wait };
         return await CopilotClient.InvokeRpcAsync<SendMessagesResult>(_session.Rpc, "session.sendMessages", [request], cancellationToken);
+    }
+
+    /// <summary>Sends zero or more user messages to the session in a single turn and returns their message IDs. All provided messages are appended to the conversation in order, then exactly one agent turn runs over the resulting history. When the list is empty, one turn runs over the existing history with no new user message. Remote-backed (Mission Control) sessions do not support this method and will return an error.</summary>
+    /// <param name="request">Parameters for sending zero or more user messages to the session in a single turn. Remote-backed (Mission Control) sessions do not support this method and will return an error.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>Result of sending zero or more user messages.</returns>
+    [Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+    public async Task<SendMessagesResult> SendMessagesAsync(SendMessagesRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(request.Messages);
+        _session.ThrowIfDisposed();
+        var wireRequest = new SendMessagesRequestWithSession { SessionId = _session.SessionId, Messages = request.Messages, MaxToolTurns = request.MaxToolTurns, Mode = request.Mode, Prepend = request.Prepend, AgentMode = request.AgentMode, RequestHeaders = request.RequestHeaders, ResponseFormat = request.ResponseFormat, Traceparent = request.Traceparent, Tracestate = request.Tracestate, ClientTurnId = request.ClientTurnId, Wait = request.Wait };
+        return await CopilotClient.InvokeRpcAsync<SendMessagesResult>(_session.Rpc, "session.sendMessages", [wireRequest], cancellationToken);
     }
 
     /// <summary>Queues or sends an internal system notification to the session according to its passive policy.</summary>
@@ -85440,6 +85772,18 @@ public sealed class RemoteApi
 
         var request = new RemoteAttachMissionControlRequest { SessionId = _session.SessionId, PublicSessionId = publicSessionId, AuthInfo = authInfo, IntegrationId = integrationId, TaskId = taskId, ObservedEventsJson = observedEventsJson, RemoteSteerable = remoteSteerable, RpcEnabled = rpcEnabled, BaseUrl = baseUrl, FrontendBaseUrl = frontendBaseUrl, AuthContextId = authContextId, RepositoryOwner = repositoryOwner, RepositoryName = repositoryName, PollIntervalMs = pollIntervalMs };
         return await CopilotClient.InvokeRpcAsync<RemoteAttachMissionControlResult>(_session.Rpc, "session.remote.attachMissionControl", [request], cancellationToken);
+    }
+
+    /// <summary>Waits for an attached cloud task to publish session.start. SDK hosts and ACP clients can distinguish an attached poller from a ready remote host. The caller retains timeout cleanup ownership.</summary>
+    /// <param name="timeoutMs">Maximum wait in milliseconds; omission uses the cloud startup default.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>Reports cloud host readiness and the existing startup error when the host did not start. The caller retains cleanup ownership.</returns>
+    internal async Task<RemoteWaitForStartResult> WaitForStartAsync(long? timeoutMs = null, CancellationToken cancellationToken = default)
+    {
+        _session.ThrowIfDisposed();
+
+        var request = new RemoteWaitForStartRequest { SessionId = _session.SessionId, TimeoutMs = timeoutMs };
+        return await CopilotClient.InvokeRpcAsync<RemoteWaitForStartResult>(_session.Rpc, "session.remote.waitForStart", [request], cancellationToken);
     }
 
     /// <summary>Enables remote session export or steering.</summary>
@@ -91276,8 +91620,8 @@ internal static class ClientGlobalApiRegistration
 [JsonSerializable(typeof(Microsoft.Copilot.PermissionPromptRequestCommands), TypeInfoPropertyName = "SessionEventsPermissionPromptRequestCommands")]
 [JsonSerializable(typeof(Microsoft.Copilot.PermissionPromptRequestCustomTool), TypeInfoPropertyName = "SessionEventsPermissionPromptRequestCustomTool")]
 [JsonSerializable(typeof(Microsoft.Copilot.PermissionPromptRequestExtensionEnvAccess), TypeInfoPropertyName = "SessionEventsPermissionPromptRequestExtensionEnvAccess")]
+[JsonSerializable(typeof(Microsoft.Copilot.PermissionPromptRequestExtensionLaunch), TypeInfoPropertyName = "SessionEventsPermissionPromptRequestExtensionLaunch")]
 [JsonSerializable(typeof(Microsoft.Copilot.PermissionPromptRequestExtensionManagement), TypeInfoPropertyName = "SessionEventsPermissionPromptRequestExtensionManagement")]
-[JsonSerializable(typeof(Microsoft.Copilot.PermissionPromptRequestExtensionPermissionAccess), TypeInfoPropertyName = "SessionEventsPermissionPromptRequestExtensionPermissionAccess")]
 [JsonSerializable(typeof(Microsoft.Copilot.PermissionPromptRequestHook), TypeInfoPropertyName = "SessionEventsPermissionPromptRequestHook")]
 [JsonSerializable(typeof(Microsoft.Copilot.PermissionPromptRequestMcp), TypeInfoPropertyName = "SessionEventsPermissionPromptRequestMcp")]
 [JsonSerializable(typeof(Microsoft.Copilot.PermissionPromptRequestMemory), TypeInfoPropertyName = "SessionEventsPermissionPromptRequestMemory")]
@@ -91300,8 +91644,8 @@ internal static class ClientGlobalApiRegistration
 [JsonSerializable(typeof(Microsoft.Copilot.PermissionRequest), TypeInfoPropertyName = "SessionEventsPermissionRequest")]
 [JsonSerializable(typeof(Microsoft.Copilot.PermissionRequestCustomTool), TypeInfoPropertyName = "SessionEventsPermissionRequestCustomTool")]
 [JsonSerializable(typeof(Microsoft.Copilot.PermissionRequestExtensionEnvAccess), TypeInfoPropertyName = "SessionEventsPermissionRequestExtensionEnvAccess")]
+[JsonSerializable(typeof(Microsoft.Copilot.PermissionRequestExtensionLaunch), TypeInfoPropertyName = "SessionEventsPermissionRequestExtensionLaunch")]
 [JsonSerializable(typeof(Microsoft.Copilot.PermissionRequestExtensionManagement), TypeInfoPropertyName = "SessionEventsPermissionRequestExtensionManagement")]
-[JsonSerializable(typeof(Microsoft.Copilot.PermissionRequestExtensionPermissionAccess), TypeInfoPropertyName = "SessionEventsPermissionRequestExtensionPermissionAccess")]
 [JsonSerializable(typeof(Microsoft.Copilot.PermissionRequestHook), TypeInfoPropertyName = "SessionEventsPermissionRequestHook")]
 [JsonSerializable(typeof(Microsoft.Copilot.PermissionRequestMcp), TypeInfoPropertyName = "SessionEventsPermissionRequestMcp")]
 [JsonSerializable(typeof(Microsoft.Copilot.PermissionRequestMemory), TypeInfoPropertyName = "SessionEventsPermissionRequestMemory")]
@@ -91485,6 +91829,7 @@ internal static class ClientGlobalApiRegistration
 [JsonSerializable(typeof(Microsoft.Copilot.ToolShellOutputData), TypeInfoPropertyName = "SessionEventsToolShellOutputData")]
 [JsonSerializable(typeof(Microsoft.Copilot.ToolShellOutputEvent), TypeInfoPropertyName = "SessionEventsToolShellOutputEvent")]
 [JsonSerializable(typeof(Microsoft.Copilot.ToolShellOutputStream), TypeInfoPropertyName = "SessionEventsToolShellOutputStream")]
+[JsonSerializable(typeof(Microsoft.Copilot.ToolTurnBudget), TypeInfoPropertyName = "SessionEventsToolTurnBudget")]
 [JsonSerializable(typeof(Microsoft.Copilot.ToolUserRequestedData), TypeInfoPropertyName = "SessionEventsToolUserRequestedData")]
 [JsonSerializable(typeof(Microsoft.Copilot.ToolUserRequestedEvent), TypeInfoPropertyName = "SessionEventsToolUserRequestedEvent")]
 [JsonSerializable(typeof(Microsoft.Copilot.UIEphemeralQueryPhase), TypeInfoPropertyName = "SessionEventsUIEphemeralQueryPhase")]
@@ -91512,8 +91857,8 @@ internal static class ClientGlobalApiRegistration
 [JsonSerializable(typeof(Microsoft.Copilot.UserToolSessionApprovalCommands), TypeInfoPropertyName = "SessionEventsUserToolSessionApprovalCommands")]
 [JsonSerializable(typeof(Microsoft.Copilot.UserToolSessionApprovalCustomTool), TypeInfoPropertyName = "SessionEventsUserToolSessionApprovalCustomTool")]
 [JsonSerializable(typeof(Microsoft.Copilot.UserToolSessionApprovalExtensionEnvAccess), TypeInfoPropertyName = "SessionEventsUserToolSessionApprovalExtensionEnvAccess")]
+[JsonSerializable(typeof(Microsoft.Copilot.UserToolSessionApprovalExtensionLaunch), TypeInfoPropertyName = "SessionEventsUserToolSessionApprovalExtensionLaunch")]
 [JsonSerializable(typeof(Microsoft.Copilot.UserToolSessionApprovalExtensionManagement), TypeInfoPropertyName = "SessionEventsUserToolSessionApprovalExtensionManagement")]
-[JsonSerializable(typeof(Microsoft.Copilot.UserToolSessionApprovalExtensionPermissionAccess), TypeInfoPropertyName = "SessionEventsUserToolSessionApprovalExtensionPermissionAccess")]
 [JsonSerializable(typeof(Microsoft.Copilot.UserToolSessionApprovalMcp), TypeInfoPropertyName = "SessionEventsUserToolSessionApprovalMcp")]
 [JsonSerializable(typeof(Microsoft.Copilot.UserToolSessionApprovalMemory), TypeInfoPropertyName = "SessionEventsUserToolSessionApprovalMemory")]
 [JsonSerializable(typeof(Microsoft.Copilot.UserToolSessionApprovalRead), TypeInfoPropertyName = "SessionEventsUserToolSessionApprovalRead")]
@@ -92805,6 +93150,8 @@ internal static class ClientGlobalApiRegistration
 [JsonSerializable(typeof(RemoteSessionPageEntry))]
 [JsonSerializable(typeof(RemoteSessionPageFailure))]
 [JsonSerializable(typeof(RemoteSessionRepository))]
+[JsonSerializable(typeof(RemoteWaitForStartRequest))]
+[JsonSerializable(typeof(RemoteWaitForStartResult))]
 [JsonSerializable(typeof(RepoSettingsEditRequest))]
 [JsonSerializable(typeof(RepoSettingsReadRawRequest))]
 [JsonSerializable(typeof(RepoSettingsReadRawResult))]
@@ -92904,8 +93251,10 @@ internal static class ClientGlobalApiRegistration
 [JsonSerializable(typeof(SendAttachmentsToMessageParams))]
 [JsonSerializable(typeof(SendMessageItem))]
 [JsonSerializable(typeof(SendMessagesRequest))]
+[JsonSerializable(typeof(SendMessagesRequestWithSession))]
 [JsonSerializable(typeof(SendMessagesResult))]
 [JsonSerializable(typeof(SendRequest))]
+[JsonSerializable(typeof(SendRequestWithSession))]
 [JsonSerializable(typeof(SendResult))]
 [JsonSerializable(typeof(SendSystemNotificationRequest))]
 [JsonSerializable(typeof(ServerAgentList))]

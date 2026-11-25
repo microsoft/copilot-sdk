@@ -21,6 +21,8 @@ import javax.annotation.processing.Generated;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record SessionOpenExecutionOptions(
+    /** Default maximum logical model turns per request. Zero permits no model turns. Needing another turn after the limit is an error. */
+    @JsonProperty("maxToolTurns") Long maxToolTurns,
     /** Whether auto-mode continuation is enabled. */
     @JsonProperty("continueOnAutoMode") Boolean continueOnAutoMode,
     /** Initial session limits. */
@@ -48,9 +50,21 @@ public record SessionOpenExecutionOptions(
      */
     public static final class Builder {
         private Builder() {}
+        private Long maxToolTurns;
         private Boolean continueOnAutoMode;
         private SessionLimitsConfig limits;
         private AutopilotOptions autopilot;
+
+        /**
+         * Sets the {@code maxToolTurns} property.
+         * @param value the property value
+         * @return this builder
+         * @since 2.0.0
+         */
+        public Builder maxToolTurns(Long value) {
+            this.maxToolTurns = value;
+            return this;
+        }
 
         /**
          * Sets the {@code continueOnAutoMode} property.
@@ -92,7 +106,7 @@ public record SessionOpenExecutionOptions(
          * @since 2.0.0
          */
         public SessionOpenExecutionOptions build() {
-            return new SessionOpenExecutionOptions(continueOnAutoMode, limits, autopilot);
+            return new SessionOpenExecutionOptions(maxToolTurns, continueOnAutoMode, limits, autopilot);
         }
     }
 }

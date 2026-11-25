@@ -62,6 +62,62 @@ public partial class ToolsE2ETests(E2ETestFixture fixture, ITestOutputHelper out
     }
 
     [Fact]
+    [Trait(E2ETestTraits.Backend, E2ETestTraits.SelfConfiguredBackend)]
+    public async Task Reused_Factory_Options_Do_Not_Leak_Explicit_Exposure()
+    {
+        var handler = new CapturingFinalResponseHandler();
+        await using var client = Ctx.CreateClient(options: new CopilotClientOptions
+        {
+            Mode = CopilotClientMode.CodingAgent,
+            Runtime = RuntimeConnection.ForSpawnedStdio(),
+            Models = new ClientModelOptions { RequestHandler = handler }
+        });
+        await client.StartAsync();
+
+        var factoryOptions = new AIFunctionFactoryOptions
+        {
+            Name = "explicit_reused_options",
+            Description = "Must stay hidden from the root agent",
+        };
+        var explicitTool = CopilotTool.DefineTool(
+            () => "explicit",
+            new CopilotToolOptions { Exposure = CopilotToolExposure.Explicit },
+            factoryOptions);
+        factoryOptions.Name = "automatic_reused_options";
+        factoryOptions.Description = "Must remain visible to the root agent";
+        var automaticTool = CopilotTool.DefineTool(() => "automatic", factoryOptions: factoryOptions);
+
+        await using var session = await Ctx.CreateSessionAsync(client, new CreateSessionOptions
+        {
+            GitHub = new SessionGitHubOptions { Capi = new CapiSessionOptions { Enabled = false } },
+            Model = "gpt-4o-mini",
+            Inference = ByokTestOptions.Inference(
+                new ProviderConfig
+                {
+                    Type = "openai",
+                    WireApi = "completions",
+                    BaseUrl = "https://tool-exposure.invalid/v1",
+                    ApiKey = "test-key",
+                    ModelId = "gpt-4o-mini",
+                    WireModel = "gpt-4o-mini",
+                },
+                new SessionInferenceOptions { }),
+            Tools = new SessionToolOptions { Definitions = [explicitTool, automaticTool] },
+        });
+
+        await session.SendAndWaitAsync(new MessageOptions { Prompt = "Say done." });
+
+        using var request = JsonDocument.Parse(Assert.Single(handler.InferenceRequests));
+        var toolNames = request.RootElement
+            .GetProperty("tools")
+            .EnumerateArray()
+            .Select(tool => tool.GetProperty("function").GetProperty("name").GetString())
+            .ToList();
+        Assert.Contains("automatic_reused_options", toolNames);
+        Assert.DoesNotContain("explicit_reused_options", toolNames);
+    }
+
+    [Fact]
     public async Task Low_Level_Tool_Definition()
     {
         string currentPhase = string.Empty;
@@ -632,5 +688,49 @@ public partial class ToolsE2ETests(E2ETestFixture fixture, ITestOutputHelper out
         {
             Content = new StringContent(body, Encoding.UTF8, "text/event-stream"),
         };
+    }
+
+    private sealed class CapturingFinalResponseHandler : CopilotRequestHandler
+    {
+        private const string FinalResponse =
+            "{\"id\":\"chatcmpl-final\",\"object\":\"chat.completion\",\"created\":1,\"model\":\"gpt-4o-mini\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"done\"},\"finish_reason\":\"stop\"}]}";
+
+        private readonly object _lock = new();
+        private readonly List<string> _inferenceRequests = [];
+
+        internal IReadOnlyList<string> InferenceRequests
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    return [.. _inferenceRequests];
+                }
+            }
+        }
+
+        protected override async Task<HttpResponseMessage> SendRequestAsync(HttpRequestMessage request, CopilotRequestContext ctx)
+        {
+            var url = request.RequestUri!.ToString();
+            if (!RecordingRequestHandler.IsInferenceUrl(url))
+            {
+                return RecordingRequestHandler.BuildNonInferenceResponse(url);
+            }
+
+            var requestBody = request.Content is null
+                ? string.Empty
+#if NET
+                : await request.Content.ReadAsStringAsync(ctx.CancellationToken).ConfigureAwait(false);
+#else
+                : await request.Content.ReadAsStringAsync().ConfigureAwait(false);
+#endif
+
+            lock (_lock)
+            {
+                _inferenceRequests.Add(requestBody);
+            }
+
+            return RecordingRequestHandler.Json(FinalResponse);
+        }
     }
 }

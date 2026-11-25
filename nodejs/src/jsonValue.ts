@@ -208,3 +208,11 @@ export function assertStrictJson(
 
     visit(value, "$", context.allowTopLevelUndefined);
 }
+
+/** Validate before JSON serialization would turn a non-finite value into null. */
+export function validateMaxToolTurns(value: number | undefined): number | undefined {
+    if (value !== undefined && (!Number.isInteger(value) || value < 0 || value > 0xffffffff)) {
+        throw new RangeError("maxToolTurns must be an unsigned 32-bit integer");
+    }
+    return value;
+}

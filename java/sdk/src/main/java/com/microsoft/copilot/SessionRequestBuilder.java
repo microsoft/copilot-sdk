@@ -29,9 +29,11 @@ import com.microsoft.copilot.rpc.StoredMemory;
 import com.microsoft.copilot.rpc.SystemMessageConfig;
 import com.microsoft.copilot.rpc.ToolDefinition;
 import com.microsoft.copilot.rpc.ToolDefer;
+import com.microsoft.copilot.rpc.ToolExposure;
 import com.microsoft.copilot.rpc.ToolNamespace;
 import com.microsoft.copilot.generated.rpc.ProtocolExternalToolDefer;
 import com.microsoft.copilot.generated.rpc.ProtocolExternalToolDefinition;
+import com.microsoft.copilot.generated.rpc.ProtocolExternalToolExposure;
 import com.microsoft.copilot.generated.rpc.ProtocolExternalToolNamespace;
 
 /**
@@ -162,7 +164,7 @@ final class SessionRequestBuilder {
                 .overridesBuiltInTool(tool.overridesBuiltInTool()).skipPermission(tool.skipPermission())
                 .hasHandler(tool.handler() != null).defer(toProtocolDefer(tool.defer())).isTerminal(tool.isTerminal())
                 .metadata(tool.metadata()).namespace(toProtocolNamespace(tool.namespace(), substituteRequiredNulls))
-                .idempotent(tool.idempotent()).build();
+                .idempotent(tool.idempotent()).exposure(toProtocolExposure(tool.exposure())).build();
     }
 
     private static ProtocolExternalToolNamespace toProtocolNamespace(ToolNamespace namespace) {
@@ -186,6 +188,16 @@ final class SessionRequestBuilder {
             case AUTO -> ProtocolExternalToolDefer.AUTO;
             case NEVER -> ProtocolExternalToolDefer.NEVER;
             case NONE -> null;
+        };
+    }
+
+    private static ProtocolExternalToolExposure toProtocolExposure(ToolExposure exposure) {
+        if (exposure == null) {
+            return null;
+        }
+        return switch (exposure) {
+            case AUTOMATIC -> ProtocolExternalToolExposure.AUTOMATIC;
+            case EXPLICIT -> ProtocolExternalToolExposure.EXPLICIT;
         };
     }
 
@@ -239,6 +251,7 @@ final class SessionRequestBuilder {
         config.getInference().getEnableCitations().ifPresent(request.getInference()::setEnableCitations);
         config.getFilesystem().getTrackFileChanges().ifPresent(request.getFilesystem()::setTrackFileChanges);
         request.setExecution(request.getExecution().setLimits(config.getExecution().getLimits()));
+        request.getExecution().setMaxToolTurns(config.getExecution().getMaxToolTurns());
         request.setExecution(request.getExecution().setAutopilot(config.getExecution().getAutopilot()));
         experimentalModeForMode(mode, config.getExperiments().getEnableExperimentalMode().orElse(null))
                 .ifPresent(request.getExperiments()::setEnableExperimentalMode);
@@ -403,6 +416,7 @@ final class SessionRequestBuilder {
         config.getInference().getEnableCitations().ifPresent(request.getInference()::setEnableCitations);
         config.getFilesystem().getTrackFileChanges().ifPresent(request.getFilesystem()::setTrackFileChanges);
         request.setExecution(request.getExecution().setLimits(config.getExecution().getLimits()));
+        request.getExecution().setMaxToolTurns(config.getExecution().getMaxToolTurns());
         request.setExecution(request.getExecution().setAutopilot(config.getExecution().getAutopilot()));
         experimentalModeForMode(mode, config.getExperiments().getEnableExperimentalMode().orElse(null))
                 .ifPresent(request.getExperiments()::setEnableExperimentalMode);

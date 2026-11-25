@@ -2325,6 +2325,19 @@ pub(crate) struct UserSettingsWriteKeysResult {
 }
 crate::record_serde::wire_record!(UserSettingsWriteKeysResult { status: "status" });
 
+/// Legacy durable extension approval.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct UserToolSessionApprovalExtensionPermissionAccess {
+    /// Extension name
+    pub extension_name: String,
+    /// Extension permission access approval kind
+    pub kind: UserToolSessionApprovalExtensionPermissionAccessKind,
+}
+crate::record_serde::wire_record!(UserToolSessionApprovalExtensionPermissionAccess {
+    extension_name: "extensionName",
+    kind: "kind"
+});
+
 /// The on-disk location of the user's settings document.
 ///
 /// <div class="warning">
@@ -3283,5 +3296,24 @@ impl<'de> Deserialize<'de> for UserSettingsMigrateObsoleteOnDiskStatus {
             3 => Self::Changed,
             _ => Self::Unknown,
         })
+    }
+}
+
+/// Extension permission access approval kind
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub(crate) enum UserToolSessionApprovalExtensionPermissionAccessKind {
+    #[serde(rename = "extension-permission-access")]
+    #[default]
+    ExtensionPermissionAccess,
+}
+impl<'de> Deserialize<'de> for UserToolSessionApprovalExtensionPermissionAccessKind {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        crate::enum_serde::deserialize_variant(
+            deserializer,
+            "UserToolSessionApprovalExtensionPermissionAccessKind",
+            &["extension-permission-access"],
+            None,
+        )?;
+        Ok(Self::ExtensionPermissionAccess)
     }
 }

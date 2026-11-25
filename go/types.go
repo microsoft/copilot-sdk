@@ -225,7 +225,10 @@ type clientOptions struct {
 	// GitHubToken is the GitHub token to use for authentication.
 	// When provided, the token is passed to the runtime via environment
 	// variable. This takes priority over other authentication methods.
-	GitHubToken string
+	GitHubToken    string
+	gitHubClientID string
+	// fmt does not dereference nested pointers when formatting a Client.
+	gitHubClientSecret *string
 	// UseLoggedInUser controls whether to use the logged-in user for
 	// authentication. When true, the runtime attempts to use stored OAuth
 	// tokens or gh CLI auth. When false, only explicit tokens such as
@@ -1665,6 +1668,8 @@ func (c MCPHTTPServerConfig) MarshalJSON() ([]byte, error) {
 
 // CustomAgentConfig configures a custom agent.
 type CustomAgentConfig struct {
+	// MaxToolTurns overrides the inherited limit when running as a local subagent.
+	MaxToolTurns *uint32 `json:"maxToolTurns,omitempty"`
 	// Hooks contains declarative actions keyed by event name, active only for this agent.
 	Hooks map[string][]map[string]any `json:"hooks,omitempty"`
 	// Name is the unique name of the custom agent
@@ -2157,6 +2162,7 @@ type sessionOptions struct {
 	// Experimental: SessionLimits is part of an experimental runtime accounting
 	// surface and may change or be removed in future SDK or CLI releases.
 	SessionLimits *rpc.SessionLimitsConfig
+	maxToolTurns  *uint32
 	// Autopilot configures continuation without changing the session mode.
 	// Omitted fields use defaults on create and preserve resident values on warm resume.
 	// Experimental: this policy may change in a future release.
@@ -2500,6 +2506,19 @@ const (
 	ToolDeferNever ToolDefer = "never"
 )
 
+// ToolExposure controls which agents automatically receive a tool.
+type ToolExposure string
+
+const (
+	// ToolExposureAutomatic preserves the default behavior: the tool is available
+	// to the default agent and unrestricted custom agents.
+	ToolExposureAutomatic ToolExposure = "automatic"
+	// ToolExposureExplicit makes the tool available only to custom agents whose
+	// tools list explicitly names it. This controls model visibility, not execution
+	// permission.
+	ToolExposureExplicit ToolExposure = "explicit"
+)
+
 type Tool struct {
 	Name                 string         `json:"name"`
 	Description          string         `json:"description,omitempty"`
@@ -2520,6 +2539,11 @@ type Tool struct {
 	// Defer controls whether the tool may be deferred (loaded lazily via tool
 	// search) rather than always pre-loaded. When empty, the runtime decides.
 	Defer ToolDefer `json:"defer,omitempty"`
+	// Exposure controls which agents automatically receive the tool. When empty
+	// or automatic, the tool retains the default behavior. Explicit tools are
+	// available only to custom agents whose tools list explicitly names them.
+	// This controls model visibility, not execution permission.
+	Exposure ToolExposure `json:"exposure,omitempty"`
 	// Metadata is opaque, host-defined metadata associated with the tool
 	// definition. Keys are namespaced and not part of the stable public API;
 	// values are not interpreted and may be recognized to inform host-specific
@@ -2901,6 +2925,7 @@ type resumeOptions struct {
 	// Experimental: SessionLimits is part of an experimental runtime accounting
 	// surface and may change or be removed in future SDK or CLI releases.
 	SessionLimits *rpc.SessionLimitsConfig
+	maxToolTurns  *uint32
 	// Autopilot patches resident policy on warm resume; re-supply on cold resume.
 	// Does not change the session mode.
 	// Experimental: this policy may change in a future release.
@@ -3582,6 +3607,8 @@ func MessageSourceAutomation(id string) MessageSource {
 
 // MessageOptions configures a message to send
 type MessageOptions struct {
+	// MaxToolTurns overrides the session's limit for this request. Not supported for immediate steering.
+	MaxToolTurns *uint32
 	// ResponseSchema is a per-run JSON Schema. Independent sends do not inherit it.
 	// Immediate steering inherits the active format and must not specify its own.
 	// Use RPC.Send for schema name, description and strictness options.
@@ -3746,6 +3773,7 @@ type createSessionRequest struct {
 	EnableCitations                    *bool                          `json:"enableCitations,omitempty"`
 	EnableFileChangeTracking           *bool                          `json:"enableFileChangeTracking,omitempty"`
 	SessionLimits                      *rpc.SessionLimitsConfig       `json:"sessionLimits,omitempty"`
+	MaxToolTurns                       *uint32                        `json:"maxToolTurns,omitempty"`
 	Autopilot                          *rpc.AutopilotOptions          `json:"autopilot,omitempty"`
 	IsExperimentalMode                 *bool                          `json:"isExperimentalMode,omitempty"`
 	SkipCustomInstructions             *bool                          `json:"skipCustomInstructions,omitempty"`
@@ -3866,6 +3894,7 @@ type resumeSessionRequest struct {
 	EnableCitations                    *bool                          `json:"enableCitations,omitempty"`
 	EnableFileChangeTracking           *bool                          `json:"enableFileChangeTracking,omitempty"`
 	SessionLimits                      *rpc.SessionLimitsConfig       `json:"sessionLimits,omitempty"`
+	MaxToolTurns                       *uint32                        `json:"maxToolTurns,omitempty"`
 	Autopilot                          *rpc.AutopilotOptions          `json:"autopilot,omitempty"`
 	IsExperimentalMode                 *bool                          `json:"isExperimentalMode,omitempty"`
 	SkipCustomInstructions             *bool                          `json:"skipCustomInstructions,omitempty"`
@@ -4100,6 +4129,7 @@ type sessionSendRequest struct {
 	Source         MessageSource       `json:"source,omitempty"`
 	DisplayPrompt  string              `json:"displayPrompt,omitempty"`
 	ClientTurnID   *string             `json:"clientTurnId,omitempty"`
+	MaxToolTurns   *uint32             `json:"maxToolTurns,omitempty"`
 	Attachments    []Attachment        `json:"attachments,omitempty"`
 	Mode           string              `json:"mode,omitempty"`
 	AgentMode      AgentMode           `json:"agentMode,omitempty"`

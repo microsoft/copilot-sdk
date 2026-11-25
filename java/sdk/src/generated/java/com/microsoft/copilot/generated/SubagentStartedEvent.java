@@ -52,7 +52,7 @@ public final class SubagentStartedEvent extends SessionEvent {
         @JsonProperty("workflowRunId") String workflowRunId,
         /** Task-registry ID of the spawning sub-agent. Absent when the root session spawned this child. */
         @JsonProperty("parentId") String parentId,
-        /** Whether this sub-agent can be resumed. Currently always false. */
+        /** Whether a later session resume may continue this sub-agent if its session ends before it does. */
         @JsonProperty("resumable") Boolean resumable,
         /** Type of the sub-agent selected at spawn time. */
         @JsonProperty("agentType") String agentType,

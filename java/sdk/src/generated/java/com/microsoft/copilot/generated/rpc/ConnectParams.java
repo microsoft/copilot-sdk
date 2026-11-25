@@ -25,6 +25,10 @@ import javax.annotation.processing.Generated;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @JsonIgnoreProperties(ignoreUnknown = true)
 record ConnectParams(
+    /** GitHub.com OAuth application client ID for runtime-managed sign-in and Entra token exchange. */
+    @JsonProperty("githubClientId") String gitHubClientId,
+    /** Matching OAuth application secret. Required whenever githubClientId is supplied. Omit both fields to use the built-in CLI registration. */
+    @JsonProperty("githubClientSecret") String gitHubClientSecret,
     /** Entra application used by this client's authentication flows. Required to enable built-in Microsoft Entra sign-in and token renewal; other authentication methods remain available. */
     @CopilotExperimental
     @JsonProperty("entra") EntraAuthConfig entra,
@@ -60,12 +64,36 @@ record ConnectParams(
      */
     public static final class Builder {
         private Builder() {}
+        private String gitHubClientId;
+        private String gitHubClientSecret;
         private EntraAuthConfig entra;
         private Boolean entraTokenProvider;
         private Boolean enableGitHubTelemetryForwarding;
         private ConnectClientInfo clientInfo;
         private List<TaskKind> supportedTaskKinds;
         private String token;
+
+        /**
+         * Sets the {@code githubClientId} property.
+         * @param value the property value
+         * @return this builder
+         * @since 2.0.0
+         */
+        public Builder gitHubClientId(String value) {
+            this.gitHubClientId = value;
+            return this;
+        }
+
+        /**
+         * Sets the {@code githubClientSecret} property.
+         * @param value the property value
+         * @return this builder
+         * @since 2.0.0
+         */
+        public Builder gitHubClientSecret(String value) {
+            this.gitHubClientSecret = value;
+            return this;
+        }
 
         /**
          * Sets the {@code entra} property.
@@ -142,7 +170,12 @@ record ConnectParams(
          * @since 2.0.0
          */
         public ConnectParams build() {
-            return new ConnectParams(entra, entraTokenProvider, enableGitHubTelemetryForwarding, clientInfo, supportedTaskKinds, token);
+            return new ConnectParams(gitHubClientId, gitHubClientSecret, entra, entraTokenProvider, enableGitHubTelemetryForwarding, clientInfo, supportedTaskKinds, token);
         }
+    }
+
+    @Override
+    public String toString() {
+        return "ConnectParams[gitHubClientId=" + gitHubClientId + ", gitHubClientSecret=" + (gitHubClientSecret == null ? null : "<redacted>") + ", entra=" + entra + ", entraTokenProvider=" + entraTokenProvider + ", enableGitHubTelemetryForwarding=" + enableGitHubTelemetryForwarding + ", clientInfo=" + clientInfo + ", supportedTaskKinds=" + supportedTaskKinds + ", token=" + token + "]";
     }
 }

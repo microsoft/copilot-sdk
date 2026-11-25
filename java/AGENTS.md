@@ -100,7 +100,7 @@ npm run generate:java
 The protocol constant `sdk/src/main/java/com/microsoft/copilot/SdkProtocolVersion.java`
 is also generated, despite living outside `src/generated/`. Change the shared
 `<SDK_ROOT>/sdk-protocol-version.json` and run
-`npm --prefix <SDK_ROOT>/nodejs run update:protocol-version` to update all six SDKs.
+`pnpm --dir <SDK_ROOT>/nodejs run update:protocol-version` to update all six SDKs.
 
 Use the SDK's selected schema inputs; do not update release-derived CLI pins
 as an incidental part of implementation work.

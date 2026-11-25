@@ -106,6 +106,7 @@ if (
     stampTreeDigest === currentTreeDigest &&
     currentPlatformProperties === expectedPlatformProperties
   ) {
+    removeStagedVoiceArtifacts(stampLines);
     console.log(`${assetName} already staged at ${runtimePath}`);
     process.exit(0);
   }
@@ -232,6 +233,38 @@ fs.writeFileSync(stampPath, `${stagingSchema}\n${version}\n${expectedHash}\n${tr
 
 console.log(`Staged ${runtimePath}`);
 
+// A tree staged before the voice filter is migrated in place, so a verified
+// tree stays usable offline and clean trees keep their stamp.
+function removeStagedVoiceArtifacts(stampLines) {
+  const voiceRoots = new Set();
+  for (const file of walkFiles(resourceDir)) {
+    const parts = path.relative(resourceDir, file).split(path.sep);
+    const index = parts.findIndex(isCliVoiceArtifact);
+    if (index !== -1) {
+      voiceRoots.add(path.join(resourceDir, ...parts.slice(0, index + 1)));
+    }
+  }
+  if (voiceRoots.size === 0) {
+    return;
+  }
+  for (const voiceRoot of voiceRoots) {
+    fs.rmSync(voiceRoot, { recursive: true, force: true });
+  }
+  const retainedInventory = fs
+    .readFileSync(inventoryPath, 'utf8')
+    .split('\n')
+    .filter((line) => line && !line.split('\t')[1]?.split('/').some(isCliVoiceArtifact));
+  fs.writeFileSync(inventoryPath, `${retainedInventory.join('\n')}\n`);
+  stampLines[3] = digestTree(resourceDir);
+  fs.writeFileSync(stampPath, `${stampLines.join('\n')}\n`);
+}
+
+// The CLI voice service, its .path references, and its native asset
+// generations. SDK clients have no voice API.
+function isCliVoiceArtifact(part) {
+  return part === 'copilot-voice' || part.startsWith('copilot-voice.') || part.startsWith('copilot-voice-assets.');
+}
+
 function hostlessRuntimePath(packageRelative, platform) {
   if (packageRelative.includes('\\')) {
     return null;
@@ -249,6 +282,7 @@ function hostlessRuntimePath(packageRelative, platform) {
     (topLevel.startsWith('voice-') && topLevel.endsWith('.js')) ||
     fileName === 'cli-native.node' ||
     parts.includes('mediaremote-adapter') ||
+    parts.some(isCliVoiceArtifact) ||
     fileName.startsWith('copilot-runtime-bin')
   ) {
     return null;

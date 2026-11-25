@@ -7,6 +7,14 @@ See [GitHub Releases](https://github.com/github/copilot-sdk/releases) for the fu
 
 ## [Unreleased]
 
+### Feature: explicit external tool exposure
+
+External tool definitions accept an optional `exposure` mode. Set it to `explicit` to hide the tool from the root agent and wildcard custom agents while allowing custom agents that name it.
+
+**Rust source break:** `ProtocolExternalToolDefinition` gains `exposure`. Exhaustive struct literals must add `exposure: None` or use `..Default::default()`.
+
+**Go source break:** `copilot.Tool` and `rpc.ProtocolExternalToolDefinition` gain `Exposure`. Positional literals must switch to keyed literals or add the new field.
+
 ### Feature: skill catalog diagnostics in session events
 
 The `session.skills_loaded` event includes optional `errors` and `warnings` arrays. Older runtimes can omit these fields.

@@ -9,7 +9,19 @@ use copilot_sdk::rpc::{
     SavedProviderConfigurationReadResult, SessionsOpenCreate, SessionsOpenCreateKind,
     SessionsOpenResume, SessionsOpenResumeKind, UnsupportedEnqueueCommandResult,
 };
-use copilot_sdk::session_events::{RecommendedAutoTier, UserMessageData};
+use copilot_sdk::session_events::{AssistantTurnStartData, RecommendedAutoTier, UserMessageData};
+
+#[test]
+fn assistant_turn_start_keeps_public_struct_update_syntax() {
+    let event = AssistantTurnStartData {
+        turn_id: "turn-1".into(),
+        ..Default::default()
+    };
+    assert_eq!(
+        serde_json::to_value(event).unwrap(),
+        serde_json::json!({ "turnId": "turn-1" })
+    );
+}
 
 #[test]
 fn released_session_records_preserve_complete_struct_literals() {
@@ -699,6 +711,7 @@ fn external_tool_definitions_preserve_public_struct_literals() {
     let definition = ProtocolExternalToolDefinition {
         defer: None,
         description: "Description".to_owned(),
+        exposure: None,
         idempotent: None,
         is_terminal: Some(true),
         metadata: None,

@@ -493,6 +493,13 @@ pub struct Tool {
     /// runtime decide.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub defer: Option<DeferMode>,
+    /// Controls which agents automatically receive this tool. `None` or
+    /// [`ExposureMode::Automatic`] preserves the default behavior.
+    /// [`ExposureMode::Explicit`] makes the tool available only to custom
+    /// agents whose tool list explicitly names it. This controls model
+    /// visibility, not execution permission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exposure: Option<ExposureMode>,
     /// Opaque, host-defined metadata associated with the tool definition.
     /// Keys are namespaced and not part of the stable public API; values are
     /// not interpreted and may be recognized to inform host-specific behavior.
@@ -576,6 +583,16 @@ pub enum DeferMode {
     Auto,
     /// The tool is always pre-loaded.
     Never,
+}
+
+/// Controls which agents automatically receive a [`Tool`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ExposureMode {
+    /// The tool is available to the default agent and unrestricted custom agents.
+    Automatic,
+    /// The tool is available only to custom agents whose tool list explicitly names it.
+    Explicit,
 }
 
 impl Tool {
@@ -690,6 +707,12 @@ impl Tool {
         self
     }
 
+    /// Set which agents automatically receive this tool.
+    pub fn with_exposure(mut self, exposure: ExposureMode) -> Self {
+        self.exposure = Some(exposure);
+        self
+    }
+
     /// Set opaque, host-defined metadata for the tool. Keys are namespaced and
     /// not part of the stable public API. Replaces any previously-set metadata.
     pub fn with_metadata(mut self, metadata: IndexMap<String, Value>) -> Self {
@@ -760,6 +783,7 @@ impl std::fmt::Debug for Tool {
             .field("is_terminal", &self.is_terminal)
             .field("idempotent", &self.idempotent)
             .field("defer", &self.defer)
+            .field("exposure", &self.exposure)
             .field("metadata", &self.metadata)
             .field("namespace", &self.namespace)
             .field(
@@ -862,6 +886,9 @@ impl Serialize for CommandDefinition {
 #[serde(rename_all = "camelCase")]
 #[non_exhaustive]
 pub struct CustomAgentConfig {
+    /// Maximum logical model turns per request as a local subagent, overriding inheritance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tool_turns: Option<u32>,
     /// Declarative hook action objects keyed by event name, active only for this agent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hooks: Option<IndexMap<String, Vec<IndexMap<String, Value>>>>,
@@ -906,6 +933,12 @@ pub struct CustomAgentConfig {
 }
 
 impl CustomAgentConfig {
+    /// Override the inherited maximum logical model turns when running as a local subagent.
+    pub fn with_max_tool_turns(mut self, limit: u32) -> Self {
+        self.max_tool_turns = Some(limit);
+        self
+    }
+
     /// Set declarative hook action objects scoped to this agent.
     pub fn with_hooks(mut self, hooks: IndexMap<String, Vec<IndexMap<String, Value>>>) -> Self {
         self.hooks = Some(hooks);
@@ -3773,6 +3806,8 @@ impl SessionPermissionOptions {
 #[derive(Clone, Default)]
 #[non_exhaustive]
 pub struct SessionExecutionOptions {
+    /// Default maximum logical model turns per request. Zero prevents any primary model call.
+    pub max_tool_turns: Option<u32>,
     /// **Experimental.** Limits applied to this session's current accounting window.
     pub limits: Option<SessionLimitsConfig>,
     /// **Experimental.** Patch resident Autopilot policy on warm resume.
@@ -3789,6 +3824,12 @@ impl SessionExecutionOptions {
     /// Construct an empty option group.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Set the default maximum logical model turns per request.
+    pub fn with_max_tool_turns(mut self, limit: u32) -> Self {
+        self.max_tool_turns = Some(limit);
+        self
     }
 
     /// **Experimental.** Set limits for this session's current accounting window.
@@ -4328,6 +4369,7 @@ impl CreateSessionOptions {
             },
             execution: crate::wire::SessionExecutionWire {
                 limits: self.execution.limits,
+                max_tool_turns: self.execution.max_tool_turns,
                 autopilot: self.execution.autopilot,
             },
             experiments: crate::wire::SessionExperimentWire {
@@ -4879,6 +4921,7 @@ impl ResumeSessionOptions {
             },
             execution: crate::wire::SessionExecutionWire {
                 limits: self.execution.limits,
+                max_tool_turns: self.execution.max_tool_turns,
                 autopilot: self.execution.autopilot,
             },
             experiments: crate::wire::SessionExperimentWire {
@@ -6121,6 +6164,8 @@ pub struct MessageOptions {
     /// value stamped on MCP calls is held in memory only and is not restored
     /// on resume.
     pub client_turn_id: Option<String>,
+    /// Overrides the session's logical model-turn limit for this request. Not supported for immediate steering.
+    pub max_tool_turns: Option<u32>,
 }
 
 impl MessageOptions {
@@ -6139,7 +6184,14 @@ impl MessageOptions {
             tracestate: None,
             display_prompt: None,
             client_turn_id: None,
+            max_tool_turns: None,
         }
+    }
+
+    /// Override the session's maximum logical model turns for this request.
+    pub fn with_max_tool_turns(mut self, limit: u32) -> Self {
+        self.max_tool_turns = Some(limit);
+        self
     }
 
     /// Set the message provenance without changing its delivery mode.
@@ -7105,8 +7157,8 @@ pub enum PermissionRequestKind {
     Memory,
     /// Run a hook callback.
     Hook,
-    /// Let an extension access permission-gated capabilities.
-    ExtensionPermissionAccess,
+    /// Approve an extension before its code starts.
+    ExtensionLaunch,
     /// Unrecognized kind. The original wire string is available in
     /// [`PermissionRequestData::extra`] under the `kind` key.
     #[serde(other)]

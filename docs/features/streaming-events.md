@@ -408,6 +408,7 @@ Emitted when the agent begins processing a turn.
 | `agentMode` | `"interactive" \| "plan" \| "autopilot"` | | Agent mode whose tools this turn was offered; absent on historical events and sub-agent turns |
 | `model` | `string` | | Model identifier used for this turn, when known |
 | `parentToolCallId` | `string` | | Parent task tool call ID when this turn belongs to a sub-agent |
+| `toolTurnBudget` | `ToolTurnBudget` | | Internal replay metadata for the active request's logical model-turn limit and usage |
 
 ### `assistant.intent`
 

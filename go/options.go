@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/microsoft/copilot-sdk/go/v2/rpc"
 )
@@ -52,6 +53,12 @@ type ClientGitHubOptions struct {
 	// When provided, the token is passed to the runtime via environment
 	// variable. This takes priority over other authentication methods.
 	Token string
+	// ClientID selects the GitHub OAuth app for runtime-managed GitHub.com sign-in
+	// and Entra-to-GitHub token exchange. It requires ClientSecret.
+	ClientID string
+	// ClientSecret is the matching GitHub OAuth app secret. Leave both fields
+	// empty to use the Copilot CLI OAuth app.
+	ClientSecret string
 	// UseLoggedInUser controls whether to use the logged-in user for
 	// authentication. When true, the runtime attempts to use stored OAuth
 	// tokens or gh CLI auth. When false, only explicit tokens such as
@@ -64,6 +71,23 @@ type ClientGitHubOptions struct {
 	// opened by this client. When non-nil, every session created or resumed by
 	// this client opts into telemetry forwarding (enableGitHubTelemetryForwarding).
 	OnTelemetry func(notification *rpc.GitHubTelemetryNotification)
+}
+
+// String describes GitHub options without including credentials.
+func (o ClientGitHubOptions) String() string {
+	return o.GoString()
+}
+
+// GoString describes GitHub options without including credentials in %#v output.
+func (o ClientGitHubOptions) GoString() string {
+	if o.Token != "" {
+		o.Token = "<redacted>"
+	}
+	if o.ClientSecret != "" {
+		o.ClientSecret = "<redacted>"
+	}
+	type options ClientGitHubOptions
+	return fmt.Sprintf("%+v", options(o))
 }
 
 // ClientModelOptions configures client models.
@@ -548,6 +572,9 @@ type SessionEventOptions struct {
 
 // SessionExecutionOptions configures session execution.
 type SessionExecutionOptions struct {
+	// MaxToolTurns is the default maximum logical model turns per request.
+	// Zero prevents any primary model call.
+	MaxToolTurns *uint32
 	// Limits applies limits to this session's current accounting window.
 	//
 	// Experimental: SessionLimits is part of an experimental runtime accounting
@@ -724,6 +751,11 @@ func (options *ClientOptions) normalize() *clientOptions {
 	if options == nil {
 		return &clientOptions{}
 	}
+	github := options.GitHub
+	if (github.ClientID != "" || github.ClientSecret != "") &&
+		(strings.TrimSpace(github.ClientID) == "" || strings.TrimSpace(github.ClientSecret) == "") {
+		panic("GitHub.ClientID and GitHub.ClientSecret must both be non-empty")
+	}
 	result := &clientOptions{
 		InternalTestOptions:             options.InternalTestOptions,
 		Connection:                      options.Runtime,
@@ -733,6 +765,7 @@ func (options *ClientOptions) normalize() *clientOptions {
 		InstallationConfirmationHandler: options.Installations.ConfirmationHandler,
 		LogLevel:                        options.Observability.LogLevel,
 		GitHubToken:                     options.GitHub.Token,
+		gitHubClientID:                  github.ClientID,
 		UseLoggedInUser:                 options.GitHub.UseLoggedInUser,
 		OnListModels:                    options.Models.OnListModels,
 		SessionFS:                       options.SessionFS,
@@ -742,6 +775,9 @@ func (options *ClientOptions) normalize() *clientOptions {
 		ClientInfo:                      options.ClientInfo,
 		Entra:                           options.Entra,
 		Mode:                            options.Mode,
+	}
+	if github.ClientSecret != "" {
+		result.gitHubClientSecret = String(github.ClientSecret)
 	}
 
 	connection := options.Runtime
@@ -884,6 +920,7 @@ func (options *CreateSessionOptions) normalize() *sessionOptions {
 		EnableCitations:                    options.Inference.EnableCitations,
 		EnableFileChangeTracking:           options.Filesystem.TrackFileChanges,
 		SessionLimits:                      options.Execution.Limits,
+		maxToolTurns:                       options.Execution.MaxToolTurns,
 		Autopilot:                          options.Execution.Autopilot,
 		EnableExperimentalMode:             options.Experiments.EnableExperimentalMode,
 		SkipCustomInstructions:             options.Instructions.SkipCustomInstructions,
@@ -1044,6 +1081,7 @@ func (options *ResumeSessionOptions) normalize() *resumeOptions {
 		EnableCitations:                    options.Inference.EnableCitations,
 		EnableFileChangeTracking:           options.Filesystem.TrackFileChanges,
 		SessionLimits:                      options.Execution.Limits,
+		maxToolTurns:                       options.Execution.MaxToolTurns,
 		Autopilot:                          options.Execution.Autopilot,
 		EnableExperimentalMode:             options.Experiments.EnableExperimentalMode,
 		SkipCustomInstructions:             options.Instructions.SkipCustomInstructions,
@@ -1195,6 +1233,7 @@ var sessionWireGroups = map[string][]string{
 	"enableCitations":                    {"inference", "enableCitations"},
 	"enableFileChangeTracking":           {"filesystem", "trackFileChanges"},
 	"sessionLimits":                      {"execution", "limits"},
+	"maxToolTurns":                       {"execution", "maxToolTurns"},
 	"autopilot":                          {"execution", "autopilot"},
 	"skipCustomInstructions":             {"instructions", "skipCustomInstructions"},
 	"customAgentsLocalOnly":              {"agents", "localDiscoveryOnly"},

@@ -51,6 +51,18 @@ public final class SendMessageRequest {
 
     @JsonProperty("clientTurnId")
     private String clientTurnId;
+    @JsonProperty("maxToolTurns")
+    private Long maxToolTurns;
+
+    /** Gets the logical model-turn limit. @return the limit, or null */
+    public Long getMaxToolTurns() {
+        return maxToolTurns;
+    }
+
+    /** Sets the logical model-turn limit. @param maxToolTurns the limit */
+    public void setMaxToolTurns(Long maxToolTurns) {
+        this.maxToolTurns = maxToolTurns;
+    }
 
     @JsonProperty("responseFormat")
     private Map<String, Object> responseFormat;

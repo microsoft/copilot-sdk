@@ -366,6 +366,7 @@ fn hostless_runtime_path(source: &str, platform: Platform) -> Option<PathBuf> {
         || (top_level.starts_with("voice-") && top_level.ends_with(".js"))
         || file_name == "cli-native.node"
         || parts.contains(&"mediaremote-adapter")
+        || parts.iter().any(|part| is_cli_voice_artifact(part))
         || file_name.starts_with("copilot-runtime-bin")
     {
         return None;
@@ -381,6 +382,14 @@ fn hostless_runtime_path(source: &str, platform: Platform) -> Option<PathBuf> {
         return Some(parts[2..].iter().copied().collect());
     }
     Some(parts.iter().copied().collect())
+}
+
+/// The CLI voice service, its `.path` references, and its native asset
+/// generations. SDK clients have no voice API, so none of these ship.
+fn is_cli_voice_artifact(part: &str) -> bool {
+    part == "copilot-voice"
+        || part.starts_with("copilot-voice.")
+        || part.starts_with("copilot-voice-assets.")
 }
 
 fn append_archive_file<W: Write>(

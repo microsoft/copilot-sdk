@@ -28,6 +28,8 @@ import javax.annotation.processing.Generated;
 public record SessionSendMessagesParams(
     /** Target session identifier */
     @JsonProperty("sessionId") String sessionId,
+    /** Overrides the maximum logical model turns for the entire batch, including an empty batch. Zero permits no model turns. Not supported for immediate steering. */
+    @JsonProperty("maxToolTurns") Long maxToolTurns,
     /** The user messages to append to the conversation, in order, before running one agent loop. When the batch starts a run, its final message is the primary initiating message; earlier messages provide context, not separate runs or replies. May be empty, in which case a single turn runs over the existing history with no new user message or originatingMessageId. */
     @JsonProperty("messages") List<SendMessageItem> messages,
     /** How to deliver the messages. `enqueue` (default) appends to the message queue. `immediate` interjects during an in-progress turn. */
@@ -139,6 +141,7 @@ public record SessionSendMessagesParams(
     public static final class Builder {
         private Builder() {}
         private String sessionId;
+        private Long maxToolTurns;
         private List<SendMessageItem> messages;
         private SendMode mode;
         private Boolean prepend;
@@ -159,6 +162,18 @@ public record SessionSendMessagesParams(
         @com.microsoft.copilot.CopilotExperimental
         public Builder sessionId(String value) {
             this.sessionId = value;
+            return this;
+        }
+
+        /**
+         * Sets the {@code maxToolTurns} property.
+         * @param value the property value
+         * @return this builder
+         * @since 2.0.0
+         */
+        @com.microsoft.copilot.CopilotExperimental
+        public Builder maxToolTurns(Long value) {
+            this.maxToolTurns = value;
             return this;
         }
 
@@ -290,7 +305,7 @@ public record SessionSendMessagesParams(
          */
         public SessionSendMessagesParams build() {
             if (messages == null) throw new IllegalStateException("Missing required property: messages");
-            return new SessionSendMessagesParams(sessionId, messages, mode, prepend, agentMode, requestHeaders, responseFormat, traceparent, tracestate, clientTurnId, wait_);
+            return new SessionSendMessagesParams(sessionId, maxToolTurns, messages, mode, prepend, agentMode, requestHeaders, responseFormat, traceparent, tracestate, clientTurnId, wait_);
         }
     }
 }

@@ -214,6 +214,7 @@ impl ClientOptions {
 
     #[cfg(feature = "runtime")]
     pub(crate) fn into_startup(self) -> Result<StartupOptions> {
+        let github_oauth = self.github.oauth_config()?;
         let runtime = match self.runtime {
             Some(runtime) => runtime,
             None => RuntimeConnection::for_default(OwnedRuntimeOptions::default())?,
@@ -225,6 +226,7 @@ impl ClientOptions {
             mode: self.mode,
             client_info: self.client_info,
             entra: self.entra,
+            github_oauth,
             builtin_plugin_directories: self.plugins.builtin_directories,
             extension_launch_provider: self.extensions.launch_provider,
             installation_confirmation_handler: self.installations.confirmation_handler,
@@ -386,6 +388,11 @@ impl ClientInstallationOptions {
 /// Github settings. Unset values retain their existing defaults.
 #[derive(Default)]
 pub struct ClientGitHubOptions {
+    /// GitHub.com OAuth client ID for runtime sign-in and Entra/EMU exchange.
+    /// Supply with [`Self::client_secret`] or omit both to use the built-in app.
+    pub client_id: Option<String>,
+    /// Secret matching [`Self::client_id`]. Not used for enterprise-host sign-in.
+    pub client_secret: Option<String>,
     /// GitHub token for authentication. When set, the SDK passes the token
     /// to the CLI via `--auth-token-env COPILOT_SDK_AUTH_TOKEN` and exports
     /// the token in that env var. When set, the CLI defaults to *not*
@@ -418,6 +425,32 @@ impl ClientGitHubOptions {
     /// Construct default settings.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Select a GitHub.com OAuth application for runtime-managed sign-in.
+    pub fn with_oauth_app(
+        mut self,
+        client_id: impl Into<String>,
+        client_secret: impl Into<String>,
+    ) -> Self {
+        self.client_id = Some(client_id.into());
+        self.client_secret = Some(client_secret.into());
+        self
+    }
+
+    pub(crate) fn oauth_config(&self) -> Result<Option<(String, String)>> {
+        match (&self.client_id, &self.client_secret) {
+            (None, None) => Ok(None),
+            (Some(client_id), Some(client_secret))
+                if !client_id.trim().is_empty() && !client_secret.trim().is_empty() =>
+            {
+                Ok(Some((client_id.clone(), client_secret.clone())))
+            }
+            _ => Err(crate::Error::with_message(
+                crate::ErrorKind::InvalidConfig,
+                "github.client_id and github.client_secret must both be non-empty",
+            )),
+        }
     }
 
     /// GitHub token for authentication. The SDK passes the token to the

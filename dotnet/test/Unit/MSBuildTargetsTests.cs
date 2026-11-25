@@ -179,6 +179,9 @@ public class MSBuildTargetsTests
         Assert.Equal("runtime", File.ReadAllText(sandbox.ExpectedRuntimeAsset("runtime.node")));
         Assert.True(File.Exists(sandbox.ExpectedCacheAsset(".copilot-runtime-complete")));
         Assert.False(File.Exists(sandbox.ExpectedRuntimeAsset(".copilot-runtime-complete")));
+        Assert.False(File.Exists(sandbox.ExpectedCacheAsset("prebuilds", GetReleasePlatform(), "copilot-voice")));
+        Assert.False(File.Exists(sandbox.ExpectedCacheAsset("prebuilds", GetReleasePlatform(), "copilot-voice-assets.path")));
+        Assert.False(Directory.Exists(sandbox.ExpectedCacheAsset("prebuilds", GetReleasePlatform(), "copilot-voice-assets.0123abcd")));
         Assert.Equal(1, server.RequestPaths.Count(path => path == checksumsPath));
         Assert.Equal(1, server.RequestPaths.Count(path => path == assetPath));
         Assert.False(File.Exists(sandbox.ExpectedRuntimeAsset("SHA256SUMS.txt")));
@@ -305,6 +308,19 @@ public class MSBuildTargetsTests
         sandbox.WriteRuntimeCacheAsset("cli-main.js", "excluded");
         sandbox.WriteRuntimeCacheAsset("LICENSE.md", "excluded");
         sandbox.WriteRuntimeCacheAsset("README.md", "excluded");
+        string[][] voiceAssets =
+        [
+            ["copilot-voice"],
+            ["copilot-voice.path"],
+            ["copilot-voice.0123abcd.exe"],
+            ["copilot-voice-assets.path"],
+            ["copilot-voice-assets.0123abcd", "libfoundry_local.so"],
+        ];
+        foreach (var voiceAsset in voiceAssets)
+        {
+            sandbox.WriteRuntimeCacheAsset([.. voiceAsset, "excluded"]);
+            sandbox.WriteRuntimeCacheAsset(["prebuilds", GetReleasePlatform(), .. voiceAsset, "excluded"]);
+        }
         sandbox.WriteStaleOutputRuntimeAsset("obsolete", "tool", "stale");
 
         var result = await sandbox.BuildAsync(new Dictionary<string, string>
@@ -313,6 +329,10 @@ public class MSBuildTargetsTests
         });
 
         Assert.True(result.Succeeded, result.FailureMessage());
+        foreach (var voiceAsset in voiceAssets)
+        {
+            Assert.False(File.Exists(sandbox.ExpectedRuntimeAsset(voiceAsset)), string.Join("/", voiceAsset));
+        }
         Assert.Equal("ripgrep", File.ReadAllText(sandbox.ExpectedRuntimeAsset("ripgrep", "bin", GetReleasePlatform(), "rg")));
         Assert.Equal("{}", File.ReadAllText(sandbox.ExpectedRuntimeAsset("definitions", "future.json")));
         Assert.Equal("extension", File.ReadAllText(sandbox.ExpectedRuntimeAsset("copilot-sdk", "extension.js")));
@@ -619,6 +639,10 @@ public class MSBuildTargetsTests
             Directory.CreateDirectory(prebuildDir);
             File.WriteAllText(Path.Combine(prebuildDir, "runtime.node"), "runtime");
             File.WriteAllText(Path.Combine(prebuildDir, RuntimeWrapperName), runtimeWrapperContents);
+            File.WriteAllText(Path.Combine(prebuildDir, "copilot-voice"), "voice");
+            File.WriteAllText(Path.Combine(prebuildDir, "copilot-voice-assets.path"), "voice");
+            Directory.CreateDirectory(Path.Combine(prebuildDir, "copilot-voice-assets.0123abcd"));
+            File.WriteAllText(Path.Combine(prebuildDir, "copilot-voice-assets.0123abcd", "libfoundry_local.so"), "voice");
 
             var archivePath = Path.Combine(ProjectDir, "release-asset.tgz");
             var tarPath = OperatingSystem.IsWindows()

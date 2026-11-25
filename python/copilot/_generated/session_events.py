@@ -1689,6 +1689,8 @@ class PermissionAssistedApproval:
     failure_reason: AssistedApprovalJudgeFailureReason | None = None
     model: str | None = None
     reason: str | None = None
+    # Experimental: this field is part of an experimental API and may change or be removed.
+    user_feedback_upload: bool | None = None
 
     @staticmethod
     def from_dict(obj: Any) -> "PermissionAssistedApproval":
@@ -1700,6 +1702,7 @@ class PermissionAssistedApproval:
         failure_reason = from_union([from_none, lambda x: parse_enum(AssistedApprovalJudgeFailureReason, x)], obj.get("failureReason"))
         model = from_union([from_none, from_str], obj.get("model"))
         reason = from_union([from_none, from_str], obj.get("reason"))
+        user_feedback_upload = from_union([from_none, from_bool], obj.get("userFeedbackUpload"))
         return PermissionAssistedApproval(
             recommendation=recommendation,
             approval_required_command_segments=approval_required_command_segments,
@@ -1708,6 +1711,7 @@ class PermissionAssistedApproval:
             failure_reason=failure_reason,
             model=model,
             reason=reason,
+            user_feedback_upload=user_feedback_upload,
         )
 
     def to_dict(self) -> dict:
@@ -1725,6 +1729,8 @@ class PermissionAssistedApproval:
             result["model"] = from_union([from_none, from_str], self.model)
         if self.reason is not None:
             result["reason"] = from_union([from_none, from_str], self.reason)
+        if self.user_feedback_upload is not None:
+            result["userFeedbackUpload"] = from_union([from_none, from_bool], self.user_feedback_upload)
         return result
 
 
@@ -4118,6 +4124,8 @@ class AssistantTurnStartData:
     interaction_id: str | None = None
     model: str | None = None
     parent_tool_call_id: str | None = None
+    # Internal: this field is an internal SDK API and is not part of the public surface.
+    _tool_turn_budget: ToolTurnBudget | None = field(default=None, kw_only=True)
 
     @staticmethod
     def from_dict(obj: Any) -> "AssistantTurnStartData":
@@ -4127,12 +4135,14 @@ class AssistantTurnStartData:
         interaction_id = from_union([from_none, from_str], obj.get("interactionId"))
         model = from_union([from_none, from_str], obj.get("model"))
         parent_tool_call_id = from_union([from_none, from_str], obj.get("parentToolCallId"))
+        _tool_turn_budget = from_union([from_none, ToolTurnBudget.from_dict], obj.get("toolTurnBudget"))
         return AssistantTurnStartData(
             turn_id=turn_id,
             agent_mode=agent_mode,
             interaction_id=interaction_id,
             model=model,
             parent_tool_call_id=parent_tool_call_id,
+            _tool_turn_budget=_tool_turn_budget,
         )
 
     def to_dict(self) -> dict:
@@ -4146,6 +4156,8 @@ class AssistantTurnStartData:
             result["model"] = from_union([from_none, from_str], self.model)
         if self.parent_tool_call_id is not None:
             result["parentToolCallId"] = from_union([from_none, from_str], self.parent_tool_call_id)
+        if self._tool_turn_budget is not None:
+            result["toolTurnBudget"] = from_union([from_none, lambda x: to_class(ToolTurnBudget, x)], self._tool_turn_budget)
         return result
 
 
@@ -8838,6 +8850,43 @@ class PermissionPromptRequestExtensionEnvAccess:
 
 
 @dataclass
+class PermissionPromptRequestExtensionLaunch:
+    "Approval to run extension code and access the session before its process starts."
+    extension_name: str
+    kind: ClassVar[str] = "extension-launch"
+    # Experimental: this field is part of an experimental API and may change or be removed.
+    assisted_approval: PermissionAssistedApproval | None = None
+    capabilities: list[str] | None = None
+    tool_call_id: str | None = None
+
+    @staticmethod
+    def from_dict(obj: Any) -> "PermissionPromptRequestExtensionLaunch":
+        assert isinstance(obj, dict)
+        extension_name = from_str(obj.get("extensionName"))
+        assisted_approval = from_union([from_none, PermissionAssistedApproval.from_dict], obj.get("assistedApproval"))
+        capabilities = from_union([from_none, lambda x: from_list(from_str, x)], obj.get("capabilities"))
+        tool_call_id = from_union([from_none, from_str], obj.get("toolCallId"))
+        return PermissionPromptRequestExtensionLaunch(
+            extension_name=extension_name,
+            assisted_approval=assisted_approval,
+            capabilities=capabilities,
+            tool_call_id=tool_call_id,
+        )
+
+    def to_dict(self) -> dict:
+        result: dict = {}
+        result["extensionName"] = from_str(self.extension_name)
+        result["kind"] = self.kind
+        if self.assisted_approval is not None:
+            result["assistedApproval"] = from_union([from_none, lambda x: to_class(PermissionAssistedApproval, x)], self.assisted_approval)
+        if self.capabilities is not None:
+            result["capabilities"] = from_union([from_none, lambda x: from_list(from_str, x)], self.capabilities)
+        if self.tool_call_id is not None:
+            result["toolCallId"] = from_union([from_none, from_str], self.tool_call_id)
+        return result
+
+
+@dataclass
 class PermissionPromptRequestExtensionManagement:
     "Extension management permission prompt"
     kind: ClassVar[str] = "extension-management"
@@ -8869,42 +8918,6 @@ class PermissionPromptRequestExtensionManagement:
             result["assistedApproval"] = from_union([from_none, lambda x: to_class(PermissionAssistedApproval, x)], self.assisted_approval)
         if self.extension_name is not None:
             result["extensionName"] = from_union([from_none, from_str], self.extension_name)
-        if self.tool_call_id is not None:
-            result["toolCallId"] = from_union([from_none, from_str], self.tool_call_id)
-        return result
-
-
-@dataclass
-class PermissionPromptRequestExtensionPermissionAccess:
-    "Extension permission access prompt"
-    capabilities: list[str]
-    extension_name: str
-    kind: ClassVar[str] = "extension-permission-access"
-    # Experimental: this field is part of an experimental API and may change or be removed.
-    assisted_approval: PermissionAssistedApproval | None = None
-    tool_call_id: str | None = None
-
-    @staticmethod
-    def from_dict(obj: Any) -> "PermissionPromptRequestExtensionPermissionAccess":
-        assert isinstance(obj, dict)
-        capabilities = from_list(from_str, obj.get("capabilities"))
-        extension_name = from_str(obj.get("extensionName"))
-        assisted_approval = from_union([from_none, PermissionAssistedApproval.from_dict], obj.get("assistedApproval"))
-        tool_call_id = from_union([from_none, from_str], obj.get("toolCallId"))
-        return PermissionPromptRequestExtensionPermissionAccess(
-            capabilities=capabilities,
-            extension_name=extension_name,
-            assisted_approval=assisted_approval,
-            tool_call_id=tool_call_id,
-        )
-
-    def to_dict(self) -> dict:
-        result: dict = {}
-        result["capabilities"] = from_list(from_str, self.capabilities)
-        result["extensionName"] = from_str(self.extension_name)
-        result["kind"] = self.kind
-        if self.assisted_approval is not None:
-            result["assistedApproval"] = from_union([from_none, lambda x: to_class(PermissionAssistedApproval, x)], self.assisted_approval)
         if self.tool_call_id is not None:
             result["toolCallId"] = from_union([from_none, from_str], self.tool_call_id)
         return result
@@ -9569,6 +9582,42 @@ class PermissionRequestExtensionEnvAccess:
 
 
 @dataclass
+class PermissionRequestExtensionLaunch:
+    "Request approval before starting an extension process."
+    extension_name: str
+    kind: ClassVar[str] = "extension-launch"
+    capabilities: list[str] | None = None
+    managed_approval_required: bool | None = None
+    tool_call_id: str | None = None
+
+    @staticmethod
+    def from_dict(obj: Any) -> "PermissionRequestExtensionLaunch":
+        assert isinstance(obj, dict)
+        extension_name = from_str(obj.get("extensionName"))
+        capabilities = from_union([from_none, lambda x: from_list(from_str, x)], obj.get("capabilities"))
+        managed_approval_required = from_union([from_none, from_bool], obj.get("managedApprovalRequired"))
+        tool_call_id = from_union([from_none, from_str], obj.get("toolCallId"))
+        return PermissionRequestExtensionLaunch(
+            extension_name=extension_name,
+            capabilities=capabilities,
+            managed_approval_required=managed_approval_required,
+            tool_call_id=tool_call_id,
+        )
+
+    def to_dict(self) -> dict:
+        result: dict = {}
+        result["extensionName"] = from_str(self.extension_name)
+        result["kind"] = self.kind
+        if self.capabilities is not None:
+            result["capabilities"] = from_union([from_none, lambda x: from_list(from_str, x)], self.capabilities)
+        if self.managed_approval_required is not None:
+            result["managedApprovalRequired"] = from_union([from_none, from_bool], self.managed_approval_required)
+        if self.tool_call_id is not None:
+            result["toolCallId"] = from_union([from_none, from_str], self.tool_call_id)
+        return result
+
+
+@dataclass
 class PermissionRequestExtensionManagement:
     "Extension management permission request"
     kind: ClassVar[str] = "extension-management"
@@ -9597,41 +9646,6 @@ class PermissionRequestExtensionManagement:
         result["operation"] = from_str(self.operation)
         if self.extension_name is not None:
             result["extensionName"] = from_union([from_none, from_str], self.extension_name)
-        if self.managed_approval_required is not None:
-            result["managedApprovalRequired"] = from_union([from_none, from_bool], self.managed_approval_required)
-        if self.tool_call_id is not None:
-            result["toolCallId"] = from_union([from_none, from_str], self.tool_call_id)
-        return result
-
-
-@dataclass
-class PermissionRequestExtensionPermissionAccess:
-    "Extension permission access request"
-    capabilities: list[str]
-    extension_name: str
-    kind: ClassVar[str] = "extension-permission-access"
-    managed_approval_required: bool | None = None
-    tool_call_id: str | None = None
-
-    @staticmethod
-    def from_dict(obj: Any) -> "PermissionRequestExtensionPermissionAccess":
-        assert isinstance(obj, dict)
-        capabilities = from_list(from_str, obj.get("capabilities"))
-        extension_name = from_str(obj.get("extensionName"))
-        managed_approval_required = from_union([from_none, from_bool], obj.get("managedApprovalRequired"))
-        tool_call_id = from_union([from_none, from_str], obj.get("toolCallId"))
-        return PermissionRequestExtensionPermissionAccess(
-            capabilities=capabilities,
-            extension_name=extension_name,
-            managed_approval_required=managed_approval_required,
-            tool_call_id=tool_call_id,
-        )
-
-    def to_dict(self) -> dict:
-        result: dict = {}
-        result["capabilities"] = from_list(from_str, self.capabilities)
-        result["extensionName"] = from_str(self.extension_name)
-        result["kind"] = self.kind
         if self.managed_approval_required is not None:
             result["managedApprovalRequired"] = from_union([from_none, from_bool], self.managed_approval_required)
         if self.tool_call_id is not None:
@@ -12601,6 +12615,7 @@ class SessionResumeData:
     context_tier_managed: bool | None = None
     continue_pending_work: bool | None = None
     events_file_size_bytes: int | None = None
+    max_tool_turns: int | None = field(default=None, kw_only=True)
     provider_id: str | None = None
     provider_routing: Any = None
     reasoning_effort: str | None = None
@@ -12628,6 +12643,7 @@ class SessionResumeData:
         context_tier_managed = from_union([from_none, from_bool], obj.get("contextTierManaged"))
         continue_pending_work = from_union([from_none, from_bool], obj.get("continuePendingWork"))
         events_file_size_bytes = from_union([from_none, from_int], obj.get("eventsFileSizeBytes"))
+        max_tool_turns = from_union([from_none, from_int], obj.get("maxToolTurns"))
         provider_id = from_union([from_none, from_str], obj.get("providerId"))
         provider_routing = obj.get("providerRouting")
         reasoning_effort = from_union([from_none, from_str], obj.get("reasoningEffort"))
@@ -12652,6 +12668,7 @@ class SessionResumeData:
             context_tier_managed=context_tier_managed,
             continue_pending_work=continue_pending_work,
             events_file_size_bytes=events_file_size_bytes,
+            max_tool_turns=max_tool_turns,
             provider_id=provider_id,
             provider_routing=provider_routing,
             reasoning_effort=reasoning_effort,
@@ -12687,6 +12704,8 @@ class SessionResumeData:
             result["continuePendingWork"] = from_union([from_none, from_bool], self.continue_pending_work)
         if self.events_file_size_bytes is not None:
             result["eventsFileSizeBytes"] = from_union([from_none, to_int], self.events_file_size_bytes)
+        if self.max_tool_turns is not None:
+            result["maxToolTurns"] = from_union([from_none, to_int], self.max_tool_turns)
         if self.provider_id is not None:
             result["providerId"] = from_union([from_none, from_str], self.provider_id)
         if self.provider_routing is not None:
@@ -13076,6 +13095,7 @@ class SessionStartData:
     context_tier_managed: bool | None = None
     detached_from_spawning_parent_session_id: str | None = None
     github_mcp_tool_config: GitHubMcpToolConfig | None = None
+    max_tool_turns: int | None = field(default=None, kw_only=True)
     provider_id: str | None = None
     provider_routing: Any = None
     reasoning_effort: str | None = None
@@ -13103,6 +13123,7 @@ class SessionStartData:
         context_tier_managed = from_union([from_none, from_bool], obj.get("contextTierManaged"))
         detached_from_spawning_parent_session_id = from_union([from_none, from_str], obj.get("detachedFromSpawningParentSessionId"))
         github_mcp_tool_config = from_union([from_none, GitHubMcpToolConfig.from_dict], obj.get("githubMcpToolConfig"))
+        max_tool_turns = from_union([from_none, from_int], obj.get("maxToolTurns"))
         provider_id = from_union([from_none, from_str], obj.get("providerId"))
         provider_routing = obj.get("providerRouting")
         reasoning_effort = from_union([from_none, from_str], obj.get("reasoningEffort"))
@@ -13127,6 +13148,7 @@ class SessionStartData:
             context_tier_managed=context_tier_managed,
             detached_from_spawning_parent_session_id=detached_from_spawning_parent_session_id,
             github_mcp_tool_config=github_mcp_tool_config,
+            max_tool_turns=max_tool_turns,
             provider_id=provider_id,
             provider_routing=provider_routing,
             reasoning_effort=reasoning_effort,
@@ -13162,6 +13184,8 @@ class SessionStartData:
             result["detachedFromSpawningParentSessionId"] = from_union([from_none, from_str], self.detached_from_spawning_parent_session_id)
         if self.github_mcp_tool_config is not None:
             result["githubMcpToolConfig"] = from_union([from_none, lambda x: to_class(GitHubMcpToolConfig, x)], self.github_mcp_tool_config)
+        if self.max_tool_turns is not None:
+            result["maxToolTurns"] = from_union([from_none, to_int], self.max_tool_turns)
         if self.provider_id is not None:
             result["providerId"] = from_union([from_none, from_str], self.provider_id)
         if self.provider_routing is not None:
@@ -15837,6 +15861,28 @@ class ToolShellOutputData:
 
 
 @dataclass
+class ToolTurnBudget:
+    limit: int
+    used: int
+
+    @staticmethod
+    def from_dict(obj: Any) -> "ToolTurnBudget":
+        assert isinstance(obj, dict)
+        limit = from_int(obj.get("limit"))
+        used = from_int(obj.get("used"))
+        return ToolTurnBudget(
+            limit=limit,
+            used=used,
+        )
+
+    def to_dict(self) -> dict:
+        result: dict = {}
+        result["limit"] = to_int(self.limit)
+        result["used"] = to_int(self.used)
+        return result
+
+
+@dataclass
 class ToolUserRequestedData:
     "User-initiated tool invocation request with tool name and arguments"
     tool_call_id: str
@@ -16555,6 +16601,27 @@ class UserToolSessionApprovalExtensionEnvAccess:
 
 
 @dataclass
+class UserToolSessionApprovalExtensionLaunch:
+    "Reusable launch approval for one source-qualified extension identity."
+    extension_name: str
+    kind: ClassVar[str] = "extension-launch"
+
+    @staticmethod
+    def from_dict(obj: Any) -> "UserToolSessionApprovalExtensionLaunch":
+        assert isinstance(obj, dict)
+        extension_name = from_str(obj.get("extensionName"))
+        return UserToolSessionApprovalExtensionLaunch(
+            extension_name=extension_name,
+        )
+
+    def to_dict(self) -> dict:
+        result: dict = {}
+        result["extensionName"] = from_str(self.extension_name)
+        result["kind"] = self.kind
+        return result
+
+
+@dataclass
 class UserToolSessionApprovalExtensionManagement:
     "Session-scoped tool-approval rule for extension-management operations, optionally narrowed by operation."
     kind: ClassVar[str] = "extension-management"
@@ -16573,27 +16640,6 @@ class UserToolSessionApprovalExtensionManagement:
         result["kind"] = self.kind
         if self.operation is not None:
             result["operation"] = from_union([from_none, from_str], self.operation)
-        return result
-
-
-@dataclass
-class UserToolSessionApprovalExtensionPermissionAccess:
-    "Session-scoped tool-approval rule for an extension's permission-gated capability access, keyed by extension name."
-    extension_name: str
-    kind: ClassVar[str] = "extension-permission-access"
-
-    @staticmethod
-    def from_dict(obj: Any) -> "UserToolSessionApprovalExtensionPermissionAccess":
-        assert isinstance(obj, dict)
-        extension_name = from_str(obj.get("extensionName"))
-        return UserToolSessionApprovalExtensionPermissionAccess(
-            extension_name=extension_name,
-        )
-
-    def to_dict(self) -> dict:
-        result: dict = {}
-        result["extensionName"] = from_str(self.extension_name)
-        result["kind"] = self.kind
         return result
 
 
@@ -16838,7 +16884,7 @@ def _load_PermissionPromptRequest(obj: Any) -> "PermissionPromptRequest":
         case "hook": return PermissionPromptRequestHook.from_dict(obj)
         case "extension-management": return PermissionPromptRequestExtensionManagement.from_dict(obj)
         case "workflow": return PermissionPromptRequestWorkflow.from_dict(obj)
-        case "extension-permission-access": return PermissionPromptRequestExtensionPermissionAccess.from_dict(obj)
+        case "extension-launch": return PermissionPromptRequestExtensionLaunch.from_dict(obj)
         case "extension-env-access": return PermissionPromptRequestExtensionEnvAccess.from_dict(obj)
         case _: raise ValueError(f"Unknown PermissionPromptRequest kind: {kind!r}")
 
@@ -16857,7 +16903,7 @@ def _load_PermissionRequest(obj: Any) -> "PermissionRequest":
         case "hook": return PermissionRequestHook.from_dict(obj)
         case "extension-management": return PermissionRequestExtensionManagement.from_dict(obj)
         case "workflow": return PermissionRequestWorkflow.from_dict(obj)
-        case "extension-permission-access": return PermissionRequestExtensionPermissionAccess.from_dict(obj)
+        case "extension-launch": return PermissionRequestExtensionLaunch.from_dict(obj)
         case "extension-env-access": return PermissionRequestExtensionEnvAccess.from_dict(obj)
         case _: raise ValueError(f"Unknown PermissionRequest kind: {kind!r}")
 
@@ -16919,7 +16965,7 @@ def _load_UserToolSessionApproval(obj: Any) -> "UserToolSessionApproval":
         case "custom-tool": return UserToolSessionApprovalCustomTool.from_dict(obj)
         case "extension-management": return UserToolSessionApprovalExtensionManagement.from_dict(obj)
         case "workflow": return UserToolSessionApprovalWorkflow.from_dict(obj)
-        case "extension-permission-access": return UserToolSessionApprovalExtensionPermissionAccess.from_dict(obj)
+        case "extension-launch": return UserToolSessionApprovalExtensionLaunch.from_dict(obj)
         case "extension-env-access": return UserToolSessionApprovalExtensionEnvAccess.from_dict(obj)
         case _: raise ValueError(f"Unknown UserToolSessionApproval kind: {kind!r}")
 
@@ -16941,11 +16987,11 @@ AssistedApprovalAssessment = AssistedApprovalAssessmentUnavailable | AssistedApp
 
 
 # Derived user-facing permission prompt details for UI consumers
-PermissionPromptRequest = PermissionPromptRequestCommands | PermissionPromptRequestWrite | PermissionPromptRequestRead | PermissionPromptRequestMcp | PermissionPromptRequestUrl | PermissionPromptRequestMemory | PermissionPromptRequestCustomTool | PermissionPromptRequestPath | PermissionPromptRequestHook | PermissionPromptRequestExtensionManagement | PermissionPromptRequestWorkflow | PermissionPromptRequestExtensionPermissionAccess | PermissionPromptRequestExtensionEnvAccess
+PermissionPromptRequest = PermissionPromptRequestCommands | PermissionPromptRequestWrite | PermissionPromptRequestRead | PermissionPromptRequestMcp | PermissionPromptRequestUrl | PermissionPromptRequestMemory | PermissionPromptRequestCustomTool | PermissionPromptRequestPath | PermissionPromptRequestHook | PermissionPromptRequestExtensionManagement | PermissionPromptRequestWorkflow | PermissionPromptRequestExtensionLaunch | PermissionPromptRequestExtensionEnvAccess
 
 
 # Details of the permission being requested
-PermissionRequest = PermissionRequestShell | PermissionRequestWrite | PermissionRequestRead | PermissionRequestMcp | PermissionRequestUrl | PermissionRequestMemory | PermissionRequestCustomTool | PermissionRequestHook | PermissionRequestExtensionManagement | PermissionRequestWorkflow | PermissionRequestExtensionPermissionAccess | PermissionRequestExtensionEnvAccess
+PermissionRequest = PermissionRequestShell | PermissionRequestWrite | PermissionRequestRead | PermissionRequestMcp | PermissionRequestUrl | PermissionRequestMemory | PermissionRequestCustomTool | PermissionRequestHook | PermissionRequestExtensionManagement | PermissionRequestWorkflow | PermissionRequestExtensionLaunch | PermissionRequestExtensionEnvAccess
 
 
 # Location within a cited source (character, page, or content-block range) that supports a span.
@@ -16957,7 +17003,7 @@ SystemNotification = SystemNotificationAgentCompleted | SystemNotificationAgentI
 
 
 # The approval to add as a session-scoped rule
-UserToolSessionApproval = UserToolSessionApprovalCommands | UserToolSessionApprovalRead | UserToolSessionApprovalWrite | UserToolSessionApprovalMcp | UserToolSessionApprovalMemory | UserToolSessionApprovalCustomTool | UserToolSessionApprovalExtensionManagement | UserToolSessionApprovalWorkflow | UserToolSessionApprovalExtensionPermissionAccess | UserToolSessionApprovalExtensionEnvAccess
+UserToolSessionApproval = UserToolSessionApprovalCommands | UserToolSessionApprovalRead | UserToolSessionApprovalWrite | UserToolSessionApprovalMcp | UserToolSessionApprovalMemory | UserToolSessionApprovalCustomTool | UserToolSessionApprovalExtensionManagement | UserToolSessionApprovalWorkflow | UserToolSessionApprovalExtensionLaunch | UserToolSessionApprovalExtensionEnvAccess
 
 
 # The embedded resource contents, either text or base64-encoded binary
@@ -19351,8 +19397,8 @@ __all__ = [
     "PermissionPromptRequestCommands",
     "PermissionPromptRequestCustomTool",
     "PermissionPromptRequestExtensionEnvAccess",
+    "PermissionPromptRequestExtensionLaunch",
     "PermissionPromptRequestExtensionManagement",
-    "PermissionPromptRequestExtensionPermissionAccess",
     "PermissionPromptRequestHook",
     "PermissionPromptRequestMcp",
     "PermissionPromptRequestMemory",
@@ -19375,8 +19421,8 @@ __all__ = [
     "PermissionRequest",
     "PermissionRequestCustomTool",
     "PermissionRequestExtensionEnvAccess",
+    "PermissionRequestExtensionLaunch",
     "PermissionRequestExtensionManagement",
-    "PermissionRequestExtensionPermissionAccess",
     "PermissionRequestHook",
     "PermissionRequestMcp",
     "PermissionRequestMemory",
@@ -19612,6 +19658,7 @@ __all__ = [
     "ToolSearchActivatedData",
     "ToolShellOutputData",
     "ToolShellOutputStream",
+    "ToolTurnBudget",
     "ToolUserRequestedData",
     "UIEphemeralQueryPhase",
     "UiEphemeralQueryData",
@@ -19636,8 +19683,8 @@ __all__ = [
     "UserToolSessionApprovalCommands",
     "UserToolSessionApprovalCustomTool",
     "UserToolSessionApprovalExtensionEnvAccess",
+    "UserToolSessionApprovalExtensionLaunch",
     "UserToolSessionApprovalExtensionManagement",
-    "UserToolSessionApprovalExtensionPermissionAccess",
     "UserToolSessionApprovalMcp",
     "UserToolSessionApprovalMemory",
     "UserToolSessionApprovalRead",

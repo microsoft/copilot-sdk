@@ -33,6 +33,11 @@ export async function followCloudTask(
     });
 }
 
+/** Wait for the cloud host without changing the caller's cleanup ownership. */
+export async function waitForCloudHost(session: CopilotSession, timeoutMs?: number) {
+    return session["internalRpc"].remote.waitForStart({ timeoutMs });
+}
+
 /** Read the connection target before a host attaches to a remote session. */
 export async function readCloudSessionTarget(
     tasks: ReturnType<typeof createInternalServerRpc>["cloudTasks"],

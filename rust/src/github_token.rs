@@ -251,7 +251,6 @@ impl GitHubTokenRegistry {
     ) {
         let params = request
             .params
-            .clone()
             .unwrap_or(Value::Object(serde_json::Map::new()));
         let params: GitHubTokenAcquireRequest = match serde_json::from_value(params) {
             Ok(params) => params,

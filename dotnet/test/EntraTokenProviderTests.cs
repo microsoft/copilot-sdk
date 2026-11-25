@@ -32,7 +32,7 @@ public class EntraTokenProviderTests
             Assert.False(cancellation.IsCancellationRequested);
             observed.Add(request);
             return ValueTask.FromResult<EntraTokenAcquireResult>(request is EntraTokenAcquireRequestIdentity
-                ? new EntraTokenAcquireResultIdentity { AccountId = "host-account", Username = "display-name" }
+                ? new EntraTokenAcquireResultIdentity { AccountId = "host-account", TenantId = "resource-tenant", Username = "display-name" }
                 : new EntraTokenAcquireResultToken { AccountId = "host-account", AccessToken = "resource-token" });
         };
         var peer = await InstallationConfirmationTests.Peer.ConnectAsync(null,
@@ -44,6 +44,7 @@ public class EntraTokenProviderTests
             var identity = (await peer.ReadFrameAsync()).GetProperty("result");
             Assert.Equal("identity", identity.GetProperty("kind").GetString());
             Assert.Equal("host-account", identity.GetProperty("accountId").GetString());
+            Assert.Equal("resource-tenant", identity.GetProperty("tenantId").GetString());
             var identityRequest = Assert.IsType<EntraTokenAcquireRequestIdentity>(observed[0]);
             Assert.Equal("host-client", identityRequest.ClientId);
             Assert.Equal(EntraTokenAcquireReason.SignIn, identityRequest.Reason);
@@ -72,7 +73,7 @@ public class EntraTokenProviderTests
             entered.SetResult(cancellation);
             try { await Task.Delay(Timeout.InfiniteTimeSpan, cancellation); }
             catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
-            return new EntraTokenAcquireResultIdentity { AccountId = "late-account" };
+            return new EntraTokenAcquireResultIdentity { AccountId = "late-account", TenantId = "resource-tenant" };
         };
         var peer = await InstallationConfirmationTests.Peer.ConnectAsync(null,
             new EntraAuthOptions { ClientId = "host-client", TokenProvider = provider });

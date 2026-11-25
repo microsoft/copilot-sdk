@@ -9,7 +9,29 @@ import com.microsoft.copilot.generated.rpc.SessionLimitsConfig;
 public class SessionExecutionOptions {
 
     private SessionLimitsConfig limits;
+    private Long maxToolTurns;
     private AutopilotOptions autopilot;
+
+    /**
+     * Gets the default logical model-turn limit per request.
+     *
+     * @return the limit, or {@code null} if not set
+     */
+    public Long getMaxToolTurns() {
+        return maxToolTurns;
+    }
+
+    /**
+     * Sets the default logical model-turn limit per request.
+     *
+     * @param maxToolTurns
+     *            the limit; zero prevents any primary model call
+     * @return this instance for method chaining
+     */
+    public SessionExecutionOptions setMaxToolTurns(Long maxToolTurns) {
+        this.maxToolTurns = maxToolTurns;
+        return this;
+    }
 
     /**
      * Gets the limits for this session's current accounting window.
@@ -66,6 +88,7 @@ public class SessionExecutionOptions {
     public SessionExecutionOptions clone() {
         SessionExecutionOptions copy = new SessionExecutionOptions();
         copy.limits = this.limits;
+        copy.maxToolTurns = this.maxToolTurns;
         copy.autopilot = this.autopilot;
         return copy;
     }

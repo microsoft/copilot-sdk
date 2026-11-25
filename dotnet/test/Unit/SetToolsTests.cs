@@ -127,6 +127,23 @@ public sealed class SetToolsTests
     }
 
     [Fact]
+    public async Task SetToolsAsync_Rejects_Invalid_Exposure()
+    {
+        await using var server = await SetToolsFakeServer.StartAsync();
+        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
+        await using var session = await client.CreateSessionAsync(new CreateSessionOptions());
+        server.ClearRequests();
+        var tool = CopilotTool.DefineTool(
+            () => "ok",
+            new CopilotToolOptions { Exposure = (CopilotToolExposure)2 },
+            new AIFunctionFactoryOptions { Name = "invalid_exposure" });
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => session.SetToolsAsync([tool]));
+
+        Assert.DoesNotContain(server.Requests, request => request.Method == "session.tools.set");
+    }
+
+    [Fact]
     public async Task DeclarationOnly_Request_Does_Not_Run_The_Previous_Handler()
     {
         await using var server = await SetToolsFakeServer.StartAsync();

@@ -69,6 +69,42 @@ fn windows_runtime_archive_preserves_oneauth_and_its_terms_beside_the_runtime() 
     );
 }
 
+#[test]
+fn runtime_archive_omits_cli_voice_service_and_assets() {
+    let platform = Platform {
+        package_name: "copilot-linux-x64",
+        binary_name: "copilot",
+    };
+    let voice = [
+        "copilot-voice",
+        "copilot-voice.path",
+        "copilot-voice.0123abcd.exe",
+        "copilot-voice-assets.path",
+        "copilot-voice-assets.0123abcd/libfoundry_local.so",
+    ];
+    let mut files = vec![(
+        "package/prebuilds/linux-x64/runtime.node".to_owned(),
+        b"runtime".as_slice(),
+    )];
+    for path in voice {
+        files.push((format!("package/{path}"), b"voice"));
+        files.push((format!("package/prebuilds/linux-x64/{path}"), b"voice"));
+    }
+    let files: Vec<(&str, &[u8])> = files.iter().map(|(p, b)| (p.as_str(), *b)).collect();
+    let archive = build_embedded_runtime_archive(&tar_archive(&files), platform, false);
+    let root = fixture_dir();
+    tar::Archive::new(flate2::read::GzDecoder::new(Cursor::new(archive)))
+        .unpack(root.path())
+        .unwrap();
+    assert_eq!(
+        fs::read(root.path().join("runtime.node")).unwrap(),
+        b"runtime"
+    );
+    for path in voice {
+        assert!(!root.path().join(path).exists(), "{path} was bundled");
+    }
+}
+
 fn release(sdk: bool) -> Release {
     Release::new(
         VERSION.into(),

@@ -1,10 +1,58 @@
 "Defines the Rust SDK targets shared by its independent and runtime-local graphs."
 
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
-load("@rules_rust//rust:defs.bzl", "rust_doc", "rust_doc_test")
+load("@rules_rust//rust:defs.bzl", "rust_common", "rust_doc", "rust_doc_test")
 load("//bazel:rust_rules.bzl", "copilot_rust_binary_explicit", "copilot_rust_build_script", "copilot_rust_library_explicit", "copilot_rust_test")
 load("//bazel:rust_test_runner.bzl", shared_rust_test = "rust_test")
 load("//src/sdk/rust/bazel/crates:defs.bzl", "aliases", "all_crate_deps", "crate_deps")
+
+def _doc_crate_impl(ctx):
+    crate = ctx.attr.crate[rust_common.crate_info]
+    return [
+        rust_common.create_crate_info(
+            name = crate.name,
+            type = crate.type,
+            root = crate.root,
+            root_path = crate.root_path,
+            srcs = crate.srcs,
+            deps = crate.deps,
+            proc_macro_deps = crate.proc_macro_deps,
+            aliases = crate.aliases,
+            output = crate.output,
+            metadata = crate.metadata,
+            metadata_supports_pipelining = crate.metadata_supports_pipelining,
+            rustc_output = crate.rustc_output,
+            rustc_rmeta_output = crate.rustc_rmeta_output,
+            extra_named_deps = crate.extra_named_deps,
+            edition = crate.edition,
+            rustc_env = crate.rustc_env,
+            rustc_env_files = crate.rustc_env_files,
+            is_test = crate.is_test,
+            compile_data = depset(ctx.files.compile_data, transitive = [crate.compile_data]),
+            compile_data_targets = depset(
+                [target.label for target in ctx.attr.compile_data],
+                transitive = [crate.compile_data_targets],
+            ),
+            data = crate.data,
+            wrapped_crate_type = crate.wrapped_crate_type,
+            owner = crate.owner,
+        ),
+    ]
+
+# Attaches README.md only to rustdoc and doctest actions so documentation edits
+# do not invalidate compiled library or test targets.
+_doc_crate = rule(
+    implementation = _doc_crate_impl,
+    attrs = {
+        "crate": attr.label(
+            providers = [rust_common.crate_info],
+            mandatory = True,
+        ),
+        "compile_data": attr.label_list(
+            allow_files = True,
+        ),
+    },
+)
 
 _FEATURES = {
     "default": ["bundled-cli"],
@@ -39,6 +87,17 @@ _TEST_PROFILES = [
     "inprocess",
     "lean-local-runtime",
     "external-test",
+]
+
+# Non-Linux CI builds this compact host matrix together with the tested
+# profiles (`inprocess`, `subprocess`, `lean-local-runtime`, `external-test`),
+# exercising every OS-specific cfg branch while Linux builds every unique
+# profile in `_PROFILES`.
+_HOST_MATRIX_PROFILES = [
+    "default",
+    "external",
+    "all-features",
+    "bundled-in-process",
 ]
 
 _UNIT_TEST_SRC_GLOBS = [
@@ -141,7 +200,6 @@ def _sdk_profile(profile, features):
     copilot_rust_library_explicit(
         name = name,
         srcs = native.glob(["src/**/*.rs"], exclude = _UNIT_TEST_SRC_GLOBS),
-        compile_data = ["README.md"],
         crate_features = features,
         crate_name = "copilot_sdk",
         crate_root = "src/lib.rs",
@@ -153,9 +211,15 @@ def _sdk_profile(profile, features):
         tags = ["manual"],
         deps = deps,
     )
+    _doc_crate(
+        name = name + "_doc_crate",
+        crate = ":" + name,
+        compile_data = ["README.md"],
+        tags = ["manual"],
+    )
     rust_doc(
         name = name + "_doc",
-        crate = ":" + name,
+        crate = ":" + name + "_doc_crate",
         crate_features = features,
         rustdoc_flags = ["-Dwarnings"],
         tags = ["manual"],
@@ -203,7 +267,7 @@ def _sdk_profile(profile, features):
         copilot_rust_test(
             name = name + "_" + test,
             srcs = native.glob(["src/**/*.rs", "tests/**/*.rs", "build/**/*.rs"]) + ["build.rs"],
-            compile_data = ["README.md"] + native.glob(["tests/**/*.json"]),
+            compile_data = native.glob(["tests/**/*.json"]),
             crate_features = features,
             crate_name = (name + "_" + test).replace("-", "_"),
             crate_root = source,
@@ -250,7 +314,7 @@ def _sdk_profile(profile, features):
         tests.append(("example_session_fs_test", "examples/session_fs.rs"))
         rust_doc_test(
             name = name + "_doctest",
-            crate = ":" + name,
+            crate = ":" + name + "_doc_crate",
             crate_features = features,
             deps = all_crate_deps(normal_dev = True) + _platform_deps(
                 linux = [":sdk_doctest_openssl"],
@@ -351,8 +415,15 @@ def sdk_targets(name = "platform_dirs_srcs"):
         target_compatible_with = ["@platforms//os:linux"],
     )
 
+    unique_feature_profiles = []
+    seen_feature_sets = {}
     for profile, requested in _PROFILES.items():
-        _sdk_profile(profile, _features(requested))
+        resolved = _features(requested)
+        _sdk_profile(profile, resolved)
+        key = tuple(resolved)
+        if key not in seen_feature_sets:
+            seen_feature_sets[key] = True
+            unique_feature_profiles.append(profile)
     native.alias(
         name = "copilot-sdk",
         actual = ":sdk_default",
@@ -360,14 +431,18 @@ def sdk_targets(name = "platform_dirs_srcs"):
     )
     native.filegroup(
         name = "feature-builds",
-        srcs = [":sdk_" + profile for profile in _PROFILES],
+        srcs = [":sdk_" + profile for profile in unique_feature_profiles],
+        tags = ["manual"],
+    )
+    native.filegroup(
+        name = "feature-builds-host",
+        srcs = [":sdk_" + profile for profile in _HOST_MATRIX_PROFILES],
         tags = ["manual"],
     )
 
     copilot_rust_library_explicit(
         name = "copilot-sdk-local-runtime",
         srcs = native.glob(["src/**/*.rs"], exclude = _UNIT_TEST_SRC_GLOBS),
-        compile_data = ["README.md"],
         crate_features = [
             "in-process",
             "local-runtime",

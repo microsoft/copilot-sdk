@@ -109,21 +109,18 @@ fn permission_request_conversion_preserves_legacy_direct_json() {
 }
 
 #[test]
-fn permission_request_recognizes_extension_permission_access() {
+fn permission_request_recognizes_extension_launch() {
     let data: PermissionRequestData = serde_json::from_value(json!({
-        "kind": "extension-permission-access",
+        "kind": "extension-launch",
         "requestId": "permission-1",
         "permissionRequest": {
-            "kind": "extension-permission-access",
+            "kind": "extension-launch",
             "extensionName": "plugin:demo:hooks",
         },
     }))
     .unwrap();
 
-    assert_eq!(
-        data.kind,
-        Some(PermissionRequestKind::ExtensionPermissionAccess)
-    );
+    assert_eq!(data.kind, Some(PermissionRequestKind::ExtensionLaunch));
 }
 
 #[test]

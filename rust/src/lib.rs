@@ -1,4 +1,5 @@
-#![doc = include_str!("../README.md")]
+#![cfg_attr(any(doc, doctest), doc = include_str!("../README.md"))]
+#![cfg_attr(not(any(doc, doctest)), doc = "GitHub Copilot SDK for Rust.")]
 #![warn(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
 #![cfg_attr(test, allow(clippy::unwrap_used))]
@@ -769,6 +770,7 @@ struct StartupOptions {
     ///
     /// **Experimental.** May change or be removed in future releases.
     pub entra: Option<types::EntraAuthOptions>,
+    github_oauth: Option<(String, String)>,
 }
 
 /// Identity of the integrating application, declared on the `server.connect`
@@ -1237,6 +1239,7 @@ impl Default for StartupOptions {
             mode: ClientMode::CodingAgent,
             client_info: None,
             entra: None,
+            github_oauth: None,
         }
     }
 }
@@ -1521,6 +1524,7 @@ struct ClientInner {
     /// telemetry attribution.
     client_info: Option<ClientInfo>,
     entra: Option<types::EntraAuthOptions>,
+    github_oauth: OnceLock<(String, String)>,
     /// SDK [`ClientMode`] captured at start time. Drives empty-mode safe
     /// defaults inside `create_session` / `resume_session`.
     pub(crate) mode: ClientMode,
@@ -2390,6 +2394,9 @@ impl Client {
             }
         };
         timings.transport_setup_ms = StartupTimings::millis(transport_setup_start.elapsed());
+        if let Some(config) = options.github_oauth {
+            let _ = client.inner.github_oauth.set(config);
+        }
         client
             .inner
             .installation_confirmation
@@ -2598,7 +2605,31 @@ impl Client {
         cwd: PathBuf,
         entra: Option<types::EntraAuthOptions>,
     ) -> Result<Self> {
-        Self::from_transport(
+        Self::from_streams_with_auth_options(
+            mode,
+            reader,
+            writer,
+            cwd,
+            entra,
+            &ClientGitHubOptions::default(),
+        )
+    }
+
+    /// Create a custom-transport client with optional Entra and GitHub OAuth configuration.
+    ///
+    /// The transport owns authentication with any existing GitHub bearer. Only the
+    /// GitHub OAuth client ID and secret are read from `github`. Call
+    /// [`Self::verify_protocol_version`] before issuing other operations.
+    pub fn from_streams_with_auth_options(
+        mode: ClientMode,
+        reader: impl AsyncRead + Unpin + Send + 'static,
+        writer: impl AsyncWrite + Unpin + Send + 'static,
+        cwd: PathBuf,
+        entra: Option<types::EntraAuthOptions>,
+        github: &ClientGitHubOptions,
+    ) -> Result<Self> {
+        let oauth = github.oauth_config()?;
+        let client = Self::from_transport(
             reader,
             jsonrpc::MessageWriter::stream(writer),
             None,
@@ -2616,7 +2647,11 @@ impl Client {
             None,
             entra,
             false,
-        )
+        )?;
+        if let Some(oauth) = oauth {
+            let _ = client.inner.github_oauth.set(oauth);
+        }
+        Ok(client)
     }
 
     /// Construct a client with declared session filesystem capabilities for
@@ -2969,6 +3004,7 @@ impl Client {
                 mode,
                 client_info,
                 entra,
+                github_oauth: OnceLock::new(),
                 startup_timings: OnceLock::new(),
             }),
         };
@@ -3402,28 +3438,30 @@ impl Client {
                 return Ok(());
             }
             pending.extend_from_slice(&chunk[..count]);
+            let mut rest = pending.as_slice();
             loop {
-                if let Some(newline) = pending[..pending.len().min(CHUNK_SIZE)]
+                if let Some(newline) = rest[..rest.len().min(CHUNK_SIZE)]
                     .iter()
                     .position(|&byte| byte == b'\n')
                 {
-                    let line = pending[..newline]
+                    let line = rest[..newline]
                         .strip_suffix(b"\r")
-                        .unwrap_or(&pending[..newline]);
+                        .unwrap_or(&rest[..newline]);
                     log(&String::from_utf8_lossy(line));
-                    pending.drain(..=newline);
-                } else if pending.len() >= CHUNK_SIZE {
+                    rest = &rest[newline + 1..];
+                } else if rest.len() >= CHUNK_SIZE {
                     // Stream long lines without splitting a valid UTF-8 character.
-                    let end = match std::str::from_utf8(&pending[..CHUNK_SIZE]) {
+                    let end = match std::str::from_utf8(&rest[..CHUNK_SIZE]) {
                         Err(error) if error.error_len().is_none() => error.valid_up_to(),
                         _ => CHUNK_SIZE,
                     };
-                    log(&String::from_utf8_lossy(&pending[..end]));
-                    pending.drain(..end);
+                    log(&String::from_utf8_lossy(&rest[..end]));
+                    rest = &rest[end..];
                 } else {
                     break;
                 }
             }
+            pending.drain(..pending.len() - rest.len());
         }
     }
 
@@ -3823,6 +3861,12 @@ impl Client {
         let server_version = match self.connect_handshake().await {
             Ok(v) => v,
             Err(ref e) if e.rpc_code() == Some(error_codes::METHOD_NOT_FOUND) => {
+                if self.inner.github_oauth.get().is_some() {
+                    return Err(Error::with_message(
+                        ErrorKind::InvalidConfig,
+                        "This runtime does not support GitHub OAuth client configuration",
+                    ));
+                }
                 if self.inner.entra.is_some() {
                     return Err(Error::with_message(
                         ErrorKind::InvalidConfig,
@@ -3878,7 +3922,10 @@ impl Client {
     /// param. Server-side, the token is required when the server was
     /// started with `COPILOT_CONNECTION_TOKEN`.
     async fn connect_handshake(&self) -> Result<Option<u32>> {
+        let github_oauth = self.inner.github_oauth.get();
         let params = crate::generated::api_types::ConnectRequest {
+            github_client_id: github_oauth.map(|(id, _)| id.clone()),
+            github_client_secret: github_oauth.map(|(_, secret)| secret.clone()),
             entra: self
                 .inner
                 .entra

@@ -52,6 +52,12 @@ itself when it is outside a Git repository. For example, supplying
 `B\packages\core` inside repository `B` admits `B\.github\hooks` and B's repository
 hook settings, not just configuration inside `B\packages\core`.
 
+When the session's folder trust is narrower than its checkout, as with
+`filesystem.trustWorkingDirectory` on a working directory below the checkout
+root or `--trust-folder` run from a subdirectory, accepted directories inside that same checkout contribute no
+repository hooks: they cannot load the checkout root that trust left out.
+Directories in other checkouts are unaffected.
+
 > [!WARNING]
 > Supply only trusted startup directories. This authorizes hook commands
 > and hook-provided prompts from all eligible startup directories without

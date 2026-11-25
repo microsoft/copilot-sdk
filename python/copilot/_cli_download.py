@@ -351,6 +351,16 @@ _HOSTLESS_EXCLUDED_TOP_LEVEL = {
 }
 
 
+def _is_cli_voice_artifact(part: str) -> bool:
+    # The CLI voice service, its .path references, and its native asset
+    # generations. SDK clients have no voice API.
+    return (
+        part == "copilot-voice"
+        or part.startswith("copilot-voice.")
+        or part.startswith("copilot-voice-assets.")
+    )
+
+
 def _hostless_runtime_path(member_name: str, runtime_platform: str) -> Path | None:
     if "\\" in member_name:
         raise RuntimeError(f"Unsafe runtime package path: {member_name}")
@@ -366,6 +376,7 @@ def _hostless_runtime_path(member_name: str, runtime_platform: str) -> Path | No
         or (top_level.startswith("voice-") and top_level.endswith(".js"))
         or file_name == "cli-native.node"
         or "mediaremote-adapter" in relative
+        or any(_is_cli_voice_artifact(part) for part in relative)
         or file_name.startswith("copilot-runtime-bin")
     ):
         return None

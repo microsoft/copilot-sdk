@@ -36,6 +36,8 @@ public final class SessionStartEvent extends SessionEvent {
     @JsonInclude(JsonInclude.Include.NON_NULL)
     @com.fasterxml.jackson.databind.annotation.JsonDeserialize(using = SessionStartEventData.$NullableDeserializer.class)
     public record SessionStartEventData(
+        /** Default maximum logical model turns per request. */
+        @JsonProperty("maxToolTurns") Long maxToolTurns,
         /** Credential-free effective model routing policy restored on cold resume. */
         @JsonProperty("providerRouting") Object providerRouting,
         /** Unique identifier for the session */
@@ -104,8 +106,9 @@ public final class SessionStartEvent extends SessionEvent {
          */
         public static final class Builder {
             private Builder() {}
+            private Long maxToolTurns;
             private Object providerRouting;
-            private boolean $presence0;
+            private boolean $presence1;
             private String sessionId;
             private Long version;
             private String producer;
@@ -119,7 +122,7 @@ public final class SessionStartEvent extends SessionEvent {
             private ReasoningSummary reasoningSummary;
             private Verbosity verbosity;
             private ContextTier contextTier;
-            private boolean $presence13;
+            private boolean $presence14;
             private Boolean contextTierManaged;
             private AutoTier autoTier;
             private Boolean autoTierManaged;
@@ -131,6 +134,17 @@ public final class SessionStartEvent extends SessionEvent {
             private String detachedFromSpawningParentSessionId;
 
             /**
+             * Sets the {@code maxToolTurns} property.
+             * @param value the property value
+             * @return this builder
+             * @since 2.0.0
+             */
+            public Builder maxToolTurns(Long value) {
+                this.maxToolTurns = value;
+                return this;
+            }
+
+            /**
              * Sets the {@code providerRouting} property.
              * @param value the property value
              * @return this builder
@@ -138,7 +152,7 @@ public final class SessionStartEvent extends SessionEvent {
              */
             public Builder providerRouting(Object value) {
                 this.providerRouting = value;
-                this.$presence0 = true;
+                this.$presence1 = true;
                 return this;
             }
 
@@ -282,7 +296,7 @@ public final class SessionStartEvent extends SessionEvent {
              */
             public Builder contextTier(ContextTier value) {
                 this.contextTier = value;
-                this.$presence13 = true;
+                this.$presence14 = true;
                 return this;
             }
 
@@ -398,9 +412,9 @@ public final class SessionStartEvent extends SessionEvent {
                 if (copilotVersion == null) throw new IllegalStateException("Missing required property: copilotVersion");
                 if (startTime == null) throw new IllegalStateException("Missing required property: startTime");
                 java.util.Set<String> $explicitNulls = new java.util.LinkedHashSet<>();
-                if ($presence0 && providerRouting == null) $explicitNulls.add("providerRouting");
-                if ($presence13 && contextTier == null) $explicitNulls.add("contextTier");
-                return new SessionStartEventData(providerRouting, sessionId, version, producer, copilotVersion, startTime, selectedModel, providerId, reasoningEffort, reasoningEffortModel, reasoningEffortManaged, reasoningSummary, verbosity, contextTier, contextTierManaged, autoTier, autoTierManaged, sessionLimits, context, gitHubMcpToolConfig, alreadyInUse, remoteSteerable, detachedFromSpawningParentSessionId, $explicitNulls);
+                if ($presence1 && providerRouting == null) $explicitNulls.add("providerRouting");
+                if ($presence14 && contextTier == null) $explicitNulls.add("contextTier");
+                return new SessionStartEventData(maxToolTurns, providerRouting, sessionId, version, producer, copilotVersion, startTime, selectedModel, providerId, reasoningEffort, reasoningEffortModel, reasoningEffortManaged, reasoningSummary, verbosity, contextTier, contextTierManaged, autoTier, autoTierManaged, sessionLimits, context, gitHubMcpToolConfig, alreadyInUse, remoteSteerable, detachedFromSpawningParentSessionId, $explicitNulls);
             }
         }
 
@@ -422,7 +436,7 @@ public final class SessionStartEvent extends SessionEvent {
                 java.util.Set<String> $explicitNulls = new java.util.LinkedHashSet<>();
                 if (tree.has("providerRouting") && tree.get("providerRouting").isNull()) $explicitNulls.add("providerRouting");
                 if (tree.has("contextTier") && tree.get("contextTier").isNull()) $explicitNulls.add("contextTier");
-                return new SessionStartEventData(readProperty(context, tree, "providerRouting", new com.fasterxml.jackson.core.type.TypeReference<Object>() {}), readProperty(context, tree, "sessionId", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "version", new com.fasterxml.jackson.core.type.TypeReference<Long>() {}), readProperty(context, tree, "producer", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "copilotVersion", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "startTime", new com.fasterxml.jackson.core.type.TypeReference<OffsetDateTime>() {}), readProperty(context, tree, "selectedModel", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "providerId", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "reasoningEffort", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "reasoningEffortModel", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "reasoningEffortManaged", new com.fasterxml.jackson.core.type.TypeReference<Boolean>() {}), readProperty(context, tree, "reasoningSummary", new com.fasterxml.jackson.core.type.TypeReference<ReasoningSummary>() {}), readProperty(context, tree, "verbosity", new com.fasterxml.jackson.core.type.TypeReference<Verbosity>() {}), readProperty(context, tree, "contextTier", new com.fasterxml.jackson.core.type.TypeReference<ContextTier>() {}), readProperty(context, tree, "contextTierManaged", new com.fasterxml.jackson.core.type.TypeReference<Boolean>() {}), readProperty(context, tree, "autoTier", new com.fasterxml.jackson.core.type.TypeReference<AutoTier>() {}), readProperty(context, tree, "autoTierManaged", new com.fasterxml.jackson.core.type.TypeReference<Boolean>() {}), readProperty(context, tree, "sessionLimits", new com.fasterxml.jackson.core.type.TypeReference<SessionLimitsConfig>() {}), readProperty(context, tree, "context", new com.fasterxml.jackson.core.type.TypeReference<WorkingDirectoryContext>() {}), readProperty(context, tree, "githubMcpToolConfig", new com.fasterxml.jackson.core.type.TypeReference<GitHubMcpToolConfig>() {}), readProperty(context, tree, "alreadyInUse", new com.fasterxml.jackson.core.type.TypeReference<Boolean>() {}), readProperty(context, tree, "remoteSteerable", new com.fasterxml.jackson.core.type.TypeReference<Boolean>() {}), readProperty(context, tree, "detachedFromSpawningParentSessionId", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), $explicitNulls);
+                return new SessionStartEventData(readProperty(context, tree, "maxToolTurns", new com.fasterxml.jackson.core.type.TypeReference<Long>() {}), readProperty(context, tree, "providerRouting", new com.fasterxml.jackson.core.type.TypeReference<Object>() {}), readProperty(context, tree, "sessionId", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "version", new com.fasterxml.jackson.core.type.TypeReference<Long>() {}), readProperty(context, tree, "producer", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "copilotVersion", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "startTime", new com.fasterxml.jackson.core.type.TypeReference<OffsetDateTime>() {}), readProperty(context, tree, "selectedModel", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "providerId", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "reasoningEffort", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "reasoningEffortModel", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "reasoningEffortManaged", new com.fasterxml.jackson.core.type.TypeReference<Boolean>() {}), readProperty(context, tree, "reasoningSummary", new com.fasterxml.jackson.core.type.TypeReference<ReasoningSummary>() {}), readProperty(context, tree, "verbosity", new com.fasterxml.jackson.core.type.TypeReference<Verbosity>() {}), readProperty(context, tree, "contextTier", new com.fasterxml.jackson.core.type.TypeReference<ContextTier>() {}), readProperty(context, tree, "contextTierManaged", new com.fasterxml.jackson.core.type.TypeReference<Boolean>() {}), readProperty(context, tree, "autoTier", new com.fasterxml.jackson.core.type.TypeReference<AutoTier>() {}), readProperty(context, tree, "autoTierManaged", new com.fasterxml.jackson.core.type.TypeReference<Boolean>() {}), readProperty(context, tree, "sessionLimits", new com.fasterxml.jackson.core.type.TypeReference<SessionLimitsConfig>() {}), readProperty(context, tree, "context", new com.fasterxml.jackson.core.type.TypeReference<WorkingDirectoryContext>() {}), readProperty(context, tree, "githubMcpToolConfig", new com.fasterxml.jackson.core.type.TypeReference<GitHubMcpToolConfig>() {}), readProperty(context, tree, "alreadyInUse", new com.fasterxml.jackson.core.type.TypeReference<Boolean>() {}), readProperty(context, tree, "remoteSteerable", new com.fasterxml.jackson.core.type.TypeReference<Boolean>() {}), readProperty(context, tree, "detachedFromSpawningParentSessionId", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), $explicitNulls);
             }
 
             private static <T> T readProperty(com.fasterxml.jackson.databind.DeserializationContext context,

@@ -472,7 +472,8 @@ class JsonRpcClientTest {
         String json = """
                 {"jsonrpc":"2.0","result":{"accessToken":"secret","nested":{"gitHubToken":"static"},
                 "negotiate":{"token":"spnego"},"basic":{"username":"user","password":"hunter2"}},
-                "metadata":{"tokenType":"Bearer"}}
+                "metadata":{"tokenType":"Bearer"},"params":{"githubClientId":"fixture-app",
+                "githubClientSecret":"fixture-oauth-credential"}}
                 """;
 
         String rendered = JsonRpcClient.redactCredentialsForLogging(json);
@@ -486,6 +487,8 @@ class JsonRpcClientTest {
         assertEquals("<redacted>", MAPPER.readTree(rendered).at("/result/negotiate/token").asText());
         assertEquals("<redacted>", MAPPER.readTree(rendered).at("/result/basic/password").asText());
         assertEquals("Bearer", MAPPER.readTree(rendered).at("/metadata/tokenType").asText());
+        assertEquals("fixture-app", MAPPER.readTree(rendered).at("/params/githubClientId").asText());
+        assertEquals("<redacted>", MAPPER.readTree(rendered).at("/params/githubClientSecret").asText());
     }
 
     @Test

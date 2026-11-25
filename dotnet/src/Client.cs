@@ -210,6 +210,11 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(options);
         _options = options;
+        _githubClientId = options.GitHub.ClientId;
+        _githubClientSecret = options.GitHub.ClientSecret;
+        if ((_githubClientId is not null || _githubClientSecret is not null) &&
+            (string.IsNullOrWhiteSpace(_githubClientId) || string.IsNullOrWhiteSpace(_githubClientSecret)))
+            throw new ArgumentException("GitHub.ClientId and GitHub.ClientSecret must both be non-empty.", nameof(options));
         _connection = _options.Runtime ?? RuntimeConnection.ForDefault();
         _builtinPluginDirectories = _options.Plugins.BuiltinDirectories?.ToArray() ?? [];
         foreach (var path in _builtinPluginDirectories.Where(path => !IsFullyQualifiedPath(path)))
@@ -1467,6 +1472,7 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
                 Execution = new SessionExecutionRequest
                 {
                     Limits = config.Execution.Limits,
+                    MaxToolTurns = config.Execution.MaxToolTurns,
                     Autopilot = config.Execution.Autopilot
                 },
                 Plugins = new SessionPluginRequest
@@ -1846,6 +1852,7 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
                 Execution = new SessionExecutionRequest
                 {
                     Limits = config.Execution.Limits,
+                    MaxToolTurns = config.Execution.MaxToolTurns,
                     Autopilot = config.Execution.Autopilot
                 },
                 Plugins = new SessionPluginRequest
@@ -2693,6 +2700,9 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
         session.SetSessionFsHandler(provider);
     }
 
+    private readonly string? _githubClientId;
+    private readonly string? _githubClientSecret;
+
     private async Task VerifyProtocolVersionAsync(Connection connection, CancellationToken cancellationToken)
     {
         var handshakeTimestamp = Stopwatch.GetTimestamp();
@@ -2725,7 +2735,9 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
                     ConnectHandshakeClientInfo.From(_options.ClientInfo),
                     SupportedTaskKinds: [TaskKind.Agent, TaskKind.Client, TaskKind.Shell],
                     Entra: _options.Entra?.ToWire(),
-                    EntraTokenProvider: _options.Entra?.TokenProvider is null ? null : true)],
+                    EntraTokenProvider: _options.Entra?.TokenProvider is null ? null : true,
+                    GitHubClientId: _githubClientId,
+                    GitHubClientSecret: _githubClientSecret)],
                 connection.StderrBuffer,
                 cancellationToken);
             serverVersion = (int)connectResponse.ProtocolVersion;
@@ -2736,6 +2748,8 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
         }
         catch (RemoteRpcException ex) when (IsUnsupportedConnectMethod(ex))
         {
+            if (_githubClientId is not null)
+                throw new InvalidOperationException("This runtime does not support GitHub OAuth client configuration.", ex);
             if (_options.Entra is not null)
             {
                 throw new InvalidOperationException("This runtime does not support Entra client configuration.", ex);
@@ -4166,6 +4180,7 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
         bool? SkipPermission = null,
         bool? HasHandler = null,
         CopilotToolDefer? Defer = null,
+        CopilotToolExposure? Exposure = null,
         IDictionary<string, JsonNode?>? Metadata = null,
         bool? IsTerminal = null,
         ProtocolExternalToolNamespace? Namespace = null,
@@ -4176,6 +4191,7 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
             var overrides = function.AdditionalProperties.TryGetValue(CopilotTool.OverridesBuiltInToolKey, out var val) && val is true;
             var skipPerm = function.AdditionalProperties.TryGetValue(CopilotTool.SkipPermissionKey, out var skipVal) && skipVal is true;
             var defer = function.AdditionalProperties.TryGetValue(CopilotTool.DeferKey, out var deferVal) && deferVal is CopilotToolDefer d ? d : (CopilotToolDefer?)null;
+            var exposure = function.AdditionalProperties.TryGetValue(CopilotTool.ExposureKey, out var exposureVal) && exposureVal is CopilotToolExposure e ? e : (CopilotToolExposure?)null;
             var metadata = function.AdditionalProperties.TryGetValue(CopilotTool.MetadataKey, out var metaVal) && metaVal is IDictionary<string, JsonNode?> m ? m : null;
             var isTerminal = function.AdditionalProperties.TryGetValue(CopilotTool.IsTerminalKey, out var terminalVal) && terminalVal is true;
             var idempotent = function.AdditionalProperties.TryGetValue(CopilotTool.IdempotentKey, out var idempotentVal) && idempotentVal is true;
@@ -4187,6 +4203,7 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
                 skipPerm ? true : null,
                 function.GetService<AIFunction>() is not null,
                 defer,
+                exposure,
                 metadata,
                 isTerminal ? true : null,
                 toolNamespace,
@@ -4285,7 +4302,12 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
         [property: JsonPropertyName("clientInfo")] ConnectHandshakeClientInfo? ClientInfo = null,
         [property: JsonPropertyName("supportedTaskKinds")] IList<TaskKind>? SupportedTaskKinds = null,
         [property: JsonPropertyName("entra")] EntraAuthConfig? Entra = null,
-        [property: JsonPropertyName("entraTokenProvider")] bool? EntraTokenProvider = null);
+        [property: JsonPropertyName("entraTokenProvider")] bool? EntraTokenProvider = null,
+        [property: JsonPropertyName("githubClientId"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? GitHubClientId = null,
+        [property: JsonPropertyName("githubClientSecret"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? GitHubClientSecret = null)
+    {
+        public override string ToString() => nameof(ConnectHandshakeRequest);
+    }
 
     internal record ConnectHandshakeClientInfo(
         [property: JsonPropertyName("editorName")] string? EditorName = null,
@@ -4429,6 +4451,7 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
     [JsonSerializable(typeof(CommandWireDefinition))]
     [JsonSerializable(typeof(ToolDefinition))]
     [JsonSerializable(typeof(CopilotToolDefer))]
+    [JsonSerializable(typeof(CopilotToolExposure))]
     [JsonSerializable(typeof(ToolResultAIContent))]
     [JsonSerializable(typeof(ToolResultObject))]
     [JsonSerializable(typeof(ShellAuthenticationCancelParams))]
@@ -4738,6 +4761,9 @@ internal sealed class SessionSkillRequest
 }
 internal sealed class SessionExecutionRequest
 {
+    [JsonPropertyName("maxToolTurns")]
+    public uint? MaxToolTurns { get; init; }
+
     [JsonPropertyName("limits")]
     public SessionLimitsConfig? Limits { get; init; }
 

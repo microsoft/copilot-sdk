@@ -1466,6 +1466,8 @@ pub struct SessionStartData {
     pub detached_from_spawning_parent_session_id: Option<String>,
     /// Per-session GitHub MCP override persisted for cold resume
     pub github_mcp_tool_config: Option<GitHubMcpToolConfig>,
+    /// Default maximum logical model turns per request.
+    pub max_tool_turns: Option<i64>,
     /// Identifier of the software producing the events (e.g., "copilot-agent")
     pub producer: String,
     /// Provider of selectedModel at creation time, when explicitly selected.
@@ -1495,7 +1497,7 @@ pub struct SessionStartData {
     /// Schema version number for the session event format
     pub version: i64,
 }
-crate::record_serde::wire_record!(SessionStartData { already_in_use: "alreadyInUse" if is_none, auto_tier: "autoTier" if is_none, auto_tier_managed: "autoTierManaged" if is_none, context: "context" if is_none, context_tier: "contextTier" if is_none, context_tier_managed: "contextTierManaged" if is_none, copilot_version: "copilotVersion", detached_from_spawning_parent_session_id: "detachedFromSpawningParentSessionId" if is_none, github_mcp_tool_config: "githubMcpToolConfig" if is_none, producer: "producer", provider_id: "providerId" if is_none, provider_routing: "providerRouting" if is_none, reasoning_effort: "reasoningEffort" if is_none, reasoning_effort_managed: "reasoningEffortManaged" if is_none, reasoning_effort_model: "reasoningEffortModel" if is_none, reasoning_summary: "reasoningSummary" if is_none, remote_steerable: "remoteSteerable" if is_none, selected_model: "selectedModel" if is_none, session_id: "sessionId", session_limits: "sessionLimits" if is_none, start_time: "startTime", verbosity: "verbosity" if is_none, version: "version" });
+crate::record_serde::wire_record!(SessionStartData { already_in_use: "alreadyInUse" if is_none, auto_tier: "autoTier" if is_none, auto_tier_managed: "autoTierManaged" if is_none, context: "context" if is_none, context_tier: "contextTier" if is_none, context_tier_managed: "contextTierManaged" if is_none, copilot_version: "copilotVersion", detached_from_spawning_parent_session_id: "detachedFromSpawningParentSessionId" if is_none, github_mcp_tool_config: "githubMcpToolConfig" if is_none, max_tool_turns: "maxToolTurns" if is_none, producer: "producer", provider_id: "providerId" if is_none, provider_routing: "providerRouting" if is_none, reasoning_effort: "reasoningEffort" if is_none, reasoning_effort_managed: "reasoningEffortManaged" if is_none, reasoning_effort_model: "reasoningEffortModel" if is_none, reasoning_summary: "reasoningSummary" if is_none, remote_steerable: "remoteSteerable" if is_none, selected_model: "selectedModel" if is_none, session_id: "sessionId", session_limits: "sessionLimits" if is_none, start_time: "startTime", verbosity: "verbosity" if is_none, version: "version" });
 
 /// Session event "session.resume". Session resume metadata including current context and event count
 #[derive(Debug, Clone, Default)]
@@ -1518,6 +1520,8 @@ pub struct SessionResumeData {
     pub event_count: i64,
     /// On-disk byte size of the session's persisted events.jsonl file at resume time; omitted when the file does not exist or cannot be stat'd
     pub events_file_size_bytes: Option<i64>,
+    /// Default maximum logical model turns per request, when changed on resume.
+    pub max_tool_turns: Option<i64>,
     /// Provider of selectedModel at resume time, when explicitly selected.
     pub provider_id: Option<String>,
     /// Credential-free effective model routing policy restored on cold resume.
@@ -1547,7 +1551,7 @@ pub struct SessionResumeData {
     /// Output verbosity level used for model calls, if applicable (e.g. "low", "medium", "high")
     pub verbosity: Option<Verbosity>,
 }
-crate::record_serde::wire_record!(SessionResumeData { already_in_use: "alreadyInUse" if is_none, auto_tier: "autoTier" if is_none, auto_tier_managed: "autoTierManaged" if is_none, context: "context" if is_none, context_tier: "contextTier" if is_none, context_tier_managed: "contextTierManaged" if is_none, continue_pending_work: "continuePendingWork" if is_none, event_count: "eventCount", events_file_size_bytes: "eventsFileSizeBytes" if is_none, provider_id: "providerId" if is_none, provider_routing: "providerRouting" if is_none, reasoning_effort: "reasoningEffort" if is_none, reasoning_effort_managed: "reasoningEffortManaged" if is_none, reasoning_effort_model: "reasoningEffortModel" if is_none, reasoning_summary: "reasoningSummary" if is_none, remote_steerable: "remoteSteerable" if is_none, responses_reasoning_kept: "responsesReasoningKept" if is_none, responses_reasoning_overridden: "responsesReasoningOverridden" if is_none, resume_time: "resumeTime", selected_model: "selectedModel" if is_none, session_limits: "sessionLimits" if is_none, session_was_active: "sessionWasActive" if is_none, verbosity: "verbosity" if is_none });
+crate::record_serde::wire_record!(SessionResumeData { already_in_use: "alreadyInUse" if is_none, auto_tier: "autoTier" if is_none, auto_tier_managed: "autoTierManaged" if is_none, context: "context" if is_none, context_tier: "contextTier" if is_none, context_tier_managed: "contextTierManaged" if is_none, continue_pending_work: "continuePendingWork" if is_none, event_count: "eventCount", events_file_size_bytes: "eventsFileSizeBytes" if is_none, max_tool_turns: "maxToolTurns" if is_none, provider_id: "providerId" if is_none, provider_routing: "providerRouting" if is_none, reasoning_effort: "reasoningEffort" if is_none, reasoning_effort_managed: "reasoningEffortManaged" if is_none, reasoning_effort_model: "reasoningEffortModel" if is_none, reasoning_summary: "reasoningSummary" if is_none, remote_steerable: "remoteSteerable" if is_none, responses_reasoning_kept: "responsesReasoningKept" if is_none, responses_reasoning_overridden: "responsesReasoningOverridden" if is_none, resume_time: "resumeTime", selected_model: "selectedModel" if is_none, session_limits: "sessionLimits" if is_none, session_was_active: "sessionWasActive" if is_none, verbosity: "verbosity" if is_none });
 
 /// Session event "session.remote_steerable_changed". Notifies that the session's remote steering capability has changed
 #[derive(Debug, Clone, Default)]
@@ -3798,6 +3802,18 @@ crate::record_serde::wire_record!(UserMessageData { agent_authored: "agentAuthor
 #[serde(rename_all = "camelCase")]
 pub struct PendingMessagesModifiedData {}
 
+#[derive(Debug, Clone, Default)]
+pub struct ToolTurnBudget {
+    /// Maximum logical model turns allowed for this request.
+    pub limit: i64,
+    /// Logical model turns already admitted for this request.
+    pub used: i64,
+}
+crate::record_serde::wire_record!(ToolTurnBudget {
+    limit: "limit",
+    used: "used"
+});
+
 /// Session event "assistant.turn_start". Turn initialization metadata including identifier and interaction tracking
 #[derive(Debug, Clone, Default)]
 pub struct AssistantTurnStartData {
@@ -3809,10 +3825,13 @@ pub struct AssistantTurnStartData {
     pub model: Option<String>,
     /// Parent task tool call ID when this turn belongs to a sub-agent
     pub parent_tool_call_id: Option<String>,
+    /// Maximum and consumed logical model turns for the active request.
+    #[doc(hidden)]
+    pub tool_turn_budget: Option<ToolTurnBudget>,
     /// Identifier for this turn within the agentic loop, typically a stringified turn number
     pub turn_id: String,
 }
-crate::record_serde::wire_record!(AssistantTurnStartData { agent_mode: "agentMode" if is_none, interaction_id: "interactionId" if is_none, model: "model" if is_none, parent_tool_call_id: "parentToolCallId" if is_none, turn_id: "turnId" });
+crate::record_serde::wire_record!(AssistantTurnStartData { agent_mode: "agentMode" if is_none, interaction_id: "interactionId" if is_none, model: "model" if is_none, parent_tool_call_id: "parentToolCallId" if is_none, tool_turn_budget: "toolTurnBudget" if is_none, turn_id: "turnId" });
 
 /// Session event "assistant.turn_retry". Metadata for an additional model inference attempt within an existing assistant turn
 #[derive(Debug, Clone, Default)]
@@ -6276,7 +6295,7 @@ pub struct SubagentStartedData {
     pub model_selection_source: Option<SubagentModelSelectionSource>,
     /// Task-registry ID of the spawning sub-agent. Absent when the root session spawned this child.
     pub parent_id: Option<String>,
-    /// Whether this sub-agent can be resumed. Currently always false.
+    /// Whether a later session resume may continue this sub-agent if its session ends before it does.
     pub resumable: Option<bool>,
     /// Where the model input for this sub-agent came from. Present when the task planner resolved the launch (the task tool and workflow agents); absent for sub-agents created through other runtime paths.
     pub task_model_source: Option<SubagentTaskModelSource>,
@@ -6977,8 +6996,17 @@ pub struct PermissionAssistedApproval {
     pub reason: Option<String>,
     /// The assisted-approval safety judge's outcome for this request.
     pub recommendation: AssistedApprovalRecommendation,
+    /// True when the runtime shares a note the user gives with their answer (`userFeedback` in the decision context) with GitHub through the feedback upload, after asking the user's consent, instead of restricted telemetry. Set only for GitHub staff whose account does not allow restricted telemetry. Hosts that collect Assisted Permissions feedback show their feedback field when this is true.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This type is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases.
+    ///
+    /// </div>
+    pub user_feedback_upload: Option<bool>,
 }
-crate::record_serde::wire_record!(PermissionAssistedApproval { approval_required_command_segments: "approvalRequiredCommandSegments" if is_none, evaluation: "evaluation" if is_none, evaluation_id: "evaluationId" if is_none, failure_reason: "failureReason" if is_none, model: "model" if is_none, reason: "reason" if is_none, recommendation: "recommendation" });
+crate::record_serde::wire_record!(PermissionAssistedApproval { approval_required_command_segments: "approvalRequiredCommandSegments" if is_none, evaluation: "evaluation" if is_none, evaluation_id: "evaluationId" if is_none, failure_reason: "failureReason" if is_none, model: "model" if is_none, reason: "reason" if is_none, recommendation: "recommendation", user_feedback_upload: "userFeedbackUpload" if is_none });
 
 /// Memory operation permission request
 #[derive(Debug, Clone, Default)]
@@ -7121,21 +7149,21 @@ pub struct PermissionRequestWorkflow {
 }
 crate::record_serde::wire_record!(PermissionRequestWorkflow { approval_key: "approvalKey", can_persist_approval: "canPersistApproval", declared_max_ai_credits: "declaredMaxAiCredits" if is_none, declared_max_concurrent_subagents: "declaredMaxConcurrentSubagents" if is_none, declared_max_total_subagents: "declaredMaxTotalSubagents" if is_none, declared_timeout_seconds: "declaredTimeoutSeconds" if is_none, description: "description", kind: "kind", managed_approval_required: "managedApprovalRequired" if is_none, max_ai_credits: "maxAiCredits" if is_none, max_concurrent_subagents: "maxConcurrentSubagents" if is_none, max_total_subagents: "maxTotalSubagents" if is_none, name: "name", operation: "operation", phases: "phases", timeout_seconds: "timeoutSeconds" if is_none, tool_call_id: "toolCallId" if is_none });
 
-/// Extension permission access request
+/// Request approval before starting an extension process.
 #[derive(Debug, Clone, Default)]
-pub struct PermissionRequestExtensionPermissionAccess {
-    /// Capabilities the extension is requesting
-    pub capabilities: Vec<String>,
-    /// Name of the extension requesting permission access
+pub struct PermissionRequestExtensionLaunch {
+    /// Contribution descriptions retained from historical capability-consent records. Absent for new launch requests.
+    pub capabilities: Option<Vec<String>>,
+    /// Source-qualified identity of the extension to launch.
     pub extension_name: String,
     /// Permission kind discriminator
-    pub kind: PermissionRequestExtensionPermissionAccessKind,
+    pub kind: PermissionRequestExtensionLaunchKind,
     /// When true, managed policy requires an explicit user decision and automatic approval must be bypassed.
     pub managed_approval_required: Option<bool>,
-    /// Tool call ID that triggered this permission request
+    /// Tool call that initiated the launch, when applicable.
     pub tool_call_id: Option<String>,
 }
-crate::record_serde::wire_record!(PermissionRequestExtensionPermissionAccess { capabilities: "capabilities", extension_name: "extensionName", kind: "kind", managed_approval_required: "managedApprovalRequired" if is_none, tool_call_id: "toolCallId" if is_none });
+crate::record_serde::wire_record!(PermissionRequestExtensionLaunch { capabilities: "capabilities" if is_none, extension_name: "extensionName", kind: "kind", managed_approval_required: "managedApprovalRequired" if is_none, tool_call_id: "toolCallId" if is_none });
 
 /// Extension sensitive environment variable access request
 #[derive(Debug, Clone, Default)]
@@ -7533,10 +7561,10 @@ pub struct PermissionPromptRequestWorkflow {
 }
 crate::record_serde::wire_record!(PermissionPromptRequestWorkflow { approval_key: "approvalKey", assisted_approval: "assistedApproval" if is_none, can_persist_approval: "canPersistApproval", declared_max_ai_credits: "declaredMaxAiCredits" if is_none, declared_max_concurrent_subagents: "declaredMaxConcurrentSubagents" if is_none, declared_max_total_subagents: "declaredMaxTotalSubagents" if is_none, declared_timeout_seconds: "declaredTimeoutSeconds" if is_none, description: "description", kind: "kind", managed_approval_required: "managedApprovalRequired" if is_none, max_ai_credits: "maxAiCredits" if is_none, max_concurrent_subagents: "maxConcurrentSubagents" if is_none, max_total_subagents: "maxTotalSubagents" if is_none, name: "name", operation: "operation", phases: "phases", timeout_seconds: "timeoutSeconds" if is_none, tool_call_id: "toolCallId" if is_none });
 
-/// Extension permission access prompt
+/// Approval to run extension code and access the session before its process starts.
 #[derive(Debug, Clone, Default)]
-pub struct PermissionPromptRequestExtensionPermissionAccess {
-    /// Assisted-approval judge information for this request; present only in assisted mode.
+pub struct PermissionPromptRequestExtensionLaunch {
+    /// Assisted-approval information retained for this request, when present.
     ///
     /// <div class="warning">
     ///
@@ -7545,16 +7573,16 @@ pub struct PermissionPromptRequestExtensionPermissionAccess {
     ///
     /// </div>
     pub assisted_approval: Option<PermissionAssistedApproval>,
-    /// Capabilities the extension is requesting
-    pub capabilities: Vec<String>,
-    /// Name of the extension requesting permission access
+    /// Contribution descriptions retained from historical capability-consent records. Absent for new launch requests.
+    pub capabilities: Option<Vec<String>>,
+    /// Source-qualified identity of the extension to launch.
     pub extension_name: String,
     /// Prompt kind discriminator
-    pub kind: PermissionPromptRequestExtensionPermissionAccessKind,
-    /// Tool call ID that triggered this permission request
+    pub kind: PermissionPromptRequestExtensionLaunchKind,
+    /// Tool call that initiated the launch, when applicable.
     pub tool_call_id: Option<String>,
 }
-crate::record_serde::wire_record!(PermissionPromptRequestExtensionPermissionAccess { assisted_approval: "assistedApproval" if is_none, capabilities: "capabilities", extension_name: "extensionName", kind: "kind", tool_call_id: "toolCallId" if is_none });
+crate::record_serde::wire_record!(PermissionPromptRequestExtensionLaunch { assisted_approval: "assistedApproval" if is_none, capabilities: "capabilities" if is_none, extension_name: "extensionName", kind: "kind", tool_call_id: "toolCallId" if is_none });
 
 /// Extension sensitive environment variable access prompt
 #[derive(Debug, Clone, Default)]
@@ -7742,15 +7770,15 @@ pub struct UserToolSessionApprovalWorkflow {
 }
 crate::record_serde::wire_record!(UserToolSessionApprovalWorkflow { approval_key: "approvalKey" if is_none, kind: "kind" });
 
-/// Session-scoped tool-approval rule for an extension's permission-gated capability access, keyed by extension name.
+/// Reusable launch approval for one source-qualified extension identity.
 #[derive(Debug, Clone, Default)]
-pub struct UserToolSessionApprovalExtensionPermissionAccess {
-    /// Extension name
+pub struct UserToolSessionApprovalExtensionLaunch {
+    /// Source-qualified identity of the approved extension.
     pub extension_name: String,
-    /// Extension permission access approval kind
-    pub kind: UserToolSessionApprovalExtensionPermissionAccessKind,
+    /// Extension launch approval kind
+    pub kind: UserToolSessionApprovalExtensionLaunchKind,
 }
-crate::record_serde::wire_record!(UserToolSessionApprovalExtensionPermissionAccess {
+crate::record_serde::wire_record!(UserToolSessionApprovalExtensionLaunch {
     extension_name: "extensionName",
     kind: "kind"
 });
@@ -15518,20 +15546,20 @@ impl<'de> Deserialize<'de> for WorkflowPermissionOperation {
 
 /// Permission kind discriminator
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-pub enum PermissionRequestExtensionPermissionAccessKind {
-    #[serde(rename = "extension-permission-access")]
+pub enum PermissionRequestExtensionLaunchKind {
+    #[serde(rename = "extension-launch")]
     #[default]
-    ExtensionPermissionAccess,
+    ExtensionLaunch,
 }
-impl<'de> Deserialize<'de> for PermissionRequestExtensionPermissionAccessKind {
+impl<'de> Deserialize<'de> for PermissionRequestExtensionLaunchKind {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         crate::enum_serde::deserialize_variant(
             deserializer,
-            "PermissionRequestExtensionPermissionAccessKind",
-            &["extension-permission-access"],
+            "PermissionRequestExtensionLaunchKind",
+            &["extension-launch"],
             None,
         )?;
-        Ok(Self::ExtensionPermissionAccess)
+        Ok(Self::ExtensionLaunch)
     }
 }
 
@@ -15568,7 +15596,7 @@ pub enum PermissionRequest {
     Hook(PermissionRequestHook),
     ExtensionManagement(PermissionRequestExtensionManagement),
     Workflow(PermissionRequestWorkflow),
-    ExtensionPermissionAccess(PermissionRequestExtensionPermissionAccess),
+    ExtensionLaunch(PermissionRequestExtensionLaunch),
     ExtensionEnvAccess(PermissionRequestExtensionEnvAccess),
 }
 
@@ -15817,20 +15845,20 @@ impl<'de> Deserialize<'de> for PermissionPromptRequestWorkflowKind {
 
 /// Prompt kind discriminator
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-pub enum PermissionPromptRequestExtensionPermissionAccessKind {
-    #[serde(rename = "extension-permission-access")]
+pub enum PermissionPromptRequestExtensionLaunchKind {
+    #[serde(rename = "extension-launch")]
     #[default]
-    ExtensionPermissionAccess,
+    ExtensionLaunch,
 }
-impl<'de> Deserialize<'de> for PermissionPromptRequestExtensionPermissionAccessKind {
+impl<'de> Deserialize<'de> for PermissionPromptRequestExtensionLaunchKind {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         crate::enum_serde::deserialize_variant(
             deserializer,
-            "PermissionPromptRequestExtensionPermissionAccessKind",
-            &["extension-permission-access"],
+            "PermissionPromptRequestExtensionLaunchKind",
+            &["extension-launch"],
             None,
         )?;
-        Ok(Self::ExtensionPermissionAccess)
+        Ok(Self::ExtensionLaunch)
     }
 }
 
@@ -15868,7 +15896,7 @@ pub enum PermissionPromptRequest {
     Hook(PermissionPromptRequestHook),
     ExtensionManagement(PermissionPromptRequestExtensionManagement),
     Workflow(PermissionPromptRequestWorkflow),
-    ExtensionPermissionAccess(PermissionPromptRequestExtensionPermissionAccess),
+    ExtensionLaunch(PermissionPromptRequestExtensionLaunch),
     ExtensionEnvAccess(PermissionPromptRequestExtensionEnvAccess),
 }
 
@@ -16111,22 +16139,22 @@ impl<'de> Deserialize<'de> for UserToolSessionApprovalWorkflowKind {
     }
 }
 
-/// Extension permission access approval kind
+/// Extension launch approval kind
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-pub enum UserToolSessionApprovalExtensionPermissionAccessKind {
-    #[serde(rename = "extension-permission-access")]
+pub enum UserToolSessionApprovalExtensionLaunchKind {
+    #[serde(rename = "extension-launch")]
     #[default]
-    ExtensionPermissionAccess,
+    ExtensionLaunch,
 }
-impl<'de> Deserialize<'de> for UserToolSessionApprovalExtensionPermissionAccessKind {
+impl<'de> Deserialize<'de> for UserToolSessionApprovalExtensionLaunchKind {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         crate::enum_serde::deserialize_variant(
             deserializer,
-            "UserToolSessionApprovalExtensionPermissionAccessKind",
-            &["extension-permission-access"],
+            "UserToolSessionApprovalExtensionLaunchKind",
+            &["extension-launch"],
             None,
         )?;
-        Ok(Self::ExtensionPermissionAccess)
+        Ok(Self::ExtensionLaunch)
     }
 }
 
@@ -16161,7 +16189,7 @@ pub enum UserToolSessionApproval {
     CustomTool(UserToolSessionApprovalCustomTool),
     ExtensionManagement(UserToolSessionApprovalExtensionManagement),
     Workflow(UserToolSessionApprovalWorkflow),
-    ExtensionPermissionAccess(UserToolSessionApprovalExtensionPermissionAccess),
+    ExtensionLaunch(UserToolSessionApprovalExtensionLaunch),
     ExtensionEnvAccess(UserToolSessionApprovalExtensionEnvAccess),
 }
 

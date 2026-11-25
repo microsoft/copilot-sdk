@@ -36,6 +36,29 @@ import com.microsoft.copilot.generated.AgentModelPolicy;
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class CustomAgentConfig {
+    @JsonProperty("maxToolTurns")
+    private Long maxToolTurns;
+
+    /**
+     * Gets the logical model-turn limit when running as a local subagent.
+     *
+     * @return the limit, or {@code null} to inherit the parent limit
+     */
+    public Long getMaxToolTurns() {
+        return maxToolTurns;
+    }
+
+    /**
+     * Overrides the inherited limit when running as a local subagent.
+     *
+     * @param maxToolTurns
+     *            the limit
+     * @return this instance for method chaining
+     */
+    public CustomAgentConfig setMaxToolTurns(Long maxToolTurns) {
+        this.maxToolTurns = maxToolTurns;
+        return this;
+    }
 
     @JsonProperty("hooks")
     private Map<String, List<Map<String, Object>>> hooks;

@@ -7,7 +7,7 @@ import type { MessageConnection } from "../jsonrpcTypes.js";
 
 import { sendCancellableRequest } from "../rpcCancellation.js";
 import { sendRequestWithSignal } from "../jsonrpcTypes.js";
-import { assertStrictJson } from "../jsonValue.js";
+import { assertStrictJson, validateMaxToolTurns } from "../jsonValue.js";
 import { settingsResponseParams, type SettingsResponse, type SettingsResponseOptions } from "../settingsJson.js";
 import type { AbortReason, AgentModelPolicy, AssistedApprovalAssessment, Attachment, AutoTier, ContextTier, EmbeddedBlobResourceContents, EmbeddedTextResourceContents, IdeConnectionState, IndexedSearchState, ManagedPermissionsContext, ManagedSettingsResolvedData, McpOauthHttpResponse, McpOauthWWWAuthenticateParams, McpServerMetadata, McpServerSource, McpServerStatus, McpSkillOrigin, ModelChangeSource, ModelProviderKind, ModelProviderRef, PermissionDecisionSource, PermissionMode, PermissionPromptRequest, PermissionRule, PermissionSandboxPathGrant, PolicyHelperFailure, ProviderQuotaState, ReasoningSummary, RemediationAction, SessionEvent, SessionLimitsConfig, SessionMode, ShutdownType, SkillSource, TaskCompleteData, TaskCompletionOutcome, UsageGetMetricsResult, UserInputImageAttachment, UserToolSessionApproval, Verbosity } from "./session-events.js";
 import type { LifecycleDiagnosticEvent } from "./lifecycle-diagnostics.js";
@@ -3533,13 +3533,17 @@ export type EntraTokenAcquireResult =
        */
       kind: "identity";
       /**
-       * Stable nonblank opaque account ID owned by the host.
+       * Stable, account-specific opaque host ID, preserved exactly as the suffix of entra:<accountId> and echoed on later requests. Must remain stable across renewal, reauthentication, reconnect and restart. Nonblank, without control characters, and at most 480 UTF-8 bytes; hosts may namespace their IDs.
        */
       accountId: string;
       /**
-       * Optional display name; not an account identifier or credential.
+       * Optional human-readable account label. Never used as account identity.
        */
       username?: string;
+      /**
+       * Required Entra tenant ID, stored as non-secret parent-account metadata for service routing. Microsoft internal tenants use MSIT Loki; other tenants use production. Does not affect account identity.
+       */
+      tenantId: string;
     }
   | {
       /**
@@ -7419,7 +7423,7 @@ export type PermissionDecisionApproveForSessionApproval =
   | PermissionDecisionApproveForSessionApprovalCustomTool
   | PermissionDecisionApproveForSessionApprovalExtensionManagement
   | PermissionDecisionApproveForSessionApprovalWorkflow
-  | PermissionDecisionApproveForSessionApprovalExtensionPermissionAccess
+  | PermissionDecisionApproveForSessionApprovalExtensionLaunch
   | PermissionDecisionApproveForSessionApprovalExtensionEnvAccess;
 /**
  * Approval to persist for this location
@@ -7438,7 +7442,7 @@ export type PermissionDecisionApproveForLocationApproval =
   | PermissionDecisionApproveForLocationApprovalCustomTool
   | PermissionDecisionApproveForLocationApprovalExtensionManagement
   | PermissionDecisionApproveForLocationApprovalWorkflow
-  | PermissionDecisionApproveForLocationApprovalExtensionPermissionAccess
+  | PermissionDecisionApproveForLocationApprovalExtensionLaunch
   | PermissionDecisionApproveForLocationApprovalExtensionEnvAccess;
 /**
  * Disposition of a permission request as observed by the responding client.
@@ -7503,7 +7507,7 @@ export type PermissionsLocationsAddToolApprovalDetails =
   | PermissionsLocationsAddToolApprovalDetailsCustomTool
   | PermissionsLocationsAddToolApprovalDetailsExtensionManagement
   | PermissionsLocationsAddToolApprovalDetailsWorkflow
-  | PermissionsLocationsAddToolApprovalDetailsExtensionPermissionAccess
+  | PermissionsLocationsAddToolApprovalDetailsExtensionLaunch
   | PermissionsLocationsAddToolApprovalDetailsExtensionEnvAccess;
 /**
  * Whether the location is a git repo or directory
@@ -7864,6 +7868,18 @@ export type ProtocolExternalToolDefer =
   | "auto"
   /** The runtime must include the tool without deferring it. */
   | "never";
+/**
+ * Controls how agents receive an external tool definition. This is a visibility policy, not an execution permission.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "ProtocolExternalToolExposure".
+ */
+/** @experimental */
+export type ProtocolExternalToolExposure =
+  /** Use normal tool selection: the default agent receives the tool, unrestricted custom agents inherit it, and custom agents with tool lists receive it only when listed. */
+  | "automatic"
+  /** Expose the tool only to custom agents whose tools list explicitly names it. */
+  | "explicit";
 /**
  * Optional model identifier to scope the endpoint snapshot to.
  *
@@ -19672,6 +19688,14 @@ export interface ConnectRemoteSessionParams {
 /** @experimental */
 /** @internal */
 export interface ConnectRequest {
+  /**
+   * GitHub.com OAuth application client ID for runtime-managed sign-in and Entra token exchange.
+   */
+  githubClientId?: string;
+  /**
+   * Matching OAuth application secret. Required whenever githubClientId is supplied. Omit both fields to use the built-in CLI registration.
+   */
+  githubClientSecret?: string;
   /**
    * Entra application used by this client's authentication flows. Required to enable built-in Microsoft Entra sign-in and token renewal; other authentication methods remain available.
    *
@@ -37629,19 +37653,19 @@ export interface PermissionDecisionApproveForSessionApprovalWorkflow {
   approvalKey?: string;
 }
 /**
- * Session-scoped approval details for an extension's permission-gated capability access, keyed by extension name.
+ * Session-scoped approval to launch an extension.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
- * via the `definition` "PermissionDecisionApproveForSessionApprovalExtensionPermissionAccess".
+ * via the `definition` "PermissionDecisionApproveForSessionApprovalExtensionLaunch".
  */
 /** @experimental */
-export interface PermissionDecisionApproveForSessionApprovalExtensionPermissionAccess {
+export interface PermissionDecisionApproveForSessionApprovalExtensionLaunch {
   /**
-   * Approval covering an extension's request to access a permission-gated capability.
+   * Extension launch approval kind
    */
-  kind: "extension-permission-access";
+  kind: "extension-launch";
   /**
-   * Extension name.
+   * Source-qualified identity of the approved extension.
    */
   extensionName: string;
 }
@@ -37854,19 +37878,19 @@ export interface PermissionDecisionApproveForLocationApprovalWorkflow {
   approvalKey?: string;
 }
 /**
- * Location-scoped approval details for an extension's permission-gated capability access, keyed by extension name.
+ * Location-scoped approval to launch an extension.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
- * via the `definition` "PermissionDecisionApproveForLocationApprovalExtensionPermissionAccess".
+ * via the `definition` "PermissionDecisionApproveForLocationApprovalExtensionLaunch".
  */
 /** @experimental */
-export interface PermissionDecisionApproveForLocationApprovalExtensionPermissionAccess {
+export interface PermissionDecisionApproveForLocationApprovalExtensionLaunch {
   /**
-   * Approval covering an extension's request to access a permission-gated capability.
+   * Extension launch approval kind
    */
-  kind: "extension-permission-access";
+  kind: "extension-launch";
   /**
-   * Extension name.
+   * Source-qualified identity of the approved extension.
    */
   extensionName: string;
 }
@@ -38114,6 +38138,40 @@ export interface PermissionDecisionDeniedByPermissionRequestHook {
   interrupt?: boolean;
 }
 /**
+ * Legacy durable location approval for an extension.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "PermissionDecisionApproveForLocationApprovalExtensionPermissionAccess".
+ */
+/** @internal */
+export interface PermissionDecisionApproveForLocationApprovalExtensionPermissionAccess {
+  /**
+   * Approval covering an extension's request to access a permission-gated capability.
+   */
+  kind: "extension-permission-access";
+  /**
+   * Extension name.
+   */
+  extensionName: string;
+}
+/**
+ * Legacy durable session approval for an extension.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "PermissionDecisionApproveForSessionApprovalExtensionPermissionAccess".
+ */
+/** @internal */
+export interface PermissionDecisionApproveForSessionApprovalExtensionPermissionAccess {
+  /**
+   * Approval covering an extension's request to access a permission-gated capability.
+   */
+  kind: "extension-permission-access";
+  /**
+   * Extension name.
+   */
+  extensionName: string;
+}
+/**
  * Who answered a prompt and how. A label saying a person answered (`source` `human_response`) gives the answer human authority for Assisted Permissions: for permission prompts it becomes `permission.completed.decisionSource`, and with `responseCapability` `interactive` it also covers `ask_user`, user-input and plan-review answers. The runtime accepts that claim only from the session's authenticated owning, non-extension connection, the in-process host, or a Mission Control answer the session owner wrote; any other answer settles without it. Other fields attribute the decision in telemetry.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
@@ -38138,7 +38196,7 @@ export interface PermissionDecisionContext {
    */
   responseCapability?: PermissionResponseCapability;
   /**
-   * Optional user-authored explanation of this decision, independent of approval scope. Collected only in restricted telemetry for accepted human responses to Assisted Permissions prompts. Never persisted in session history, sent to the agent or judge, or used to create approval rules. Existing rejection feedback is separate.
+   * Optional user-authored explanation of this decision, independent of approval scope. Collected for accepted human responses to Assisted Permissions prompts: in restricted telemetry, or, when the prompt's `assistedApproval.userFeedbackUpload` is true, uploaded to GitHub with the redacted session event log after the user consents. Never persisted in session history, sent to the agent or judge, or used to create approval rules. Existing rejection feedback is separate.
    */
   userFeedback?: string;
 }
@@ -38326,19 +38384,19 @@ export interface PermissionsLocationsAddToolApprovalDetailsWorkflow {
   approvalKey?: string;
 }
 /**
- * Location-persisted tool approval details for an extension's permission-gated capability access, keyed by extension name.
+ * Location-persisted approval to launch an extension.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
- * via the `definition` "PermissionsLocationsAddToolApprovalDetailsExtensionPermissionAccess".
+ * via the `definition` "PermissionsLocationsAddToolApprovalDetailsExtensionLaunch".
  */
 /** @experimental */
-export interface PermissionsLocationsAddToolApprovalDetailsExtensionPermissionAccess {
+export interface PermissionsLocationsAddToolApprovalDetailsExtensionLaunch {
   /**
-   * Approval covering an extension's request to access a permission-gated capability.
+   * Extension launch approval kind
    */
-  kind: "extension-permission-access";
+  kind: "extension-launch";
   /**
-   * Extension name.
+   * Source-qualified identity of the approved extension.
    */
   extensionName: string;
 }
@@ -39090,6 +39148,23 @@ export interface PermissionsGetModeResult {
    * Current permission mode
    */
   mode: PermissionMode;
+}
+/**
+ * Legacy durable location approval for an extension.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "PermissionsLocationsAddToolApprovalDetailsExtensionPermissionAccess".
+ */
+/** @internal */
+export interface PermissionsLocationsAddToolApprovalDetailsExtensionPermissionAccess {
+  /**
+   * Approval covering an extension's request to access a permission-gated capability.
+   */
+  kind: "extension-permission-access";
+  /**
+   * Extension name.
+   */
+  extensionName: string;
 }
 /**
  * Indicates whether the operation succeeded.
@@ -40757,6 +40832,13 @@ export interface ProtocolExternalToolDefinition {
    * Tool-loading deferral policy.
    */
   defer?: ProtocolExternalToolDefer;
+  /**
+   * Controls how agents receive this tool. Omitted or `automatic` preserves
+   * normal tool selection. `explicit` makes the tool available only to custom
+   * agents whose `tools` list names it. This controls model-visible exposure,
+   * not permission to execute the tool.
+   */
+  exposure?: ProtocolExternalToolExposure;
   /**
    * Whether the tool executes commands in a terminal.
    */
@@ -42967,6 +43049,38 @@ export interface RemoteSessionRepository {
   branch?: string;
 }
 /**
+ * Waits for the attached cloud task to publish session.start. Does not create a task or shut down the retained session.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "RemoteWaitForStartRequest".
+ */
+/** @experimental */
+/** @internal */
+export interface RemoteWaitForStartRequest {
+  /**
+   * Maximum wait in milliseconds; omission uses the cloud startup default.
+   */
+  timeoutMs?: number;
+}
+/**
+ * Reports cloud host readiness and the existing startup error when the host did not start. The caller retains cleanup ownership.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "RemoteWaitForStartResult".
+ */
+/** @experimental */
+/** @internal */
+export interface RemoteWaitForStartResult {
+  /**
+   * True only after the attached cloud task publishes session.start.
+   */
+  started: boolean;
+  /**
+   * Startup error when started is false; absent on success.
+   */
+  errorMessage?: string;
+}
+/**
  * One atomic edit of an allowed top-level repository setting.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
@@ -44956,6 +45070,10 @@ export interface SendMessageItem {
 /** @experimental */
 export interface SendMessagesRequest {
   /**
+   * Overrides the maximum logical model turns for the entire batch, including an empty batch. Zero permits no model turns. Not supported for immediate steering.
+   */
+  maxToolTurns?: number;
+  /**
    * The user messages to append to the conversation, in order, before running one agent loop. When the batch starts a run, its final message is the primary initiating message; earlier messages provide context, not separate runs or replies. May be empty, in which case a single turn runs over the existing history with no new user message or originatingMessageId.
    */
   messages: SendMessageItem[];
@@ -45019,6 +45137,10 @@ export interface SendMessagesResult {
  */
 /** @experimental */
 export interface SendRequest {
+  /**
+   * Overrides the maximum logical model turns for this request. Zero permits no model turns; needing another turn after the limit is an error. Not supported for immediate steering.
+   */
+  maxToolTurns?: number;
   /**
    * The user message text
    */
@@ -47141,6 +47263,10 @@ export interface SessionOpenEventOptions {
  */
 /** @experimental */
 export interface SessionOpenExecutionOptions {
+  /**
+   * Default maximum logical model turns per request. Zero permits no model turns. Needing another turn after the limit is an error.
+   */
+  maxToolTurns?: number;
   /**
    * Whether auto-mode continuation is enabled.
    */
@@ -55784,6 +55910,23 @@ export interface UserSettingsWriteKeysResult {
   status: string;
 }
 /**
+ * Legacy durable extension approval.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "UserToolSessionApprovalExtensionPermissionAccess".
+ */
+/** @internal */
+export interface UserToolSessionApprovalExtensionPermissionAccess {
+  /**
+   * Extension permission access approval kind
+   */
+  kind: "extension-permission-access";
+  /**
+   * Extension name
+   */
+  extensionName: string;
+}
+/**
  * Utility generation outcome under the session's model and credential policy.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
@@ -63060,8 +63203,10 @@ export function createServerRpc(connection: MessageConnection) {
              *
              * @returns Result of opening a session.
              */
-            open: async (params: SessionOpenParams): Promise<SessionOpenResult> =>
-                connection.sendRequest("sessions.open", params),
+            open: async (params: SessionOpenParams): Promise<SessionOpenResult> => {
+                validateMaxToolTurns("options" in params ? params.options?.execution?.maxToolTurns : undefined);
+                return connection.sendRequest("sessions.open", params);
+            },
             /**
              * Creates a new session by forking persisted history from an existing session.
              *
@@ -67827,8 +67972,10 @@ export function createSessionRpc(connection: MessageConnection, sessionId: strin
          *
          * @experimental
          */
-        send: async (params: SendRequest): Promise<SendResult> =>
-            connection.sendRequest("session.send", { ...params, sessionId }),
+        send: async (params: SendRequest): Promise<SendResult> => {
+            validateMaxToolTurns(params.maxToolTurns);
+            return connection.sendRequest("session.send", { ...params, sessionId });
+        },
         /**
          * Sends zero or more user messages to the session in a single turn and returns their message IDs. All provided messages are appended to the conversation in order, then exactly one agent turn runs over the resulting history. When the list is empty, one turn runs over the existing history with no new user message. Remote-backed (Mission Control) sessions do not support this method and will return an error.
          *
@@ -67838,8 +67985,10 @@ export function createSessionRpc(connection: MessageConnection, sessionId: strin
          *
          * @experimental
          */
-        sendMessages: async (params: SendMessagesRequest): Promise<SendMessagesResult> =>
-            connection.sendRequest("session.sendMessages", { ...params, sessionId }),
+        sendMessages: async (params: SendMessagesRequest): Promise<SendMessagesResult> => {
+            validateMaxToolTurns(params.maxToolTurns);
+            return connection.sendRequest("session.sendMessages", { ...params, sessionId });
+        },
         /** @experimental */
         sandbox: {
             /**
@@ -70373,6 +70522,17 @@ export function createInternalSessionRpc(connection: MessageConnection, sessionI
              */
             attachMissionControl: async (params: RemoteAttachMissionControlRequest): Promise<RemoteAttachMissionControlResult> =>
                 connection.sendRequest("session.remote.attachMissionControl", { ...params, sessionId }),
+            /**
+             * Waits for an attached cloud task to publish session.start. SDK hosts and ACP clients can distinguish an attached poller from a ready remote host. The caller retains timeout cleanup ownership.
+             *
+             * @param params Waits for the attached cloud task to publish session.start. Does not create a task or shut down the retained session.
+             *
+             * @param options.signal Aborting stops the wait and sends `$/cancelRequest` so the server stops the work.
+             *
+             * @returns Reports cloud host readiness and the existing startup error when the host did not start. The caller retains cleanup ownership.
+             */
+            waitForStart: async (params: RemoteWaitForStartRequest, options?: { signal?: AbortSignal }): Promise<RemoteWaitForStartResult> =>
+                sendCancellableRequest(connection, "session.remote.waitForStart", { ...params, sessionId }, options?.signal, true),
         },
         /**
          * Retains the active session for a subscribed view without creating, resuming, or copying it. Editors and other SDK clients use this while a view outlives its original connection owner. The token belongs to this connection and session generation. Connection teardown releases it automatically.
@@ -70403,8 +70563,10 @@ export function createInternalSessionRpc(connection: MessageConnection, sessionI
          *
          * @experimental
          */
-        sendAndWait: async (params: SendRequest): Promise<SendAndWaitResult> =>
-            connection.sendRequest("session.sendAndWait", { ...params, sessionId }),
+        sendAndWait: async (params: SendRequest): Promise<SendAndWaitResult> => {
+            validateMaxToolTurns(params.maxToolTurns);
+            return connection.sendRequest("session.sendAndWait", { ...params, sessionId });
+        },
         /** @experimental */
         sandbox: {
             /**

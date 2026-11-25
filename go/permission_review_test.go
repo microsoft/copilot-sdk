@@ -137,7 +137,7 @@ func TestPermissionEventSubscriberPreservesRequest(t *testing.T) {
 func TestPermissionReviewPreservesHandlerRequest(t *testing.T) {
 	for _, name := range []string{
 		"custom-tool", "extension-env-access", "extension-management",
-		"extension-permission-access", "hook", "mcp", "memory", "read",
+		"extension-launch", "extension-permission-access", "hook", "mcp", "memory", "read",
 		"shell", "url", "workflow", "write", "future-kind",
 		"read-edited", "read-null", "read-null-edited", "read-remove-optional",
 		"read-grant-edited", "read-grant-cleared", "read-grant-remove-optional",

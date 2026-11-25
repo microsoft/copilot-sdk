@@ -13,6 +13,7 @@ from uuid import uuid4
 import pytest
 
 from copilot.session_events import (
+    AssistantTurnStartData,
     AttachmentGitHubReferenceType,
     AutoTier,
     AutoTierSwitchFailureReason,
@@ -54,6 +55,7 @@ from copilot.session_events import (
     ToolExecutionCompleteData,
     ToolExecutionCompleteResult,
     ToolExecutionCompleteUIResource,
+    ToolTurnBudget,
     UserMessageAgentMode,
     session_event_from_dict,
     session_event_to_dict,
@@ -62,6 +64,48 @@ from copilot.session_events import (
 
 class TestEventForwardCompatibility:
     """Test forward compatibility for unknown event types."""
+
+    def test_turn_limits_do_not_shift_existing_positional_event_arguments(self):
+        now = datetime.fromisoformat("2026-01-02T03:04:05+00:00")
+        start = SessionStartData(
+            "1.0.0",
+            "cli",
+            "session",
+            now,
+            1,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            "provider",
+            max_tool_turns=3,
+        )
+        resume = SessionResumeData(
+            1,
+            now,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            "provider",
+            max_tool_turns=3,
+        )
+        turn = AssistantTurnStartData(
+            "1", None, "interaction", "model", "parent", _tool_turn_budget=ToolTurnBudget(3, 1)
+        )
+        for event in (start, resume):
+            assert event.to_dict()["providerId"] == "provider"
+            assert event.to_dict()["maxToolTurns"] == 3
+        assert turn.to_dict()["parentToolCallId"] == "parent"
+        assert turn.to_dict()["toolTurnBudget"] == {"limit": 3, "used": 1}
 
     def test_usage_counts_do_not_shift_existing_positional_event_arguments(self):
         agents = {}

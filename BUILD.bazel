@@ -5,7 +5,8 @@ exports_files(
 
 SHARED_CODEGEN_INPUTS = [
     "scripts/codegen/legacy-parameters.ts",
-    "scripts/codegen/package-lock.json",
+    "scripts/codegen/pnpm-lock.yaml",
+    "scripts/codegen/pnpm-workspace.yaml",
     "scripts/codegen/package.json",
     "scripts/codegen/extensible-enums.ts",
     "scripts/codegen/protocol-type-roots.ts",
@@ -58,9 +59,16 @@ elif pwd -W >/dev/null 2>&1; then
   codegen_root="$$(cd "$$root" && pwd -W)"
   codegen_schemas="$$(cd "$$schemas" && pwd -W)"
 fi
-COPILOT_CODEGEN_OUTPUT_ROOT="$$codegen_root" \
-COPILOT_CLI_SCHEMA_DIR="$$codegen_schemas" \
-npm --prefix src/sdk/scripts/codegen run generate:ts
+codegen_dir="$$(node -p 'const fs=require("node:fs"),p=require("node:path");p.dirname(fs.realpathSync("src/sdk/scripts/codegen/package.json")).split(p.sep).join("/")')"
+if command -v cygpath >/dev/null 2>&1; then
+  codegen_dir="$$(cygpath -u "$$codegen_dir")"
+fi
+(
+  cd "$$codegen_dir"
+  COPILOT_CODEGEN_OUTPUT_ROOT="$$codegen_root" \
+  COPILOT_CLI_SCHEMA_DIR="$$codegen_schemas" \
+  node --import tsx typescript.ts
+)
 tar -cf "$@" -C "$$root" .
 """,
     tags = [
@@ -96,9 +104,16 @@ elif pwd -W >/dev/null 2>&1; then
   codegen_root="$$(cd "$$root" && pwd -W)"
   codegen_schemas="$$(cd "$$schemas" && pwd -W)"
 fi
-COPILOT_CODEGEN_OUTPUT_ROOT="$$codegen_root" \
-COPILOT_CLI_SCHEMA_DIR="$$codegen_schemas" \
-npm --prefix src/sdk/scripts/codegen run generate:python
+codegen_dir="$$(node -p 'const fs=require("node:fs"),p=require("node:path");p.dirname(fs.realpathSync("src/sdk/scripts/codegen/package.json")).split(p.sep).join("/")')"
+if command -v cygpath >/dev/null 2>&1; then
+  codegen_dir="$$(cygpath -u "$$codegen_dir")"
+fi
+(
+  cd "$$codegen_dir"
+  COPILOT_CODEGEN_OUTPUT_ROOT="$$codegen_root" \
+  COPILOT_CLI_SCHEMA_DIR="$$codegen_schemas" \
+  node --import tsx python.ts
+)
 tar -cf "$@" -C "$$root" .
 """,
     tags = [
@@ -134,9 +149,16 @@ elif pwd -W >/dev/null 2>&1; then
   codegen_root="$$(cd "$$root" && pwd -W)"
   codegen_schemas="$$(cd "$$schemas" && pwd -W)"
 fi
-COPILOT_CODEGEN_OUTPUT_ROOT="$$codegen_root" \
-COPILOT_CLI_SCHEMA_DIR="$$codegen_schemas" \
-npm --prefix src/sdk/scripts/codegen run generate:go
+codegen_dir="$$(node -p 'const fs=require("node:fs"),p=require("node:path");p.dirname(fs.realpathSync("src/sdk/scripts/codegen/package.json")).split(p.sep).join("/")')"
+if command -v cygpath >/dev/null 2>&1; then
+  codegen_dir="$$(cygpath -u "$$codegen_dir")"
+fi
+(
+  cd "$$codegen_dir"
+  COPILOT_CODEGEN_OUTPUT_ROOT="$$codegen_root" \
+  COPILOT_CLI_SCHEMA_DIR="$$codegen_schemas" \
+  node --import tsx go.ts
+)
 tar -cf "$@" -C "$$root" .
 """,
     tags = [
@@ -174,9 +196,16 @@ elif pwd -W >/dev/null 2>&1; then
   codegen_root="$$(cd "$$root" && pwd -W)"
   codegen_schemas="$$(cd "$$schemas" && pwd -W)"
 fi
-COPILOT_CODEGEN_OUTPUT_ROOT="$$codegen_root" \
-COPILOT_CLI_SCHEMA_DIR="$$codegen_schemas" \
-npm --prefix src/sdk/scripts/codegen run generate:csharp
+codegen_dir="$$(node -p 'const fs=require("node:fs"),p=require("node:path");p.dirname(fs.realpathSync("src/sdk/scripts/codegen/package.json")).split(p.sep).join("/")')"
+if command -v cygpath >/dev/null 2>&1; then
+  codegen_dir="$$(cygpath -u "$$codegen_dir")"
+fi
+(
+  cd "$$codegen_dir"
+  COPILOT_CODEGEN_OUTPUT_ROOT="$$codegen_root" \
+  COPILOT_CLI_SCHEMA_DIR="$$codegen_schemas" \
+  node --import tsx csharp.ts
+)
 tar -cf "$@" -C "$$root" .
 """,
     tags = [
@@ -216,9 +245,16 @@ elif pwd -W >/dev/null 2>&1; then
   codegen_root="$$(cd "$$root" && pwd -W)"
   codegen_schemas="$$(cd "$$schemas" && pwd -W)"
 fi
-COPILOT_CODEGEN_OUTPUT_ROOT="$$codegen_root" \
-COPILOT_CLI_SCHEMA_DIR="$$codegen_schemas" \
-npm --prefix src/sdk/scripts/codegen run generate:rust
+codegen_dir="$$(node -p 'const fs=require("node:fs"),p=require("node:path");p.dirname(fs.realpathSync("src/sdk/scripts/codegen/package.json")).split(p.sep).join("/")')"
+if command -v cygpath >/dev/null 2>&1; then
+  codegen_dir="$$(cygpath -u "$$codegen_dir")"
+fi
+(
+  cd "$$codegen_dir"
+  COPILOT_CODEGEN_OUTPUT_ROOT="$$codegen_root" \
+  COPILOT_CLI_SCHEMA_DIR="$$codegen_schemas" \
+  node --import tsx rust.ts
+)
 tar -cf "$@" -C "$$root" .
 """,
     tags = [
@@ -236,7 +272,8 @@ genrule(
         "//src/native/schema-codegen:generated/session-events.schema.json",
         "java/scripts/codegen/fetch-schemas.mjs",
         "java/scripts/codegen/java.ts",
-        "java/scripts/codegen/package-lock.json",
+        "java/scripts/codegen/pnpm-lock.yaml",
+        "java/scripts/codegen/pnpm-workspace.yaml",
         "java/scripts/codegen/package.json",
         "java/scripts/codegen/rpc-variant-owners.ts",
         "scripts/codegen/extensible-enums.ts",
@@ -271,10 +308,21 @@ elif pwd -W >/dev/null 2>&1; then
   codegen_schemas="$$(cd "$$schemas" && pwd -W)"
   codegen_input_schemas="$$(cd "$$input_schemas" && pwd -W)"
 fi
-COPILOT_CODEGEN_OUTPUT_ROOT="$$codegen_root" \
-COPILOT_CLI_SCHEMA_DIR="$$codegen_input_schemas" \
-COPILOT_CLI_SCHEMA_OUTPUT="$$codegen_schemas" \
-npm --prefix src/sdk/java/scripts/codegen run generate
+codegen_dir="$$(node -p 'const fs=require("node:fs"),p=require("node:path");p.dirname(fs.realpathSync("src/sdk/java/scripts/codegen/package.json")).split(p.sep).join("/")')"
+if command -v cygpath >/dev/null 2>&1; then
+  codegen_dir="$$(cygpath -u "$$codegen_dir")"
+fi
+(
+  cd "$$codegen_dir"
+  COPILOT_CODEGEN_OUTPUT_ROOT="$$codegen_root" \
+  COPILOT_CLI_SCHEMA_DIR="$$codegen_input_schemas" \
+  COPILOT_CLI_SCHEMA_OUTPUT="$$codegen_schemas" \
+  node fetch-schemas.mjs &&
+  COPILOT_CODEGEN_OUTPUT_ROOT="$$codegen_root" \
+  COPILOT_CLI_SCHEMA_DIR="$$codegen_input_schemas" \
+  COPILOT_CLI_SCHEMA_OUTPUT="$$codegen_schemas" \
+  node --import tsx java.ts
+)
 tar -cf "$@" -C "$$archive_root" .
 """,
     tags = [

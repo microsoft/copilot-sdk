@@ -3256,6 +3256,8 @@ type SessionStartData struct {
 	DetachedFromSpawningParentSessionID *string `json:"detachedFromSpawningParentSessionId,omitempty"`
 	// Per-session GitHub MCP override persisted for cold resume
 	GitHubMCPToolConfig *GitHubMCPToolConfig `json:"githubMcpToolConfig,omitempty"`
+	// Default maximum logical model turns per request.
+	MaxToolTurns *int64 `json:"maxToolTurns,omitempty"`
 	// Identifier of the software producing the events (e.g., "copilot-agent")
 	Producer string `json:"producer"`
 	// Provider of selectedModel at creation time, when explicitly selected.
@@ -3348,6 +3350,8 @@ type SessionResumeData struct {
 	EventCount int64 `json:"eventCount"`
 	// On-disk byte size of the session's persisted events.jsonl file at resume time; omitted when the file does not exist or cannot be stat'd
 	EventsFileSizeBytes *int64 `json:"eventsFileSizeBytes,omitempty"`
+	// Default maximum logical model turns per request, when changed on resume.
+	MaxToolTurns *int64 `json:"maxToolTurns,omitempty"`
 	// Provider of selectedModel at resume time, when explicitly selected.
 	ProviderID *string `json:"providerId,omitempty"`
 	// Credential-free effective model routing policy restored on cold resume.
@@ -3680,7 +3684,7 @@ type SubagentStartedData struct {
 	ModelSelectionSource *SubagentModelSelectionSource `json:"modelSelectionSource,omitempty"`
 	// Task-registry ID of the spawning sub-agent. Absent when the root session spawned this child.
 	ParentID *string `json:"parentId,omitempty"`
-	// Whether this sub-agent can be resumed. Currently always false.
+	// Whether a later session resume may continue this sub-agent if its session ends before it does.
 	Resumable *bool `json:"resumable,omitempty"`
 	// Where the model input for this sub-agent came from. Present when the task planner resolved the launch (the task tool and workflow agents); absent for sub-agents created through other runtime paths.
 	TaskModelSource *SubagentTaskModelSource `json:"taskModelSource,omitempty"`
@@ -5092,6 +5096,9 @@ type PermissionAssistedApproval struct {
 	Reason *string `json:"reason,omitempty"`
 	// The assisted-approval safety judge's outcome for this request.
 	Recommendation AssistedApprovalRecommendation `json:"recommendation"`
+	// True when the runtime shares a note the user gives with their answer (`userFeedback` in the decision context) with GitHub through the feedback upload, after asking the user's consent, instead of restricted telemetry. Set only for GitHub staff whose account does not allow restricted telemetry. Hosts that collect Assisted Permissions feedback show their feedback field when this is true.
+	// Experimental: UserFeedbackUpload is part of an experimental API and may change or be removed.
+	UserFeedbackUpload *bool `json:"userFeedbackUpload,omitempty"`
 }
 
 // Derived user-facing permission prompt details for UI consumers
@@ -5183,6 +5190,24 @@ func (PermissionPromptRequestExtensionEnvAccess) Kind() PermissionPromptRequestK
 	return PermissionPromptRequestKindExtensionEnvAccess
 }
 
+// Approval to run extension code and access the session before its process starts.
+type PermissionPromptRequestExtensionLaunch struct {
+	// Assisted-approval information retained for this request, when present.
+	// Experimental: AssistedApproval is part of an experimental API and may change or be removed.
+	AssistedApproval *PermissionAssistedApproval `json:"assistedApproval,omitempty"`
+	// Contribution descriptions retained from historical capability-consent records. Absent for new launch requests.
+	Capabilities []string `json:"capabilities,omitzero"`
+	// Source-qualified identity of the extension to launch.
+	ExtensionName string `json:"extensionName"`
+	// Tool call that initiated the launch, when applicable.
+	ToolCallID *string `json:"toolCallId,omitempty"`
+}
+
+func (PermissionPromptRequestExtensionLaunch) permissionPromptRequest() {}
+func (PermissionPromptRequestExtensionLaunch) Kind() PermissionPromptRequestKind {
+	return PermissionPromptRequestKindExtensionLaunch
+}
+
 // Extension management permission prompt
 type PermissionPromptRequestExtensionManagement struct {
 	// Assisted-approval judge information for this request; present only in assisted mode.
@@ -5199,24 +5224,6 @@ type PermissionPromptRequestExtensionManagement struct {
 func (PermissionPromptRequestExtensionManagement) permissionPromptRequest() {}
 func (PermissionPromptRequestExtensionManagement) Kind() PermissionPromptRequestKind {
 	return PermissionPromptRequestKindExtensionManagement
-}
-
-// Extension permission access prompt
-type PermissionPromptRequestExtensionPermissionAccess struct {
-	// Assisted-approval judge information for this request; present only in assisted mode.
-	// Experimental: AssistedApproval is part of an experimental API and may change or be removed.
-	AssistedApproval *PermissionAssistedApproval `json:"assistedApproval,omitempty"`
-	// Capabilities the extension is requesting
-	Capabilities []string `json:"capabilities"`
-	// Name of the extension requesting permission access
-	ExtensionName string `json:"extensionName"`
-	// Tool call ID that triggered this permission request
-	ToolCallID *string `json:"toolCallId,omitempty"`
-}
-
-func (PermissionPromptRequestExtensionPermissionAccess) permissionPromptRequest() {}
-func (PermissionPromptRequestExtensionPermissionAccess) Kind() PermissionPromptRequestKind {
-	return PermissionPromptRequestKindExtensionPermissionAccess
 }
 
 // Hook confirmation permission prompt
@@ -5496,6 +5503,23 @@ func (PermissionRequestExtensionEnvAccess) Kind() PermissionRequestKind {
 	return PermissionRequestKindExtensionEnvAccess
 }
 
+// Request approval before starting an extension process.
+type PermissionRequestExtensionLaunch struct {
+	// Contribution descriptions retained from historical capability-consent records. Absent for new launch requests.
+	Capabilities []string `json:"capabilities,omitzero"`
+	// Source-qualified identity of the extension to launch.
+	ExtensionName string `json:"extensionName"`
+	// When true, managed policy requires an explicit user decision and automatic approval must be bypassed.
+	ManagedApprovalRequired *bool `json:"managedApprovalRequired,omitempty"`
+	// Tool call that initiated the launch, when applicable.
+	ToolCallID *string `json:"toolCallId,omitempty"`
+}
+
+func (PermissionRequestExtensionLaunch) permissionRequest() {}
+func (PermissionRequestExtensionLaunch) Kind() PermissionRequestKind {
+	return PermissionRequestKindExtensionLaunch
+}
+
 // Extension management permission request
 type PermissionRequestExtensionManagement struct {
 	// Name of the extension being managed
@@ -5511,23 +5535,6 @@ type PermissionRequestExtensionManagement struct {
 func (PermissionRequestExtensionManagement) permissionRequest() {}
 func (PermissionRequestExtensionManagement) Kind() PermissionRequestKind {
 	return PermissionRequestKindExtensionManagement
-}
-
-// Extension permission access request
-type PermissionRequestExtensionPermissionAccess struct {
-	// Capabilities the extension is requesting
-	Capabilities []string `json:"capabilities"`
-	// Name of the extension requesting permission access
-	ExtensionName string `json:"extensionName"`
-	// When true, managed policy requires an explicit user decision and automatic approval must be bypassed.
-	ManagedApprovalRequired *bool `json:"managedApprovalRequired,omitempty"`
-	// Tool call ID that triggered this permission request
-	ToolCallID *string `json:"toolCallId,omitempty"`
-}
-
-func (PermissionRequestExtensionPermissionAccess) permissionRequest() {}
-func (PermissionRequestExtensionPermissionAccess) Kind() PermissionRequestKind {
-	return PermissionRequestKindExtensionPermissionAccess
 }
 
 // Hook confirmation permission request
@@ -7776,19 +7783,19 @@ const (
 type PermissionPromptRequestKind string
 
 const (
-	PermissionPromptRequestKindCommands                  PermissionPromptRequestKind = "commands"
-	PermissionPromptRequestKindCustomTool                PermissionPromptRequestKind = "custom-tool"
-	PermissionPromptRequestKindExtensionEnvAccess        PermissionPromptRequestKind = "extension-env-access"
-	PermissionPromptRequestKindExtensionManagement       PermissionPromptRequestKind = "extension-management"
-	PermissionPromptRequestKindExtensionPermissionAccess PermissionPromptRequestKind = "extension-permission-access"
-	PermissionPromptRequestKindHook                      PermissionPromptRequestKind = "hook"
-	PermissionPromptRequestKindMCP                       PermissionPromptRequestKind = "mcp"
-	PermissionPromptRequestKindMemory                    PermissionPromptRequestKind = "memory"
-	PermissionPromptRequestKindPath                      PermissionPromptRequestKind = "path"
-	PermissionPromptRequestKindRead                      PermissionPromptRequestKind = "read"
-	PermissionPromptRequestKindURL                       PermissionPromptRequestKind = "url"
-	PermissionPromptRequestKindWorkflow                  PermissionPromptRequestKind = "workflow"
-	PermissionPromptRequestKindWrite                     PermissionPromptRequestKind = "write"
+	PermissionPromptRequestKindCommands            PermissionPromptRequestKind = "commands"
+	PermissionPromptRequestKindCustomTool          PermissionPromptRequestKind = "custom-tool"
+	PermissionPromptRequestKindExtensionEnvAccess  PermissionPromptRequestKind = "extension-env-access"
+	PermissionPromptRequestKindExtensionLaunch     PermissionPromptRequestKind = "extension-launch"
+	PermissionPromptRequestKindExtensionManagement PermissionPromptRequestKind = "extension-management"
+	PermissionPromptRequestKindHook                PermissionPromptRequestKind = "hook"
+	PermissionPromptRequestKindMCP                 PermissionPromptRequestKind = "mcp"
+	PermissionPromptRequestKindMemory              PermissionPromptRequestKind = "memory"
+	PermissionPromptRequestKindPath                PermissionPromptRequestKind = "path"
+	PermissionPromptRequestKindRead                PermissionPromptRequestKind = "read"
+	PermissionPromptRequestKindURL                 PermissionPromptRequestKind = "url"
+	PermissionPromptRequestKindWorkflow            PermissionPromptRequestKind = "workflow"
+	PermissionPromptRequestKindWrite               PermissionPromptRequestKind = "write"
 )
 
 // Underlying permission kind that needs path approval
@@ -7816,18 +7823,18 @@ const (
 type PermissionRequestKind string
 
 const (
-	PermissionRequestKindCustomTool                PermissionRequestKind = "custom-tool"
-	PermissionRequestKindExtensionEnvAccess        PermissionRequestKind = "extension-env-access"
-	PermissionRequestKindExtensionManagement       PermissionRequestKind = "extension-management"
-	PermissionRequestKindExtensionPermissionAccess PermissionRequestKind = "extension-permission-access"
-	PermissionRequestKindHook                      PermissionRequestKind = "hook"
-	PermissionRequestKindMCP                       PermissionRequestKind = "mcp"
-	PermissionRequestKindMemory                    PermissionRequestKind = "memory"
-	PermissionRequestKindRead                      PermissionRequestKind = "read"
-	PermissionRequestKindShell                     PermissionRequestKind = "shell"
-	PermissionRequestKindURL                       PermissionRequestKind = "url"
-	PermissionRequestKindWorkflow                  PermissionRequestKind = "workflow"
-	PermissionRequestKindWrite                     PermissionRequestKind = "write"
+	PermissionRequestKindCustomTool          PermissionRequestKind = "custom-tool"
+	PermissionRequestKindExtensionEnvAccess  PermissionRequestKind = "extension-env-access"
+	PermissionRequestKindExtensionLaunch     PermissionRequestKind = "extension-launch"
+	PermissionRequestKindExtensionManagement PermissionRequestKind = "extension-management"
+	PermissionRequestKindHook                PermissionRequestKind = "hook"
+	PermissionRequestKindMCP                 PermissionRequestKind = "mcp"
+	PermissionRequestKindMemory              PermissionRequestKind = "memory"
+	PermissionRequestKindRead                PermissionRequestKind = "read"
+	PermissionRequestKindShell               PermissionRequestKind = "shell"
+	PermissionRequestKindURL                 PermissionRequestKind = "url"
+	PermissionRequestKindWorkflow            PermissionRequestKind = "workflow"
+	PermissionRequestKindWrite               PermissionRequestKind = "write"
 )
 
 // Whether this is a store or vote memory operation

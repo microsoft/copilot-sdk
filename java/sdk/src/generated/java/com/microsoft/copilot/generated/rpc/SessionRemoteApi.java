@@ -111,6 +111,22 @@ public final class SessionRemoteApi {
     }
 
     /**
+     * Waits for an attached cloud task to publish session.start. SDK hosts and ACP clients can distinguish an attached poller from a ready remote host. The caller retains timeout cleanup ownership.
+     * <p>
+     * Note: the {@code sessionId} field in the params record is overridden
+     * by the session-scoped wrapper; any value provided is ignored.
+     *
+     * @apiNote This method is experimental and may change in a future version.
+     * @since 1.0.0
+     */
+    @CopilotExperimental
+    CompletableFuture<RemoteWaitForStartResult> waitForStart(SessionRemoteWaitForStartParams params) {
+        com.fasterxml.jackson.databind.node.ObjectNode _p = MAPPER.valueToTree(params);
+        _p.put("sessionId", this.sessionId);
+        return caller.invoke("session.remote.waitForStart", _p, RemoteWaitForStartResult.class);
+    }
+
+    /**
      * Enables remote session export or steering.
      * <p>
      * Note: the {@code sessionId} field in the params record is overridden

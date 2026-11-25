@@ -3171,6 +3171,11 @@ public sealed partial class SessionStartData
     [JsonPropertyName("githubMcpToolConfig")]
     public GitHubMcpToolConfig? GitHubMcpToolConfig { get; set; }
 
+    /// <summary>Default maximum logical model turns per request.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [JsonPropertyName("maxToolTurns")]
+    public long? MaxToolTurns { get; set; }
+
     /// <summary>Identifier of the software producing the events (e.g., "copilot-agent").</summary>
     [JsonPropertyName("producer")]
     public required string Producer { get; set; }
@@ -3284,6 +3289,11 @@ public sealed partial class SessionResumeData
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [JsonPropertyName("eventsFileSizeBytes")]
     public long? EventsFileSizeBytes { get; set; }
+
+    /// <summary>Default maximum logical model turns per request, when changed on resume.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [JsonPropertyName("maxToolTurns")]
+    public long? MaxToolTurns { get; set; }
 
     /// <summary>Provider of selectedModel at resume time, when explicitly selected.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -5155,6 +5165,12 @@ public sealed partial class AssistantTurnStartData
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [JsonPropertyName("parentToolCallId")]
     public string? ParentToolCallId { get; set; }
+
+    /// <summary>Maximum and consumed logical model turns for the active request.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [JsonInclude]
+    [JsonPropertyName("toolTurnBudget")]
+    internal ToolTurnBudget? ToolTurnBudget { get; set; }
 
     /// <summary>Identifier for this turn within the agentic loop, typically a stringified turn number.</summary>
     [JsonPropertyName("turnId")]
@@ -7235,7 +7251,7 @@ public sealed partial class SubagentStartedData
     [JsonPropertyName("parentId")]
     public string? ParentId { get; set; }
 
-    /// <summary>Whether this sub-agent can be resumed. Currently always false.</summary>
+    /// <summary>Whether a later session resume may continue this sub-agent if its session ends before it does.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [JsonPropertyName("resumable")]
     public bool? Resumable { get; set; }
@@ -11456,6 +11472,18 @@ public partial class Attachment
 }
 
 
+/// <summary>Nested data type for <c>ToolTurnBudget</c>.</summary>
+public sealed partial class ToolTurnBudget
+{
+    /// <summary>Maximum logical model turns allowed for this request.</summary>
+    [JsonPropertyName("limit")]
+    public required long Limit { get; set; }
+
+    /// <summary>Logical model turns already admitted for this request.</summary>
+    [JsonPropertyName("used")]
+    public required long Used { get; set; }
+}
+
 /// <summary>Internal durable terminal request staged by a HydraFusion phase until an idempotent final commit selects it.</summary>
 /// <remarks>Nested data type for <c>FusionStagedTerminal</c>.</remarks>
 [Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
@@ -14293,6 +14321,12 @@ public sealed partial class PermissionAssistedApproval
     /// <summary>The assisted-approval safety judge's outcome for this request.</summary>
     [JsonPropertyName("recommendation")]
     public required AssistedApprovalRecommendation Recommendation { get; set; }
+
+    /// <summary>True when the runtime shares a note the user gives with their answer (`userFeedback` in the decision context) with GitHub through the feedback upload, after asking the user's consent, instead of restricted telemetry. Set only for GitHub staff whose account does not allow restricted telemetry. Hosts that collect Assisted Permissions feedback show their feedback field when this is true.</summary>
+    [Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [JsonPropertyName("userFeedbackUpload")]
+    public bool? UserFeedbackUpload { get; set; }
 }
 
 /// <summary>Memory operation permission request.</summary>
@@ -14538,23 +14572,24 @@ public sealed partial class PermissionRequestWorkflow : PermissionRequest
     public string? ToolCallId { get; set; }
 }
 
-/// <summary>Extension permission access request.</summary>
-/// <remarks>The <c>extension-permission-access</c> variant of <see cref="PermissionRequest"/>.</remarks>
-public sealed partial class PermissionRequestExtensionPermissionAccess : PermissionRequest
+/// <summary>Request approval before starting an extension process.</summary>
+/// <remarks>The <c>extension-launch</c> variant of <see cref="PermissionRequest"/>.</remarks>
+public sealed partial class PermissionRequestExtensionLaunch : PermissionRequest
 {
     /// <inheritdoc />
     [JsonIgnore]
-    public override string Kind => "extension-permission-access";
+    public override string Kind => "extension-launch";
 
-    /// <summary>Capabilities the extension is requesting.</summary>
+    /// <summary>Contribution descriptions retained from historical capability-consent records. Absent for new launch requests.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [JsonPropertyName("capabilities")]
-    public required string[] Capabilities { get; set; }
+    public string[]? Capabilities { get; set; }
 
-    /// <summary>Name of the extension requesting permission access.</summary>
+    /// <summary>Source-qualified identity of the extension to launch.</summary>
     [JsonPropertyName("extensionName")]
     public required string ExtensionName { get; set; }
 
-    /// <summary>Tool call ID that triggered this permission request.</summary>
+    /// <summary>Tool call that initiated the launch, when applicable.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [JsonPropertyName("toolCallId")]
     public string? ToolCallId { get; set; }
@@ -14597,7 +14632,7 @@ public sealed partial class PermissionRequestExtensionEnvAccess : PermissionRequ
 [JsonDerivedType(typeof(PermissionRequestHook), "hook")]
 [JsonDerivedType(typeof(PermissionRequestExtensionManagement), "extension-management")]
 [JsonDerivedType(typeof(PermissionRequestWorkflow), "workflow")]
-[JsonDerivedType(typeof(PermissionRequestExtensionPermissionAccess), "extension-permission-access")]
+[JsonDerivedType(typeof(PermissionRequestExtensionLaunch), "extension-launch")]
 [JsonDerivedType(typeof(PermissionRequestExtensionEnvAccess), "extension-env-access")]
 public partial class PermissionRequest
 {
@@ -15149,29 +15184,30 @@ public sealed partial class PermissionPromptRequestWorkflow : PermissionPromptRe
     public string? ToolCallId { get; set; }
 }
 
-/// <summary>Extension permission access prompt.</summary>
-/// <remarks>The <c>extension-permission-access</c> variant of <see cref="PermissionPromptRequest"/>.</remarks>
-public sealed partial class PermissionPromptRequestExtensionPermissionAccess : PermissionPromptRequest
+/// <summary>Approval to run extension code and access the session before its process starts.</summary>
+/// <remarks>The <c>extension-launch</c> variant of <see cref="PermissionPromptRequest"/>.</remarks>
+public sealed partial class PermissionPromptRequestExtensionLaunch : PermissionPromptRequest
 {
     /// <inheritdoc />
     [JsonIgnore]
-    public override string Kind => "extension-permission-access";
+    public override string Kind => "extension-launch";
 
-    /// <summary>Assisted-approval judge information for this request; present only in assisted mode.</summary>
+    /// <summary>Assisted-approval information retained for this request, when present.</summary>
     [Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [JsonPropertyName("assistedApproval")]
     public PermissionAssistedApproval? AssistedApproval { get; set; }
 
-    /// <summary>Capabilities the extension is requesting.</summary>
+    /// <summary>Contribution descriptions retained from historical capability-consent records. Absent for new launch requests.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [JsonPropertyName("capabilities")]
-    public required string[] Capabilities { get; set; }
+    public string[]? Capabilities { get; set; }
 
-    /// <summary>Name of the extension requesting permission access.</summary>
+    /// <summary>Source-qualified identity of the extension to launch.</summary>
     [JsonPropertyName("extensionName")]
     public required string ExtensionName { get; set; }
 
-    /// <summary>Tool call ID that triggered this permission request.</summary>
+    /// <summary>Tool call that initiated the launch, when applicable.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [JsonPropertyName("toolCallId")]
     public string? ToolCallId { get; set; }
@@ -15221,7 +15257,7 @@ public sealed partial class PermissionPromptRequestExtensionEnvAccess : Permissi
 [JsonDerivedType(typeof(PermissionPromptRequestHook), "hook")]
 [JsonDerivedType(typeof(PermissionPromptRequestExtensionManagement), "extension-management")]
 [JsonDerivedType(typeof(PermissionPromptRequestWorkflow), "workflow")]
-[JsonDerivedType(typeof(PermissionPromptRequestExtensionPermissionAccess), "extension-permission-access")]
+[JsonDerivedType(typeof(PermissionPromptRequestExtensionLaunch), "extension-launch")]
 [JsonDerivedType(typeof(PermissionPromptRequestExtensionEnvAccess), "extension-env-access")]
 public partial class PermissionPromptRequest
 {
@@ -15357,15 +15393,15 @@ public sealed partial class UserToolSessionApprovalWorkflow : UserToolSessionApp
     public string? ApprovalKey { get; set; }
 }
 
-/// <summary>Session-scoped tool-approval rule for an extension's permission-gated capability access, keyed by extension name.</summary>
-/// <remarks>The <c>extension-permission-access</c> variant of <see cref="UserToolSessionApproval"/>.</remarks>
-public sealed partial class UserToolSessionApprovalExtensionPermissionAccess : UserToolSessionApproval
+/// <summary>Reusable launch approval for one source-qualified extension identity.</summary>
+/// <remarks>The <c>extension-launch</c> variant of <see cref="UserToolSessionApproval"/>.</remarks>
+public sealed partial class UserToolSessionApprovalExtensionLaunch : UserToolSessionApproval
 {
     /// <inheritdoc />
     [JsonIgnore]
-    public override string Kind => "extension-permission-access";
+    public override string Kind => "extension-launch";
 
-    /// <summary>Extension name.</summary>
+    /// <summary>Source-qualified identity of the approved extension.</summary>
     [JsonPropertyName("extensionName")]
     public required string ExtensionName { get; set; }
 }
@@ -15400,7 +15436,7 @@ public sealed partial class UserToolSessionApprovalExtensionEnvAccess : UserTool
 [JsonDerivedType(typeof(UserToolSessionApprovalCustomTool), "custom-tool")]
 [JsonDerivedType(typeof(UserToolSessionApprovalExtensionManagement), "extension-management")]
 [JsonDerivedType(typeof(UserToolSessionApprovalWorkflow), "workflow")]
-[JsonDerivedType(typeof(UserToolSessionApprovalExtensionPermissionAccess), "extension-permission-access")]
+[JsonDerivedType(typeof(UserToolSessionApprovalExtensionLaunch), "extension-launch")]
 [JsonDerivedType(typeof(UserToolSessionApprovalExtensionEnvAccess), "extension-env-access")]
 public partial class UserToolSessionApproval
 {
@@ -26777,8 +26813,8 @@ public readonly struct ExtensionsLoadedExtensionStatus : IEquatable<ExtensionsLo
 [JsonSerializable(typeof(PermissionPromptRequestCommands))]
 [JsonSerializable(typeof(PermissionPromptRequestCustomTool))]
 [JsonSerializable(typeof(PermissionPromptRequestExtensionEnvAccess))]
+[JsonSerializable(typeof(PermissionPromptRequestExtensionLaunch))]
 [JsonSerializable(typeof(PermissionPromptRequestExtensionManagement))]
-[JsonSerializable(typeof(PermissionPromptRequestExtensionPermissionAccess))]
 [JsonSerializable(typeof(PermissionPromptRequestHook))]
 [JsonSerializable(typeof(PermissionPromptRequestMcp))]
 [JsonSerializable(typeof(PermissionPromptRequestMemory))]
@@ -26793,8 +26829,8 @@ public readonly struct ExtensionsLoadedExtensionStatus : IEquatable<ExtensionsLo
 [JsonSerializable(typeof(PermissionRequest))]
 [JsonSerializable(typeof(PermissionRequestCustomTool))]
 [JsonSerializable(typeof(PermissionRequestExtensionEnvAccess))]
+[JsonSerializable(typeof(PermissionRequestExtensionLaunch))]
 [JsonSerializable(typeof(PermissionRequestExtensionManagement))]
-[JsonSerializable(typeof(PermissionRequestExtensionPermissionAccess))]
 [JsonSerializable(typeof(PermissionRequestHook))]
 [JsonSerializable(typeof(PermissionRequestMcp))]
 [JsonSerializable(typeof(PermissionRequestMemory))]
@@ -27092,6 +27128,7 @@ public readonly struct ExtensionsLoadedExtensionStatus : IEquatable<ExtensionsLo
 [JsonSerializable(typeof(ToolSearchActivatedEvent))]
 [JsonSerializable(typeof(ToolShellOutputData))]
 [JsonSerializable(typeof(ToolShellOutputEvent))]
+[JsonSerializable(typeof(ToolTurnBudget))]
 [JsonSerializable(typeof(ToolUserRequestedData))]
 [JsonSerializable(typeof(ToolUserRequestedEvent))]
 [JsonSerializable(typeof(UiEphemeralQueryData))]
@@ -27119,8 +27156,8 @@ public readonly struct ExtensionsLoadedExtensionStatus : IEquatable<ExtensionsLo
 [JsonSerializable(typeof(UserToolSessionApprovalCommands))]
 [JsonSerializable(typeof(UserToolSessionApprovalCustomTool))]
 [JsonSerializable(typeof(UserToolSessionApprovalExtensionEnvAccess))]
+[JsonSerializable(typeof(UserToolSessionApprovalExtensionLaunch))]
 [JsonSerializable(typeof(UserToolSessionApprovalExtensionManagement))]
-[JsonSerializable(typeof(UserToolSessionApprovalExtensionPermissionAccess))]
 [JsonSerializable(typeof(UserToolSessionApprovalMcp))]
 [JsonSerializable(typeof(UserToolSessionApprovalMemory))]
 [JsonSerializable(typeof(UserToolSessionApprovalRead))]

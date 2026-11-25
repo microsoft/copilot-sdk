@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/go-json-experiment/json v1.27.2
 	github.com/google/jsonschema-go v0.4.3
-	github.com/klauspost/compress v1.20.4
+	github.com/klauspost/compress v1.20.5
 )
 
 require (

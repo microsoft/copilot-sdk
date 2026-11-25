@@ -2,6 +2,28 @@
 
 Session limits let an application set an AI Credits budget for a Copilot session. Use `execution.limits` when creating or resuming a session to set a soft cap for the current accounting window.
 
+## Limit model turns per request
+
+Set `execution.maxToolTurns` (`execution.max_tool_turns` in Python and Rust)
+when creating or resuming a local session to cap each new request. An
+individual send can override this default with `maxToolTurns`. Omitting the
+limit leaves the session uncapped on create or preserves its default on resume.
+Zero prevents the first model call.
+
+Each logical model turn counts, including a turn that answers without tools.
+Retries within a turn and auxiliary model calls don't count. Tools requested
+on the last allowed turn still run. If another model turn is needed, the
+runtime emits `session.error` with `errorType: "max_tool_turns"` instead of
+asking the model for a final answer. A final answer within the limit succeeds.
+
+Steering, automatic continuations, and resuming unfinished work don't reset a
+request's budget. A per-send override isn't supported with `mode: "immediate"`.
+Local subagents get independent budgets: a custom agent's `maxToolTurns`
+overrides inheritance; otherwise the child uses its parent's effective limit,
+subject to any tighter built-in limit. A child that reaches its own cap fails
+through the normal subagent failure path. This is not a shared budget across
+the whole agent tree. Remote sessions and HydraFusion do not support this option.
+
 ## Configure a session limit
 
 Set `maxAiCredits` to the AI Credits soft cap for the session's current accounting window. Usage is checked after model calls return, so one response can exceed the configured value before the runtime blocks the next model call. The SDK forwards this value to the Copilot runtime when it creates or resumes the session. The value must be at least 30 and greater than the AI Credits the session has already used; a lower value is rejected.

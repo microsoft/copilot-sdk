@@ -32,8 +32,8 @@ Try the interactive chat sample (from the repo root):
 
 ```bash
 cd nodejs
-npm ci
-export COPILOT_CLI_PATH="$(npm run --silent prepare:runtime -- --print-path)"
+pnpm install --frozen-lockfile --ignore-scripts
+export COPILOT_CLI_PATH="$(pnpm run --silent prepare:runtime --print-path)"
 cd ../go/samples
 go run chat.go
 ```
@@ -2068,12 +2068,12 @@ Tests require a supported [Node.js version](../nodejs/README.md#prerequisites). 
 
 ```bash
 cd nodejs
-npm ci
+pnpm install --frozen-lockfile --ignore-scripts
 ```
 
 ```bash
 cd test/harness
-npm ci
+pnpm install --frozen-lockfile --ignore-scripts
 ```
 
 ```bash

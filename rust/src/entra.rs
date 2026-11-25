@@ -26,12 +26,16 @@ pub(crate) const ACQUIRE_METHOD: &str = "entraToken.getToken";
 pub enum EntraTokenProviderResult {
     /// An identity was selected or revalidated without acquiring a resource token.
     Identity {
-        /// Opaque host account identifier, preserved for subsequent acquisitions.
+        /// Stable opaque host ID, preserved exactly in `entra:<account_id>` and
+        /// subsequent acquisitions. Nonblank, no controls, at most 480 UTF-8 bytes.
         #[serde(rename = "accountId")]
         account_id: String,
         /// Optional display name for the selected identity.
         #[serde(skip_serializing_if = "Option::is_none")]
         username: Option<String>,
+        /// Non-secret tenant metadata for service routing; not part of identity.
+        #[serde(rename = "tenantId")]
+        tenant_id: String,
     },
     /// A resource token was acquired for exactly the requested identity.
     Token {

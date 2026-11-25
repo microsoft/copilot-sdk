@@ -41,7 +41,7 @@ public static class PermissionHandler
                 or "hook"
                 or "extension-management"
                 or "workflow"
-                or "extension-permission-access"
+                or "extension-launch"
                 or "extension-env-access");
     }
 }

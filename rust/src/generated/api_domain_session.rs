@@ -744,7 +744,7 @@ pub struct PermissionDecisionApproveForSessionApprovalWorkflow {
 }
 crate::record_serde::wire_record!(PermissionDecisionApproveForSessionApprovalWorkflow { approval_key: "approvalKey" if is_none, kind: "kind" });
 
-/// Session-scoped approval details for an extension's permission-gated capability access, keyed by extension name.
+/// Session-scoped approval to launch an extension.
 ///
 /// <div class="warning">
 ///
@@ -753,18 +753,16 @@ crate::record_serde::wire_record!(PermissionDecisionApproveForSessionApprovalWor
 ///
 /// </div>
 #[derive(Debug, Clone, Default)]
-pub struct PermissionDecisionApproveForSessionApprovalExtensionPermissionAccess {
-    /// Extension name.
+pub struct PermissionDecisionApproveForSessionApprovalExtensionLaunch {
+    /// Source-qualified identity of the approved extension.
     pub extension_name: String,
-    /// Approval covering an extension's request to access a permission-gated capability.
-    pub kind: PermissionDecisionApproveForSessionApprovalExtensionPermissionAccessKind,
+    /// Extension launch approval kind
+    pub kind: PermissionDecisionApproveForSessionApprovalExtensionLaunchKind,
 }
-crate::record_serde::wire_record!(
-    PermissionDecisionApproveForSessionApprovalExtensionPermissionAccess {
-        extension_name: "extensionName",
-        kind: "kind"
-    }
-);
+crate::record_serde::wire_record!(PermissionDecisionApproveForSessionApprovalExtensionLaunch {
+    extension_name: "extensionName",
+    kind: "kind"
+});
 
 /// Session-scoped approval details for an extension's access to sensitive environment variables, keyed by extension name and the exact set of variable names.
 ///
@@ -1000,7 +998,7 @@ pub struct PermissionDecisionApproveForLocationApprovalWorkflow {
 }
 crate::record_serde::wire_record!(PermissionDecisionApproveForLocationApprovalWorkflow { approval_key: "approvalKey" if is_none, kind: "kind" });
 
-/// Location-scoped approval details for an extension's permission-gated capability access, keyed by extension name.
+/// Location-scoped approval to launch an extension.
 ///
 /// <div class="warning">
 ///
@@ -1009,14 +1007,14 @@ crate::record_serde::wire_record!(PermissionDecisionApproveForLocationApprovalWo
 ///
 /// </div>
 #[derive(Debug, Clone, Default)]
-pub struct PermissionDecisionApproveForLocationApprovalExtensionPermissionAccess {
-    /// Extension name.
+pub struct PermissionDecisionApproveForLocationApprovalExtensionLaunch {
+    /// Source-qualified identity of the approved extension.
     pub extension_name: String,
-    /// Approval covering an extension's request to access a permission-gated capability.
-    pub kind: PermissionDecisionApproveForLocationApprovalExtensionPermissionAccessKind,
+    /// Extension launch approval kind
+    pub kind: PermissionDecisionApproveForLocationApprovalExtensionLaunchKind,
 }
 crate::record_serde::wire_record!(
-    PermissionDecisionApproveForLocationApprovalExtensionPermissionAccess {
+    PermissionDecisionApproveForLocationApprovalExtensionLaunch {
         extension_name: "extensionName",
         kind: "kind"
     }
@@ -1290,6 +1288,36 @@ pub struct PermissionDecisionDeniedByPermissionRequestHook {
 }
 crate::record_serde::wire_record!(PermissionDecisionDeniedByPermissionRequestHook { interrupt: "interrupt" if is_none, kind: "kind", message: "message" if is_none });
 
+/// Legacy durable location approval for an extension.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct PermissionDecisionApproveForLocationApprovalExtensionPermissionAccess {
+    /// Extension name.
+    pub extension_name: String,
+    /// Approval covering an extension's request to access a permission-gated capability.
+    pub kind: PermissionDecisionApproveForLocationApprovalExtensionPermissionAccessKind,
+}
+crate::record_serde::wire_record!(
+    PermissionDecisionApproveForLocationApprovalExtensionPermissionAccess {
+        extension_name: "extensionName",
+        kind: "kind"
+    }
+);
+
+/// Legacy durable session approval for an extension.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct PermissionDecisionApproveForSessionApprovalExtensionPermissionAccess {
+    /// Extension name.
+    pub extension_name: String,
+    /// Approval covering an extension's request to access a permission-gated capability.
+    pub kind: PermissionDecisionApproveForSessionApprovalExtensionPermissionAccessKind,
+}
+crate::record_serde::wire_record!(
+    PermissionDecisionApproveForSessionApprovalExtensionPermissionAccess {
+        extension_name: "extensionName",
+        kind: "kind"
+    }
+);
+
 /// Pending permission request ID and the decision to apply (approve/reject and scope).
 ///
 /// <div class="warning">
@@ -1474,7 +1502,7 @@ pub struct PermissionsLocationsAddToolApprovalDetailsWorkflow {
 }
 crate::record_serde::wire_record!(PermissionsLocationsAddToolApprovalDetailsWorkflow { approval_key: "approvalKey" if is_none, kind: "kind" });
 
-/// Location-persisted tool approval details for an extension's permission-gated capability access, keyed by extension name.
+/// Location-persisted approval to launch an extension.
 ///
 /// <div class="warning">
 ///
@@ -1483,18 +1511,16 @@ crate::record_serde::wire_record!(PermissionsLocationsAddToolApprovalDetailsWork
 ///
 /// </div>
 #[derive(Debug, Clone, Default)]
-pub struct PermissionsLocationsAddToolApprovalDetailsExtensionPermissionAccess {
-    /// Extension name.
+pub struct PermissionsLocationsAddToolApprovalDetailsExtensionLaunch {
+    /// Source-qualified identity of the approved extension.
     pub extension_name: String,
-    /// Approval covering an extension's request to access a permission-gated capability.
-    pub kind: PermissionsLocationsAddToolApprovalDetailsExtensionPermissionAccessKind,
+    /// Extension launch approval kind
+    pub kind: PermissionsLocationsAddToolApprovalDetailsExtensionLaunchKind,
 }
-crate::record_serde::wire_record!(
-    PermissionsLocationsAddToolApprovalDetailsExtensionPermissionAccess {
-        extension_name: "extensionName",
-        kind: "kind"
-    }
-);
+crate::record_serde::wire_record!(PermissionsLocationsAddToolApprovalDetailsExtensionLaunch {
+    extension_name: "extensionName",
+    kind: "kind"
+});
 
 /// Location-persisted tool approval details for an extension's access to sensitive environment variables, keyed by extension name and the exact set of variable names.
 ///
@@ -2303,6 +2329,21 @@ pub struct PermissionsGetModeResult {
 }
 crate::record_serde::wire_record!(PermissionsGetModeResult { mode: "mode" });
 
+/// Legacy durable location approval for an extension.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct PermissionsLocationsAddToolApprovalDetailsExtensionPermissionAccess {
+    /// Extension name.
+    pub extension_name: String,
+    /// Approval covering an extension's request to access a permission-gated capability.
+    pub kind: PermissionsLocationsAddToolApprovalDetailsExtensionPermissionAccessKind,
+}
+crate::record_serde::wire_record!(
+    PermissionsLocationsAddToolApprovalDetailsExtensionPermissionAccess {
+        extension_name: "extensionName",
+        kind: "kind"
+    }
+);
+
 /// Indicates whether the operation succeeded.
 ///
 /// <div class="warning">
@@ -2631,6 +2672,11 @@ pub struct ProtocolExternalToolDefinition {
     pub defer: Option<ProtocolExternalToolDefer>,
     /// Model-visible explanation of what the tool does.
     pub description: String,
+    /// Controls how agents receive this tool. Omitted or `automatic` preserves
+    /// normal tool selection. `explicit` makes the tool available only to custom
+    /// agents whose `tools` list names it. This controls model-visible exposure,
+    /// not permission to execute the tool.
+    pub exposure: Option<ProtocolExternalToolExposure>,
     /// Whether repeating a call with the same arguments has no additional effect
     /// beyond the first call, as is true of any tool without side effects. Hosts
     /// may use this to safely repeat a call whose outcome was lost. It does not
@@ -2656,7 +2702,7 @@ pub struct ProtocolExternalToolDefinition {
     /// Optional human-readable display title.
     pub title: Option<String>,
 }
-crate::record_serde::wire_record!(ProtocolExternalToolDefinition { defer: "defer" if is_none, description: "description", idempotent: "idempotent" if is_none, is_terminal: "isTerminal" if is_none, metadata: "metadata" if is_none, name: "name", namespace: "namespace" if is_none, overrides_built_in_tool: "overridesBuiltInTool" if is_none, parameters: "parameters" if is_none, skip_permission: "skipPermission" if is_none, title: "title" if is_none });
+crate::record_serde::wire_record!(ProtocolExternalToolDefinition { defer: "defer" if is_none, description: "description", exposure: "exposure" if is_none, idempotent: "idempotent" if is_none, is_terminal: "isTerminal" if is_none, metadata: "metadata" if is_none, name: "name", namespace: "namespace" if is_none, overrides_built_in_tool: "overridesBuiltInTool" if is_none, parameters: "parameters" if is_none, skip_permission: "skipPermission" if is_none, title: "title" if is_none });
 
 /// Reattach to an existing MC session without creating a new one.
 ///
@@ -4897,8 +4943,10 @@ pub struct SessionOpenExecutionOptions {
     pub continue_on_auto_mode: Option<bool>,
     /// Initial session limits.
     pub limits: Option<SessionLimitsConfig>,
+    /// Default maximum logical model turns per request. Zero permits no model turns. Needing another turn after the limit is an error.
+    pub max_tool_turns: Option<i64>,
 }
-crate::record_serde::wire_record!(SessionOpenExecutionOptions { autopilot: "autopilot" if is_none, continue_on_auto_mode: "continueOnAutoMode" if is_none, limits: "limits" if is_none });
+crate::record_serde::wire_record!(SessionOpenExecutionOptions { autopilot: "autopilot" if is_none, continue_on_auto_mode: "continueOnAutoMode" if is_none, limits: "limits" if is_none, max_tool_turns: "maxToolTurns" if is_none });
 
 /// Feature experimentation and trusted assignments.
 ///
@@ -12334,6 +12382,23 @@ pub(crate) struct SessionRemoteAttachMissionControlResult {
     pub started: bool,
 }
 crate::record_serde::wire_record!(SessionRemoteAttachMissionControlResult { started: "started" });
+
+/// Reports cloud host readiness and the existing startup error when the host did not start. The caller retains cleanup ownership.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub(crate) struct SessionRemoteWaitForStartResult {
+    /// Startup error when started is false; absent on success.
+    pub error_message: Option<String>,
+    /// True only after the attached cloud task publishes session.start.
+    pub started: bool,
+}
+crate::record_serde::wire_record!(SessionRemoteWaitForStartResult { error_message: "errorMessage" if is_none, started: "started" });
 
 /// GitHub URL and remote export and steering state, with an optional warning when cloud session storage policy refuses export.
 ///
@@ -20639,24 +20704,22 @@ impl<'de> Deserialize<'de> for PermissionDecisionApproveForSessionApprovalWorkfl
     }
 }
 
-/// Approval covering an extension's request to access a permission-gated capability.
+/// Extension launch approval kind
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-pub enum PermissionDecisionApproveForSessionApprovalExtensionPermissionAccessKind {
-    #[serde(rename = "extension-permission-access")]
+pub enum PermissionDecisionApproveForSessionApprovalExtensionLaunchKind {
+    #[serde(rename = "extension-launch")]
     #[default]
-    ExtensionPermissionAccess,
+    ExtensionLaunch,
 }
-impl<'de> Deserialize<'de>
-    for PermissionDecisionApproveForSessionApprovalExtensionPermissionAccessKind
-{
+impl<'de> Deserialize<'de> for PermissionDecisionApproveForSessionApprovalExtensionLaunchKind {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         crate::enum_serde::deserialize_variant(
             deserializer,
-            "PermissionDecisionApproveForSessionApprovalExtensionPermissionAccessKind",
-            &["extension-permission-access"],
+            "PermissionDecisionApproveForSessionApprovalExtensionLaunchKind",
+            &["extension-launch"],
             None,
         )?;
-        Ok(Self::ExtensionPermissionAccess)
+        Ok(Self::ExtensionLaunch)
     }
 }
 
@@ -20699,7 +20762,7 @@ pub enum PermissionDecisionApproveForSessionApproval {
     CustomTool(PermissionDecisionApproveForSessionApprovalCustomTool),
     ExtensionManagement(PermissionDecisionApproveForSessionApprovalExtensionManagement),
     Workflow(PermissionDecisionApproveForSessionApprovalWorkflow),
-    ExtensionPermissionAccess(PermissionDecisionApproveForSessionApprovalExtensionPermissionAccess),
+    ExtensionLaunch(PermissionDecisionApproveForSessionApprovalExtensionLaunch),
     ExtensionEnvAccess(PermissionDecisionApproveForSessionApprovalExtensionEnvAccess),
 }
 
@@ -20912,24 +20975,22 @@ impl<'de> Deserialize<'de> for PermissionDecisionApproveForLocationApprovalWorkf
     }
 }
 
-/// Approval covering an extension's request to access a permission-gated capability.
+/// Extension launch approval kind
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-pub enum PermissionDecisionApproveForLocationApprovalExtensionPermissionAccessKind {
-    #[serde(rename = "extension-permission-access")]
+pub enum PermissionDecisionApproveForLocationApprovalExtensionLaunchKind {
+    #[serde(rename = "extension-launch")]
     #[default]
-    ExtensionPermissionAccess,
+    ExtensionLaunch,
 }
-impl<'de> Deserialize<'de>
-    for PermissionDecisionApproveForLocationApprovalExtensionPermissionAccessKind
-{
+impl<'de> Deserialize<'de> for PermissionDecisionApproveForLocationApprovalExtensionLaunchKind {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         crate::enum_serde::deserialize_variant(
             deserializer,
-            "PermissionDecisionApproveForLocationApprovalExtensionPermissionAccessKind",
-            &["extension-permission-access"],
+            "PermissionDecisionApproveForLocationApprovalExtensionLaunchKind",
+            &["extension-launch"],
             None,
         )?;
-        Ok(Self::ExtensionPermissionAccess)
+        Ok(Self::ExtensionLaunch)
     }
 }
 
@@ -20972,9 +21033,7 @@ pub enum PermissionDecisionApproveForLocationApproval {
     CustomTool(PermissionDecisionApproveForLocationApprovalCustomTool),
     ExtensionManagement(PermissionDecisionApproveForLocationApprovalExtensionManagement),
     Workflow(PermissionDecisionApproveForLocationApprovalWorkflow),
-    ExtensionPermissionAccess(
-        PermissionDecisionApproveForLocationApprovalExtensionPermissionAccess,
-    ),
+    ExtensionLaunch(PermissionDecisionApproveForLocationApprovalExtensionLaunch),
     ExtensionEnvAccess(PermissionDecisionApproveForLocationApprovalExtensionEnvAccess),
 }
 
@@ -21258,6 +21317,48 @@ pub enum PermissionDecision {
     DeniedByPermissionRequestHook(PermissionDecisionDeniedByPermissionRequestHook),
 }
 
+/// Approval covering an extension's request to access a permission-gated capability.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub(crate) enum PermissionDecisionApproveForLocationApprovalExtensionPermissionAccessKind {
+    #[serde(rename = "extension-permission-access")]
+    #[default]
+    ExtensionPermissionAccess,
+}
+impl<'de> Deserialize<'de>
+    for PermissionDecisionApproveForLocationApprovalExtensionPermissionAccessKind
+{
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        crate::enum_serde::deserialize_variant(
+            deserializer,
+            "PermissionDecisionApproveForLocationApprovalExtensionPermissionAccessKind",
+            &["extension-permission-access"],
+            None,
+        )?;
+        Ok(Self::ExtensionPermissionAccess)
+    }
+}
+
+/// Approval covering an extension's request to access a permission-gated capability.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub(crate) enum PermissionDecisionApproveForSessionApprovalExtensionPermissionAccessKind {
+    #[serde(rename = "extension-permission-access")]
+    #[default]
+    ExtensionPermissionAccess,
+}
+impl<'de> Deserialize<'de>
+    for PermissionDecisionApproveForSessionApprovalExtensionPermissionAccessKind
+{
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        crate::enum_serde::deserialize_variant(
+            deserializer,
+            "PermissionDecisionApproveForSessionApprovalExtensionPermissionAccessKind",
+            &["extension-permission-access"],
+            None,
+        )?;
+        Ok(Self::ExtensionPermissionAccess)
+    }
+}
+
 /// Approval scoped to specific command identifiers.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub enum PermissionsLocationsAddToolApprovalDetailsCommandsKind {
@@ -21429,24 +21530,22 @@ impl<'de> Deserialize<'de> for PermissionsLocationsAddToolApprovalDetailsWorkflo
     }
 }
 
-/// Approval covering an extension's request to access a permission-gated capability.
+/// Extension launch approval kind
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-pub enum PermissionsLocationsAddToolApprovalDetailsExtensionPermissionAccessKind {
-    #[serde(rename = "extension-permission-access")]
+pub enum PermissionsLocationsAddToolApprovalDetailsExtensionLaunchKind {
+    #[serde(rename = "extension-launch")]
     #[default]
-    ExtensionPermissionAccess,
+    ExtensionLaunch,
 }
-impl<'de> Deserialize<'de>
-    for PermissionsLocationsAddToolApprovalDetailsExtensionPermissionAccessKind
-{
+impl<'de> Deserialize<'de> for PermissionsLocationsAddToolApprovalDetailsExtensionLaunchKind {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         crate::enum_serde::deserialize_variant(
             deserializer,
-            "PermissionsLocationsAddToolApprovalDetailsExtensionPermissionAccessKind",
-            &["extension-permission-access"],
+            "PermissionsLocationsAddToolApprovalDetailsExtensionLaunchKind",
+            &["extension-launch"],
             None,
         )?;
-        Ok(Self::ExtensionPermissionAccess)
+        Ok(Self::ExtensionLaunch)
     }
 }
 
@@ -21489,7 +21588,7 @@ pub enum PermissionsLocationsAddToolApprovalDetails {
     CustomTool(PermissionsLocationsAddToolApprovalDetailsCustomTool),
     ExtensionManagement(PermissionsLocationsAddToolApprovalDetailsExtensionManagement),
     Workflow(PermissionsLocationsAddToolApprovalDetailsWorkflow),
-    ExtensionPermissionAccess(PermissionsLocationsAddToolApprovalDetailsExtensionPermissionAccess),
+    ExtensionLaunch(PermissionsLocationsAddToolApprovalDetailsExtensionLaunch),
     ExtensionEnvAccess(PermissionsLocationsAddToolApprovalDetailsExtensionEnvAccess),
 }
 
@@ -21628,6 +21727,27 @@ impl<'de> Deserialize<'de> for PermissionsConfigureAdditionalContentExclusionPol
     }
 }
 
+/// Approval covering an extension's request to access a permission-gated capability.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub(crate) enum PermissionsLocationsAddToolApprovalDetailsExtensionPermissionAccessKind {
+    #[serde(rename = "extension-permission-access")]
+    #[default]
+    ExtensionPermissionAccess,
+}
+impl<'de> Deserialize<'de>
+    for PermissionsLocationsAddToolApprovalDetailsExtensionPermissionAccessKind
+{
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        crate::enum_serde::deserialize_variant(
+            deserializer,
+            "PermissionsLocationsAddToolApprovalDetailsExtensionPermissionAccessKind",
+            &["extension-permission-access"],
+            None,
+        )?;
+        Ok(Self::ExtensionPermissionAccess)
+    }
+}
+
 /// Whether the change applies to ephemeral session-scoped rules (cleared at session end) or to location-scoped rules persisted via the location-permissions config file.
 ///
 /// <div class="warning">
@@ -21753,6 +21873,43 @@ impl<'de> Deserialize<'de> for ProtocolExternalToolDefer {
         Ok(match index {
             0 => Self::Auto,
             1 => Self::Never,
+            _ => Self::Unknown,
+        })
+    }
+}
+
+/// Controls how agents receive an external tool definition. This is a visibility policy, not an execution permission.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub enum ProtocolExternalToolExposure {
+    /// Use normal tool selection: the default agent receives the tool, unrestricted custom agents inherit it, and custom agents with tool lists receive it only when listed.
+    #[serde(rename = "automatic")]
+    Automatic,
+    /// Expose the tool only to custom agents whose tools list explicitly names it.
+    #[serde(rename = "explicit")]
+    Explicit,
+    /// Unknown variant for forward compatibility.
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+impl<'de> Deserialize<'de> for ProtocolExternalToolExposure {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let index = crate::enum_serde::deserialize_variant(
+            deserializer,
+            "ProtocolExternalToolExposure",
+            &["automatic", "explicit", "Unknown"],
+            Some(2),
+        )?;
+        Ok(match index {
+            0 => Self::Automatic,
+            1 => Self::Explicit,
             _ => Self::Unknown,
         })
     }

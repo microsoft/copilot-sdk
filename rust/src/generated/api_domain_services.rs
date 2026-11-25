@@ -5636,12 +5636,15 @@ crate::record_serde::wire_record!(EntraAuthConfig { client_id: "clientId", mats_
 /// and may change or be removed in future SDK or CLI releases.
 ///
 /// </div>
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct ConnectRequest {
     /// Identity of the integrating host. Optional; omit it to keep the default attribution.
     #[doc(hidden)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) client_info: Option<ConnectClientInfo>,
     /// Opt this connection in to GitHub telemetry forwarding for its lifetime. When set, the runtime forwards this host's telemetry across all its sessions, its sessionless events, and explicitly process-wide events over the `gitHubTelemetry.event` notification. Connections intentionally sharing one server receive that server's events; independently embedded runtime hosts do not receive each other's host-owned events. Regular events are also written to the runtime's normal GitHub/CTS path (dual-write); host-only compatibility events are forward-only and intentionally skip that path. Intended for first-party hosts that re-emit the events into their own telemetry stores. Both unrestricted and restricted events are forwarded, each tagged with a `restricted` discriminator; a backstop drops restricted events when restricted telemetry is disabled — using the process-global gate for ordinary events and an explicit session-scoped decision for host-only events.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub enable_git_hub_telemetry_forwarding: Option<bool>,
     /// Entra application used by this client's authentication flows. Required to enable built-in Microsoft Entra sign-in and token renewal; other authentication methods remain available.
     ///
@@ -5651,6 +5654,7 @@ pub(crate) struct ConnectRequest {
     /// and may change or be removed in future SDK or CLI releases.
     ///
     /// </div>
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub entra: Option<EntraAuthConfig>,
     /// Opt this connection in to host-owned Entra identity and token acquisition through entraToken.getToken. Requires entra.clientId and an explicit true acknowledgement in the response. SDKs set this internally when a callback is configured.
     ///
@@ -5660,13 +5664,42 @@ pub(crate) struct ConnectRequest {
     /// and may change or be removed in future SDK or CLI releases.
     ///
     /// </div>
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub entra_token_provider: Option<bool>,
+    /// GitHub.com OAuth application client ID for runtime-managed sign-in and Entra token exchange.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub github_client_id: Option<String>,
+    /// Matching OAuth application secret. Required whenever githubClientId is supplied. Omit both fields to use the built-in CLI registration.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub github_client_secret: Option<String>,
     /// Task kinds this connection can decode when observing session tasks. Omit to retain agent and shell compatibility.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub supported_task_kinds: Option<Vec<TaskKind>>,
     /// Connection token; required when the server was started with COPILOT_CONNECTION_TOKEN
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub token: Option<String>,
 }
-crate::record_serde::wire_record!(ConnectRequest { client_info: "clientInfo" if is_none, enable_git_hub_telemetry_forwarding: "enableGitHubTelemetryForwarding" if is_none, entra: "entra" if is_none, entra_token_provider: "entraTokenProvider" if is_none, supported_task_kinds: "supportedTaskKinds" if is_none, token: "token" if is_none });
+
+impl std::fmt::Debug for ConnectRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectRequest")
+            .field("client_info", &self.client_info)
+            .field(
+                "enable_git_hub_telemetry_forwarding",
+                &self.enable_git_hub_telemetry_forwarding,
+            )
+            .field("entra", &self.entra)
+            .field("entra_token_provider", &self.entra_token_provider)
+            .field("github_client_id", &self.github_client_id)
+            .field(
+                "github_client_secret",
+                &self.github_client_secret.as_ref().map(|_| "<redacted>"),
+            )
+            .field("supported_task_kinds", &self.supported_task_kinds)
+            .field("token", &self.token)
+            .finish()
+    }
+}
 
 /// Handshake result reporting the server's protocol version and package version on success.
 ///
@@ -6560,14 +6593,16 @@ crate::record_serde::wire_record!(EntraTokenAcquireRequestToken { account_id: "a
 /// </div>
 #[derive(Debug, Clone, Default)]
 pub struct EntraTokenAcquireResultIdentity {
-    /// Stable nonblank opaque account ID owned by the host.
+    /// Stable, account-specific opaque host ID, preserved exactly as the suffix of entra:`<accountId>` and echoed on later requests. Must remain stable across renewal, reauthentication, reconnect and restart. Nonblank, without control characters, and at most 480 UTF-8 bytes; hosts may namespace their IDs.
     pub account_id: String,
     /// Entra acquisition response variant discriminator.
     pub kind: EntraTokenAcquireResultIdentityKind,
-    /// Optional display name; not an account identifier or credential.
+    /// Required Entra tenant ID, stored as non-secret parent-account metadata for service routing. Microsoft internal tenants use MSIT Loki; other tenants use production. Does not affect account identity.
+    pub tenant_id: String,
+    /// Optional human-readable account label. Never used as account identity.
     pub username: Option<String>,
 }
-crate::record_serde::wire_record!(EntraTokenAcquireResultIdentity { account_id: "accountId", kind: "kind", username: "username" if is_none });
+crate::record_serde::wire_record!(EntraTokenAcquireResultIdentity { account_id: "accountId", kind: "kind", tenant_id: "tenantId", username: "username" if is_none });
 
 ///
 /// <div class="warning">
@@ -13774,6 +13809,107 @@ pub struct SendMessagesRequest {
 }
 crate::record_serde::wire_record!(SendMessagesRequest { agent_mode: "agentMode" if is_none, client_turn_id: "clientTurnId" if is_none, messages: "messages", mode: "mode" if is_none, prepend: "prepend" if is_none, request_headers: "requestHeaders" if is_none, response_format: "responseFormat" if is_none, traceparent: "traceparent" if is_none, tracestate: "tracestate" if is_none, wait: "wait" if is_none });
 
+/// Extensible [`SendMessagesRequest`], including inputs added after it was published.
+///
+/// Required inputs are [`SendMessagesOptions::new`] arguments; optional inputs have fluent setters.
+/// Input-only: it serialises to the flat wire request and is not deserialisable.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SendMessagesOptions {
+    #[serde(flatten)]
+    legacy: SendMessagesRequest,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_tool_turns: Option<i64>,
+}
+
+impl SendMessagesOptions {
+    /// Creates options with the required inputs.
+    pub fn new(messages: Vec<SendMessageItem>) -> Self {
+        Self {
+            legacy: SendMessagesRequest {
+                messages,
+                mode: None,
+                prepend: None,
+                agent_mode: None,
+                request_headers: None,
+                response_format: None,
+                traceparent: None,
+                tracestate: None,
+                client_turn_id: None,
+                wait: None,
+            },
+            max_tool_turns: None,
+        }
+    }
+
+    /// How to deliver the messages. `enqueue` (default) appends to the message queue. `immediate` interjects during an in-progress turn.
+    pub fn mode(mut self, value: SendMode) -> Self {
+        self.legacy.mode = Some(value);
+        self
+    }
+
+    /// If true, adds the messages to the front of the queue instead of the end
+    pub fn prepend(mut self, value: bool) -> Self {
+        self.legacy.prepend = Some(value);
+        self
+    }
+
+    /// The UI mode the agent was in when these messages were sent. Defaults to the session's current mode.
+    pub fn agent_mode(mut self, value: SendAgentMode) -> Self {
+        self.legacy.agent_mode = Some(value);
+        self
+    }
+
+    /// Custom HTTP headers to include in outbound model requests for this turn. Merged with session-level provider headers; per-turn headers augment and overwrite session-level headers with the same key.
+    pub fn request_headers(mut self, value: HashMap<String, String>) -> Self {
+        self.legacy.request_headers = Some(value);
+        self
+    }
+
+    /// Provider-native output format for the whole turn, including an empty message batch and all tool-call iterations. Not inherited by later turns or subagents. Ordinary steering inherits the active format; specifying responseFormat with mode: immediate is an error, even while idle. Returned assistant content remains text; the runtime does not parse or validate it. Unsupported models or schemas produce provider errors.
+    pub fn response_format(mut self, value: SendMessagesRequestResponseFormat) -> Self {
+        self.legacy.response_format = Some(value);
+        self
+    }
+
+    /// W3C Trace Context traceparent header for distributed tracing of this agent turn
+    pub fn traceparent(mut self, value: impl Into<String>) -> Self {
+        self.legacy.traceparent = Some(value.into());
+        self
+    }
+
+    /// W3C Trace Context tracestate header for distributed tracing
+    pub fn tracestate(mut self, value: impl Into<String>) -> Self {
+        self.legacy.tracestate = Some(value.into());
+        self
+    }
+
+    /// Opaque caller-chosen ID for the turn this batch starts. The runtime copies it unchanged into `params._meta["com.github.copilot/turnId"]` on every MCP `tools/call` the agent makes while serving that turn, including calls from sub-agents it spawns and from Autopilot continuations of it. Visible user steering (`mode: "immediate"`) that a running turn consumes hands it to a successor turn: the steering's value replaces the running turn's from the next model call onward, and steering without one clears it. System and hidden steering leave it unchanged. A turn started without one, including one the runtime starts itself, carries no turn ID. The `user.message` event for each message the send delivers echoes it as `clientTurnId` when the message is consumed, and is persisted like other events; the value stamped on MCP calls is held in memory only and is not restored on resume.
+    pub fn client_turn_id(mut self, value: impl Into<String>) -> Self {
+        self.legacy.client_turn_id = Some(value.into());
+        self
+    }
+
+    /// If true, await completion of the agentic loop for this turn before returning. Defaults to false (fire-and-forget). When true, the result still contains the same `messageIds`; the caller can rely on the agent having processed the messages before the call resolves. Transport-dependent tail semantics: on a LOCAL (in-process) session the wait additionally blocks until the completed turn's event tail has been dispatched to this session's in-process subscribers, so a subsequent read of subscriber state already reflects the turn; on a REMOTE session the wait resolves once the loop completes and mirrored delivery follows over the wire. Callers that need the stronger local guarantee on remote sessions should await the event stream explicitly.
+    pub fn wait(mut self, value: bool) -> Self {
+        self.legacy.wait = Some(value);
+        self
+    }
+
+    /// Overrides the maximum logical model turns for the entire batch, including an empty batch. Zero permits no model turns. Not supported for immediate steering.
+    pub fn max_tool_turns(mut self, value: i64) -> Self {
+        self.max_tool_turns = Some(value);
+        self
+    }
+}
+
 /// Result of sending zero or more user messages
 ///
 /// <div class="warning">
@@ -13851,6 +13987,156 @@ pub struct SendRequest {
     pub wait: Option<bool>,
 }
 crate::record_serde::wire_record!(SendRequest { agent_authored: "agentAuthored" if is_none, agent_mode: "agentMode" if is_none, attachments: "attachments" if is_none, billable: "billable" if is_none, client_turn_id: "clientTurnId" if is_none, display_prompt: "displayPrompt" if is_none, mode: "mode" if is_none, prepend: "prepend" if is_none, prompt: "prompt", request_headers: "requestHeaders" if is_none, required_tool: "requiredTool" if is_none, response_format: "responseFormat" if is_none, send_admission_id: "sendAdmissionId" if is_none, source: "source" if is_none, traceparent: "traceparent" if is_none, tracestate: "tracestate" if is_none, wait: "wait" if is_none });
+
+/// Extensible [`SendRequest`], including inputs added after it was published.
+///
+/// Required inputs are [`SendOptions::new`] arguments; optional inputs have fluent setters.
+/// Input-only: it serialises to the flat wire request and is not deserialisable.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SendOptions {
+    #[serde(flatten)]
+    legacy: SendRequest,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_tool_turns: Option<i64>,
+}
+
+impl SendOptions {
+    /// Creates options with the required inputs.
+    pub fn new(prompt: impl Into<String>) -> Self {
+        Self {
+            legacy: SendRequest {
+                prompt: prompt.into(),
+                display_prompt: None,
+                attachments: None,
+                mode: None,
+                prepend: None,
+                billable: None,
+                required_tool: None,
+                source: None,
+                agent_authored: None,
+                agent_mode: None,
+                request_headers: None,
+                response_format: None,
+                traceparent: None,
+                tracestate: None,
+                client_turn_id: None,
+                send_admission_id: None,
+                wait: None,
+            },
+            max_tool_turns: None,
+        }
+    }
+
+    /// If provided, this is shown in the timeline instead of `prompt`
+    pub fn display_prompt(mut self, value: impl Into<String>) -> Self {
+        self.legacy.display_prompt = Some(value.into());
+        self
+    }
+
+    /// Optional attachments (files, directories, selections, blobs, GitHub references) to include with the message
+    pub fn attachments(mut self, value: Vec<serde_json::Value>) -> Self {
+        self.legacy.attachments = Some(value);
+        self
+    }
+
+    /// How to deliver the message. `enqueue` (default) appends to the message queue. `immediate` interjects during an in-progress turn.
+    pub fn mode(mut self, value: SendMode) -> Self {
+        self.legacy.mode = Some(value);
+        self
+    }
+
+    /// If true, adds the message to the front of the queue instead of the end
+    pub fn prepend(mut self, value: bool) -> Self {
+        self.legacy.prepend = Some(value);
+        self
+    }
+
+    /// If false, this message will not trigger a Premium Request Unit charge. User messages default to billable.
+    pub fn billable(mut self, value: bool) -> Self {
+        self.legacy.billable = Some(value);
+        self
+    }
+
+    /// If set, the request will fail if the named tool is not available when this message is among the user messages at the start of the current exchange
+    pub fn required_tool(mut self, value: impl Into<String>) -> Self {
+        self.legacy.required_tool = Some(value.into());
+        self
+    }
+
+    /// Optional provenance tag copied to the resulting user.message event. Must be `user`, `system`, `command-<command-id>` for command-originated messages, `schedule-<numeric-id>` for scheduled prompts, `agent-<agent-id>` for prompts sent by another agent, or `automation-<automation-id>` for turns a host sends on behalf of an automation the user configured. An automation turn defines the session's task like a user message but carries no human authority.
+    pub(crate) fn source(mut self, value: impl Into<String>) -> Self {
+        self.legacy.source = Some(value.into());
+        self
+    }
+
+    /// Set by the host when an agent wrote this message and the host delivers it in the user role, such as the kickoff of a session another agent created. Copied to the resulting user.message event. Only automatic permission decisions read it: they treat the text as another agent's message, never as the user's own words or authorization. Delivery, history and the model's view of the message are unchanged. It can only withhold human authority, never add it. Remote sessions, hosted by Mission Control or over AHP, do not carry it: their transports deliver only the prompt, so there the message is judged as it would be without the mark.
+    pub fn agent_authored(mut self, value: bool) -> Self {
+        self.legacy.agent_authored = Some(value);
+        self
+    }
+
+    /// The UI mode the agent was in when this message was sent. Defaults to the session's current mode.
+    pub fn agent_mode(mut self, value: SendAgentMode) -> Self {
+        self.legacy.agent_mode = Some(value);
+        self
+    }
+
+    /// Custom HTTP headers to include in outbound model requests for this turn. Merged with session-level provider headers; per-turn headers augment and overwrite session-level headers with the same key.
+    pub fn request_headers(mut self, value: HashMap<String, String>) -> Self {
+        self.legacy.request_headers = Some(value);
+        self
+    }
+
+    /// Provider-native output format for this turn, including all tool-call iterations. Not inherited by later turns or subagents. Ordinary steering inherits the active format; specifying responseFormat with mode: immediate is an error, even while idle. Returned assistant content remains text; the runtime does not parse or validate it. Unsupported models or schemas produce provider errors.
+    pub fn response_format(mut self, value: SendRequestResponseFormat) -> Self {
+        self.legacy.response_format = Some(value);
+        self
+    }
+
+    /// W3C Trace Context traceparent header for distributed tracing of this agent turn
+    pub fn traceparent(mut self, value: impl Into<String>) -> Self {
+        self.legacy.traceparent = Some(value.into());
+        self
+    }
+
+    /// W3C Trace Context tracestate header for distributed tracing
+    pub fn tracestate(mut self, value: impl Into<String>) -> Self {
+        self.legacy.tracestate = Some(value.into());
+        self
+    }
+
+    /// Opaque caller-chosen ID for the turn this message starts. The runtime copies it unchanged into `params._meta["com.github.copilot/turnId"]` on every MCP `tools/call` the agent makes while serving that turn, including calls from sub-agents it spawns and from Autopilot continuations of it. Visible user steering (`mode: "immediate"`) that a running turn consumes hands it to a successor turn: the steering's value replaces the running turn's from the next model call onward, and steering without one clears it. System and hidden steering leave it unchanged. A turn started without one, including one the runtime starts itself, carries no turn ID. The `user.message` event for each message the send delivers echoes it as `clientTurnId` when the message is consumed, and is persisted like other events; the value stamped on MCP calls is held in memory only and is not restored on resume.
+    pub fn client_turn_id(mut self, value: impl Into<String>) -> Self {
+        self.legacy.client_turn_id = Some(value.into());
+        self
+    }
+
+    /// SDK-owned invocation identifier for an embedder.sendAdmission callback after canonical queue admission. Only the original trusted in-process host may request it. Does not change wait or turn completion semantics.
+    pub(crate) fn send_admission_id(mut self, value: impl Into<String>) -> Self {
+        self.legacy.send_admission_id = Some(value.into());
+        self
+    }
+
+    /// If true, await completion of the agentic loop for this message before returning. Defaults to false (fire-and-forget). When true, the result still contains the same `messageId`; the caller can rely on the agent having processed the message before the call resolves. Transport-dependent tail semantics: on a LOCAL (in-process) session the wait additionally blocks until the completed turn's event tail has been dispatched to this session's in-process subscribers, so a subsequent read of subscriber state already reflects the turn; on a REMOTE session the wait resolves once the loop completes and mirrored delivery follows over the wire. Callers that need the stronger local guarantee on remote sessions should await the event stream explicitly.
+    pub fn wait(mut self, value: bool) -> Self {
+        self.legacy.wait = Some(value);
+        self
+    }
+
+    /// Overrides the maximum logical model turns for this request. Zero permits no model turns; needing another turn after the limit is an error. Not supported for immediate steering.
+    pub fn max_tool_turns(mut self, value: i64) -> Self {
+        self.max_tool_turns = Some(value);
+        self
+    }
+}
 
 /// Result of sending a user message
 ///

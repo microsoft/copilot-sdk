@@ -267,12 +267,21 @@ public final class CopilotClient implements AutoCloseable {
         this(options, null);
     }
 
+    private final String githubClientId;
+    private final String githubClientSecret;
+
     CopilotClient(CopilotClientOptions options, Runnable closeHook) {
         if (options == null || options.getMode() == null) {
             throw new IllegalArgumentException("CopilotClientOptions.mode is required; select CODING_AGENT or EMPTY");
         }
         this.options = options;
         this.closeHook = closeHook;
+        githubClientId = options.getGitHub().getClientId();
+        githubClientSecret = options.getGitHub().getClientSecret();
+        if ((githubClientId != null || githubClientSecret != null) && (githubClientId == null
+                || githubClientId.isBlank() || githubClientSecret == null || githubClientSecret.isBlank())) {
+            throw new IllegalArgumentException("github.clientId and github.clientSecret must both be non-empty");
+        }
 
         RuntimeConnection requestedConnection = this.options.getRuntime();
         if (requestedConnection == null) {
@@ -815,6 +824,10 @@ public final class CopilotClient implements AutoCloseable {
                 connectParams.put("token", effectiveConnectionToken);
             }
             connectParams.put("supportedTaskKinds", List.of("agent", "client", "shell"));
+            if (githubClientId != null) {
+                connectParams.put("githubClientId", githubClientId);
+                connectParams.put("githubClientSecret", githubClientSecret);
+            }
             if (this.options.getEntra() != null) {
                 connectParams.put("entra",
                         com.microsoft.copilot.generated.rpc.EntraAuthConfig.builder()
@@ -855,6 +868,10 @@ public final class CopilotClient implements AutoCloseable {
                 cause = cause.getCause();
             }
             if (cause instanceof JsonRpcException rpcEx && isUnsupportedConnectMethod(rpcEx)) {
+                if (githubClientId != null) {
+                    throw new IllegalStateException("This runtime does not support GitHub OAuth client configuration.",
+                            cause);
+                }
                 if (this.options.getEntra() != null) {
                     throw new IllegalStateException("This runtime does not support Entra client configuration.", cause);
                 }

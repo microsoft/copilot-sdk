@@ -12,6 +12,26 @@ public class SessionExecutionRequestOptions {
     @JsonProperty("limits")
     private SessionLimitsConfig limits;
 
+    @JsonProperty("maxToolTurns")
+    private Long maxToolTurns;
+
+    /** Gets the logical model-turn limit. @return the limit, or null */
+    public Long getMaxToolTurns() {
+        return maxToolTurns;
+    }
+
+    /**
+     * Sets the logical model-turn limit.
+     *
+     * @param maxToolTurns
+     *            the limit
+     * @return this instance
+     */
+    public SessionExecutionRequestOptions setMaxToolTurns(Long maxToolTurns) {
+        this.maxToolTurns = maxToolTurns;
+        return this;
+    }
+
     @JsonProperty("autopilot")
     private AutopilotOptions autopilot;
 

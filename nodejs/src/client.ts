@@ -66,6 +66,7 @@ import type {
 } from "./generated/rpc.js";
 import { CopilotDecisions } from "./decisions.js";
 import { normalizeClientOptions, normalizeSessionOptions } from "./optionsCompatibility.js";
+import { validateMaxToolTurns } from "./jsonValue.js";
 import { getSdkProtocolVersion } from "./sdkProtocolVersion.js";
 import { CopilotSession } from "./session.js";
 import {
@@ -659,6 +660,7 @@ function toWireCustomAgents(
 ): unknown[] | undefined {
     if (!agents) return undefined;
     return agents.map((agent) => {
+        validateMaxToolTurns(agent.maxToolTurns);
         if (!agent.mcpServers) return agent;
         const { mcpServers, ...rest } = agent;
         return { ...rest, mcpServers: toWireMcpServers(mcpServers) };
@@ -1075,9 +1077,11 @@ export class CopilotClient {
     private resolvedCliPath: string | undefined;
     /** Resolved environment passed to the spawned runtime. */
     private resolvedEnv: Record<string, string | undefined>;
+    readonly #githubClientSecret: string | undefined;
     private options: {
         internalTestOptions?: CopilotClientOptions["internalTestOptions"];
         entra?: CopilotClientOptions["entra"];
+        githubClientId?: string;
         workingDirectory: string;
         logLevel?: string;
         gitHubToken?: string;
@@ -1211,6 +1215,13 @@ export class CopilotClient {
         if (options?.mode !== "coding-agent" && options?.mode !== "empty") {
             throw new Error("mode is required and must be 'coding-agent' or 'empty'");
         }
+        const { clientId, clientSecret } = options.github ?? {};
+        if (
+            (clientId !== undefined || clientSecret !== undefined) &&
+            (!clientId?.trim() || !clientSecret?.trim())
+        ) {
+            throw new Error("github.clientId and github.clientSecret must both be non-empty");
+        }
         // Resolve the connection mode. `_internalConnection` is set by
         // `joinSession()` to opt into the parent-process stdio path; consumers
         // should always go through the public `runtime` field.
@@ -1340,7 +1351,9 @@ export class CopilotClient {
             conn.kind === "spawned-stdio" || conn.kind === "spawned-tcp" ? (conn.args ?? []) : [];
         this.connectionExtraArgs = [...connArgs];
 
+        this.#githubClientSecret = clientSecret;
         this.options = {
+            githubClientId: clientId,
             internalTestOptions: options.internalTestOptions,
             entra: options.entra
                 ? { ...options.entra, tokenProvider: options.entra.tokenProvider }
@@ -2721,6 +2734,7 @@ export class CopilotClient {
                         skipPermission: tool.skipPermission,
                         hasHandler: !!tool.handler,
                         defer: tool.defer,
+                        exposure: tool.exposure,
                         metadata: tool.metadata,
                         isTerminal: tool.isTerminal,
                         idempotent: tool.idempotent,
@@ -2800,6 +2814,7 @@ export class CopilotClient {
                 },
                 execution: {
                     limits: config.execution?.limits,
+                    maxToolTurns: validateMaxToolTurns(config.execution?.maxToolTurns),
                     autopilot: config.execution?.autopilot,
                 },
                 permissions: {
@@ -3254,6 +3269,7 @@ export class CopilotClient {
                         skipPermission: tool.skipPermission,
                         hasHandler: !!tool.handler,
                         defer: tool.defer,
+                        exposure: tool.exposure,
                         metadata: tool.metadata,
                         isTerminal: tool.isTerminal,
                         idempotent: tool.idempotent,
@@ -3296,6 +3312,7 @@ export class CopilotClient {
                 },
                 execution: {
                     limits: config.execution?.limits,
+                    maxToolTurns: validateMaxToolTurns(config.execution?.maxToolTurns),
                     autopilot: config.execution?.autopilot,
                 },
                 canvases: {
@@ -4106,6 +4123,8 @@ export class CopilotClient {
         try {
             const connectParams: {
                 entra?: CopilotClientOptions["entra"];
+                githubClientId?: string;
+                githubClientSecret?: string;
                 entraTokenProvider?: boolean;
                 token?: string;
                 enableGitHubTelemetryForwarding?: boolean;
@@ -4118,6 +4137,8 @@ export class CopilotClient {
                     oneAuthApplicationId: this.options.entra.oneAuthApplicationId,
                 },
                 entraTokenProvider: this.options.entra?.tokenProvider ? true : undefined,
+                githubClientId: this.options.githubClientId,
+                githubClientSecret: this.#githubClientSecret,
                 token: this.effectiveConnectionToken,
                 supportedTaskKinds: ["agent", "client", "shell"],
             };
@@ -4152,6 +4173,11 @@ export class CopilotClient {
                 // wait for the start() running this, so use the connection directly.
                 if (this.options.entra) {
                     throw new Error("This runtime does not support Entra client configuration.");
+                }
+                if (this.options.githubClientId !== undefined) {
+                    throw new Error(
+                        "This runtime does not support GitHub OAuth client configuration."
+                    );
                 }
                 serverVersion = (await raceAgainstExit(sendPing(connection))).protocolVersion;
             } else {

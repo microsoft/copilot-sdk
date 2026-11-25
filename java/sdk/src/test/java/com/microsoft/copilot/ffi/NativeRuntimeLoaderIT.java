@@ -10,7 +10,11 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.ByteArrayInputStream;
 import java.io.File;
+import java.io.FilterInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.JarURLConnection;
 import java.net.URL;
@@ -34,6 +38,28 @@ import org.junit.jupiter.params.provider.ValueSource;
  */
 @EnabledIfEnvironmentVariable(named = "COPILOT_SDK_DEFAULT_CONNECTION", matches = "inprocess")
 class NativeRuntimeLoaderIT {
+
+    @ParameterizedTest
+    @ValueSource(ints = {32, 65537})
+    void probeOutputStopsAtEofAndDrainsBeyondCaptureLimit(int outputSize) throws Exception {
+        byte[] bytes = "x".repeat(outputSize).getBytes(StandardCharsets.UTF_8);
+        try (var stream = new FilterInputStream(new ByteArrayInputStream(bytes)) {
+            boolean reachedEof;
+
+            @Override
+            public int read(byte[] buffer, int offset, int length) throws IOException {
+                if (reachedEof) {
+                    throw new IOException("Stream closed");
+                }
+                int count = super.read(buffer, offset, length);
+                reachedEof = count == -1;
+                return count;
+            }
+        }) {
+            assertEquals("x".repeat(Math.min(outputSize, 64 * 1024)), readProbeOutput(stream));
+            assertTrue(stream.reachedEof, "Drain the pipe even when the captured prefix is full");
+        }
+    }
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
@@ -157,10 +183,7 @@ class NativeRuntimeLoaderIT {
         Process process = builder.start();
         var output = new FutureTask<String>(() -> {
             try (var stream = process.getInputStream()) {
-                byte[] prefix = stream.readNBytes(64 * 1024);
-                // Keep diagnostics bounded, but drain all output so the child cannot block.
-                stream.transferTo(OutputStream.nullOutputStream());
-                return new String(prefix, StandardCharsets.UTF_8);
+                return readProbeOutput(stream);
             }
         });
         Thread reader = new Thread(output, "resolver-output");
@@ -178,6 +201,16 @@ class NativeRuntimeLoaderIT {
         String text = output.get();
         assertTrue(exited, "Resolver JVM did not exit:\n" + text);
         return new ProbeResult(process.exitValue(), text);
+    }
+
+    private static String readProbeOutput(InputStream stream) throws IOException {
+        byte[] prefix = stream.readNBytes(64 * 1024);
+        // A shorter prefix already reached EOF; process cleanup can close the pipe
+        // after that.
+        if (prefix.length == 64 * 1024) {
+            stream.transferTo(OutputStream.nullOutputStream());
+        }
+        return new String(prefix, StandardCharsets.UTF_8);
     }
 
     private record ProbeResult(int exitCode, String output) {

@@ -13,8 +13,51 @@ import java.util.function.Function;
 public class ClientGitHubOptions {
 
     private String token;
+    private String clientId;
+    private String clientSecret;
     private Function<GitHubTelemetryNotification, CompletableFuture<Void>> onTelemetry;
     private Boolean useLoggedInUser;
+
+    /**
+     * @return the GitHub OAuth app ID, or {@code null} to use the Copilot CLI app
+     */
+    public String getClientId() {
+        return clientId;
+    }
+
+    /**
+     * Selects the app for runtime-managed GitHub.com sign-in and Entra-to-GitHub
+     * token exchange.
+     *
+     * @param clientId
+     *            the GitHub OAuth app ID; requires a matching secret
+     * @return this options instance
+     */
+    public ClientGitHubOptions setClientId(String clientId) {
+        this.clientId = clientId;
+        return this;
+    }
+
+    /**
+     * @return the matching GitHub OAuth app secret, or {@code null} when unset
+     */
+    @JsonIgnore
+    public String getClientSecret() {
+        return clientSecret;
+    }
+
+    /**
+     * Sets the secret for the configured GitHub OAuth app.
+     *
+     * @param clientSecret
+     *            the matching secret; leave both options unset to use the Copilot
+     *            CLI app
+     * @return this options instance
+     */
+    public ClientGitHubOptions setClientSecret(String clientSecret) {
+        this.clientSecret = clientSecret;
+        return this;
+    }
 
     /**
      * Gets the GitHub token for authentication.
@@ -117,6 +160,8 @@ public class ClientGitHubOptions {
     @Override
     public ClientGitHubOptions clone() {
         ClientGitHubOptions copy = new ClientGitHubOptions();
+        copy.clientId = this.clientId;
+        copy.clientSecret = this.clientSecret;
         copy.token = this.token;
         copy.onTelemetry = this.onTelemetry;
         copy.useLoggedInUser = this.useLoggedInUser;

@@ -557,6 +557,7 @@ func (s *Session) createSendRequest(ctx context.Context, options MessageOptions)
 		Source:         options.Source,
 		DisplayPrompt:  options.DisplayPrompt,
 		ClientTurnID:   options.ClientTurnID,
+		MaxToolTurns:   options.MaxToolTurns,
 		Attachments:    options.Attachments,
 		Mode:           options.Mode,
 		AgentMode:      options.AgentMode,
@@ -3186,6 +3187,10 @@ func toolDefinitionsForWire(tools []Tool) []sdkToolDefinition {
 		if tool.Defer != "" {
 			deferPolicy := rpc.ProtocolExternalToolDefer(tool.Defer)
 			definition.Defer = &deferPolicy
+		}
+		if tool.Exposure != "" {
+			exposure := rpc.ProtocolExternalToolExposure(tool.Exposure)
+			definition.Exposure = &exposure
 		}
 		if tool.Namespace != nil {
 			namespace := rpc.ProtocolExternalToolNamespace{Name: tool.Namespace.Name}

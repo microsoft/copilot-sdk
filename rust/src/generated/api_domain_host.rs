@@ -4111,6 +4111,38 @@ crate::record_serde::wire_record!(RemoteSessionConnectionResult {
     session_id: "sessionId"
 });
 
+/// Waits for the attached cloud task to publish session.start. Does not create a task or shut down the retained session.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub(crate) struct RemoteWaitForStartRequest {
+    /// Maximum wait in milliseconds; omission uses the cloud startup default.
+    pub timeout_ms: Option<i64>,
+}
+crate::record_serde::wire_record!(RemoteWaitForStartRequest { timeout_ms: "timeoutMs" if is_none });
+
+/// Reports cloud host readiness and the existing startup error when the host did not start. The caller retains cleanup ownership.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub(crate) struct RemoteWaitForStartResult {
+    /// Startup error when started is false; absent on success.
+    pub error_message: Option<String>,
+    /// True only after the attached cloud task publishes session.start.
+    pub started: bool,
+}
+crate::record_serde::wire_record!(RemoteWaitForStartResult { error_message: "errorMessage" if is_none, started: "started" });
+
 /// Agents discovered across user, project, plugin, and remote sources.
 ///
 /// <div class="warning">

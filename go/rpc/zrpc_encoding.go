@@ -3857,6 +3857,14 @@ func (r ConnectorConnectResultPending) MarshalJSON() ([]byte, error) {
 	})
 }
 
+func (r ConnectRequest) String() string {
+	return fmt.Sprintf("ConnectRequest{ClientInfo:%+v, EnableGitHubTelemetryForwarding:%+v, Entra:%+v, EntraTokenProvider:%+v, GitHubClientID:%+v, GitHubClientSecret:<redacted>, SupportedTaskKinds:%+v, Token:%+v}", r.ClientInfo, r.EnableGitHubTelemetryForwarding, r.Entra, r.EntraTokenProvider, r.GitHubClientID, r.SupportedTaskKinds, r.Token)
+}
+
+func (r ConnectRequest) GoString() string {
+	return fmt.Sprintf("ConnectRequest{ClientInfo:%#v, EnableGitHubTelemetryForwarding:%#v, Entra:%#v, EntraTokenProvider:%#v, GitHubClientID:%#v, GitHubClientSecret:<redacted>, SupportedTaskKinds:%#v, Token:%#v}", r.ClientInfo, r.EnableGitHubTelemetryForwarding, r.Entra, r.EntraTokenProvider, r.GitHubClientID, r.SupportedTaskKinds, r.Token)
+}
+
 func (r *ContentExclusionValidatePoliciesResult) UnmarshalJSON(data []byte) error {
 	type wire ContentExclusionValidatePoliciesResult
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -10222,14 +10230,14 @@ func unmarshalUserToolSessionApproval(data []byte) (UserToolSessionApproval, err
 			return nil, err
 		}
 		return &d, nil
-	case UserToolSessionApprovalKindExtensionManagement:
-		var d UserToolSessionApprovalExtensionManagement
+	case UserToolSessionApprovalKindExtensionLaunch:
+		var d UserToolSessionApprovalExtensionLaunch
 		if err := json.Unmarshal(data, &d); err != nil {
 			return nil, err
 		}
 		return &d, nil
-	case UserToolSessionApprovalKindExtensionPermissionAccess:
-		var d UserToolSessionApprovalExtensionPermissionAccess
+	case UserToolSessionApprovalKindExtensionManagement:
+		var d UserToolSessionApprovalExtensionManagement
 		if err := json.Unmarshal(data, &d); err != nil {
 			return nil, err
 		}
@@ -10313,8 +10321,8 @@ func (r UserToolSessionApprovalExtensionEnvAccess) MarshalJSON() ([]byte, error)
 	})
 }
 
-func (r UserToolSessionApprovalExtensionManagement) MarshalJSON() ([]byte, error) {
-	type alias UserToolSessionApprovalExtensionManagement
+func (r UserToolSessionApprovalExtensionLaunch) MarshalJSON() ([]byte, error) {
+	type alias UserToolSessionApprovalExtensionLaunch
 	return json.Marshal(struct {
 		Kind UserToolSessionApprovalKind `json:"kind"`
 		alias
@@ -10324,8 +10332,8 @@ func (r UserToolSessionApprovalExtensionManagement) MarshalJSON() ([]byte, error
 	})
 }
 
-func (r UserToolSessionApprovalExtensionPermissionAccess) MarshalJSON() ([]byte, error) {
-	type alias UserToolSessionApprovalExtensionPermissionAccess
+func (r UserToolSessionApprovalExtensionManagement) MarshalJSON() ([]byte, error) {
+	type alias UserToolSessionApprovalExtensionManagement
 	return json.Marshal(struct {
 		Kind UserToolSessionApprovalKind `json:"kind"`
 		alias
@@ -10481,14 +10489,14 @@ func unmarshalPermissionDecisionApproveForLocationApproval(data []byte) (Permiss
 			return nil, err
 		}
 		return &d, nil
-	case PermissionDecisionApproveForLocationApprovalKindExtensionManagement:
-		var d PermissionDecisionApproveForLocationApprovalExtensionManagement
+	case PermissionDecisionApproveForLocationApprovalKindExtensionLaunch:
+		var d PermissionDecisionApproveForLocationApprovalExtensionLaunch
 		if err := json.Unmarshal(data, &d); err != nil {
 			return nil, err
 		}
 		return &d, nil
-	case PermissionDecisionApproveForLocationApprovalKindExtensionPermissionAccess:
-		var d PermissionDecisionApproveForLocationApprovalExtensionPermissionAccess
+	case PermissionDecisionApproveForLocationApprovalKindExtensionManagement:
+		var d PermissionDecisionApproveForLocationApprovalExtensionManagement
 		if err := json.Unmarshal(data, &d); err != nil {
 			return nil, err
 		}
@@ -10578,8 +10586,8 @@ func (r PermissionDecisionApproveForLocationApprovalExtensionEnvAccess) MarshalJ
 	})
 }
 
-func (r PermissionDecisionApproveForLocationApprovalExtensionManagement) MarshalJSON() ([]byte, error) {
-	type alias PermissionDecisionApproveForLocationApprovalExtensionManagement
+func (r PermissionDecisionApproveForLocationApprovalExtensionLaunch) MarshalJSON() ([]byte, error) {
+	type alias PermissionDecisionApproveForLocationApprovalExtensionLaunch
 	return json.Marshal(struct {
 		Kind PermissionDecisionApproveForLocationApprovalKind `json:"kind"`
 		alias
@@ -10589,8 +10597,8 @@ func (r PermissionDecisionApproveForLocationApprovalExtensionManagement) Marshal
 	})
 }
 
-func (r PermissionDecisionApproveForLocationApprovalExtensionPermissionAccess) MarshalJSON() ([]byte, error) {
-	type alias PermissionDecisionApproveForLocationApprovalExtensionPermissionAccess
+func (r PermissionDecisionApproveForLocationApprovalExtensionManagement) MarshalJSON() ([]byte, error) {
+	type alias PermissionDecisionApproveForLocationApprovalExtensionManagement
 	return json.Marshal(struct {
 		Kind PermissionDecisionApproveForLocationApprovalKind `json:"kind"`
 		alias
@@ -10728,14 +10736,14 @@ func unmarshalPermissionDecisionApproveForSessionApproval(data []byte) (Permissi
 			return nil, err
 		}
 		return &d, nil
-	case PermissionDecisionApproveForSessionApprovalKindExtensionManagement:
-		var d PermissionDecisionApproveForSessionApprovalExtensionManagement
+	case PermissionDecisionApproveForSessionApprovalKindExtensionLaunch:
+		var d PermissionDecisionApproveForSessionApprovalExtensionLaunch
 		if err := json.Unmarshal(data, &d); err != nil {
 			return nil, err
 		}
 		return &d, nil
-	case PermissionDecisionApproveForSessionApprovalKindExtensionPermissionAccess:
-		var d PermissionDecisionApproveForSessionApprovalExtensionPermissionAccess
+	case PermissionDecisionApproveForSessionApprovalKindExtensionManagement:
+		var d PermissionDecisionApproveForSessionApprovalExtensionManagement
 		if err := json.Unmarshal(data, &d); err != nil {
 			return nil, err
 		}
@@ -10825,8 +10833,8 @@ func (r PermissionDecisionApproveForSessionApprovalExtensionEnvAccess) MarshalJS
 	})
 }
 
-func (r PermissionDecisionApproveForSessionApprovalExtensionManagement) MarshalJSON() ([]byte, error) {
-	type alias PermissionDecisionApproveForSessionApprovalExtensionManagement
+func (r PermissionDecisionApproveForSessionApprovalExtensionLaunch) MarshalJSON() ([]byte, error) {
+	type alias PermissionDecisionApproveForSessionApprovalExtensionLaunch
 	return json.Marshal(struct {
 		Kind PermissionDecisionApproveForSessionApprovalKind `json:"kind"`
 		alias
@@ -10836,8 +10844,8 @@ func (r PermissionDecisionApproveForSessionApprovalExtensionManagement) MarshalJ
 	})
 }
 
-func (r PermissionDecisionApproveForSessionApprovalExtensionPermissionAccess) MarshalJSON() ([]byte, error) {
-	type alias PermissionDecisionApproveForSessionApprovalExtensionPermissionAccess
+func (r PermissionDecisionApproveForSessionApprovalExtensionManagement) MarshalJSON() ([]byte, error) {
+	type alias PermissionDecisionApproveForSessionApprovalExtensionManagement
 	return json.Marshal(struct {
 		Kind PermissionDecisionApproveForSessionApprovalKind `json:"kind"`
 		alias
@@ -11120,14 +11128,14 @@ func unmarshalPermissionsLocationsAddToolApprovalDetails(data []byte) (Permissio
 			return nil, err
 		}
 		return &d, nil
-	case PermissionsLocationsAddToolApprovalDetailsKindExtensionManagement:
-		var d PermissionsLocationsAddToolApprovalDetailsExtensionManagement
+	case PermissionsLocationsAddToolApprovalDetailsKindExtensionLaunch:
+		var d PermissionsLocationsAddToolApprovalDetailsExtensionLaunch
 		if err := json.Unmarshal(data, &d); err != nil {
 			return nil, err
 		}
 		return &d, nil
-	case PermissionsLocationsAddToolApprovalDetailsKindExtensionPermissionAccess:
-		var d PermissionsLocationsAddToolApprovalDetailsExtensionPermissionAccess
+	case PermissionsLocationsAddToolApprovalDetailsKindExtensionManagement:
+		var d PermissionsLocationsAddToolApprovalDetailsExtensionManagement
 		if err := json.Unmarshal(data, &d); err != nil {
 			return nil, err
 		}
@@ -11217,8 +11225,8 @@ func (r PermissionsLocationsAddToolApprovalDetailsExtensionEnvAccess) MarshalJSO
 	})
 }
 
-func (r PermissionsLocationsAddToolApprovalDetailsExtensionManagement) MarshalJSON() ([]byte, error) {
-	type alias PermissionsLocationsAddToolApprovalDetailsExtensionManagement
+func (r PermissionsLocationsAddToolApprovalDetailsExtensionLaunch) MarshalJSON() ([]byte, error) {
+	type alias PermissionsLocationsAddToolApprovalDetailsExtensionLaunch
 	return json.Marshal(struct {
 		Kind PermissionsLocationsAddToolApprovalDetailsKind `json:"kind"`
 		alias
@@ -11228,8 +11236,8 @@ func (r PermissionsLocationsAddToolApprovalDetailsExtensionManagement) MarshalJS
 	})
 }
 
-func (r PermissionsLocationsAddToolApprovalDetailsExtensionPermissionAccess) MarshalJSON() ([]byte, error) {
-	type alias PermissionsLocationsAddToolApprovalDetailsExtensionPermissionAccess
+func (r PermissionsLocationsAddToolApprovalDetailsExtensionManagement) MarshalJSON() ([]byte, error) {
+	type alias PermissionsLocationsAddToolApprovalDetailsExtensionManagement
 	return json.Marshal(struct {
 		Kind PermissionsLocationsAddToolApprovalDetailsKind `json:"kind"`
 		alias
@@ -13155,6 +13163,7 @@ func (r *SendRequest) UnmarshalJSON(data []byte) error {
 		Billable        *bool             `json:"billable,omitempty"`
 		ClientTurnID    *string           `json:"clientTurnId,omitempty"`
 		DisplayPrompt   *string           `json:"displayPrompt,omitempty"`
+		MaxToolTurns    *int64            `json:"maxToolTurns,omitempty"`
 		Mode            *SendMode         `json:"mode,omitempty"`
 		Prepend         *bool             `json:"prepend,omitempty"`
 		Prompt          string            `json:"prompt"`
@@ -13186,6 +13195,7 @@ func (r *SendRequest) UnmarshalJSON(data []byte) error {
 	r.Billable = raw.Billable
 	r.ClientTurnID = raw.ClientTurnID
 	r.DisplayPrompt = raw.DisplayPrompt
+	r.MaxToolTurns = raw.MaxToolTurns
 	r.Mode = raw.Mode
 	r.Prepend = raw.Prepend
 	r.Prompt = raw.Prompt

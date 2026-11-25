@@ -801,16 +801,17 @@ async def test_set_tools_sends_complete_wire_payload_and_installs_handlers_on_su
     await session.set_tools(
         [
             Tool(
-                name="new_tool",
-                description="",
-                parameters={"type": "object"},
-                handler=handled,
-                overrides_built_in_tool=True,
-                skip_permission=True,
-                defer="never",
-                metadata={"owner": "test"},
+                "new_tool",
+                "",
+                handled,
+                {"type": "object"},
+                True,
+                True,
+                "never",
+                {"owner": "test"},
                 is_terminal=True,
                 namespace=ToolNamespace(name="word", description="Edit Word documents"),
+                exposure="explicit",
             ),
             Tool(name="declaration_only", description=None),  # type: ignore[arg-type]
         ]
@@ -825,6 +826,7 @@ async def test_set_tools_sends_complete_wire_payload_and_installs_handlers_on_su
                     "description": "",
                     "name": "new_tool",
                     "defer": "never",
+                    "exposure": "explicit",
                     "isTerminal": True,
                     "metadata": {"owner": "test"},
                     "namespace": {"name": "word", "description": "Edit Word documents"},

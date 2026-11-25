@@ -200,6 +200,7 @@ async fn custom_streams_route_entra_callbacks_without_a_session() {
                 Ok(EntraTokenProviderResult::Identity {
                     account_id: "host-account".to_owned(),
                     username: None,
+                    tenant_id: "resource-tenant".to_owned(),
                 })
             },
         ),
@@ -231,7 +232,11 @@ async fn custom_streams_route_entra_callbacks_without_a_session() {
     assert!(response.error.is_none());
     assert_eq!(
         response.result.unwrap(),
-        serde_json::json!({"kind": "identity", "accountId": "host-account"}),
+        serde_json::json!({
+            "kind": "identity",
+            "accountId": "host-account",
+            "tenantId": "resource-tenant",
+        }),
     );
 }
 
@@ -330,43 +335,48 @@ async fn entra_router_observes_an_inference_dispatcher_installed_later() {
 mod cafe_metrics;
 
 #[tokio::test]
-async fn connect_forwards_optional_entra_configuration() {
-    for entra in [
-        None,
-        Some(EntraAuthConfig {
-            client_id: "host-entra-client".into(),
-            mats_app_name: None,
-            one_auth_application_id: None,
-        }),
-        Some(EntraAuthConfig {
-            client_id: "host-entra-client".into(),
-            mats_app_name: Some("Host App".into()),
-            one_auth_application_id: Some("host-native-descriptor".into()),
-        }),
+async fn custom_streams_forward_optional_oauth_configuration() {
+    for (entra, github) in [
+        (None, None),
+        (
+            Some(EntraAuthConfig {
+                client_id: "host-entra-client".into(),
+                mats_app_name: None,
+                one_auth_application_id: None,
+            }),
+            Some(("fixture-app", "fixture-oauth-secret")),
+        ),
+        (
+            Some(EntraAuthConfig {
+                client_id: "host-entra-client".into(),
+                mats_app_name: Some("Host App".into()),
+                one_auth_application_id: Some("host-native-descriptor".into()),
+            }),
+            None,
+        ),
     ] {
         let temp = tempfile::tempdir().unwrap();
         let (client_stream, server_stream) = tokio::io::duplex(8192);
         let (client_read, client_write) = tokio::io::split(client_stream);
         let (server_read, server_write) = tokio::io::split(server_stream);
-        let client = Client::from_transport(
-            client_read,
-            jsonrpc::MessageWriter::stream(client_write),
-            None,
-            temp.path().to_owned(),
-            None,
-            None,
-            false,
-            false,
-            false,
-            false,
-            None,
-            None,
-            None,
-            ClientMode::CodingAgent,
-            None,
-            entra.clone().map(Into::into),
-            false,
-        )
+        let entra_options = entra.clone().map(Into::into);
+        let client = match github {
+            Some((id, secret)) => Client::from_streams_with_auth_options(
+                ClientMode::CodingAgent,
+                client_read,
+                client_write,
+                temp.path().to_owned(),
+                entra_options,
+                &ClientGitHubOptions::default().with_oauth_app(id, secret),
+            ),
+            None => Client::from_streams_with_entra_options(
+                ClientMode::CodingAgent,
+                client_read,
+                client_write,
+                temp.path().to_owned(),
+                entra_options,
+            ),
+        }
         .unwrap();
         let (notifications, _) = mpsc::unbounded_channel();
         let (requests, _) = tokio::sync::mpsc::unbounded_channel();
@@ -392,6 +402,14 @@ async fn connect_forwards_optional_entra_configuration() {
         server.force_close();
         result.unwrap().unwrap();
         let params = received.try_recv().unwrap();
+        assert_eq!(
+            params.get("githubClientId"),
+            github.map(|(id, _)| id.into()).as_ref()
+        );
+        assert_eq!(
+            params.get("githubClientSecret"),
+            github.map(|(_, secret)| secret.into()).as_ref()
+        );
         assert_eq!(
             params.get("entra"),
             entra
@@ -2018,6 +2036,7 @@ fn client_with_list_models_handler(handler: Arc<dyn ListModelsHandler>) -> Clien
             mode: ClientMode::CodingAgent,
             client_info: None,
             entra: None,
+            github_oauth: OnceLock::new(),
             startup_timings: OnceLock::new(),
         }),
     }

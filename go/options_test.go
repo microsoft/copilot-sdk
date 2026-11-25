@@ -2,6 +2,7 @@ package copilot
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -9,6 +10,52 @@ import (
 	"github.com/microsoft/copilot-sdk/go/v2/internal/jsonrpc2"
 	"github.com/microsoft/copilot-sdk/go/v2/rpc"
 )
+
+func TestClientGitHubOptionsRedactCredentials(t *testing.T) {
+	options := ClientGitHubOptions{ClientID: "fixture-app", ClientSecret: "fixture-secret", Token: "fixture-token"}
+	for _, verb := range []string{"%+v", "%#v"} {
+		formatted := fmt.Sprintf(verb, ClientOptions{GitHub: options})
+		if strings.Contains(formatted, options.ClientSecret) || strings.Contains(formatted, options.Token) {
+			t.Errorf("%s exposed credentials in GitHub options", verb)
+		}
+		if !strings.Contains(formatted, options.ClientID) {
+			t.Errorf("%s omitted the public client ID", verb)
+		}
+	}
+}
+
+func TestClientFormattingRedactsGitHubOAuthSecret(t *testing.T) {
+	options := ClientGitHubOptions{ClientID: "fixture-app", ClientSecret: "fixture-application-secret"}
+	client := NewClient(&ClientOptions{Mode: ModeCodingAgent, GitHub: options})
+	for _, verb := range []string{"%+v", "%#v"} {
+		formatted := fmt.Sprintf(verb, client)
+		if strings.Contains(formatted, options.ClientSecret) {
+			t.Errorf("%s exposed the OAuth secret in the client", verb)
+		}
+		if !strings.Contains(formatted, options.ClientID) {
+			t.Errorf("%s omitted the public client ID", verb)
+		}
+	}
+
+	transport, server, _ := newRuntimeShutdownRpcPair(t)
+	defer server.Stop()
+	client.client = transport
+	received := make(chan json.RawMessage, 1)
+	server.SetRequestHandler("connect", func(params json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
+		received <- params
+		return json.RawMessage(`{"ok":true,"protocolVersion":4,"version":"test"}`), nil
+	})
+	if err := client.verifyProtocolVersion(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	var params map[string]any
+	if err := json.Unmarshal(<-received, &params); err != nil {
+		t.Fatal(err)
+	}
+	if params["githubClientId"] != options.ClientID || params["githubClientSecret"] != options.ClientSecret {
+		t.Error("connect did not send the configured OAuth pair")
+	}
+}
 
 func TestGroupedSessionOptionsWireOwnership(t *testing.T) {
 	client, requests, cleanup := newInMemoryClient(t)

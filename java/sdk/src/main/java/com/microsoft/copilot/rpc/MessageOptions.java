@@ -50,6 +50,29 @@ public class MessageOptions {
     private Map<String, String> requestHeaders;
     private String displayPrompt;
     private String clientTurnId;
+    private Long maxToolTurns;
+
+    /**
+     * Gets the override for the logical model-turn limit on this request.
+     *
+     * @return the limit, or {@code null} to use the session default
+     */
+    public Long getMaxToolTurns() {
+        return maxToolTurns;
+    }
+
+    /**
+     * Overrides the default logical model-turn limit for this request. Not
+     * supported for immediate steering.
+     *
+     * @param maxToolTurns
+     *            the limit
+     * @return this instance for method chaining
+     */
+    public MessageOptions setMaxToolTurns(Long maxToolTurns) {
+        this.maxToolTurns = maxToolTurns;
+        return this;
+    }
     private Map<String, Object> responseSchema;
 
     /**
@@ -306,6 +329,7 @@ public class MessageOptions {
         copy.requestHeaders = this.requestHeaders != null ? new HashMap<>(this.requestHeaders) : null;
         copy.displayPrompt = this.displayPrompt;
         copy.clientTurnId = this.clientTurnId;
+        copy.maxToolTurns = this.maxToolTurns;
         copy.responseSchema = this.responseSchema == null ? null : new HashMap<>(this.responseSchema);
         return copy;
     }

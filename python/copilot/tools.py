@@ -33,6 +33,7 @@ from ._generated.rpc import (
 )
 
 ToolResultType = Literal["success", "failure", "rejected", "denied", "timeout"]
+ToolExposure = Literal["automatic", "explicit"]
 
 
 @dataclass
@@ -171,6 +172,11 @@ class Tool:
     #: whose outcome was lost can be safely repeated. It does not affect
     #: permission checks.
     idempotent: bool = False
+    #: Controls which agents automatically receive this tool. ``None`` or
+    #: ``"automatic"`` preserves the default behavior. ``"explicit"`` makes
+    #: the tool available only to custom agents whose ``tools`` list explicitly
+    #: names it. This controls model visibility, not execution permission.
+    exposure: ToolExposure | None = None
 
 
 T = TypeVar("T", bound=BaseModel)
@@ -185,6 +191,7 @@ def define_tool(
     overrides_built_in_tool: bool = False,
     skip_permission: bool = False,
     defer: Literal["auto", "never"] | None = None,
+    exposure: ToolExposure | None = None,
     metadata: dict[str, Any] | None = None,
     is_terminal: bool = False,
     namespace: ToolNamespace | None = None,
@@ -203,6 +210,7 @@ def define_tool(
     overrides_built_in_tool: bool = False,
     skip_permission: bool = False,
     defer: Literal["auto", "never"] | None = None,
+    exposure: ToolExposure | None = None,
     metadata: dict[str, Any] | None = None,
     is_terminal: bool = False,
     namespace: ToolNamespace | None = None,
@@ -221,6 +229,7 @@ def define_tool(
     overrides_built_in_tool: bool = False,
     skip_permission: bool = False,
     defer: Literal["auto", "never"] | None = None,
+    exposure: ToolExposure | None = None,
     metadata: dict[str, Any] | None = None,
     is_terminal: bool = False,
     namespace: ToolNamespace | None = None,
@@ -238,6 +247,7 @@ def define_tool(
     overrides_built_in_tool: bool = False,
     skip_permission: bool = False,
     defer: Literal["auto", "never"] | None = None,
+    exposure: ToolExposure | None = None,
     metadata: dict[str, Any] | None = None,
     is_terminal: bool = False,
     namespace: ToolNamespace | None = None,
@@ -401,6 +411,7 @@ def define_tool(
             overrides_built_in_tool=overrides_built_in_tool,
             skip_permission=skip_permission,
             defer=defer,
+            exposure=exposure,
             metadata=metadata,
             is_terminal=is_terminal,
             namespace=namespace,
@@ -424,6 +435,7 @@ def define_tool(
             overrides_built_in_tool=overrides_built_in_tool,
             skip_permission=skip_permission,
             defer=defer,
+            exposure=exposure,
             metadata=metadata,
             is_terminal=is_terminal,
             namespace=namespace,

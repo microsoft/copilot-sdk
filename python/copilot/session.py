@@ -67,6 +67,7 @@ from ._generated.rpc import (
     PermissionDecisionUserNotAvailable,
     PermissionsSetModeResult,
     ProtocolExternalToolDefinition,
+    ProtocolExternalToolExposure,
     ProviderTokenAcquireRequest,
     ProviderTokenAcquireResult,
     SessionLogLevel,
@@ -207,6 +208,7 @@ def _fusion_tier_to_rpc(fusion_tier: FusionTier | _RpcFusionTier) -> _RpcFusionT
 
 def _tool_to_wire_definition(tool: Tool) -> ProtocolExternalToolDefinition:
     defer = MCPServerConfigDeferTools(tool.defer) if tool.defer is not None else None
+    exposure = ProtocolExternalToolExposure(tool.exposure) if tool.exposure is not None else None
     return ProtocolExternalToolDefinition(
         name=tool.name,
         description=tool.description or "",
@@ -215,6 +217,7 @@ def _tool_to_wire_definition(tool: Tool) -> ProtocolExternalToolDefinition:
         skip_permission=True if tool.skip_permission else None,
         has_handler=tool.handler is not None,
         defer=defer,
+        exposure=exposure,
         metadata=tool.metadata,
         is_terminal=True if tool.is_terminal else None,
         namespace=tool.namespace,
@@ -1694,6 +1697,8 @@ class GitHubMcpToolConfig(TypedDict, total=False):
 
 
 class CustomAgentConfig(TypedDict, total=False):
+    max_tool_turns: int
+    """Maximum logical model turns per request as a local subagent, overriding inheritance."""
     """Configuration for a custom agent."""
 
     hooks: NotRequired[dict[str, list[dict[str, Any]]]]
@@ -2371,6 +2376,7 @@ class CopilotSession:
         display_prompt: str | None = None,
         client_turn_id: str | None = None,
         response_schema: dict[str, Any] | type[BaseModel] | None = None,
+        max_tool_turns: int | None = None,
     ) -> str:
         """
         Send a message to this session.
@@ -2407,6 +2413,8 @@ class CopilotSession:
                 on resume.
             response_schema: JSON Schema or a Pydantic model for this run. Independent
                 sends do not inherit it. Immediate steering cannot specify a schema.
+            max_tool_turns: Override the session's logical model-turn limit for
+                this request. Zero prevents inference; immediate steering cannot override the limit.
 
         Returns:
             The message ID assigned by the server, which can be used to correlate events.
@@ -2431,6 +2439,7 @@ class CopilotSession:
                 display_prompt,
                 client_turn_id,
                 response_schema,
+                max_tool_turns,
             )
         )
 
@@ -2445,8 +2454,11 @@ class CopilotSession:
         display_prompt: str | None,
         client_turn_id: str | None,
         response_schema: dict[str, Any] | type[BaseModel] | None,
+        max_tool_turns: int | None,
     ) -> dict[str, Any]:
         params: dict[str, Any] = {"prompt": prompt}
+        if max_tool_turns is not None:
+            params["maxToolTurns"] = max_tool_turns
         if attachments is not None:
             params["attachments"] = attachments
         if source is not None:
@@ -2564,6 +2576,7 @@ class CopilotSession:
         display_prompt: str | None = None,
         client_turn_id: str | None = None,
         response_schema: dict[str, Any] | type[BaseModel] | None = None,
+        max_tool_turns: int | None = None,
         timeout: float = 60.0,
     ) -> SessionEvent | None:
         """
@@ -2608,6 +2621,8 @@ class CopilotSession:
                 does not abort in-flight agent work.
             response_schema: A per-run schema. Waits for the last correlated root
                 assistant message without tool requests at non-autopilot idle.
+            max_tool_turns: Override the session's logical model-turn limit for
+                this request. Zero prevents inference; immediate steering cannot override the limit.
 
         Returns:
             The final assistant message event, or None if none was received.
@@ -2637,6 +2652,7 @@ class CopilotSession:
                     display_prompt,
                     client_turn_id,
                     response_schema,
+                    max_tool_turns,
                 )
                 if asyncio.get_running_loop().time() >= deadline:
                     raise TimeoutError
@@ -2904,6 +2920,7 @@ class CopilotSession:
         request_headers: dict[str, str] | None = None,
         display_prompt: str | None = None,
         client_turn_id: str | None = None,
+        max_tool_turns: int | None = None,
         timeout: float = 60.0,
     ) -> TResponse:
         """Infer a schema using Pydantic, then validate and return the final result.
@@ -2932,6 +2949,7 @@ class CopilotSession:
             display_prompt=display_prompt,
             client_turn_id=client_turn_id,
             response_schema=response_type,
+            max_tool_turns=max_tool_turns,
             timeout=timeout,
         )
         assert response is not None and isinstance(response.data, AssistantMessageData)

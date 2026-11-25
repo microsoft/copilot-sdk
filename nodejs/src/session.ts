@@ -16,7 +16,7 @@ import {
     ResponseError,
 } from "vscode-jsonrpc/node";
 import { createInternalSessionRpc, createSessionRpc } from "./generated/rpc.js";
-import { assertStrictJson } from "./jsonValue.js";
+import { assertStrictJson, validateMaxToolTurns } from "./jsonValue.js";
 import type {
     ClientSessionApiHandlers,
     CanvasActionInvokeResult,
@@ -165,6 +165,7 @@ function toToolDefinition(tool: Tool): ProtocolExternalToolDefinition {
         skipPermission: tool.skipPermission,
         hasHandler: !!tool.handler,
         defer: tool.defer,
+        exposure: tool.exposure,
         metadata: tool.metadata as ProtocolExternalToolDefinition["metadata"],
         isTerminal: tool.isTerminal,
         idempotent: tool.idempotent,
@@ -1053,6 +1054,7 @@ export class CopilotSession {
             source: options.source,
             displayPrompt: options.displayPrompt,
             clientTurnId: options.clientTurnId,
+            maxToolTurns: validateMaxToolTurns(options.maxToolTurns),
             attachments: options.attachments,
             mode: options.mode,
             agentMode: options.agentMode,

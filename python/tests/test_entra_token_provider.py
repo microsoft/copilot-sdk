@@ -41,6 +41,7 @@ async def test_typed_identity_and_resource_acquisition_does_not_serialize_callba
                 kind=EntraTokenAcquireResultKind.IDENTITY,
                 account_id="host-account",
                 username="display-name",
+                tenant_id="resource-tenant",
             )
         return EntraTokenProviderResult(
             kind=EntraTokenAcquireResultKind.TOKEN,
@@ -64,6 +65,7 @@ async def test_typed_identity_and_resource_acquisition_does_not_serialize_callba
         assert await harness.peer.request(1, "entraToken.getToken", _request()) == {
             "kind": "identity",
             "accountId": "host-account",
+            "tenantId": "resource-tenant",
             "username": "display-name",
         }
         assert await harness.peer.request(2, "entraToken.getToken", _request("token")) == {
@@ -85,7 +87,9 @@ async def test_cancellation_rejects_late_success_and_preserves_other_requests():
         entered.set_result(context)
         await context.cancelled.wait()
         return EntraTokenProviderResult(
-            kind=EntraTokenAcquireResultKind.IDENTITY, account_id="late-account"
+            kind=EntraTokenAcquireResultKind.IDENTITY,
+            account_id="late-account",
+            tenant_id="resource-tenant",
         )
 
     harness = await _connect(entra=EntraAuthOptions("host-client", provider))

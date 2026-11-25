@@ -45,6 +45,11 @@ when the resuming SDK also registers a handler; it is never replayed. */
     @JsonProperty("hasHandler") Boolean hasHandler,
     /** Tool-loading deferral policy. */
     @JsonProperty("defer") ProtocolExternalToolDefer defer,
+    /** Controls how agents receive this tool. Omitted or `automatic` preserves
+normal tool selection. `explicit` makes the tool available only to custom
+agents whose `tools` list names it. This controls model-visible exposure,
+not permission to execute the tool. */
+    @JsonProperty("exposure") ProtocolExternalToolExposure exposure,
     /** Whether the tool executes commands in a terminal. */
     @JsonProperty("isTerminal") Boolean isTerminal,
     /** Whether repeating a call with the same arguments has no additional effect
@@ -69,6 +74,25 @@ tool's `name` remains its unique invocation name either way. */
     public ProtocolExternalToolDefinition {}
 
     /**
+     * Creates a record without optional runtime metadata.
+     * @param name the {@code name} property
+     * @param description the {@code description} property
+     * @param title the {@code title} property
+     * @param parameters the {@code parameters} property
+     * @param overridesBuiltInTool the {@code overridesBuiltInTool} property
+     * @param skipPermission the {@code skipPermission} property
+     * @param hasHandler the {@code hasHandler} property
+     * @param defer the {@code defer} property
+     * @param isTerminal the {@code isTerminal} property
+     * @param idempotent the {@code idempotent} property
+     * @param metadata the {@code metadata} property
+     * @param namespace the {@code namespace} property
+     */
+    public ProtocolExternalToolDefinition(String name, String description, String title, Map<String, Object> parameters, Boolean overridesBuiltInTool, Boolean skipPermission, Boolean hasHandler, ProtocolExternalToolDefer defer, Boolean isTerminal, Boolean idempotent, Map<String, Object> metadata, ProtocolExternalToolNamespace namespace) {
+        this(name, description, title, parameters, overridesBuiltInTool, skipPermission, hasHandler, defer, null, isTerminal, idempotent, metadata, namespace);
+    }
+
+    /**
      * Returns a named builder.
      * @return a new builder
      * @since 2.0.0
@@ -91,6 +115,7 @@ tool's `name` remains its unique invocation name either way. */
         private Boolean skipPermission;
         private Boolean hasHandler;
         private ProtocolExternalToolDefer defer;
+        private ProtocolExternalToolExposure exposure;
         private Boolean isTerminal;
         private Boolean idempotent;
         private Map<String, Object> metadata;
@@ -193,6 +218,18 @@ tool's `name` remains its unique invocation name either way. */
         }
 
         /**
+         * Sets the {@code exposure} property.
+         * @param value the property value
+         * @return this builder
+         * @since 2.0.0
+         */
+        @com.microsoft.copilot.CopilotExperimental
+        public Builder exposure(ProtocolExternalToolExposure value) {
+            this.exposure = value;
+            return this;
+        }
+
+        /**
          * Sets the {@code isTerminal} property.
          * @param value the property value
          * @return this builder
@@ -249,7 +286,7 @@ tool's `name` remains its unique invocation name either way. */
         public ProtocolExternalToolDefinition build() {
             if (name == null) throw new IllegalStateException("Missing required property: name");
             if (description == null) throw new IllegalStateException("Missing required property: description");
-            return new ProtocolExternalToolDefinition(name, description, title, parameters, overridesBuiltInTool, skipPermission, hasHandler, defer, isTerminal, idempotent, metadata, namespace);
+            return new ProtocolExternalToolDefinition(name, description, title, parameters, overridesBuiltInTool, skipPermission, hasHandler, defer, exposure, isTerminal, idempotent, metadata, namespace);
         }
     }
 }

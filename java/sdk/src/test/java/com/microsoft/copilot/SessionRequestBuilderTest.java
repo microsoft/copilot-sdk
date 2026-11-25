@@ -40,6 +40,7 @@ import com.microsoft.copilot.generated.rpc.DiagnosticsConfiguration;
 import com.microsoft.copilot.generated.rpc.McpDiagnosticSourceConfiguration;
 import com.microsoft.copilot.generated.rpc.PermissionMode;
 import com.microsoft.copilot.generated.rpc.ProtocolExternalToolDefinition;
+import com.microsoft.copilot.generated.rpc.ProtocolExternalToolExposure;
 import com.microsoft.copilot.generated.rpc.SessionPermissionsSetModeResult;
 import com.microsoft.copilot.generated.rpc.SessionOpenOptions;
 import com.microsoft.copilot.generated.rpc.SandboxConfig;
@@ -69,6 +70,7 @@ import com.microsoft.copilot.rpc.ResumeSessionResponse;
 import com.microsoft.copilot.rpc.CreateSessionOptions;
 import com.microsoft.copilot.rpc.SessionHooks;
 import com.microsoft.copilot.rpc.ToolDefinition;
+import com.microsoft.copilot.rpc.ToolExposure;
 import com.microsoft.copilot.rpc.UserInputResponse;
 
 /**
@@ -89,6 +91,15 @@ public class SessionRequestBuilderTest {
         assertEquals(mapper.readTree(
                 "{\"name\":\"lookup\",\"description\":\"Description\",\"skipPermission\":true,\"isTerminal\":true,\"metadata\":{\"custom\":\"kept\"}}"),
                 mapper.readTree(mapper.writeValueAsBytes(definition)));
+    }
+
+    @Test
+    void toolDefinitionConversionPreservesExposure() {
+        var tool = ToolDefinition.create("lookup", "Description", Map.of(), null).exposure(ToolExposure.EXPLICIT);
+
+        var definition = SessionRequestBuilder.toProtocolExternalTools(List.of(tool)).get(0);
+
+        assertEquals(ProtocolExternalToolExposure.EXPLICIT, definition.exposure());
     }
 
     @Test

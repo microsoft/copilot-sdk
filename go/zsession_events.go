@@ -267,8 +267,8 @@ type (
 	PermissionPromptRequestCommands                                = rpc.PermissionPromptRequestCommands
 	PermissionPromptRequestCustomTool                              = rpc.PermissionPromptRequestCustomTool
 	PermissionPromptRequestExtensionEnvAccess                      = rpc.PermissionPromptRequestExtensionEnvAccess
+	PermissionPromptRequestExtensionLaunch                         = rpc.PermissionPromptRequestExtensionLaunch
 	PermissionPromptRequestExtensionManagement                     = rpc.PermissionPromptRequestExtensionManagement
-	PermissionPromptRequestExtensionPermissionAccess               = rpc.PermissionPromptRequestExtensionPermissionAccess
 	PermissionPromptRequestHook                                    = rpc.PermissionPromptRequestHook
 	PermissionPromptRequestKind                                    = rpc.PermissionPromptRequestKind
 	PermissionPromptRequestMCP                                     = rpc.PermissionPromptRequestMCP
@@ -294,8 +294,8 @@ type (
 	PermissionRequestCustomTool                                    = rpc.PermissionRequestCustomTool
 	PermissionRequestedData                                        = rpc.PermissionRequestedData
 	PermissionRequestExtensionEnvAccess                            = rpc.PermissionRequestExtensionEnvAccess
+	PermissionRequestExtensionLaunch                               = rpc.PermissionRequestExtensionLaunch
 	PermissionRequestExtensionManagement                           = rpc.PermissionRequestExtensionManagement
-	PermissionRequestExtensionPermissionAccess                     = rpc.PermissionRequestExtensionPermissionAccess
 	PermissionRequestHook                                          = rpc.PermissionRequestHook
 	PermissionRequestKind                                          = rpc.PermissionRequestKind
 	PermissionRequestMCP                                           = rpc.PermissionRequestMCP
@@ -556,8 +556,8 @@ type (
 	UserToolSessionApprovalCommands                                = rpc.UserToolSessionApprovalCommands
 	UserToolSessionApprovalCustomTool                              = rpc.UserToolSessionApprovalCustomTool
 	UserToolSessionApprovalExtensionEnvAccess                      = rpc.UserToolSessionApprovalExtensionEnvAccess
+	UserToolSessionApprovalExtensionLaunch                         = rpc.UserToolSessionApprovalExtensionLaunch
 	UserToolSessionApprovalExtensionManagement                     = rpc.UserToolSessionApprovalExtensionManagement
-	UserToolSessionApprovalExtensionPermissionAccess               = rpc.UserToolSessionApprovalExtensionPermissionAccess
 	UserToolSessionApprovalKind                                    = rpc.UserToolSessionApprovalKind
 	UserToolSessionApprovalMCP                                     = rpc.UserToolSessionApprovalMCP
 	UserToolSessionApprovalMemory                                  = rpc.UserToolSessionApprovalMemory
@@ -924,8 +924,8 @@ const (
 	PermissionPromptRequestKindCommands                                  = rpc.PermissionPromptRequestKindCommands
 	PermissionPromptRequestKindCustomTool                                = rpc.PermissionPromptRequestKindCustomTool
 	PermissionPromptRequestKindExtensionEnvAccess                        = rpc.PermissionPromptRequestKindExtensionEnvAccess
+	PermissionPromptRequestKindExtensionLaunch                           = rpc.PermissionPromptRequestKindExtensionLaunch
 	PermissionPromptRequestKindExtensionManagement                       = rpc.PermissionPromptRequestKindExtensionManagement
-	PermissionPromptRequestKindExtensionPermissionAccess                 = rpc.PermissionPromptRequestKindExtensionPermissionAccess
 	PermissionPromptRequestKindHook                                      = rpc.PermissionPromptRequestKindHook
 	PermissionPromptRequestKindMCP                                       = rpc.PermissionPromptRequestKindMCP
 	PermissionPromptRequestKindMemory                                    = rpc.PermissionPromptRequestKindMemory
@@ -969,8 +969,8 @@ const (
 	PermissionRecoveryStatusResolved                                     = rpc.PermissionRecoveryStatusResolved
 	PermissionRequestKindCustomTool                                      = rpc.PermissionRequestKindCustomTool
 	PermissionRequestKindExtensionEnvAccess                              = rpc.PermissionRequestKindExtensionEnvAccess
+	PermissionRequestKindExtensionLaunch                                 = rpc.PermissionRequestKindExtensionLaunch
 	PermissionRequestKindExtensionManagement                             = rpc.PermissionRequestKindExtensionManagement
-	PermissionRequestKindExtensionPermissionAccess                       = rpc.PermissionRequestKindExtensionPermissionAccess
 	PermissionRequestKindHook                                            = rpc.PermissionRequestKindHook
 	PermissionRequestKindMCP                                             = rpc.PermissionRequestKindMCP
 	PermissionRequestKindMemory                                          = rpc.PermissionRequestKindMemory
@@ -1316,8 +1316,8 @@ const (
 	UserToolSessionApprovalKindCommands                                  = rpc.UserToolSessionApprovalKindCommands
 	UserToolSessionApprovalKindCustomTool                                = rpc.UserToolSessionApprovalKindCustomTool
 	UserToolSessionApprovalKindExtensionEnvAccess                        = rpc.UserToolSessionApprovalKindExtensionEnvAccess
+	UserToolSessionApprovalKindExtensionLaunch                           = rpc.UserToolSessionApprovalKindExtensionLaunch
 	UserToolSessionApprovalKindExtensionManagement                       = rpc.UserToolSessionApprovalKindExtensionManagement
-	UserToolSessionApprovalKindExtensionPermissionAccess                 = rpc.UserToolSessionApprovalKindExtensionPermissionAccess
 	UserToolSessionApprovalKindMCP                                       = rpc.UserToolSessionApprovalKindMCP
 	UserToolSessionApprovalKindMemory                                    = rpc.UserToolSessionApprovalKindMemory
 	UserToolSessionApprovalKindRead                                      = rpc.UserToolSessionApprovalKindRead

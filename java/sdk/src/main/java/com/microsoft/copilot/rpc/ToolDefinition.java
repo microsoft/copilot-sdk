@@ -95,6 +95,12 @@ import com.microsoft.copilot.tool.Param;
  *            true of any tool without side effects; the runtime may use this to
  *            decide that a call whose outcome was lost can be safely repeated;
  *            it does not affect permission checks; {@code null} when unset
+ * @param exposure
+ *            controls which agents automatically receive this tool;
+ *            {@code null} or {@link ToolExposure#AUTOMATIC} preserves the
+ *            default behavior, while {@link ToolExposure#EXPLICIT} requires a
+ *            custom agent's tool list to explicitly name it; this controls
+ *            model visibility, not execution permission
  * @see SessionToolOptions#setDefinitions(java.util.List)
  * @see ToolHandler
  * @since 1.0.0
@@ -105,11 +111,22 @@ public record ToolDefinition(@JsonProperty("name") String name, @JsonProperty("d
         @JsonProperty("overridesBuiltInTool") Boolean overridesBuiltInTool,
         @JsonProperty("skipPermission") Boolean skipPermission, @JsonProperty("defer") ToolDefer defer,
         @JsonProperty("metadata") Map<String, Object> metadata, @JsonProperty("isTerminal") Boolean isTerminal,
-        @JsonProperty("namespace") ToolNamespace namespace, @JsonProperty("idempotent") Boolean idempotent) {
+        @JsonProperty("namespace") ToolNamespace namespace, @JsonProperty("idempotent") Boolean idempotent,
+        @JsonProperty("exposure") ToolExposure exposure) {
 
     @JsonProperty("hasHandler")
     private boolean hasHandler() {
         return handler != null;
+    }
+
+    /**
+     * Creates a tool definition without an exposure preference.
+     */
+    public ToolDefinition(String name, String description, Object parameters, ToolHandler handler,
+            Boolean overridesBuiltInTool, Boolean skipPermission, ToolDefer defer, Map<String, Object> metadata,
+            Boolean isTerminal, ToolNamespace namespace, Boolean idempotent) {
+        this(name, description, parameters, handler, overridesBuiltInTool, skipPermission, defer, metadata, isTerminal,
+                namespace, idempotent, null);
     }
 
     /**
@@ -431,7 +448,7 @@ public record ToolDefinition(@JsonProperty("name") String name, @JsonProperty("d
     @CopilotExperimental
     public ToolDefinition overridesBuiltInTool(boolean value) {
         return new ToolDefinition(name, description, parameters, handler, value, skipPermission, defer, metadata,
-                isTerminal, namespace, idempotent);
+                isTerminal, namespace, idempotent, exposure);
     }
 
     /**
@@ -446,7 +463,7 @@ public record ToolDefinition(@JsonProperty("name") String name, @JsonProperty("d
     @CopilotExperimental
     public ToolDefinition skipPermission(boolean value) {
         return new ToolDefinition(name, description, parameters, handler, overridesBuiltInTool, value, defer, metadata,
-                isTerminal, namespace, idempotent);
+                isTerminal, namespace, idempotent, exposure);
     }
 
     /**
@@ -461,7 +478,21 @@ public record ToolDefinition(@JsonProperty("name") String name, @JsonProperty("d
     @CopilotExperimental
     public ToolDefinition defer(ToolDefer value) {
         return new ToolDefinition(name, description, parameters, handler, overridesBuiltInTool, skipPermission, value,
-                metadata, isTerminal, namespace, idempotent);
+                metadata, isTerminal, namespace, idempotent, exposure);
+    }
+
+    /**
+     * Returns a copy with the {@code exposure} mode set.
+     *
+     * @param value
+     *            the exposure mode
+     * @return a new {@code ToolDefinition} with the exposure mode applied
+     * @since 1.0.15-preview.1
+     */
+    @CopilotExperimental
+    public ToolDefinition exposure(ToolExposure value) {
+        return new ToolDefinition(name, description, parameters, handler, overridesBuiltInTool, skipPermission, defer,
+                metadata, isTerminal, namespace, idempotent, value);
     }
 
     /**
@@ -476,7 +507,7 @@ public record ToolDefinition(@JsonProperty("name") String name, @JsonProperty("d
     @CopilotExperimental
     public ToolDefinition metadata(Map<String, Object> value) {
         return new ToolDefinition(name, description, parameters, handler, overridesBuiltInTool, skipPermission, defer,
-                value, isTerminal, namespace, idempotent);
+                value, isTerminal, namespace, idempotent, exposure);
     }
 
     /**
@@ -491,7 +522,7 @@ public record ToolDefinition(@JsonProperty("name") String name, @JsonProperty("d
     @CopilotExperimental
     public ToolDefinition isTerminal(boolean value) {
         return new ToolDefinition(name, description, parameters, handler, overridesBuiltInTool, skipPermission, defer,
-                metadata, value, namespace, idempotent);
+                metadata, value, namespace, idempotent, exposure);
     }
 
     /**
@@ -506,7 +537,7 @@ public record ToolDefinition(@JsonProperty("name") String name, @JsonProperty("d
     @CopilotExperimental
     public ToolDefinition namespace(ToolNamespace value) {
         return new ToolDefinition(name, description, parameters, handler, overridesBuiltInTool, skipPermission, defer,
-                metadata, isTerminal, value, idempotent);
+                metadata, isTerminal, value, idempotent, exposure);
     }
 
     /**
@@ -525,7 +556,7 @@ public record ToolDefinition(@JsonProperty("name") String name, @JsonProperty("d
     @CopilotExperimental
     public ToolDefinition idempotent(boolean value) {
         return new ToolDefinition(name, description, parameters, handler, overridesBuiltInTool, skipPermission, defer,
-                metadata, isTerminal, namespace, value);
+                metadata, isTerminal, namespace, value, exposure);
     }
 
     // ------------------------------------------------------------------

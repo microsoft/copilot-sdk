@@ -697,6 +697,7 @@ public final class CopilotSession implements AutoCloseable {
         request.setRequestHeaders(options.getRequestHeaders());
         request.setDisplayPrompt(options.getDisplayPrompt());
         request.setClientTurnId(options.getClientTurnId());
+        request.setMaxToolTurns(options.getMaxToolTurns());
         if (options.getResponseSchema() != null) {
             request.setResponseFormat(Map.of("type", "json_schema", "jsonSchema",
                     Map.of("name", "response", "strict", true, "schema", options.getResponseSchema())));

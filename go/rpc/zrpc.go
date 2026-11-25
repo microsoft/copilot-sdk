@@ -6596,6 +6596,12 @@ type ConnectRequest struct {
 	// Experimental: EntraTokenProvider is part of an experimental API and may change or be
 	// removed.
 	EntraTokenProvider *bool `json:"entraTokenProvider,omitempty"`
+	// GitHub.com OAuth application client ID for runtime-managed sign-in and Entra token
+	// exchange.
+	GitHubClientID *string `json:"githubClientId,omitempty"`
+	// Matching OAuth application secret. Required whenever githubClientId is supplied. Omit
+	// both fields to use the built-in CLI registration.
+	GitHubClientSecret *string `json:"githubClientSecret,omitempty"`
 	// Task kinds this connection can decode when observing session tasks. Omit to retain agent
 	// and shell compatibility.
 	SupportedTaskKinds []TaskKind `json:"supportedTaskKinds,omitzero"`
@@ -8049,9 +8055,16 @@ func (EntraTokenAcquireResultCancelled) Kind() EntraTokenAcquireResultKind {
 }
 
 type EntraTokenAcquireResultIdentity struct {
-	// Stable nonblank opaque account ID owned by the host.
+	// Stable, account-specific opaque host ID, preserved exactly as the suffix of
+	// entra:<accountId> and echoed on later requests. Must remain stable across renewal,
+	// reauthentication, reconnect and restart. Nonblank, without control characters, and at
+	// most 480 UTF-8 bytes; hosts may namespace their IDs.
 	AccountID string `json:"accountId"`
-	// Optional display name; not an account identifier or credential.
+	// Required Entra tenant ID, stored as non-secret parent-account metadata for service
+	// routing. Microsoft internal tenants use MSIT Loki; other tenants use production. Does not
+	// affect account identity.
+	TenantID string `json:"tenantId"`
+	// Optional human-readable account label. Never used as account identity.
 	Username *string `json:"username,omitempty"`
 }
 
@@ -22173,6 +22186,20 @@ func (PermissionDecisionApproveForLocationApprovalExtensionEnvAccess) Kind() Per
 	return PermissionDecisionApproveForLocationApprovalKindExtensionEnvAccess
 }
 
+// Location-scoped approval to launch an extension.
+// Experimental: PermissionDecisionApproveForLocationApprovalExtensionLaunch is part of an
+// experimental API and may change or be removed.
+type PermissionDecisionApproveForLocationApprovalExtensionLaunch struct {
+	// Source-qualified identity of the approved extension.
+	ExtensionName string `json:"extensionName"`
+}
+
+func (PermissionDecisionApproveForLocationApprovalExtensionLaunch) permissionDecisionApproveForLocationApproval() {
+}
+func (PermissionDecisionApproveForLocationApprovalExtensionLaunch) Kind() PermissionDecisionApproveForLocationApprovalKind {
+	return PermissionDecisionApproveForLocationApprovalKindExtensionLaunch
+}
+
 // Location-scoped approval details for extension-management operations, optionally narrowed
 // by operation.
 // Experimental: PermissionDecisionApproveForLocationApprovalExtensionManagement is part of
@@ -22187,21 +22214,6 @@ func (PermissionDecisionApproveForLocationApprovalExtensionManagement) permissio
 }
 func (PermissionDecisionApproveForLocationApprovalExtensionManagement) Kind() PermissionDecisionApproveForLocationApprovalKind {
 	return PermissionDecisionApproveForLocationApprovalKindExtensionManagement
-}
-
-// Location-scoped approval details for an extension's permission-gated capability access,
-// keyed by extension name.
-// Experimental: PermissionDecisionApproveForLocationApprovalExtensionPermissionAccess is
-// part of an experimental API and may change or be removed.
-type PermissionDecisionApproveForLocationApprovalExtensionPermissionAccess struct {
-	// Extension name.
-	ExtensionName string `json:"extensionName"`
-}
-
-func (PermissionDecisionApproveForLocationApprovalExtensionPermissionAccess) permissionDecisionApproveForLocationApproval() {
-}
-func (PermissionDecisionApproveForLocationApprovalExtensionPermissionAccess) Kind() PermissionDecisionApproveForLocationApprovalKind {
-	return PermissionDecisionApproveForLocationApprovalKindExtensionPermissionAccess
 }
 
 // Location-scoped approval details for an MCP server tool, or all tools on the server when
@@ -22286,6 +22298,16 @@ func (PermissionDecisionApproveForLocationApprovalWrite) Kind() PermissionDecisi
 	return PermissionDecisionApproveForLocationApprovalKindWrite
 }
 
+// Legacy durable location approval for an extension.
+// Internal: PermissionDecisionApproveForLocationApprovalExtensionPermissionAccess is an
+// internal SDK API and is not part of the public surface.
+type PermissionDecisionApproveForLocationApprovalExtensionPermissionAccess struct {
+	// Extension name.
+	ExtensionName string `json:"extensionName"`
+	// Approval covering an extension's request to access a permission-gated capability.
+	Kind PermissionDecisionApproveForLocationApprovalExtensionPermissionAccessKind `json:"kind"`
+}
+
 // Session-scoped approval to remember (tool prompts only; omitted for path/url prompts)
 // Experimental: PermissionDecisionApproveForSessionApproval is part of an experimental API
 // and may change or be removed.
@@ -22351,6 +22373,20 @@ func (PermissionDecisionApproveForSessionApprovalExtensionEnvAccess) Kind() Perm
 	return PermissionDecisionApproveForSessionApprovalKindExtensionEnvAccess
 }
 
+// Session-scoped approval to launch an extension.
+// Experimental: PermissionDecisionApproveForSessionApprovalExtensionLaunch is part of an
+// experimental API and may change or be removed.
+type PermissionDecisionApproveForSessionApprovalExtensionLaunch struct {
+	// Source-qualified identity of the approved extension.
+	ExtensionName string `json:"extensionName"`
+}
+
+func (PermissionDecisionApproveForSessionApprovalExtensionLaunch) permissionDecisionApproveForSessionApproval() {
+}
+func (PermissionDecisionApproveForSessionApprovalExtensionLaunch) Kind() PermissionDecisionApproveForSessionApprovalKind {
+	return PermissionDecisionApproveForSessionApprovalKindExtensionLaunch
+}
+
 // Session-scoped approval details for extension-management operations, optionally narrowed
 // by operation.
 // Experimental: PermissionDecisionApproveForSessionApprovalExtensionManagement is part of
@@ -22365,21 +22401,6 @@ func (PermissionDecisionApproveForSessionApprovalExtensionManagement) permission
 }
 func (PermissionDecisionApproveForSessionApprovalExtensionManagement) Kind() PermissionDecisionApproveForSessionApprovalKind {
 	return PermissionDecisionApproveForSessionApprovalKindExtensionManagement
-}
-
-// Session-scoped approval details for an extension's permission-gated capability access,
-// keyed by extension name.
-// Experimental: PermissionDecisionApproveForSessionApprovalExtensionPermissionAccess is
-// part of an experimental API and may change or be removed.
-type PermissionDecisionApproveForSessionApprovalExtensionPermissionAccess struct {
-	// Extension name.
-	ExtensionName string `json:"extensionName"`
-}
-
-func (PermissionDecisionApproveForSessionApprovalExtensionPermissionAccess) permissionDecisionApproveForSessionApproval() {
-}
-func (PermissionDecisionApproveForSessionApprovalExtensionPermissionAccess) Kind() PermissionDecisionApproveForSessionApprovalKind {
-	return PermissionDecisionApproveForSessionApprovalKindExtensionPermissionAccess
 }
 
 // Session-scoped approval details for an MCP server tool, or all tools on the server when
@@ -22463,6 +22484,16 @@ func (PermissionDecisionApproveForSessionApprovalWrite) Kind() PermissionDecisio
 	return PermissionDecisionApproveForSessionApprovalKindWrite
 }
 
+// Legacy durable session approval for an extension.
+// Internal: PermissionDecisionApproveForSessionApprovalExtensionPermissionAccess is an
+// internal SDK API and is not part of the public surface.
+type PermissionDecisionApproveForSessionApprovalExtensionPermissionAccess struct {
+	// Extension name.
+	ExtensionName string `json:"extensionName"`
+	// Approval covering an extension's request to access a permission-gated capability.
+	Kind PermissionDecisionApproveForSessionApprovalExtensionPermissionAccessKind `json:"kind"`
+}
+
 // Who answered a prompt and how. A label saying a person answered (`source`
 // `human_response`) gives the answer human authority for Assisted Permissions: for
 // permission prompts it becomes `permission.completed.decisionSource`, and with
@@ -22484,9 +22515,11 @@ type PermissionDecisionContext struct {
 	// Client surface that submitted the response.
 	Surface PermissionDecisionSurface `json:"surface"`
 	// Optional user-authored explanation of this decision, independent of approval scope.
-	// Collected only in restricted telemetry for accepted human responses to Assisted
-	// Permissions prompts. Never persisted in session history, sent to the agent or judge, or
-	// used to create approval rules. Existing rejection feedback is separate.
+	// Collected for accepted human responses to Assisted Permissions prompts: in restricted
+	// telemetry, or, when the prompt's `assistedApproval.userFeedbackUpload` is true, uploaded
+	// to GitHub with the redacted session event log after the user consents. Never persisted in
+	// session history, sent to the agent or judge, or used to create approval rules. Existing
+	// rejection feedback is separate.
 	UserFeedback *string `json:"userFeedback,omitempty"`
 }
 
@@ -23189,6 +23222,20 @@ func (PermissionsLocationsAddToolApprovalDetailsExtensionEnvAccess) Kind() Permi
 	return PermissionsLocationsAddToolApprovalDetailsKindExtensionEnvAccess
 }
 
+// Location-persisted approval to launch an extension.
+// Experimental: PermissionsLocationsAddToolApprovalDetailsExtensionLaunch is part of an
+// experimental API and may change or be removed.
+type PermissionsLocationsAddToolApprovalDetailsExtensionLaunch struct {
+	// Source-qualified identity of the approved extension.
+	ExtensionName string `json:"extensionName"`
+}
+
+func (PermissionsLocationsAddToolApprovalDetailsExtensionLaunch) permissionsLocationsAddToolApprovalDetails() {
+}
+func (PermissionsLocationsAddToolApprovalDetailsExtensionLaunch) Kind() PermissionsLocationsAddToolApprovalDetailsKind {
+	return PermissionsLocationsAddToolApprovalDetailsKindExtensionLaunch
+}
+
 // Location-persisted tool approval details for extension-management operations, optionally
 // narrowed by operation.
 // Experimental: PermissionsLocationsAddToolApprovalDetailsExtensionManagement is part of an
@@ -23203,21 +23250,6 @@ func (PermissionsLocationsAddToolApprovalDetailsExtensionManagement) permissions
 }
 func (PermissionsLocationsAddToolApprovalDetailsExtensionManagement) Kind() PermissionsLocationsAddToolApprovalDetailsKind {
 	return PermissionsLocationsAddToolApprovalDetailsKindExtensionManagement
-}
-
-// Location-persisted tool approval details for an extension's permission-gated capability
-// access, keyed by extension name.
-// Experimental: PermissionsLocationsAddToolApprovalDetailsExtensionPermissionAccess is part
-// of an experimental API and may change or be removed.
-type PermissionsLocationsAddToolApprovalDetailsExtensionPermissionAccess struct {
-	// Extension name.
-	ExtensionName string `json:"extensionName"`
-}
-
-func (PermissionsLocationsAddToolApprovalDetailsExtensionPermissionAccess) permissionsLocationsAddToolApprovalDetails() {
-}
-func (PermissionsLocationsAddToolApprovalDetailsExtensionPermissionAccess) Kind() PermissionsLocationsAddToolApprovalDetailsKind {
-	return PermissionsLocationsAddToolApprovalDetailsKindExtensionPermissionAccess
 }
 
 // Location-persisted tool approval details for an MCP server tool, or all tools when
@@ -23297,6 +23329,16 @@ type PermissionsLocationsAddToolApprovalDetailsWrite struct {
 func (PermissionsLocationsAddToolApprovalDetailsWrite) permissionsLocationsAddToolApprovalDetails() {}
 func (PermissionsLocationsAddToolApprovalDetailsWrite) Kind() PermissionsLocationsAddToolApprovalDetailsKind {
 	return PermissionsLocationsAddToolApprovalDetailsKindWrite
+}
+
+// Legacy durable location approval for an extension.
+// Internal: PermissionsLocationsAddToolApprovalDetailsExtensionPermissionAccess is an
+// internal SDK API and is not part of the public surface.
+type PermissionsLocationsAddToolApprovalDetailsExtensionPermissionAccess struct {
+	// Extension name.
+	ExtensionName string `json:"extensionName"`
+	// Approval covering an extension's request to access a permission-gated capability.
+	Kind PermissionsLocationsAddToolApprovalDetailsExtensionPermissionAccessKind `json:"kind"`
 }
 
 // Indicates whether the operation succeeded.
@@ -24814,6 +24856,11 @@ type ProtocolExternalToolDefinition struct {
 	Defer *ProtocolExternalToolDefer `json:"defer,omitempty"`
 	// Model-visible explanation of what the tool does.
 	Description string `json:"description"`
+	// Controls how agents receive this tool. Omitted or `automatic` preserves
+	// normal tool selection. `explicit` makes the tool available only to custom
+	// agents whose `tools` list names it. This controls model-visible exposure,
+	// not permission to execute the tool.
+	Exposure *ProtocolExternalToolExposure `json:"exposure,omitempty"`
 	// Whether repeating a call with the same arguments has no additional effect
 	// beyond the first call, as is true of any tool without side effects. Hosts
 	// may use this to safely repeat a call whose outcome was lost. It does not
@@ -27258,6 +27305,30 @@ type RemoteSessionRepository struct {
 	Owner string `json:"owner"`
 }
 
+// Waits for the attached cloud task to publish session.start. Does not create a task or
+// shut down the retained session.
+// Experimental: RemoteWaitForStartRequest is part of an experimental API and may change or
+// be removed.
+// Internal: RemoteWaitForStartRequest is an internal SDK API and is not part of the public
+// surface.
+type RemoteWaitForStartRequest struct {
+	// Maximum wait in milliseconds; omission uses the cloud startup default.
+	TimeoutMs *int64 `json:"timeoutMs,omitempty"`
+}
+
+// Reports cloud host readiness and the existing startup error when the host did not start.
+// The caller retains cleanup ownership.
+// Experimental: RemoteWaitForStartResult is part of an experimental API and may change or
+// be removed.
+// Internal: RemoteWaitForStartResult is an internal SDK API and is not part of the public
+// surface.
+type RemoteWaitForStartResult struct {
+	// Startup error when started is false; absent on success.
+	ErrorMessage *string `json:"errorMessage,omitempty"`
+	// True only after the attached cloud task publishes session.start.
+	Started bool `json:"started"`
+}
+
 // One atomic edit of an allowed top-level repository setting.
 // Experimental: RepoSettingsEditRequest is part of an experimental API and may change or be
 // removed.
@@ -29028,6 +29099,9 @@ type SendMessagesRequest struct {
 	// other events; the value stamped on MCP calls is held in memory only and is not restored
 	// on resume.
 	ClientTurnID *string `json:"clientTurnId,omitempty"`
+	// Overrides the maximum logical model turns for the entire batch, including an empty batch.
+	// Zero permits no model turns. Not supported for immediate steering.
+	MaxToolTurns *int64 `json:"maxToolTurns,omitempty"`
 	// The user messages to append to the conversation, in order, before running one agent loop.
 	// When the batch starts a run, its final message is the primary initiating message; earlier
 	// messages provide context, not separate runs or replies. May be empty, in which case a
@@ -29112,6 +29186,9 @@ type SendRequest struct {
 	ClientTurnID *string `json:"clientTurnId,omitempty"`
 	// If provided, this is shown in the timeline instead of `prompt`
 	DisplayPrompt *string `json:"displayPrompt,omitempty"`
+	// Overrides the maximum logical model turns for this request. Zero permits no model turns;
+	// needing another turn after the limit is an error. Not supported for immediate steering.
+	MaxToolTurns *int64 `json:"maxToolTurns,omitempty"`
 	// How to deliver the message. `enqueue` (default) appends to the message queue. `immediate`
 	// interjects during an in-progress turn.
 	Mode *SendMode `json:"mode,omitempty"`
@@ -31876,6 +31953,9 @@ type SessionOpenExecutionOptions struct {
 	ContinueOnAutoMode *bool `json:"continueOnAutoMode,omitempty"`
 	// Initial session limits.
 	Limits *SessionLimitsConfig `json:"limits,omitempty"`
+	// Default maximum logical model turns per request. Zero permits no model turns. Needing
+	// another turn after the limit is an error.
+	MaxToolTurns *int64 `json:"maxToolTurns,omitempty"`
 }
 
 // Feature experimentation and trusted assignments.
@@ -39728,6 +39808,19 @@ func (UserToolSessionApprovalExtensionEnvAccess) Kind() UserToolSessionApprovalK
 	return UserToolSessionApprovalKindExtensionEnvAccess
 }
 
+// Reusable launch approval for one source-qualified extension identity.
+// Experimental: UserToolSessionApprovalExtensionLaunch is part of an experimental API and
+// may change or be removed.
+type UserToolSessionApprovalExtensionLaunch struct {
+	// Source-qualified identity of the approved extension.
+	ExtensionName string `json:"extensionName"`
+}
+
+func (UserToolSessionApprovalExtensionLaunch) userToolSessionApproval() {}
+func (UserToolSessionApprovalExtensionLaunch) Kind() UserToolSessionApprovalKind {
+	return UserToolSessionApprovalKindExtensionLaunch
+}
+
 // Session-scoped tool-approval rule for extension-management operations, optionally
 // narrowed by operation.
 // Experimental: UserToolSessionApprovalExtensionManagement is part of an experimental API
@@ -39740,20 +39833,6 @@ type UserToolSessionApprovalExtensionManagement struct {
 func (UserToolSessionApprovalExtensionManagement) userToolSessionApproval() {}
 func (UserToolSessionApprovalExtensionManagement) Kind() UserToolSessionApprovalKind {
 	return UserToolSessionApprovalKindExtensionManagement
-}
-
-// Session-scoped tool-approval rule for an extension's permission-gated capability access,
-// keyed by extension name.
-// Experimental: UserToolSessionApprovalExtensionPermissionAccess is part of an experimental
-// API and may change or be removed.
-type UserToolSessionApprovalExtensionPermissionAccess struct {
-	// Extension name
-	ExtensionName string `json:"extensionName"`
-}
-
-func (UserToolSessionApprovalExtensionPermissionAccess) userToolSessionApproval() {}
-func (UserToolSessionApprovalExtensionPermissionAccess) Kind() UserToolSessionApprovalKind {
-	return UserToolSessionApprovalKindExtensionPermissionAccess
 }
 
 // Session-scoped tool-approval rule for an MCP server tool, or all tools on the server when
@@ -39816,6 +39895,16 @@ type UserToolSessionApprovalWrite struct {
 func (UserToolSessionApprovalWrite) userToolSessionApproval() {}
 func (UserToolSessionApprovalWrite) Kind() UserToolSessionApprovalKind {
 	return UserToolSessionApprovalKindWrite
+}
+
+// Legacy durable extension approval.
+// Internal: UserToolSessionApprovalExtensionPermissionAccess is an internal SDK API and is
+// not part of the public surface.
+type UserToolSessionApprovalExtensionPermissionAccess struct {
+	// Extension name
+	ExtensionName string `json:"extensionName"`
+	// Extension permission access approval kind
+	Kind UserToolSessionApprovalExtensionPermissionAccessKind `json:"kind"`
 }
 
 // Utility generation outcome under the session's model and credential policy.
@@ -45849,38 +45938,52 @@ const (
 	OptionsUpdateToolFilterPrecedenceExcluded OptionsUpdateToolFilterPrecedence = "excluded"
 )
 
+// Approval covering an extension's request to access a permission-gated capability.
+type PermissionDecisionApproveForLocationApprovalExtensionPermissionAccessKind string
+
+const (
+	PermissionDecisionApproveForLocationApprovalExtensionPermissionAccessKindExtensionPermissionAccess PermissionDecisionApproveForLocationApprovalExtensionPermissionAccessKind = "extension-permission-access"
+)
+
 // Kind discriminator for PermissionDecisionApproveForLocationApproval.
 type PermissionDecisionApproveForLocationApprovalKind string
 
 const (
-	PermissionDecisionApproveForLocationApprovalKindCommands                  PermissionDecisionApproveForLocationApprovalKind = "commands"
-	PermissionDecisionApproveForLocationApprovalKindCustomTool                PermissionDecisionApproveForLocationApprovalKind = "custom-tool"
-	PermissionDecisionApproveForLocationApprovalKindExtensionEnvAccess        PermissionDecisionApproveForLocationApprovalKind = "extension-env-access"
-	PermissionDecisionApproveForLocationApprovalKindExtensionManagement       PermissionDecisionApproveForLocationApprovalKind = "extension-management"
-	PermissionDecisionApproveForLocationApprovalKindExtensionPermissionAccess PermissionDecisionApproveForLocationApprovalKind = "extension-permission-access"
-	PermissionDecisionApproveForLocationApprovalKindMCP                       PermissionDecisionApproveForLocationApprovalKind = "mcp"
-	PermissionDecisionApproveForLocationApprovalKindMCPSampling               PermissionDecisionApproveForLocationApprovalKind = "mcp-sampling"
-	PermissionDecisionApproveForLocationApprovalKindMemory                    PermissionDecisionApproveForLocationApprovalKind = "memory"
-	PermissionDecisionApproveForLocationApprovalKindRead                      PermissionDecisionApproveForLocationApprovalKind = "read"
-	PermissionDecisionApproveForLocationApprovalKindWorkflow                  PermissionDecisionApproveForLocationApprovalKind = "workflow"
-	PermissionDecisionApproveForLocationApprovalKindWrite                     PermissionDecisionApproveForLocationApprovalKind = "write"
+	PermissionDecisionApproveForLocationApprovalKindCommands            PermissionDecisionApproveForLocationApprovalKind = "commands"
+	PermissionDecisionApproveForLocationApprovalKindCustomTool          PermissionDecisionApproveForLocationApprovalKind = "custom-tool"
+	PermissionDecisionApproveForLocationApprovalKindExtensionEnvAccess  PermissionDecisionApproveForLocationApprovalKind = "extension-env-access"
+	PermissionDecisionApproveForLocationApprovalKindExtensionLaunch     PermissionDecisionApproveForLocationApprovalKind = "extension-launch"
+	PermissionDecisionApproveForLocationApprovalKindExtensionManagement PermissionDecisionApproveForLocationApprovalKind = "extension-management"
+	PermissionDecisionApproveForLocationApprovalKindMCP                 PermissionDecisionApproveForLocationApprovalKind = "mcp"
+	PermissionDecisionApproveForLocationApprovalKindMCPSampling         PermissionDecisionApproveForLocationApprovalKind = "mcp-sampling"
+	PermissionDecisionApproveForLocationApprovalKindMemory              PermissionDecisionApproveForLocationApprovalKind = "memory"
+	PermissionDecisionApproveForLocationApprovalKindRead                PermissionDecisionApproveForLocationApprovalKind = "read"
+	PermissionDecisionApproveForLocationApprovalKindWorkflow            PermissionDecisionApproveForLocationApprovalKind = "workflow"
+	PermissionDecisionApproveForLocationApprovalKindWrite               PermissionDecisionApproveForLocationApprovalKind = "write"
+)
+
+// Approval covering an extension's request to access a permission-gated capability.
+type PermissionDecisionApproveForSessionApprovalExtensionPermissionAccessKind string
+
+const (
+	PermissionDecisionApproveForSessionApprovalExtensionPermissionAccessKindExtensionPermissionAccess PermissionDecisionApproveForSessionApprovalExtensionPermissionAccessKind = "extension-permission-access"
 )
 
 // Kind discriminator for PermissionDecisionApproveForSessionApproval.
 type PermissionDecisionApproveForSessionApprovalKind string
 
 const (
-	PermissionDecisionApproveForSessionApprovalKindCommands                  PermissionDecisionApproveForSessionApprovalKind = "commands"
-	PermissionDecisionApproveForSessionApprovalKindCustomTool                PermissionDecisionApproveForSessionApprovalKind = "custom-tool"
-	PermissionDecisionApproveForSessionApprovalKindExtensionEnvAccess        PermissionDecisionApproveForSessionApprovalKind = "extension-env-access"
-	PermissionDecisionApproveForSessionApprovalKindExtensionManagement       PermissionDecisionApproveForSessionApprovalKind = "extension-management"
-	PermissionDecisionApproveForSessionApprovalKindExtensionPermissionAccess PermissionDecisionApproveForSessionApprovalKind = "extension-permission-access"
-	PermissionDecisionApproveForSessionApprovalKindMCP                       PermissionDecisionApproveForSessionApprovalKind = "mcp"
-	PermissionDecisionApproveForSessionApprovalKindMCPSampling               PermissionDecisionApproveForSessionApprovalKind = "mcp-sampling"
-	PermissionDecisionApproveForSessionApprovalKindMemory                    PermissionDecisionApproveForSessionApprovalKind = "memory"
-	PermissionDecisionApproveForSessionApprovalKindRead                      PermissionDecisionApproveForSessionApprovalKind = "read"
-	PermissionDecisionApproveForSessionApprovalKindWorkflow                  PermissionDecisionApproveForSessionApprovalKind = "workflow"
-	PermissionDecisionApproveForSessionApprovalKindWrite                     PermissionDecisionApproveForSessionApprovalKind = "write"
+	PermissionDecisionApproveForSessionApprovalKindCommands            PermissionDecisionApproveForSessionApprovalKind = "commands"
+	PermissionDecisionApproveForSessionApprovalKindCustomTool          PermissionDecisionApproveForSessionApprovalKind = "custom-tool"
+	PermissionDecisionApproveForSessionApprovalKindExtensionEnvAccess  PermissionDecisionApproveForSessionApprovalKind = "extension-env-access"
+	PermissionDecisionApproveForSessionApprovalKindExtensionLaunch     PermissionDecisionApproveForSessionApprovalKind = "extension-launch"
+	PermissionDecisionApproveForSessionApprovalKindExtensionManagement PermissionDecisionApproveForSessionApprovalKind = "extension-management"
+	PermissionDecisionApproveForSessionApprovalKindMCP                 PermissionDecisionApproveForSessionApprovalKind = "mcp"
+	PermissionDecisionApproveForSessionApprovalKindMCPSampling         PermissionDecisionApproveForSessionApprovalKind = "mcp-sampling"
+	PermissionDecisionApproveForSessionApprovalKindMemory              PermissionDecisionApproveForSessionApprovalKind = "memory"
+	PermissionDecisionApproveForSessionApprovalKindRead                PermissionDecisionApproveForSessionApprovalKind = "read"
+	PermissionDecisionApproveForSessionApprovalKindWorkflow            PermissionDecisionApproveForSessionApprovalKind = "workflow"
+	PermissionDecisionApproveForSessionApprovalKindWrite               PermissionDecisionApproveForSessionApprovalKind = "write"
 )
 
 // Kind discriminator for PermissionDecision.
@@ -46151,21 +46254,28 @@ const (
 	PermissionsConfigureAdditionalContentExclusionPolicyScopeRepo PermissionsConfigureAdditionalContentExclusionPolicyScope = "repo"
 )
 
+// Approval covering an extension's request to access a permission-gated capability.
+type PermissionsLocationsAddToolApprovalDetailsExtensionPermissionAccessKind string
+
+const (
+	PermissionsLocationsAddToolApprovalDetailsExtensionPermissionAccessKindExtensionPermissionAccess PermissionsLocationsAddToolApprovalDetailsExtensionPermissionAccessKind = "extension-permission-access"
+)
+
 // Kind discriminator for PermissionsLocationsAddToolApprovalDetails.
 type PermissionsLocationsAddToolApprovalDetailsKind string
 
 const (
-	PermissionsLocationsAddToolApprovalDetailsKindCommands                  PermissionsLocationsAddToolApprovalDetailsKind = "commands"
-	PermissionsLocationsAddToolApprovalDetailsKindCustomTool                PermissionsLocationsAddToolApprovalDetailsKind = "custom-tool"
-	PermissionsLocationsAddToolApprovalDetailsKindExtensionEnvAccess        PermissionsLocationsAddToolApprovalDetailsKind = "extension-env-access"
-	PermissionsLocationsAddToolApprovalDetailsKindExtensionManagement       PermissionsLocationsAddToolApprovalDetailsKind = "extension-management"
-	PermissionsLocationsAddToolApprovalDetailsKindExtensionPermissionAccess PermissionsLocationsAddToolApprovalDetailsKind = "extension-permission-access"
-	PermissionsLocationsAddToolApprovalDetailsKindMCP                       PermissionsLocationsAddToolApprovalDetailsKind = "mcp"
-	PermissionsLocationsAddToolApprovalDetailsKindMCPSampling               PermissionsLocationsAddToolApprovalDetailsKind = "mcp-sampling"
-	PermissionsLocationsAddToolApprovalDetailsKindMemory                    PermissionsLocationsAddToolApprovalDetailsKind = "memory"
-	PermissionsLocationsAddToolApprovalDetailsKindRead                      PermissionsLocationsAddToolApprovalDetailsKind = "read"
-	PermissionsLocationsAddToolApprovalDetailsKindWorkflow                  PermissionsLocationsAddToolApprovalDetailsKind = "workflow"
-	PermissionsLocationsAddToolApprovalDetailsKindWrite                     PermissionsLocationsAddToolApprovalDetailsKind = "write"
+	PermissionsLocationsAddToolApprovalDetailsKindCommands            PermissionsLocationsAddToolApprovalDetailsKind = "commands"
+	PermissionsLocationsAddToolApprovalDetailsKindCustomTool          PermissionsLocationsAddToolApprovalDetailsKind = "custom-tool"
+	PermissionsLocationsAddToolApprovalDetailsKindExtensionEnvAccess  PermissionsLocationsAddToolApprovalDetailsKind = "extension-env-access"
+	PermissionsLocationsAddToolApprovalDetailsKindExtensionLaunch     PermissionsLocationsAddToolApprovalDetailsKind = "extension-launch"
+	PermissionsLocationsAddToolApprovalDetailsKindExtensionManagement PermissionsLocationsAddToolApprovalDetailsKind = "extension-management"
+	PermissionsLocationsAddToolApprovalDetailsKindMCP                 PermissionsLocationsAddToolApprovalDetailsKind = "mcp"
+	PermissionsLocationsAddToolApprovalDetailsKindMCPSampling         PermissionsLocationsAddToolApprovalDetailsKind = "mcp-sampling"
+	PermissionsLocationsAddToolApprovalDetailsKindMemory              PermissionsLocationsAddToolApprovalDetailsKind = "memory"
+	PermissionsLocationsAddToolApprovalDetailsKindRead                PermissionsLocationsAddToolApprovalDetailsKind = "read"
+	PermissionsLocationsAddToolApprovalDetailsKindWorkflow            PermissionsLocationsAddToolApprovalDetailsKind = "workflow"
+	PermissionsLocationsAddToolApprovalDetailsKindWrite               PermissionsLocationsAddToolApprovalDetailsKind = "write"
 )
 
 // Whether the change applies to ephemeral session-scoped rules (cleared at session end) or
@@ -46391,6 +46501,20 @@ const (
 	ProtocolExternalToolDeferAuto ProtocolExternalToolDefer = "auto"
 	// The runtime must include the tool without deferring it.
 	ProtocolExternalToolDeferNever ProtocolExternalToolDefer = "never"
+)
+
+// Controls how agents receive an external tool definition. This is a visibility policy, not
+// an execution permission.
+// Experimental: ProtocolExternalToolExposure is part of an experimental API and may change
+// or be removed.
+type ProtocolExternalToolExposure string
+
+const (
+	// Use normal tool selection: the default agent receives the tool, unrestricted custom
+	// agents inherit it, and custom agents with tool lists receive it only when listed.
+	ProtocolExternalToolExposureAutomatic ProtocolExternalToolExposure = "automatic"
+	// Expose the tool only to custom agents whose tools list explicitly names it.
+	ProtocolExternalToolExposureExplicit ProtocolExternalToolExposure = "explicit"
 )
 
 // Action discriminator for ProtocolMarkerSectionOverride.
@@ -48564,20 +48688,27 @@ const (
 	UserSettingsMigrateObsoleteOnDiskStatusUnchanged UserSettingsMigrateObsoleteOnDiskStatus = "unchanged"
 )
 
+// Extension permission access approval kind
+type UserToolSessionApprovalExtensionPermissionAccessKind string
+
+const (
+	UserToolSessionApprovalExtensionPermissionAccessKindExtensionPermissionAccess UserToolSessionApprovalExtensionPermissionAccessKind = "extension-permission-access"
+)
+
 // Kind discriminator for UserToolSessionApproval.
 type UserToolSessionApprovalKind string
 
 const (
-	UserToolSessionApprovalKindCommands                  UserToolSessionApprovalKind = "commands"
-	UserToolSessionApprovalKindCustomTool                UserToolSessionApprovalKind = "custom-tool"
-	UserToolSessionApprovalKindExtensionEnvAccess        UserToolSessionApprovalKind = "extension-env-access"
-	UserToolSessionApprovalKindExtensionManagement       UserToolSessionApprovalKind = "extension-management"
-	UserToolSessionApprovalKindExtensionPermissionAccess UserToolSessionApprovalKind = "extension-permission-access"
-	UserToolSessionApprovalKindMCP                       UserToolSessionApprovalKind = "mcp"
-	UserToolSessionApprovalKindMemory                    UserToolSessionApprovalKind = "memory"
-	UserToolSessionApprovalKindRead                      UserToolSessionApprovalKind = "read"
-	UserToolSessionApprovalKindWorkflow                  UserToolSessionApprovalKind = "workflow"
-	UserToolSessionApprovalKindWrite                     UserToolSessionApprovalKind = "write"
+	UserToolSessionApprovalKindCommands            UserToolSessionApprovalKind = "commands"
+	UserToolSessionApprovalKindCustomTool          UserToolSessionApprovalKind = "custom-tool"
+	UserToolSessionApprovalKindExtensionEnvAccess  UserToolSessionApprovalKind = "extension-env-access"
+	UserToolSessionApprovalKindExtensionLaunch     UserToolSessionApprovalKind = "extension-launch"
+	UserToolSessionApprovalKindExtensionManagement UserToolSessionApprovalKind = "extension-management"
+	UserToolSessionApprovalKindMCP                 UserToolSessionApprovalKind = "mcp"
+	UserToolSessionApprovalKindMemory              UserToolSessionApprovalKind = "memory"
+	UserToolSessionApprovalKindRead                UserToolSessionApprovalKind = "read"
+	UserToolSessionApprovalKindWorkflow            UserToolSessionApprovalKind = "workflow"
+	UserToolSessionApprovalKindWrite               UserToolSessionApprovalKind = "write"
 )
 
 // Availability of the utility-model result.
@@ -70386,6 +70517,9 @@ func (a *SessionRPC) Send(ctx context.Context, params *SendRequest) (*SendResult
 		if params.DisplayPrompt != nil {
 			req["displayPrompt"] = *params.DisplayPrompt
 		}
+		if params.MaxToolTurns != nil {
+			req["maxToolTurns"] = *params.MaxToolTurns
+		}
 		if params.Mode != nil {
 			req["mode"] = *params.Mode
 		}
@@ -70452,6 +70586,9 @@ func (a *SessionRPC) SendMessages(ctx context.Context, params *SendMessagesReque
 		}
 		if params.ClientTurnID != nil {
 			req["clientTurnId"] = *params.ClientTurnID
+		}
+		if params.MaxToolTurns != nil {
+			req["maxToolTurns"] = *params.MaxToolTurns
 		}
 		if params.Messages == nil {
 			req["messages"] = []SendMessageItem{}
@@ -72731,6 +72868,38 @@ func (a *InternalRemoteAPI) SendWithAdmission(ctx context.Context, params *Sessi
 	return &result, nil
 }
 
+// WaitForStart waits for an attached cloud task to publish session.start. SDK hosts and ACP
+// clients can distinguish an attached poller from a ready remote host. The caller retains
+// timeout cleanup ownership.
+//
+// RPC method: session.remote.waitForStart.
+//
+// Parameters: Waits for the attached cloud task to publish session.start. Does not create a
+// task or shut down the retained session.
+//
+// Returns: Reports cloud host readiness and the existing startup error when the host did
+// not start. The caller retains cleanup ownership.
+// Pass nil for params to use the default request options.
+// Internal: WaitForStart is part of the SDK's internal handshake/plumbing; external callers
+// should not use it.
+func (a *InternalRemoteAPI) WaitForStart(ctx context.Context, params *RemoteWaitForStartRequest) (*RemoteWaitForStartResult, error) {
+	req := map[string]any{"sessionId": a.sessionID}
+	if params != nil {
+		if params.TimeoutMs != nil {
+			req["timeoutMs"] = *params.TimeoutMs
+		}
+	}
+	raw, err := a.client.Request(ctx, "session.remote.waitForStart", req)
+	if err != nil {
+		return nil, err
+	}
+	var result RemoteWaitForStartResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // Experimental: InternalResearchAPI contains experimental APIs that may change or be
 // removed.
 type InternalResearchAPI internalSessionAPI
@@ -73556,6 +73725,9 @@ func (a *InternalSessionRPC) SendAndWait(ctx context.Context, params *SendReques
 		}
 		if params.DisplayPrompt != nil {
 			req["displayPrompt"] = *params.DisplayPrompt
+		}
+		if params.MaxToolTurns != nil {
+			req["maxToolTurns"] = *params.MaxToolTurns
 		}
 		if params.Mode != nil {
 			req["mode"] = *params.Mode

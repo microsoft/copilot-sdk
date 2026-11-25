@@ -8,12 +8,15 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
+import java.util.List;
+
 import org.junit.jupiter.api.Test;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.microsoft.copilot.generated.UserMessageEvent.UserMessageEventData;
 import com.microsoft.copilot.generated.rpc.QueuePendingItems;
+import com.microsoft.copilot.generated.rpc.SessionSendMessagesParams;
 import com.microsoft.copilot.generated.rpc.SessionSendParams;
 
 @com.microsoft.copilot.AllowCopilotExperimental
@@ -33,6 +36,19 @@ class MessageIdentitySerializationTest {
                 .anyMatch(method -> method.getName().equals("getSendAdmissionId")
                         || method.getName().equals("setSendAdmissionId")
                         || method.getName().equals("sendAdmissionId")));
+    }
+
+    @Test
+    void testExistingSendBuildersSerializeTurnLimit() throws Exception {
+        var send = SessionSendParams.builder().prompt("hello").maxToolTurns(0L).build();
+        assertEquals(MAPPER.readTree("""
+                {"prompt": "hello", "maxToolTurns": 0}
+                """), MAPPER.readTree(MAPPER.writeValueAsString(send)));
+
+        var batch = SessionSendMessagesParams.builder().messages(List.of()).maxToolTurns(2L).build();
+        assertEquals(MAPPER.readTree("""
+                {"messages": [], "maxToolTurns": 2}
+                """), MAPPER.readTree(MAPPER.writeValueAsString(batch)));
     }
 
     @Test
