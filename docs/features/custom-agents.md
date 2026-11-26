@@ -307,7 +307,7 @@ try (var client = new CopilotClient(new CopilotClientOptions().setMode(CopilotCl
 | `name` | `string` | ✅ | Unique identifier for the agent |
 | `displayName` | `string` | | Human-readable name shown in events |
 | `description` | `string` | | What the agent does—helps the runtime select it |
-| `tools` | `string[]` or `null` | | Tool names the agent can use. `null` or omitted = all tools |
+| `tools` | `string[]` or `null` | | Tool names the agent can use. `null` or omitted = all tools except tools defined with `exposure: "explicit"`, which an agent receives only when its list names them |
 | `prompt` | `string` | ✅ | System prompt for the agent |
 | `mcpServers` | `object` | | MCP server configurations specific to this agent |
 | `infer` | `boolean` | | Whether the runtime can auto-select this agent (default: `true`) |
@@ -955,7 +955,7 @@ const session = await client.createSession({
 ```
 
 > [!NOTE]
-> When `tools` is `null` or omitted, the agent inherits access to all tools configured on the session. Use explicit tool lists to enforce the principle of least privilege.
+> When `tools` is `null` or omitted, the agent inherits access to all tools configured on the session, except tools defined with `exposure: "explicit"`; an agent receives those only when its `tools` list names them. Use explicit tool lists to enforce the principle of least privilege.
 
 ## Agent-exclusive tools
 

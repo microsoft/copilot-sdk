@@ -2336,6 +2336,38 @@ pub struct ClientRpcAgents<'a> {
 }
 
 impl<'a> ClientRpcAgents<'a> {
+    /// Validates an agent name against caller-visible custom agents and builtin names, with equivalent colon and slash namespaces. Does not discover or load agents; callers can check builtins first without consulting a custom-agent loader.
+    ///
+    /// Wire method: `agents.validateSpawnAgentName`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - Caller-visible agent identifiers for spawn validation. This operation does not load agents.
+    ///
+    /// # Returns
+    ///
+    /// Agent-name validation outcome. A rejection includes its reason and display message.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub async fn validate_spawn_agent_name(
+        &self,
+        params: AgentsValidateSpawnAgentNameRequest,
+    ) -> Result<AgentsValidateSpawnAgentNameResult, Error> {
+        let wire_params = serde_json::to_value(params)?;
+        self.client
+            .call_typed(
+                rpc_methods::AGENTS_VALIDATESPAWNAGENTNAME,
+                Some(wire_params),
+            )
+            .await
+    }
+
     /// Checks whether an agent name produces a usable filename, without filesystem access.
     ///
     /// Wire method: `agents.validateName`.
@@ -2362,6 +2394,35 @@ impl<'a> ClientRpcAgents<'a> {
         let wire_params = serde_json::to_value(params)?;
         self.client
             .call_typed(rpc_methods::AGENTS_VALIDATENAME, Some(wire_params))
+            .await
+    }
+
+    /// Validates a local working directory before spawn using the runtime host filesystem. All stat failures return cwd-not-found; a successful stat of a non-directory returns cwd-not-directory.
+    ///
+    /// Wire method: `agents.validateSpawnCwd`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - Local working directory to validate before spawn.
+    ///
+    /// # Returns
+    ///
+    /// Working directory validation outcome. All stat errors produce cwd-not-found.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub async fn validate_spawn_cwd(
+        &self,
+        params: AgentsValidateSpawnCwdRequest,
+    ) -> Result<AgentsValidateSpawnCwdResult, Error> {
+        let wire_params = serde_json::to_value(params)?;
+        self.client
+            .call_typed(rpc_methods::AGENTS_VALIDATESPAWNCWD, Some(wire_params))
             .await
     }
 
@@ -19395,7 +19456,7 @@ impl<'a> SessionRpcExtensions<'a> {
             .await
     }
 
-    /// Returns the runtime-derived standalone extension admission policy for the session's actual project and managed-settings context. enforcementVersion 1 means this runtime enforces strictPluginOnlyCustomization for executable extensions. Hosts executing independent extension targets must deny standalone targets unless standalone is allowed; plugin_only requires runtime-verified eligible plugin provenance, not a caller-supplied source label or transport bridge. pending is not confirmed absence. Older runtimes return method-not-found and must not be represented as enforcing this restriction. Re-read on managed-settings changes; a snapshot is not a launch authorization token.
+    /// Returns the runtime-derived extension policy for the session's actual project and managed-settings context. managedAllowedSources reports only the effective managed policy; it does not include user enablement, session source selection, plugin activation, discovered entries, or launch approval. A null managedAllowedSources value means policy is unresolved, while omission means the runtime does not support this report. enforcementVersion 1 means this runtime enforces strictPluginOnlyCustomization for executable extensions. Hosts executing independent extension targets must deny standalone targets unless standalone is allowed; plugin_only requires runtime-verified eligible plugin provenance, not a caller-supplied source label or transport bridge. pending is not confirmed absence. Older runtimes return method-not-found and must not be represented as enforcing this restriction. Re-read on managed-settings changes; a snapshot is not a launch authorization token.
     ///
     /// Wire method: `session.extensions.getPolicy`.
     ///

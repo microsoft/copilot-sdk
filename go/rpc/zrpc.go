@@ -1407,6 +1407,51 @@ type AgentsValidateNameResult struct {
 	Valid bool `json:"valid"`
 }
 
+// Caller-visible agent identifiers for spawn validation. This operation does not load
+// agents.
+// Experimental: AgentsValidateSpawnAgentNameRequest is part of an experimental API and may
+// change or be removed.
+type AgentsValidateSpawnAgentNameRequest struct {
+	// Builtin names available in the caller's context.
+	BuiltinNames []string `json:"builtinNames"`
+	// Custom agents already loaded by the caller.
+	CustomAgents []SpawnValidatableAgent `json:"customAgents"`
+	// Requested agent name or identifier.
+	Name string `json:"name"`
+}
+
+// Agent-name validation outcome. A rejection includes its reason and display message.
+// Experimental: AgentsValidateSpawnAgentNameResult is part of an experimental API and may
+// change or be removed.
+type AgentsValidateSpawnAgentNameResult struct {
+	// Display message, absent on success.
+	Message *string `json:"message,omitempty"`
+	// Whether the name matches an available identifier.
+	Ok bool `json:"ok"`
+	// Rejection category, absent on success.
+	Reason *SpawnAgentNameValidationReason `json:"reason,omitempty"`
+}
+
+// Local working directory to validate before spawn.
+// Experimental: AgentsValidateSpawnCwdRequest is part of an experimental API and may change
+// or be removed.
+type AgentsValidateSpawnCwdRequest struct {
+	// Path to stat on the runtime host.
+	Cwd string `json:"cwd"`
+}
+
+// Working directory validation outcome. All stat errors produce cwd-not-found.
+// Experimental: AgentsValidateSpawnCwdResult is part of an experimental API and may change
+// or be removed.
+type AgentsValidateSpawnCwdResult struct {
+	// Display message, absent on success.
+	Message *string `json:"message,omitempty"`
+	// Whether the path exists and is a directory.
+	Ok bool `json:"ok"`
+	// Rejection category, absent on success.
+	Reason *SpawnCwdValidationReason `json:"reason,omitempty"`
+}
+
 // A selectable agent tool group.
 // Experimental: AgentToolCategory is part of an experimental API and may change or be
 // removed.
@@ -8389,6 +8434,11 @@ type ExtensionManagedPolicy struct {
 	// Extension policy enforcement contract version. Version 1 includes standalone discovery,
 	// launch admission, and live-policy revocation.
 	EnforcementVersion int64 `json:"enforcementVersion"`
+	// Source categories permitted by the effective managed extension policy. This report does
+	// not include user enablement, session source selection, plugin activation, discovered
+	// entries, or launch approval. Null means managed policy is unresolved. Omission means the
+	// runtime does not support this report.
+	ManagedAllowedSources []ManagedExtensionSource `json:"managedAllowedSources,omitzero"`
 	// Whether standalone extensions are allowed, prohibited by plugin-only policy, or pending
 	// unresolved managed policy.
 	Standalone StandaloneExtensionAdmission `json:"standalone"`
@@ -36724,6 +36774,16 @@ type SlashCommandTimelineEntry struct {
 	URL *string `json:"url,omitempty"`
 }
 
+// Identifiers of a custom agent available to the caller.
+// Experimental: SpawnValidatableAgent is part of an experimental API and may change or be
+// removed.
+type SpawnValidatableAgent struct {
+	// Optional namespaced agent identifier.
+	ID *string `json:"id,omitempty"`
+	// Agent name.
+	Name string `json:"name"`
+}
+
 // Configured subagent settings, or null when absent
 // Experimental: SubagentSettings is part of an experimental API and may change or be
 // removed.
@@ -44494,6 +44554,24 @@ const (
 	LoginProviderKindGitHubEnterpriseCloud LoginProviderKind = "gitHubEnterpriseCloud"
 )
 
+// Extension source category permitted by managed policy.
+// Experimental: ManagedExtensionSource is part of an experimental API and may change or be
+// removed.
+type ManagedExtensionSource string
+
+const (
+	// Standalone extensions supplied by the host, including runtime built-ins.
+	ManagedExtensionSourceHost ManagedExtensionSource = "host"
+	// Extensions from otherwise-eligible active plugins.
+	ManagedExtensionSourcePlugins ManagedExtensionSource = "plugins"
+	// Extensions from project extension directories.
+	ManagedExtensionSourceProject ManagedExtensionSource = "project"
+	// Extensions owned by the session.
+	ManagedExtensionSourceSession ManagedExtensionSource = "session"
+	// Extensions from personal extension directories.
+	ManagedExtensionSourceUser ManagedExtensionSource = "user"
+)
+
 // Administrator-configured Fusion preference, independent of execution support.
 // Experimental: ManagedFusionTier is part of an experimental API and may change or be
 // removed.
@@ -48242,6 +48320,28 @@ const (
 	SlashCommandModelPickerDialogKindModelPicker SlashCommandModelPickerDialogKind = "model-picker"
 )
 
+// Reason an agent name cannot be used for spawn.
+// Experimental: SpawnAgentNameValidationReason is part of an experimental API and may
+// change or be removed.
+type SpawnAgentNameValidationReason string
+
+const (
+	// The name matches no supplied custom agent or builtin.
+	SpawnAgentNameValidationReasonUnknownAgent SpawnAgentNameValidationReason = "unknown-agent"
+)
+
+// Reason a working directory cannot be used for spawn.
+// Experimental: SpawnCwdValidationReason is part of an experimental API and may change or
+// be removed.
+type SpawnCwdValidationReason string
+
+const (
+	// Stat succeeded, but the path is not a directory.
+	SpawnCwdValidationReasonCwdNotDirectory SpawnCwdValidationReason = "cwd-not-directory"
+	// The runtime could not stat the path, including permission errors.
+	SpawnCwdValidationReasonCwdNotFound SpawnCwdValidationReason = "cwd-not-found"
+)
+
 // What the one-time staff log-level migration did.
 // Experimental: StaffLogLevelMigrationStatus is part of an experimental API and may change
 // or be removed.
@@ -49212,6 +49312,60 @@ func (a *ServerAgentsAPI) ValidateName(ctx context.Context, params *AgentsValida
 		return nil, err
 	}
 	var result AgentsValidateNameResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ValidateSpawnAgentName validates an agent name against caller-visible custom agents and
+// builtin names, with equivalent colon and slash namespaces. Does not discover or load
+// agents; callers can check builtins first without consulting a custom-agent loader.
+//
+// RPC method: agents.validateSpawnAgentName.
+//
+// Parameters: Caller-visible agent identifiers for spawn validation. This operation does
+// not load agents.
+//
+// Returns: Agent-name validation outcome. A rejection includes its reason and display
+// message.
+func (a *ServerAgentsAPI) ValidateSpawnAgentName(ctx context.Context, params *AgentsValidateSpawnAgentNameRequest) (*AgentsValidateSpawnAgentNameResult, error) {
+	if params != nil {
+		request := *params
+		if request.BuiltinNames == nil {
+			request.BuiltinNames = []string{}
+		}
+		if request.CustomAgents == nil {
+			request.CustomAgents = []SpawnValidatableAgent{}
+		}
+		params = &request
+	}
+	raw, err := a.client.Request(ctx, "agents.validateSpawnAgentName", params)
+	if err != nil {
+		return nil, err
+	}
+	var result AgentsValidateSpawnAgentNameResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ValidateSpawnCwd validates a local working directory before spawn using the runtime host
+// filesystem. All stat failures return cwd-not-found; a successful stat of a non-directory
+// returns cwd-not-directory.
+//
+// RPC method: agents.validateSpawnCwd.
+//
+// Parameters: Local working directory to validate before spawn.
+//
+// Returns: Working directory validation outcome. All stat errors produce cwd-not-found.
+func (a *ServerAgentsAPI) ValidateSpawnCwd(ctx context.Context, params *AgentsValidateSpawnCwdRequest) (*AgentsValidateSpawnCwdResult, error) {
+	raw, err := a.client.Request(ctx, "agents.validateSpawnCwd", params)
+	if err != nil {
+		return nil, err
+	}
+	var result AgentsValidateSpawnCwdResult
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return nil, err
 	}
@@ -62705,14 +62859,18 @@ func (a *ExtensionsAPI) Enable(ctx context.Context, params *ExtensionsEnableRequ
 	return &result, nil
 }
 
-// GetPolicy returns the runtime-derived standalone extension admission policy for the
-// session's actual project and managed-settings context. enforcementVersion 1 means this
-// runtime enforces strictPluginOnlyCustomization for executable extensions. Hosts executing
-// independent extension targets must deny standalone targets unless standalone is allowed;
-// plugin_only requires runtime-verified eligible plugin provenance, not a caller-supplied
-// source label or transport bridge. pending is not confirmed absence. Older runtimes return
-// method-not-found and must not be represented as enforcing this restriction. Re-read on
-// managed-settings changes; a snapshot is not a launch authorization token.
+// GetPolicy returns the runtime-derived extension policy for the session's actual project
+// and managed-settings context. managedAllowedSources reports only the effective managed
+// policy; it does not include user enablement, session source selection, plugin activation,
+// discovered entries, or launch approval. A null managedAllowedSources value means policy
+// is unresolved, while omission means the runtime does not support this report.
+// enforcementVersion 1 means this runtime enforces strictPluginOnlyCustomization for
+// executable extensions. Hosts executing independent extension targets must deny standalone
+// targets unless standalone is allowed; plugin_only requires runtime-verified eligible
+// plugin provenance, not a caller-supplied source label or transport bridge. pending is not
+// confirmed absence. Older runtimes return method-not-found and must not be represented as
+// enforcing this restriction. Re-read on managed-settings changes; a snapshot is not a
+// launch authorization token.
 //
 // RPC method: session.extensions.getPolicy.
 //

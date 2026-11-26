@@ -2435,6 +2435,9 @@ func TestClient_ConnectionQueriesWaitForStart(t *testing.T) {
 	server := newConnectionQueryServer(t, false, true)
 	client := NewClient(&ClientOptions{Mode: ModeCodingAgent, Runtime: server.connection})
 	t.Cleanup(client.ForceStop)
+	defer server.releaseConnect()
+	var acquired atomic.Bool
+	client.testHookTransportAcquired = func() { acquired.Store(true) }
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 
@@ -2450,29 +2453,31 @@ func TestClient_ConnectionQueriesWaitForStart(t *testing.T) {
 		name string
 		err  error
 	}
-	queries := map[string]func() error{
-		"Ping":          func() error { _, err := client.Ping(ctx, "x"); return err },
-		"GetStatus":     func() error { _, err := client.GetStatus(ctx); return err },
-		"GetAuthStatus": func() error { _, err := client.GetAuthStatus(ctx); return err },
-		"ListModels":    func() error { _, err := client.ListModels(ctx); return err },
-	}
-	results := make(chan queryResult, len(queries))
-	for name, query := range queries {
+	names := []string{"Ping", "GetStatus", "GetAuthStatus", "ListModels"}
+	results := make(chan queryResult, len(names))
+	for _, name := range names {
+		admission := &connectionQueryAdmissionContext{Context: ctx, entered: make(chan struct{})}
+		query := connectionQueries(client, admission)[name]
 		go func() { results <- queryResult{name: name, err: query()} }()
+		select {
+		case <-admission.entered:
+		case result := <-results:
+			t.Fatalf("%s returned while Start was in progress: %v", result.name, result.err)
+		case <-ctx.Done():
+			t.Fatalf("%s did not reach the held startup attempt", name)
+		}
 	}
-	// Start has created the transport but not finished the handshake, so a
-	// query must not use it yet.
-	select {
-	case result := <-results:
-		t.Fatalf("%s returned while Start was in progress: %v", result.name, result.err)
-	case <-time.After(200 * time.Millisecond):
+	// A request using the transport can also consult Done; distinguish that
+	// from a query waiting for the handshake without acquiring the transport.
+	if acquired.Load() {
+		t.Fatal("a query acquired the transport before the connect reply")
 	}
 
 	server.releaseConnect()
 	if err := <-started; err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	for range queries {
+	for range names {
 		select {
 		case result := <-results:
 			if result.err != nil {
@@ -2502,11 +2507,14 @@ func TestClient_StartWaitingForAnotherStartObservesItsContext(t *testing.T) {
 	// The first Start is waiting for its connect reply. Two more Starts wait
 	// for it, and cancelling one of them ends only that one.
 	waiterCtx, cancelWaiter := context.WithCancel(ctx)
+	cancelledAdmission := &connectionQueryAdmissionContext{Context: waiterCtx, entered: make(chan struct{})}
+	liveAdmission := &connectionQueryAdmissionContext{Context: ctx, entered: make(chan struct{})}
 	cancelled := make(chan error, 1)
-	go func() { cancelled <- client.Start(waiterCtx) }()
+	go func() { cancelled <- client.Start(cancelledAdmission) }()
 	waiting := make(chan error, 1)
-	go func() { waiting <- client.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	go func() { waiting <- client.Start(liveAdmission) }()
+	waitForClosed(t, cancelledAdmission.entered, "cancelled Start joining the queue")
+	waitForClosed(t, liveAdmission.entered, "live Start joining the queue")
 	cancelWaiter()
 	select {
 	case err := <-cancelled:
@@ -2516,12 +2524,19 @@ func TestClient_StartWaitingForAnotherStartObservesItsContext(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("a Start waiting for another Start ignored its cancelled context")
 	}
-	select {
-	case err := <-started:
-		t.Fatalf("first Start returned when a waiting Start was cancelled: %v", err)
-	case err := <-waiting:
-		t.Fatalf("waiting Start returned when another waiting Start was cancelled: %v", err)
-	case <-time.After(100 * time.Millisecond):
+	// The cancelled Start left the queue before returning. Only the handoff
+	// goroutine can grant the live one, and only after the first Start
+	// releases the lock, so this state is settled rather than racing a wakeup.
+	client.startWaitMux.Lock()
+	queued := len(client.startWaiters)
+	granted := queued == 1 && len(client.startWaiters[0]) > 0
+	client.startWaitMux.Unlock()
+	if queued != 1 || granted {
+		t.Fatalf("cancelling one waiting Start changed the other's place in the queue: %d queued, granted=%t", queued, granted)
+	}
+	if client.startStopMux.TryLock() {
+		client.startStopMux.Unlock()
+		t.Fatal("cancelling a waiting Start released the first Start's lock")
 	}
 
 	server.releaseConnect()
@@ -2652,8 +2667,9 @@ func TestClient_CancelledStartWaitersDoNotAccumulateGoroutines(t *testing.T) {
 
 	// A waiter that is still live gets the lock once the first holder lets go.
 	acquired := make(chan error, 1)
-	go func() { acquired <- client.lockStartStop(t.Context()) }()
-	time.Sleep(50 * time.Millisecond)
+	liveAdmission := &connectionQueryAdmissionContext{Context: t.Context(), entered: make(chan struct{})}
+	go func() { acquired <- client.lockStartStop(liveAdmission) }()
+	waitForClosed(t, liveAdmission.entered, "live waiter joining the queue")
 	client.startStopMux.Unlock()
 	select {
 	case err := <-acquired:

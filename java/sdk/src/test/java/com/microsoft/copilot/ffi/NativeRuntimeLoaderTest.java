@@ -23,6 +23,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.FileTime;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -226,10 +227,8 @@ class NativeRuntimeLoaderTest {
         ClassLoader loader = classLoaderWithRuntimeResource(tempDir, TEST_CLASSIFIER);
 
         Path first = NativeRuntimeLoader.extractToCache(cacheBase, loader, TEST_CLASSIFIER, TEST_VERSION);
+        Files.setLastModifiedTime(first, FileTime.fromMillis(1_000_000_000_000L));
         long modifiedAfterFirstExtraction = Files.getLastModifiedTime(first).toMillis();
-
-        // Small delay so modification time would differ if the file were rewritten
-        Thread.sleep(50);
 
         Path second = NativeRuntimeLoader.extractToCache(cacheBase, loader, TEST_CLASSIFIER, TEST_VERSION);
         long modifiedAfterSecondCall = Files.getLastModifiedTime(second).toMillis();

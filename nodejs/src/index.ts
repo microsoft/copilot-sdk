@@ -9,6 +9,15 @@
  */
 
 export { CopilotClient } from "./client.js";
+export type {
+    AgentsValidateSpawnAgentNameRequest,
+    AgentsValidateSpawnAgentNameResult,
+    AgentsValidateSpawnCwdRequest,
+    AgentsValidateSpawnCwdResult,
+    SpawnAgentNameValidationReason,
+    SpawnCwdValidationReason,
+    SpawnValidatableAgent,
+} from "./generated/rpc.js";
 export { parseTrajectoryJson } from "./taskAnalyticsJson.js";
 export type {
     ExactSettingsResponse,
@@ -94,6 +103,7 @@ export type {
     PermissionsExtensionApprovalsRevokeRequest,
     PermissionsExtensionApprovalsRevokeResult,
 } from "./generated/rpc.js";
+export type { ManagedExtensionSource } from "./generated/rpc.js";
 export type {
     FileLogLevel,
     FileLogOpenRequest,

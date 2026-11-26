@@ -4874,8 +4874,9 @@ public sealed partial class ClientSessionLifetimeTests
         });
 
         await handlerInvoked.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        // Give the send path a chance to (incorrectly) fire before asserting suppression.
-        await Task.Delay(200);
+        // The completed handler returns inline during DispatchEvent. A response it
+        // initiated would precede this ping on the same serialized JSON-RPC writer.
+        await client.PingAsync().WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.DoesNotContain(server.Requests, request => request.Method == "session.permissions.handlePendingPermissionRequest");
     }

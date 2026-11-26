@@ -122,6 +122,8 @@ class GeneratedBuilderEvolutionTest {
                     "com.microsoft.copilot.generated.rpc.SessionGitHubAuthGetStatusResult" ->
                 new Class<?>[]{Boolean.class, com.microsoft.copilot.generated.rpc.AuthInfoType.class, String.class,
                         String.class, String.class, String.class};
+            case "com.microsoft.copilot.generated.rpc.SessionExtensionsGetPolicyResult" -> new Class<?>[]{
+                    com.microsoft.copilot.generated.rpc.StandaloneExtensionAdmission.class, Long.class, List.class};
             default -> null;
         };
         Set<java.lang.reflect.Constructor<?>> expected = Set.of(canonical);
@@ -155,6 +157,23 @@ class GeneratedBuilderEvolutionTest {
 
         assertNull(definition.exposure());
         assertFalse(JSON.valueToTree(definition).has("exposure"));
+    }
+
+    @Test
+    @Tag("java-compatibility")
+    void legacyExtensionPolicyConstructorPreservesAbsentManagedSources() throws Exception {
+        var type = com.microsoft.copilot.generated.rpc.SessionExtensionsGetPolicyResult.class;
+        var constructor = type.getDeclaredConstructor(
+                com.microsoft.copilot.generated.rpc.StandaloneExtensionAdmission.class, Long.class, List.class);
+        var policy = constructor.newInstance(com.microsoft.copilot.generated.rpc.StandaloneExtensionAdmission.ALLOWED,
+                1L, List.of());
+        JsonNode json = JSON.valueToTree(policy);
+
+        assertEquals(3, json.size());
+        assertFalse(json.has("managedAllowedSources"));
+        assertEquals("allowed", json.path("standalone").textValue());
+        assertEquals(1L, json.path("enforcementVersion").longValue());
+        assertEquals(JSON.readTree("[]"), json.get("eligiblePluginEntries"));
     }
 
     @Test

@@ -10493,6 +10493,55 @@ impl<'de> Deserialize<'de> for ExtensionStatus {
     }
 }
 
+/// Extension source category permitted by managed policy.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub enum ManagedExtensionSource {
+    /// Standalone extensions supplied by the host, including runtime built-ins.
+    #[serde(rename = "host")]
+    Host,
+    /// Extensions from otherwise-eligible active plugins.
+    #[serde(rename = "plugins")]
+    Plugins,
+    /// Extensions from personal extension directories.
+    #[serde(rename = "user")]
+    User,
+    /// Extensions from project extension directories.
+    #[serde(rename = "project")]
+    Project,
+    /// Extensions owned by the session.
+    #[serde(rename = "session")]
+    Session,
+    /// Unknown variant for forward compatibility.
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+impl<'de> Deserialize<'de> for ManagedExtensionSource {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let index = crate::enum_serde::deserialize_variant(
+            deserializer,
+            "ManagedExtensionSource",
+            &["host", "plugins", "user", "project", "session", "Unknown"],
+            Some(5),
+        )?;
+        Ok(match index {
+            0 => Self::Host,
+            1 => Self::Plugins,
+            2 => Self::User,
+            3 => Self::Project,
+            4 => Self::Session,
+            _ => Self::Unknown,
+        })
+    }
+}
+
 /// Runtime-derived standalone extension eligibility.
 ///
 /// <div class="warning">

@@ -27,6 +27,17 @@ public final class ServerAgentsApi {
     }
 
     /**
+     * Validates an agent name against caller-visible custom agents and builtin names, with equivalent colon and slash namespaces. Does not discover or load agents; callers can check builtins first without consulting a custom-agent loader.
+     *
+     * @apiNote This method is experimental and may change in a future version.
+     * @since 1.0.0
+     */
+    @CopilotExperimental
+    public CompletableFuture<AgentsValidateSpawnAgentNameResult> validateSpawnAgentName(AgentsValidateSpawnAgentNameParams params) {
+        return caller.invoke("agents.validateSpawnAgentName", params, AgentsValidateSpawnAgentNameResult.class);
+    }
+
+    /**
      * Checks whether an agent name produces a usable filename, without filesystem access.
      *
      * @apiNote This method is experimental and may change in a future version.
@@ -35,6 +46,17 @@ public final class ServerAgentsApi {
     @CopilotExperimental
     public CompletableFuture<AgentsValidateNameResult> validateName(AgentsValidateNameParams params) {
         return caller.invoke("agents.validateName", params, AgentsValidateNameResult.class);
+    }
+
+    /**
+     * Validates a local working directory before spawn using the runtime host filesystem. All stat failures return cwd-not-found; a successful stat of a non-directory returns cwd-not-directory.
+     *
+     * @apiNote This method is experimental and may change in a future version.
+     * @since 1.0.0
+     */
+    @CopilotExperimental
+    public CompletableFuture<AgentsValidateSpawnCwdResult> validateSpawnCwd(AgentsValidateSpawnCwdParams params) {
+        return caller.invoke("agents.validateSpawnCwd", params, AgentsValidateSpawnCwdResult.class);
     }
 
     /**

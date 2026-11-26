@@ -622,7 +622,7 @@ def test_proxy_reaping_reports_shutdown_grace_expiry(monkeypatch, caplog):
 
     monkeypatch.setattr(proxy_harness, "_kill_process_tree", kill_process_tree)
 
-    proxy_harness._reap_process(process)
+    proxy_harness._reap_process(process, stop_acknowledged=False)
 
     assert killed == [process]
     assert process.returncode == 1
@@ -635,6 +635,94 @@ def test_proxy_reaping_reports_shutdown_grace_expiry(monkeypatch, caplog):
             "killing its process tree",
         )
     ]
+
+
+async def test_acknowledged_shutdown_waits_for_slow_proxy_exit(monkeypatch):
+    from e2e.testharness import proxy as proxy_harness
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200)))
+    monkeypatch.setattr(httpx, "AsyncClient", lambda: client)
+    process = Mock(pid=1234, returncode=None)
+
+    def wait(timeout=None):
+        # Model an exit that outlasts any grace period but completes on its own.
+        if timeout is not None:
+            raise subprocess.TimeoutExpired("proxy", timeout)
+        process.returncode = 0
+        return 0
+
+    def kill_process_tree(target):
+        target.returncode = 1
+
+    process.wait.side_effect = wait
+    monkeypatch.setattr(proxy_harness, "_kill_process_tree", kill_process_tree)
+    proxy = CapiProxy()
+    proxy._process = process
+    proxy._proxy_url = "http://proxy"
+
+    await proxy.stop()
+
+    assert process.returncode == 0
+
+
+@pytest.mark.parametrize("cancel_during", ["client_exit", "reaping"])
+async def test_cancelled_acknowledged_shutdown_kills_proxy(monkeypatch, cancel_during):
+    cancellable = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200)))
+
+    class ClosingClient:
+        async def __aenter__(self):
+            return await client.__aenter__()
+
+        async def __aexit__(self, *exc_info):
+            # Hold the exit open so cancellation arrives after /stop was answered.
+            cancellable.set()
+            try:
+                await loop.create_future()
+            finally:
+                await client.__aexit__(*exc_info)
+
+    monkeypatch.setattr(
+        httpx, "AsyncClient", ClosingClient if cancel_during == "client_exit" else lambda: client
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-c", "import sys; sys.stdin.read()"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    original_wait = process.wait
+
+    def wait_for_exit(timeout=None):
+        if cancel_during == "reaping":
+            loop.call_soon_threadsafe(cancellable.set)
+        return original_wait(timeout=timeout)
+
+    monkeypatch.setattr(process, "wait", wait_for_exit)
+    proxy = CapiProxy()
+    proxy._process = process
+    proxy._proxy_url = "http://proxy"
+    stopping = asyncio.create_task(proxy.stop())
+
+    try:
+        await cancellable.wait()
+        stopping.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await stopping
+
+        assert process.returncode is not None, "Cancelled shutdown left its proxy running"
+        assert proxy._process is None
+    finally:
+        if not stopping.done():
+            stopping.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await stopping
+        if process.poll() is None:
+            process.kill()
+        original_wait()
+        assert process.stdin is not None
+        process.stdin.close()
 
 
 @pytest.mark.parametrize("cancel_during_reaping", [False, True])

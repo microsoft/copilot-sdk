@@ -350,8 +350,8 @@ class RpcHandlerDispatcherTest {
     @Test
     void sessionEventWithNullEventNode() throws Exception {
         CopilotSession session = createSession("s1");
-        var dispatched = new CopyOnWriteArrayList<>();
-        session.on(dispatched::add);
+        var firstDelivered = new CompletableFuture<String>();
+        session.on(event -> firstDelivered.complete(event == null ? null : String.valueOf(event.getId())));
 
         ObjectNode params = MAPPER.createObjectNode();
         params.put("sessionId", "s1");
@@ -359,9 +359,10 @@ class RpcHandlerDispatcherTest {
 
         invokeHandler("session.event", null, params);
 
-        // Give queued event delivery a moment to run
-        Thread.sleep(50);
-        assertTrue(dispatched.isEmpty(), "No events should be dispatched when eventNode is null");
+        // Delivery is FIFO within one session. A valid successor must be its first
+        // event.
+        String nextId = sendSessionEvent("s1");
+        assertEquals(nextId, firstDelivered.get(SOCKET_TIMEOUT_MS, TimeUnit.MILLISECONDS));
     }
 
     @Test

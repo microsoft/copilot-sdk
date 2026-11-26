@@ -834,8 +834,12 @@ pub mod rpc_methods {
     pub const CATALOG_SELECT: &str = "catalog.select";
     /// `catalog.planInstallFromReference`
     pub const CATALOG_PLANINSTALLFROMREFERENCE: &str = "catalog.planInstallFromReference";
+    /// `agents.validateSpawnAgentName`
+    pub const AGENTS_VALIDATESPAWNAGENTNAME: &str = "agents.validateSpawnAgentName";
     /// `agents.validateName`
     pub const AGENTS_VALIDATENAME: &str = "agents.validateName";
+    /// `agents.validateSpawnCwd`
+    pub const AGENTS_VALIDATESPAWNCWD: &str = "agents.validateSpawnCwd";
     /// `agents.listToolCategories`
     pub const AGENTS_LISTTOOLCATEGORIES: &str = "agents.listToolCategories";
     /// `agents.generateFileContent`
@@ -2078,9 +2082,10 @@ pub use sdk_api_shared::{
     InstallationCatalogueIdentity, InstalledPlugin, InstalledPluginInfo,
     InstalledPluginVerifiedSource, InstructionSource, InstructionSourceLocation,
     InstructionSourceType, LoginProviderKind, LspConfigurationProblem, LspProbeExitStatus,
-    LspServerSummary, LspWarmupError, ManagedPluginAssignment, ManagedSettingsResolvedData,
-    MarketplaceInfo, MarketplaceMigrationStatus, MarketplacePluginInfo, MarketplaceRefreshEntry,
-    McpAllowedServer, McpAppsDiagnoseCapability, McpAppsDiagnoseServer, McpAppsHostContextDetails,
+    LspServerSummary, LspWarmupError, ManagedExtensionSource, ManagedPluginAssignment,
+    ManagedSettingsResolvedData, MarketplaceInfo, MarketplaceMigrationStatus,
+    MarketplacePluginInfo, MarketplaceRefreshEntry, McpAllowedServer, McpAppsDiagnoseCapability,
+    McpAppsDiagnoseServer, McpAppsHostContextDetails,
     McpAppsHostContextDetailsAvailableDisplayMode, McpAppsHostContextDetailsDisplayMode,
     McpAppsHostContextDetailsPlatform, McpAppsHostContextDetailsTheme, McpAppsResourceContent,
     McpConfiguredServer, McpConfiguredServerState, McpDiagnosticDetails, McpDiagnosticDirection,
@@ -3274,16 +3279,18 @@ pub use sdk_api_services::{
     AgentsCreateFileResultSuccessKind, AgentsDiscoverRequest, AgentsDiscoverResult,
     AgentsGenerateFileContentRequest, AgentsGenerateFileContentResult,
     AgentsGetDiscoveryPathsRequest, AgentsGetDiscoveryPathsResult, AgentsListToolCategoriesResult,
-    AgentsValidateNameRequest, AgentsValidateNameResult, AhpConnectionAuthenticateRequest,
-    AhpConnectionCreateRequest, AhpConnectionCreateSessionRequest,
-    AhpConnectionCreateSessionResult, AhpConnectionDisposeSessionRequest, AhpConnectionEvent,
-    AhpConnectionEventProjected, AhpConnectionEventProjectedKind, AhpConnectionEventState,
-    AhpConnectionEventStateKind, AhpConnectionLogOpenRequest, AhpConnectionLogRequest,
-    AhpConnectionLogWriteRequest, AhpConnectionLogsOpenResult, AhpConnectionModelSelection,
-    AhpConnectionProjectOptions, AhpConnectionReadEventsResult, AhpConnectionRequest,
-    AhpConnectionResourceAuthResult, AhpConnectionSelectSessionRequest,
-    AhpConnectionSelectSessionResult, AhpConnectionSessionOptions, AhpConnectionStateResult,
-    AhpConnectionTransport, AhpConnectionTransportDirect, AhpConnectionTransportDirectKind,
+    AgentsValidateNameRequest, AgentsValidateNameResult, AgentsValidateSpawnAgentNameRequest,
+    AgentsValidateSpawnAgentNameResult, AgentsValidateSpawnCwdRequest,
+    AgentsValidateSpawnCwdResult, AhpConnectionAuthenticateRequest, AhpConnectionCreateRequest,
+    AhpConnectionCreateSessionRequest, AhpConnectionCreateSessionResult,
+    AhpConnectionDisposeSessionRequest, AhpConnectionEvent, AhpConnectionEventProjected,
+    AhpConnectionEventProjectedKind, AhpConnectionEventState, AhpConnectionEventStateKind,
+    AhpConnectionLogOpenRequest, AhpConnectionLogRequest, AhpConnectionLogWriteRequest,
+    AhpConnectionLogsOpenResult, AhpConnectionModelSelection, AhpConnectionProjectOptions,
+    AhpConnectionReadEventsResult, AhpConnectionRequest, AhpConnectionResourceAuthResult,
+    AhpConnectionSelectSessionRequest, AhpConnectionSelectSessionResult,
+    AhpConnectionSessionOptions, AhpConnectionStateResult, AhpConnectionTransport,
+    AhpConnectionTransportDirect, AhpConnectionTransportDirectKind,
     AhpConnectionTransportMissionControl, AhpConnectionTransportMissionControlKind,
     AhpConnectionsAttachSessionResult, AhpConnectionsAuthenticateResult,
     AhpConnectionsConnectResult, AhpConnectionsCreateResult, AhpConnectionsCreateSessionResult,
@@ -3580,7 +3587,8 @@ pub use sdk_api_services::{
     SlashCommandSetModelResultKind, SlashCommandSetPlanModelResult,
     SlashCommandSetPlanModelResultKind, SlashCommandShowDialogResult,
     SlashCommandShowDialogResultKind, SlashCommandTextResult, SlashCommandTextResultKind,
-    SlashCommandTimelineEntry, SubagentSettings, SystemMessageBlock, TaskKind,
+    SlashCommandTimelineEntry, SpawnAgentNameValidationReason, SpawnCwdValidationReason,
+    SpawnValidatableAgent, SubagentSettings, SystemMessageBlock, TaskKind,
     TelemetrySetFeatureOverridesRequest, UIAutoModeSwitchResponse, UIElicitationArrayAnyOfField,
     UIElicitationArrayAnyOfFieldItems, UIElicitationArrayAnyOfFieldItemsAnyOf,
     UIElicitationArrayAnyOfFieldType, UIElicitationArrayEnumField,

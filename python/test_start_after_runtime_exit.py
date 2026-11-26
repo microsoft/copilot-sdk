@@ -51,6 +51,7 @@ if mode == "descendant":
     else:
         subprocess.Popen(holder, stdin=subprocess.DEVNULL, stdout=sys.stdout, stderr=sys.stderr)
 if mode == "alive":
+    open(stop + ".ping-received", "xb").close()
     while not os.path.exists(stop):
         time.sleep(0.02)
 sys.exit(3)
@@ -86,18 +87,26 @@ ROWS = [
 
 
 @pytest.mark.parametrize(("transport", "mode", "state_before_start", "starts_anew"), ROWS)
-async def test_start_after_runtime_exit(tmp_path, transport, mode, state_before_start, starts_anew):
+async def test_start_after_runtime_exit(
+    tmp_path, request, transport, mode, state_before_start, starts_anew
+):
     stop = tmp_path / "stop"
     script = (RUNTIME, transport, mode, str(get_sdk_protocol_version()), str(stop))
-    external: subprocess.Popen | None = None
     if transport == "uri":
         external = subprocess.Popen(
             [sys.executable, "-c", RUNTIME, "tcp", *script[2:]],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
         )
+
+        def reap_external():
+            external.kill()
+            external.wait(timeout=5)
+            external.stdout.close()
+
+        request.addfinalizer(reap_external)
         assert external.stdout is not None
-        announcement = await asyncio.to_thread(external.stdout.readline)
+        announcement = await asyncio.wait_for(asyncio.to_thread(external.stdout.readline), 30)
         connection = RuntimeConnection.for_tcp("127.0.0.1", int(announcement.split()[-1]))
     elif transport == "tcp":
         connection = RuntimeConnection.for_spawned_tcp(path=sys.executable, args=("-c", *script))
@@ -113,14 +122,16 @@ async def test_start_after_runtime_exit(tmp_path, transport, mode, state_before_
             spawned = client._cli_process
             ping = asyncio.create_task(client.ping("in flight"))
             if mode == "alive":
-                await asyncio.sleep(0.5)
+                while not (tmp_path / "stop.ping-received").exists():
+                    if ping.done():
+                        pytest.fail(f"ping ended before runtime admission: {ping.result()!r}")
+                    await asyncio.sleep(0.01)
             else:
                 assert spawned is not None
                 await asyncio.to_thread(spawned.wait)
                 # Give the reader time to see the transport close, if it does.
                 while mode == "exits" and client._state == "connected":
                     await asyncio.sleep(0.01)
-                await asyncio.sleep(0.5)
             state_before = client._state
 
             await client.start()
@@ -141,6 +152,3 @@ async def test_start_after_runtime_exit(tmp_path, transport, mode, state_before_
             ping.cancel()
             await asyncio.gather(ping, return_exceptions=True)
         await client.force_stop()
-        if external is not None:
-            external.kill()
-            await asyncio.to_thread(external.wait, 5)

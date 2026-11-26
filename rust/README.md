@@ -891,9 +891,10 @@ transport tests do not establish live OAuth, activation or cross-process recover
 Experimental generated DTOs can gain fields and change raw unions to typed
 variants. Existing exhaustive struct literals must add the new fields explicitly
 (for example, `expected_installation_id: None` for a manual MCP request), or use
-`..Default::default()` where that type supports it. This is a source migration,
-not full source compatibility. Absent optional fields retain their wire omission
-behaviour; existing handwritten builder calls remain compatible.
+`..Default::default()` where that type supports it. Exhaustive destructuring
+patterns must add `..`. These are source migrations, not full source
+compatibility. Absent optional fields retain their wire omission behaviour;
+existing handwritten builder calls remain compatible.
 
 #### Generated type-name migration
 

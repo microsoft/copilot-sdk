@@ -102,6 +102,8 @@ async fn should_invoke_onsessionend_hook_when_session_is_disconnected() {
                 session.send_and_wait("Say hi").await.expect("send");
                 session.disconnect().await.expect("disconnect session");
                 let input = recv_with_timeout(&mut rx, "sessionEnd hook").await;
+                assert_eq!(input.session_id, session.id().as_str());
+                assert_eq!(input.reason, "user_exit");
                 assert!(input.timestamp > 0.0);
                 assert!(!input.working_directory.as_os_str().is_empty());
 

@@ -1040,6 +1040,99 @@ pub struct AgentsValidateNameResult {
 }
 crate::record_serde::wire_record!(AgentsValidateNameResult { valid: "valid" });
 
+/// Identifiers of a custom agent available to the caller.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct SpawnValidatableAgent {
+    /// Optional namespaced agent identifier.
+    pub id: Option<String>,
+    /// Agent name.
+    pub name: String,
+}
+crate::record_serde::wire_record!(SpawnValidatableAgent { id: "id" if is_none, name: "name" });
+
+/// Caller-visible agent identifiers for spawn validation. This operation does not load agents.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct AgentsValidateSpawnAgentNameRequest {
+    /// Builtin names available in the caller's context.
+    pub builtin_names: Vec<String>,
+    /// Custom agents already loaded by the caller.
+    pub custom_agents: Vec<SpawnValidatableAgent>,
+    /// Requested agent name or identifier.
+    pub name: String,
+}
+crate::record_serde::wire_record!(AgentsValidateSpawnAgentNameRequest {
+    builtin_names: "builtinNames",
+    custom_agents: "customAgents",
+    name: "name"
+});
+
+/// Agent-name validation outcome. A rejection includes its reason and display message.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct AgentsValidateSpawnAgentNameResult {
+    /// Display message, absent on success.
+    pub message: Option<String>,
+    /// Whether the name matches an available identifier.
+    pub ok: bool,
+    /// Rejection category, absent on success.
+    pub reason: Option<SpawnAgentNameValidationReason>,
+}
+crate::record_serde::wire_record!(AgentsValidateSpawnAgentNameResult { message: "message" if is_none, ok: "ok", reason: "reason" if is_none });
+
+/// Local working directory to validate before spawn.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct AgentsValidateSpawnCwdRequest {
+    /// Path to stat on the runtime host.
+    pub cwd: String,
+}
+crate::record_serde::wire_record!(AgentsValidateSpawnCwdRequest { cwd: "cwd" });
+
+/// Working directory validation outcome. All stat errors produce cwd-not-found.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct AgentsValidateSpawnCwdResult {
+    /// Display message, absent on success.
+    pub message: Option<String>,
+    /// Whether the path exists and is a directory.
+    pub ok: bool,
+    /// Rejection category, absent on success.
+    pub reason: Option<SpawnCwdValidationReason>,
+}
+crate::record_serde::wire_record!(AgentsValidateSpawnCwdResult { message: "message" if is_none, ok: "ok", reason: "reason" if is_none });
+
 /// Authenticates pending protected resources with the connection's renewable credential source.
 ///
 /// <div class="warning">
@@ -17470,6 +17563,76 @@ impl<'de> Deserialize<'de> for AgentsCreateFileResultErrorKind {
 pub enum AgentsCreateFileResult {
     Success(AgentsCreateFileResultSuccess),
     Error(AgentsCreateFileResultError),
+}
+
+/// Reason an agent name cannot be used for spawn.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub enum SpawnAgentNameValidationReason {
+    /// The name matches no supplied custom agent or builtin.
+    #[serde(rename = "unknown-agent")]
+    UnknownAgent,
+    /// Unknown variant for forward compatibility.
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+impl<'de> Deserialize<'de> for SpawnAgentNameValidationReason {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let index = crate::enum_serde::deserialize_variant(
+            deserializer,
+            "SpawnAgentNameValidationReason",
+            &["unknown-agent", "Unknown"],
+            Some(1),
+        )?;
+        Ok(match index {
+            0 => Self::UnknownAgent,
+            _ => Self::Unknown,
+        })
+    }
+}
+
+/// Reason a working directory cannot be used for spawn.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub enum SpawnCwdValidationReason {
+    /// The runtime could not stat the path, including permission errors.
+    #[serde(rename = "cwd-not-found")]
+    CwdNotFound,
+    /// Stat succeeded, but the path is not a directory.
+    #[serde(rename = "cwd-not-directory")]
+    CwdNotDirectory,
+    /// Unknown variant for forward compatibility.
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+impl<'de> Deserialize<'de> for SpawnCwdValidationReason {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let index = crate::enum_serde::deserialize_variant(
+            deserializer,
+            "SpawnCwdValidationReason",
+            &["cwd-not-found", "cwd-not-directory", "Unknown"],
+            Some(2),
+        )?;
+        Ok(match index {
+            0 => Self::CwdNotFound,
+            1 => Self::CwdNotDirectory,
+            _ => Self::Unknown,
+        })
+    }
 }
 
 /// Outgoing AHP transport discriminator.

@@ -290,10 +290,18 @@ public sealed class SetToolsTests
         var first = session.SetToolsAsync([Tool("ordered_tool", "first")]);
         await server.WaitForRequestAsync("session.tools.set");
         var second = session.SetToolsAsync([Tool("ordered_tool", "second")]);
-        await Task.Delay(100);
-        Assert.Single(server.Requests, request => request.Method == "session.tools.set");
+        try
+        {
+            // The fake records frames in wire order. The tool reply crosses the same
+            // serialized writer a premature second replacement would already have entered.
+            Assert.Equal("initial", await InvokeToolAsync(server, session, "ordered_tool", "while-first-is-held"));
+            Assert.Single(server.Requests, request => request.Method == "session.tools.set");
+        }
+        finally
+        {
+            releaseFirst.TrySetResult();
+        }
 
-        releaseFirst.SetResult();
         await Assert.ThrowsAsync<RemoteRpcException>(() => first);
         await second;
 

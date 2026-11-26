@@ -10167,14 +10167,12 @@ pub struct SessionExtensionsGetPolicyResult {
     pub eligible_plugin_entries: Vec<EligiblePluginExtensionEntry>,
     /// Extension policy enforcement contract version. Version 1 includes standalone discovery, launch admission, and live-policy revocation.
     pub enforcement_version: i64,
+    /// Source categories permitted by the effective managed extension policy. This report does not include user enablement, session source selection, plugin activation, discovered entries, or launch approval. Null means managed policy is unresolved. Omission means the runtime does not support this report.
+    pub managed_allowed_sources: Option<Vec<ManagedExtensionSource>>,
     /// Whether standalone extensions are allowed, prohibited by plugin-only policy, or pending unresolved managed policy.
     pub standalone: StandaloneExtensionAdmission,
 }
-crate::record_serde::wire_record!(SessionExtensionsGetPolicyResult {
-    eligible_plugin_entries: "eligiblePluginEntries",
-    enforcement_version: "enforcementVersion",
-    standalone: "standalone"
-});
+crate::record_serde::wire_record!(SessionExtensionsGetPolicyResult { eligible_plugin_entries: "eligiblePluginEntries", enforcement_version: "enforcementVersion", managed_allowed_sources: "managedAllowedSources" if is_none, standalone: "standalone" });
 
 /// Identifies the target session.
 ///

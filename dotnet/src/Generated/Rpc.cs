@@ -23955,6 +23955,56 @@ internal sealed class CatalogPlanInstallFromReferenceRequest
     public CatalogMaterializationReference Reference { get => field ??= new(); set; }
 }
 
+/// <summary>Agent-name validation outcome. A rejection includes its reason and display message.</summary>
+[Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+public sealed class AgentsValidateSpawnAgentNameResult
+{
+    /// <summary>Display message, absent on success.</summary>
+    [JsonPropertyName("message")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Message { get; set; }
+
+    /// <summary>Whether the name matches an available identifier.</summary>
+    [JsonPropertyName("ok")]
+    public bool Ok { get; set; }
+
+    /// <summary>Rejection category, absent on success.</summary>
+    [JsonPropertyName("reason")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public SpawnAgentNameValidationReason? Reason { get; set; }
+}
+
+/// <summary>Identifiers of a custom agent available to the caller.</summary>
+[Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+public sealed class SpawnValidatableAgent
+{
+    /// <summary>Optional namespaced agent identifier.</summary>
+    [JsonPropertyName("id")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Id { get; set; }
+
+    /// <summary>Agent name.</summary>
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+}
+
+/// <summary>Caller-visible agent identifiers for spawn validation. This operation does not load agents.</summary>
+[Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+internal sealed class AgentsValidateSpawnAgentNameRequest
+{
+    /// <summary>Builtin names available in the caller's context.</summary>
+    [JsonPropertyName("builtinNames")]
+    public IList<string> BuiltinNames { get => field ??= []; set; }
+
+    /// <summary>Custom agents already loaded by the caller.</summary>
+    [JsonPropertyName("customAgents")]
+    public IList<SpawnValidatableAgent> CustomAgents { get => field ??= []; set; }
+
+    /// <summary>Requested agent name or identifier.</summary>
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+}
+
 /// <summary>Whether the name produces a nonempty filename.</summary>
 [Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
 public sealed class AgentsValidateNameResult
@@ -23971,6 +24021,34 @@ internal sealed class AgentsValidateNameRequest
     /// <summary>The name to check for a usable filename.</summary>
     [JsonPropertyName("name")]
     public string Name { get; set; } = string.Empty;
+}
+
+/// <summary>Working directory validation outcome. All stat errors produce cwd-not-found.</summary>
+[Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+public sealed class AgentsValidateSpawnCwdResult
+{
+    /// <summary>Display message, absent on success.</summary>
+    [JsonPropertyName("message")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Message { get; set; }
+
+    /// <summary>Whether the path exists and is a directory.</summary>
+    [JsonPropertyName("ok")]
+    public bool Ok { get; set; }
+
+    /// <summary>Rejection category, absent on success.</summary>
+    [JsonPropertyName("reason")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public SpawnCwdValidationReason? Reason { get; set; }
+}
+
+/// <summary>Local working directory to validate before spawn.</summary>
+[Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+internal sealed class AgentsValidateSpawnCwdRequest
+{
+    /// <summary>Path to stat on the runtime host.</summary>
+    [JsonPropertyName("cwd")]
+    public string Cwd { get; set; } = string.Empty;
 }
 
 /// <summary>A selectable agent tool group.</summary>
@@ -28708,6 +28786,11 @@ public sealed class ExtensionManagedPolicy
     /// <summary>Extension policy enforcement contract version. Version 1 includes standalone discovery, launch admission, and live-policy revocation.</summary>
     [JsonPropertyName("enforcementVersion")]
     public long EnforcementVersion { get; set; }
+
+    /// <summary>Source categories permitted by the effective managed extension policy. This report does not include user enablement, session source selection, plugin activation, discovered entries, or launch approval. Null means managed policy is unresolved. Omission means the runtime does not support this report.</summary>
+    [JsonPropertyName("managedAllowedSources")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IList<ManagedExtensionSource>? ManagedAllowedSources { get; set; }
 
     /// <summary>Whether standalone extensions are allowed, prohibited by plugin-only policy, or pending unresolved managed policy.</summary>
     [JsonPropertyName("standalone")]
@@ -64139,6 +64222,129 @@ public readonly struct CatalogReferenceInstallationFailureReason : IEquatable<Ca
 }
 
 
+/// <summary>Reason an agent name cannot be used for spawn.</summary>
+[Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+[JsonConverter(typeof(Converter))]
+[DebuggerDisplay("{Value,nq}")]
+public readonly struct SpawnAgentNameValidationReason : IEquatable<SpawnAgentNameValidationReason>
+{
+    private readonly string? _value;
+
+    /// <summary>Initializes a new instance of the <see cref="SpawnAgentNameValidationReason"/> struct.</summary>
+    /// <param name="value">The value to associate with this <see cref="SpawnAgentNameValidationReason"/>.</param>
+    [JsonConstructor]
+    public SpawnAgentNameValidationReason(string value)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(value);
+        _value = value;
+    }
+
+    /// <summary>Gets the value associated with this <see cref="SpawnAgentNameValidationReason"/>.</summary>
+    public string Value => _value ?? string.Empty;
+
+    /// <summary>The name matches no supplied custom agent or builtin.</summary>
+    public static SpawnAgentNameValidationReason UnknownAgent { get; } = new("unknown-agent");
+
+    /// <summary>Returns a value indicating whether two <see cref="SpawnAgentNameValidationReason"/> instances are equivalent.</summary>
+    public static bool operator ==(SpawnAgentNameValidationReason left, SpawnAgentNameValidationReason right) => left.Equals(right);
+
+    /// <summary>Returns a value indicating whether two <see cref="SpawnAgentNameValidationReason"/> instances are not equivalent.</summary>
+    public static bool operator !=(SpawnAgentNameValidationReason left, SpawnAgentNameValidationReason right) => !(left == right);
+
+    /// <inheritdoc />
+    public override bool Equals(object? obj) => obj is SpawnAgentNameValidationReason other && Equals(other);
+
+    /// <inheritdoc />
+    public bool Equals(SpawnAgentNameValidationReason other) => string.Equals(Value, other.Value, StringComparison.OrdinalIgnoreCase);
+
+    /// <inheritdoc />
+    public override int GetHashCode() => StringComparer.OrdinalIgnoreCase.GetHashCode(Value);
+
+    /// <inheritdoc />
+    public override string ToString() => Value;
+
+    /// <summary>Provides a <see cref="JsonConverter{SpawnAgentNameValidationReason}"/> for serializing <see cref="SpawnAgentNameValidationReason"/> instances.</summary>
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    public sealed class Converter : JsonConverter<SpawnAgentNameValidationReason>
+    {
+        /// <inheritdoc />
+        public override SpawnAgentNameValidationReason Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            return new(GeneratedStringEnumJson.ReadValue(ref reader, typeToConvert));
+        }
+
+        /// <inheritdoc />
+        public override void Write(Utf8JsonWriter writer, SpawnAgentNameValidationReason value, JsonSerializerOptions options)
+        {
+            GeneratedStringEnumJson.WriteValue(writer, value.Value, typeof(SpawnAgentNameValidationReason));
+        }
+    }
+}
+
+
+/// <summary>Reason a working directory cannot be used for spawn.</summary>
+[Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+[JsonConverter(typeof(Converter))]
+[DebuggerDisplay("{Value,nq}")]
+public readonly struct SpawnCwdValidationReason : IEquatable<SpawnCwdValidationReason>
+{
+    private readonly string? _value;
+
+    /// <summary>Initializes a new instance of the <see cref="SpawnCwdValidationReason"/> struct.</summary>
+    /// <param name="value">The value to associate with this <see cref="SpawnCwdValidationReason"/>.</param>
+    [JsonConstructor]
+    public SpawnCwdValidationReason(string value)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(value);
+        _value = value;
+    }
+
+    /// <summary>Gets the value associated with this <see cref="SpawnCwdValidationReason"/>.</summary>
+    public string Value => _value ?? string.Empty;
+
+    /// <summary>The runtime could not stat the path, including permission errors.</summary>
+    public static SpawnCwdValidationReason CwdNotFound { get; } = new("cwd-not-found");
+
+    /// <summary>Stat succeeded, but the path is not a directory.</summary>
+    public static SpawnCwdValidationReason CwdNotDirectory { get; } = new("cwd-not-directory");
+
+    /// <summary>Returns a value indicating whether two <see cref="SpawnCwdValidationReason"/> instances are equivalent.</summary>
+    public static bool operator ==(SpawnCwdValidationReason left, SpawnCwdValidationReason right) => left.Equals(right);
+
+    /// <summary>Returns a value indicating whether two <see cref="SpawnCwdValidationReason"/> instances are not equivalent.</summary>
+    public static bool operator !=(SpawnCwdValidationReason left, SpawnCwdValidationReason right) => !(left == right);
+
+    /// <inheritdoc />
+    public override bool Equals(object? obj) => obj is SpawnCwdValidationReason other && Equals(other);
+
+    /// <inheritdoc />
+    public bool Equals(SpawnCwdValidationReason other) => string.Equals(Value, other.Value, StringComparison.OrdinalIgnoreCase);
+
+    /// <inheritdoc />
+    public override int GetHashCode() => StringComparer.OrdinalIgnoreCase.GetHashCode(Value);
+
+    /// <inheritdoc />
+    public override string ToString() => Value;
+
+    /// <summary>Provides a <see cref="JsonConverter{SpawnCwdValidationReason}"/> for serializing <see cref="SpawnCwdValidationReason"/> instances.</summary>
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    public sealed class Converter : JsonConverter<SpawnCwdValidationReason>
+    {
+        /// <inheritdoc />
+        public override SpawnCwdValidationReason Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            return new(GeneratedStringEnumJson.ReadValue(ref reader, typeToConvert));
+        }
+
+        /// <inheritdoc />
+        public override void Write(Utf8JsonWriter writer, SpawnCwdValidationReason value, JsonSerializerOptions options)
+        {
+            GeneratedStringEnumJson.WriteValue(writer, value.Value, typeof(SpawnCwdValidationReason));
+        }
+    }
+}
+
+
 /// <summary>A tool group that an agent file can enable.</summary>
 [Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
 [JsonConverter(typeof(Converter))]
@@ -66810,6 +67016,78 @@ public readonly struct ExtensionStatus : IEquatable<ExtensionStatus>
         public override void Write(Utf8JsonWriter writer, ExtensionStatus value, JsonSerializerOptions options)
         {
             GeneratedStringEnumJson.WriteValue(writer, value.Value, typeof(ExtensionStatus));
+        }
+    }
+}
+
+
+/// <summary>Extension source category permitted by managed policy.</summary>
+[Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+[JsonConverter(typeof(Converter))]
+[DebuggerDisplay("{Value,nq}")]
+public readonly struct ManagedExtensionSource : IEquatable<ManagedExtensionSource>
+{
+    private readonly string? _value;
+
+    /// <summary>Initializes a new instance of the <see cref="ManagedExtensionSource"/> struct.</summary>
+    /// <param name="value">The value to associate with this <see cref="ManagedExtensionSource"/>.</param>
+    [JsonConstructor]
+    public ManagedExtensionSource(string value)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(value);
+        _value = value;
+    }
+
+    /// <summary>Gets the value associated with this <see cref="ManagedExtensionSource"/>.</summary>
+    public string Value => _value ?? string.Empty;
+
+    /// <summary>Standalone extensions supplied by the host, including runtime built-ins.</summary>
+    public static ManagedExtensionSource Host { get; } = new("host");
+
+    /// <summary>Extensions from otherwise-eligible active plugins.</summary>
+    public static ManagedExtensionSource Plugins { get; } = new("plugins");
+
+    /// <summary>Extensions from personal extension directories.</summary>
+    public static ManagedExtensionSource User { get; } = new("user");
+
+    /// <summary>Extensions from project extension directories.</summary>
+    public static ManagedExtensionSource Project { get; } = new("project");
+
+    /// <summary>Extensions owned by the session.</summary>
+    public static ManagedExtensionSource Session { get; } = new("session");
+
+    /// <summary>Returns a value indicating whether two <see cref="ManagedExtensionSource"/> instances are equivalent.</summary>
+    public static bool operator ==(ManagedExtensionSource left, ManagedExtensionSource right) => left.Equals(right);
+
+    /// <summary>Returns a value indicating whether two <see cref="ManagedExtensionSource"/> instances are not equivalent.</summary>
+    public static bool operator !=(ManagedExtensionSource left, ManagedExtensionSource right) => !(left == right);
+
+    /// <inheritdoc />
+    public override bool Equals(object? obj) => obj is ManagedExtensionSource other && Equals(other);
+
+    /// <inheritdoc />
+    public bool Equals(ManagedExtensionSource other) => string.Equals(Value, other.Value, StringComparison.OrdinalIgnoreCase);
+
+    /// <inheritdoc />
+    public override int GetHashCode() => StringComparer.OrdinalIgnoreCase.GetHashCode(Value);
+
+    /// <inheritdoc />
+    public override string ToString() => Value;
+
+    /// <summary>Provides a <see cref="JsonConverter{ManagedExtensionSource}"/> for serializing <see cref="ManagedExtensionSource"/> instances.</summary>
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    public sealed class Converter : JsonConverter<ManagedExtensionSource>
+    {
+        /// <inheritdoc />
+        public override ManagedExtensionSource Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            return new(GeneratedStringEnumJson.ReadValue(ref reader, typeToConvert));
+        }
+
+        /// <inheritdoc />
+        public override void Write(Utf8JsonWriter writer, ManagedExtensionSource value, JsonSerializerOptions options)
+        {
+            GeneratedStringEnumJson.WriteValue(writer, value.Value, typeof(ManagedExtensionSource));
         }
     }
 }
@@ -82050,6 +82328,22 @@ public sealed class ServerAgentsApi
         _rpc = rpc;
     }
 
+    /// <summary>Validates an agent name against caller-visible custom agents and builtin names, with equivalent colon and slash namespaces. Does not discover or load agents; callers can check builtins first without consulting a custom-agent loader.</summary>
+    /// <param name="name">Requested agent name or identifier.</param>
+    /// <param name="customAgents">Custom agents already loaded by the caller.</param>
+    /// <param name="builtinNames">Builtin names available in the caller's context.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>Agent-name validation outcome. A rejection includes its reason and display message.</returns>
+    public async Task<AgentsValidateSpawnAgentNameResult> ValidateSpawnAgentNameAsync(string name, IList<SpawnValidatableAgent> customAgents, IList<string> builtinNames, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+        ArgumentNullException.ThrowIfNull(customAgents);
+        ArgumentNullException.ThrowIfNull(builtinNames);
+
+        var request = new AgentsValidateSpawnAgentNameRequest { Name = name, CustomAgents = customAgents, BuiltinNames = builtinNames };
+        return await CopilotClient.InvokeRpcAsync<AgentsValidateSpawnAgentNameResult>(_rpc, "agents.validateSpawnAgentName", [request], cancellationToken);
+    }
+
     /// <summary>Checks whether an agent name produces a usable filename, without filesystem access.</summary>
     /// <param name="name">The name to check for a usable filename.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
@@ -82060,6 +82354,18 @@ public sealed class ServerAgentsApi
 
         var request = new AgentsValidateNameRequest { Name = name };
         return await CopilotClient.InvokeRpcAsync<AgentsValidateNameResult>(_rpc, "agents.validateName", [request], cancellationToken);
+    }
+
+    /// <summary>Validates a local working directory before spawn using the runtime host filesystem. All stat failures return cwd-not-found; a successful stat of a non-directory returns cwd-not-directory.</summary>
+    /// <param name="cwd">Path to stat on the runtime host.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>Working directory validation outcome. All stat errors produce cwd-not-found.</returns>
+    public async Task<AgentsValidateSpawnCwdResult> ValidateSpawnCwdAsync(string cwd, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(cwd);
+
+        var request = new AgentsValidateSpawnCwdRequest { Cwd = cwd };
+        return await CopilotClient.InvokeRpcAsync<AgentsValidateSpawnCwdResult>(_rpc, "agents.validateSpawnCwd", [request], cancellationToken);
     }
 
     /// <summary>Lists the closed agent tool groups in canonical display order for agent-file authoring.</summary>
@@ -84067,7 +84373,7 @@ public sealed class ExtensionsApi
         return await CopilotClient.InvokeRpcAsync<SessionExtensionsInspectServiceResult>(_session.Rpc, "session.extensions.inspectService", [request], cancellationToken);
     }
 
-    /// <summary>Returns the runtime-derived standalone extension admission policy for the session's actual project and managed-settings context. enforcementVersion 1 means this runtime enforces strictPluginOnlyCustomization for executable extensions. Hosts executing independent extension targets must deny standalone targets unless standalone is allowed; plugin_only requires runtime-verified eligible plugin provenance, not a caller-supplied source label or transport bridge. pending is not confirmed absence. Older runtimes return method-not-found and must not be represented as enforcing this restriction. Re-read on managed-settings changes; a snapshot is not a launch authorization token.</summary>
+    /// <summary>Returns the runtime-derived extension policy for the session's actual project and managed-settings context. managedAllowedSources reports only the effective managed policy; it does not include user enablement, session source selection, plugin activation, discovered entries, or launch approval. A null managedAllowedSources value means policy is unresolved, while omission means the runtime does not support this report. enforcementVersion 1 means this runtime enforces strictPluginOnlyCustomization for executable extensions. Hosts executing independent extension targets must deny standalone targets unless standalone is allowed; plugin_only requires runtime-verified eligible plugin provenance, not a caller-supplied source label or transport bridge. pending is not confirmed absence. Older runtimes return method-not-found and must not be represented as enforcing this restriction. Re-read on managed-settings changes; a snapshot is not a launch authorization token.</summary>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>Runtime support and session-context standalone executable extension policy.</returns>
     public async Task<ExtensionManagedPolicy> GetPolicyAsync(CancellationToken cancellationToken = default)
@@ -92001,6 +92307,10 @@ internal static class ClientGlobalApiRegistration
 [JsonSerializable(typeof(AgentsListToolCategoriesResult))]
 [JsonSerializable(typeof(AgentsValidateNameRequest))]
 [JsonSerializable(typeof(AgentsValidateNameResult))]
+[JsonSerializable(typeof(AgentsValidateSpawnAgentNameRequest))]
+[JsonSerializable(typeof(AgentsValidateSpawnAgentNameResult))]
+[JsonSerializable(typeof(AgentsValidateSpawnCwdRequest))]
+[JsonSerializable(typeof(AgentsValidateSpawnCwdResult))]
 [JsonSerializable(typeof(AhpConnectionEvent))]
 [JsonSerializable(typeof(AhpConnectionLogsCloseRequest))]
 [JsonSerializable(typeof(AhpConnectionLogsFlushRequest))]
@@ -93833,6 +94143,7 @@ internal static class ClientGlobalApiRegistration
 [JsonSerializable(typeof(SlashCommandModelPickerDialog))]
 [JsonSerializable(typeof(SlashCommandSelectSubcommandOption))]
 [JsonSerializable(typeof(SlashCommandTimelineEntry))]
+[JsonSerializable(typeof(SpawnValidatableAgent))]
 [JsonSerializable(typeof(SubagentSettingsConfig))]
 [JsonSerializable(typeof(SubagentSettingsEntry))]
 [JsonSerializable(typeof(SystemMessageBlock))]

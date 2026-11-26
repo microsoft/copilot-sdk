@@ -575,6 +575,28 @@ export type AgentsCreateFileResult =
       kind: "error";
     };
 /**
+ * Reason an agent name cannot be used for spawn.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "SpawnAgentNameValidationReason".
+ */
+/** @experimental */
+export type SpawnAgentNameValidationReason =
+  /** The name matches no supplied custom agent or builtin. */
+  "unknown-agent";
+/**
+ * Reason a working directory cannot be used for spawn.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "SpawnCwdValidationReason".
+ */
+/** @experimental */
+export type SpawnCwdValidationReason =
+  /** The runtime could not stat the path, including permission errors. */
+  | "cwd-not-found"
+  /** Stat succeeded, but the path is not a directory. */
+  | "cwd-not-directory";
+/**
  * Transport selected for an outgoing connection.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
@@ -3681,6 +3703,24 @@ export type ExtensionStatus =
   | "failed"
   /** The extension process is starting. */
   | "starting";
+/**
+ * Extension source category permitted by managed policy.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "ManagedExtensionSource".
+ */
+/** @experimental */
+export type ManagedExtensionSource =
+  /** Standalone extensions supplied by the host, including runtime built-ins. */
+  | "host"
+  /** Extensions from otherwise-eligible active plugins. */
+  | "plugins"
+  /** Extensions from personal extension directories. */
+  | "user"
+  /** Extensions from project extension directories. */
+  | "project"
+  /** Extensions owned by the session. */
+  | "session";
 /**
  * Runtime-derived standalone extension eligibility.
  *
@@ -13443,6 +13483,99 @@ export interface AgentsValidateNameResult {
   valid: boolean;
 }
 /**
+ * Caller-visible agent identifiers for spawn validation. This operation does not load agents.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "AgentsValidateSpawnAgentNameRequest".
+ */
+/** @experimental */
+export interface AgentsValidateSpawnAgentNameRequest {
+  /**
+   * Requested agent name or identifier.
+   */
+  name: string;
+  /**
+   * Custom agents already loaded by the caller.
+   */
+  customAgents: SpawnValidatableAgent[];
+  /**
+   * Builtin names available in the caller's context.
+   */
+  builtinNames: string[];
+}
+/**
+ * Identifiers of a custom agent available to the caller.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "SpawnValidatableAgent".
+ */
+/** @experimental */
+export interface SpawnValidatableAgent {
+  /**
+   * Agent name.
+   */
+  name: string;
+  /**
+   * Optional namespaced agent identifier.
+   */
+  id?: string;
+}
+/**
+ * Agent-name validation outcome. A rejection includes its reason and display message.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "AgentsValidateSpawnAgentNameResult".
+ */
+/** @experimental */
+export interface AgentsValidateSpawnAgentNameResult {
+  /**
+   * Whether the name matches an available identifier.
+   */
+  ok: boolean;
+  /**
+   * Rejection category, absent on success.
+   */
+  reason?: SpawnAgentNameValidationReason;
+  /**
+   * Display message, absent on success.
+   */
+  message?: string;
+}
+/**
+ * Local working directory to validate before spawn.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "AgentsValidateSpawnCwdRequest".
+ */
+/** @experimental */
+export interface AgentsValidateSpawnCwdRequest {
+  /**
+   * Path to stat on the runtime host.
+   */
+  cwd: string;
+}
+/**
+ * Working directory validation outcome. All stat errors produce cwd-not-found.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "AgentsValidateSpawnCwdResult".
+ */
+/** @experimental */
+export interface AgentsValidateSpawnCwdResult {
+  /**
+   * Whether the path exists and is a directory.
+   */
+  ok: boolean;
+  /**
+   * Rejection category, absent on success.
+   */
+  reason?: SpawnCwdValidationReason;
+  /**
+   * Display message, absent on success.
+   */
+  message?: string;
+}
+/**
  * Authenticates pending protected resources with the connection's renewable credential source.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
@@ -22030,6 +22163,10 @@ export interface ExtensionList {
  */
 /** @experimental */
 export interface ExtensionManagedPolicy {
+  /**
+   * Source categories permitted by the effective managed extension policy. This report does not include user enablement, session source selection, plugin activation, discovered entries, or launch approval. Null means managed policy is unresolved. Omission means the runtime does not support this report.
+   */
+  managedAllowedSources?: ManagedExtensionSource[] | null;
   /**
    * Whether standalone extensions are allowed, prohibited by plugin-only policy, or pending unresolved managed policy.
    */
@@ -64470,6 +64607,15 @@ export function createServerRpc(connection: MessageConnection) {
         /** @experimental */
         agents: {
             /**
+             * Validates an agent name against caller-visible custom agents and builtin names, with equivalent colon and slash namespaces. Does not discover or load agents; callers can check builtins first without consulting a custom-agent loader.
+             *
+             * @param params Caller-visible agent identifiers for spawn validation. This operation does not load agents.
+             *
+             * @returns Agent-name validation outcome. A rejection includes its reason and display message.
+             */
+            validateSpawnAgentName: async (params: AgentsValidateSpawnAgentNameRequest): Promise<AgentsValidateSpawnAgentNameResult> =>
+                connection.sendRequest("agents.validateSpawnAgentName", params),
+            /**
              * Checks whether an agent name produces a usable filename, without filesystem access.
              *
              * @param params A proposed agent name.
@@ -64478,6 +64624,15 @@ export function createServerRpc(connection: MessageConnection) {
              */
             validateName: async (params: AgentsValidateNameRequest): Promise<AgentsValidateNameResult> =>
                 connection.sendRequest("agents.validateName", params),
+            /**
+             * Validates a local working directory before spawn using the runtime host filesystem. All stat failures return cwd-not-found; a successful stat of a non-directory returns cwd-not-directory.
+             *
+             * @param params Local working directory to validate before spawn.
+             *
+             * @returns Working directory validation outcome. All stat errors produce cwd-not-found.
+             */
+            validateSpawnCwd: async (params: AgentsValidateSpawnCwdRequest): Promise<AgentsValidateSpawnCwdResult> =>
+                connection.sendRequest("agents.validateSpawnCwd", params),
             /**
              * Lists the closed agent tool groups in canonical display order for agent-file authoring.
              *
@@ -67214,7 +67369,7 @@ export function createSessionRpc(connection: MessageConnection, sessionId: strin
         /** @experimental */
         extensions: {
             /**
-             * Returns the runtime-derived standalone extension admission policy for the session's actual project and managed-settings context. enforcementVersion 1 means this runtime enforces strictPluginOnlyCustomization for executable extensions. Hosts executing independent extension targets must deny standalone targets unless standalone is allowed; plugin_only requires runtime-verified eligible plugin provenance, not a caller-supplied source label or transport bridge. pending is not confirmed absence. Older runtimes return method-not-found and must not be represented as enforcing this restriction. Re-read on managed-settings changes; a snapshot is not a launch authorization token.
+             * Returns the runtime-derived extension policy for the session's actual project and managed-settings context. managedAllowedSources reports only the effective managed policy; it does not include user enablement, session source selection, plugin activation, discovered entries, or launch approval. A null managedAllowedSources value means policy is unresolved, while omission means the runtime does not support this report. enforcementVersion 1 means this runtime enforces strictPluginOnlyCustomization for executable extensions. Hosts executing independent extension targets must deny standalone targets unless standalone is allowed; plugin_only requires runtime-verified eligible plugin provenance, not a caller-supplied source label or transport bridge. pending is not confirmed absence. Older runtimes return method-not-found and must not be represented as enforcing this restriction. Re-read on managed-settings changes; a snapshot is not a launch authorization token.
              *
              * @returns Runtime support and session-context standalone executable extension policy.
              */

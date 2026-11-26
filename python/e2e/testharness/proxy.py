@@ -95,6 +95,8 @@ class CapiProxy:
 
         process = self._process
         shutdown_error: Exception | None = None
+        stop_acknowledged = False
+        cancellation: asyncio.CancelledError | None = None
         try:
             # Send stop request to the server
             if self._proxy_url:
@@ -104,6 +106,8 @@ class CapiProxy:
                         stop_url += "?skipWritingCache=true"
                     async with httpx.AsyncClient() as client:
                         response = await client.post(stop_url)
+                        # The server exits by itself after answering /stop.
+                        stop_acknowledged = True
                         if not response.is_success:
                             shutdown_error = RuntimeError(
                                 f"Proxy shutdown failed: HTTP {response.status_code}: "
@@ -111,17 +115,31 @@ class CapiProxy:
                             )
                 except httpx.HTTPError as error:
                     shutdown_error = error
+        except asyncio.CancelledError as error:
+            # Cancellation is delivered once, so reaping must act on it here.
+            cancellation = error
         finally:
-            reaping = asyncio.create_task(asyncio.to_thread(_reap_process, process))
-            cancellation: asyncio.CancelledError | None = None
+            reaping = asyncio.create_task(
+                asyncio.to_thread(_reap_process, process, stop_acknowledged)
+            )
+            killing: asyncio.Task[None] | None = None
+            if cancellation is not None:
+                killing = asyncio.create_task(asyncio.to_thread(_kill_process_tree, process))
             try:
                 # Even repeated teardown cancellation must not abandon the owned process.
-                while not reaping.done():
+                while pending := [task for task in (reaping, killing) if task and not task.done()]:
                     try:
-                        await asyncio.shield(reaping)
+                        await asyncio.wait(pending)
                     except asyncio.CancelledError as error:
                         cancellation = error
+                        if killing is None:
+                            # A cancelled teardown stops waiting for a graceful exit.
+                            killing = asyncio.create_task(
+                                asyncio.to_thread(_kill_process_tree, process)
+                            )
                 reaping.result()
+                if killing is not None:
+                    killing.result()
                 if cancellation is not None:
                     raise cancellation
             finally:
@@ -202,7 +220,12 @@ class CapiProxy:
         }
 
 
-def _reap_process(process: subprocess.Popen) -> None:
+def _reap_process(process: subprocess.Popen, stop_acknowledged: bool) -> None:
+    if stop_acknowledged:
+        # Its exit, not a grace period, ends an acknowledged shutdown: a forced kill
+        # would fail a slow but healthy exit. pytest-timeout stops a hung one.
+        process.wait()
+        return
     try:
         process.wait(timeout=PROCESS_SHUTDOWN_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
