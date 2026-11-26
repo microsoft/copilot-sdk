@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -480,6 +481,163 @@ func TestAhpRejectsChangedBooleanSettings(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestAhpFactoriesPreserveLifecycleMode(t *testing.T) {
+	for _, resume := range []bool{false, true} {
+		for _, scenario := range []struct {
+			name   string
+			mode   SessionLifecycleMode
+			change bool
+		}{
+			{name: "per-turn", mode: SessionLifecycleModePerTurn},
+			{name: "default"},
+			{name: "changed", mode: SessionLifecycleModePerTurn, change: true},
+		} {
+			t.Run(fmt.Sprintf("resume=%t/%s", resume, scenario.name), func(t *testing.T) {
+				client, server, _ := ahpFixture(t)
+				var factoryCalled atomic.Bool
+				selectedMode := func(ctx context.Context) SessionLifecycleMode {
+					t.Helper()
+					mode := AhpSessionLifecycleMode(ctx)
+					if mode != scenario.mode {
+						t.Errorf("factory lifecycle mode = %q, want %q", mode, scenario.mode)
+					}
+					if scenario.change {
+						return SessionLifecycleModeInteractive
+					}
+					return mode
+				}
+				method := "session.create"
+				if resume {
+					method = "session.resume"
+				}
+				server.SetRequestHandler(method, func(data json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
+					var request map[string]any
+					if err := json.Unmarshal(data, &request); err != nil {
+						t.Error(err)
+					}
+					mode, present := request["sessionLifecycleMode"]
+					want := scenario.mode
+					if scenario.change {
+						want = SessionLifecycleModeInteractive
+					}
+					if want == "" {
+						if present {
+							t.Errorf("request supplied a lifecycle default: %v", mode)
+						}
+					} else if mode != string(want) {
+						t.Errorf("wire lifecycle mode = %v, want %q", mode, want)
+					}
+					return []byte(`{"sessionId":"lifecycle"}`), nil
+				})
+				host, err := client.StartAhpHost(t.Context(), &AhpHostOptions{
+					Authentication: AhpHostAuthentication{Mode: "github"},
+					LocalServer:    &rpc.HostLocalServerOptions{},
+					CreateSession: func(ctx context.Context, request AhpSessionCreateRequest) (*Session, error) {
+						factoryCalled.Store(true)
+						return client.CreateSessionWithLifecycleMode(ctx, request.Config, selectedMode(ctx))
+					},
+					ResumeSession: func(ctx context.Context, request AhpSessionResumeRequest) (*Session, error) {
+						factoryCalled.Store(true)
+						return client.ResumeSessionWithLifecycleMode(ctx, request.SessionID, request.Config, selectedMode(ctx))
+					},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				config := map[string]any{"sessionId": "lifecycle"}
+				if scenario.mode != "" {
+					config["sessionLifecycleMode"] = string(scenario.mode)
+				}
+				_, err = server.Request(t.Context(), "host.materializeSession", &rpc.HostSessionCreateCallback{
+					Authentication: rpc.HostSessionAuthenticationGitHub{Identity: "123"},
+					HostID:         host.HostID, HandoffID: "lifecycle", Resume: Bool(resume),
+					Config: config,
+				})
+				if scenario.change {
+					if err == nil || !strings.Contains(err.Error(), "preserve") {
+						t.Fatalf("changed lifecycle mode must fail preservation: %v", err)
+					}
+				} else if err != nil {
+					t.Fatalf("lifecycle handoff failed (factory called: %t): %v", factoryCalled.Load(), err)
+				}
+				if !factoryCalled.Load() {
+					t.Fatal("handoff did not invoke the factory")
+				}
+			})
+		}
+	}
+}
+
+func ExampleAhpSessionLifecycleMode() {
+	// A scripted runtime keeps this example independent of native runtime assets.
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+	transport := jsonrpc2.NewClient(clientConn, clientConn)
+	runtime := jsonrpc2.NewClient(serverConn, serverConn)
+	transport.Start()
+	runtime.Start()
+	defer transport.Stop()
+	defer runtime.Stop()
+	client := NewClient(&ClientOptions{Mode: ModeCodingAgent})
+	client.client, client.RPC, client.state = transport, rpc.NewServerRPC(transport), stateConnected
+	client.setupNotificationHandler()
+	defer client.ForceStop()
+	runtime.SetRequestHandler("host.start", jsonrpc2.RequestHandlerFor(func(request *rpc.HostStartRequest) (*rpc.HostStartResult, *jsonrpc2.Error) {
+		return &rpc.HostStartResult{HostID: request.HostID}, nil
+	}))
+	for _, method := range []string{"session.create", "session.resume"} {
+		runtime.SetRequestHandler(method, func(data json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
+			var request map[string]any
+			if err := json.Unmarshal(data, &request); err != nil {
+				panic(err)
+			}
+			fmt.Printf("%s: %s\n", method, request["sessionLifecycleMode"])
+			result, err := json.Marshal(map[string]any{"sessionId": request["sessionId"]})
+			if err != nil {
+				panic(err)
+			}
+			return result, nil
+		})
+	}
+	for _, method := range []string{"session.options.update", "session.detach"} {
+		runtime.SetRequestHandler(method, func(json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
+			return []byte(`{}`), nil
+		})
+	}
+
+	host, err := client.StartAhpHost(context.Background(), &AhpHostOptions{
+		Authentication: AhpHostAuthentication{Mode: "none"},
+		LocalServer:    &rpc.HostLocalServerOptions{},
+		CreateSession: func(ctx context.Context, request AhpSessionCreateRequest) (*Session, error) {
+			return client.CreateSessionWithLifecycleMode(ctx, request.Config, AhpSessionLifecycleMode(ctx))
+		},
+		ResumeSession: func(ctx context.Context, request AhpSessionResumeRequest) (*Session, error) {
+			return client.ResumeSessionWithLifecycleMode(ctx, request.SessionID, request.Config, AhpSessionLifecycleMode(ctx))
+		},
+	})
+	if err != nil {
+		panic(err)
+	}
+	for _, resume := range []bool{false, true} {
+		mode := SessionLifecycleModePerTurn
+		if resume {
+			mode = SessionLifecycleModeInteractive
+		}
+		_, err := runtime.Request(context.Background(), "host.materializeSession", &rpc.HostSessionCreateCallback{
+			Authentication: rpc.HostSessionAuthenticationNone{},
+			HostID:         host.HostID, HandoffID: fmt.Sprintf("handoff-%t", resume), Resume: Bool(resume),
+			Config: map[string]any{"sessionId": fmt.Sprintf("session-%t", resume), "sessionLifecycleMode": string(mode)},
+		})
+		if err != nil {
+			panic(err)
+		}
+	}
+	// Output:
+	// session.create: per-turn
+	// session.resume: interactive
 }
 
 func TestAhpCancellationReleasesLateResultAndRejectsDuplicate(t *testing.T) {

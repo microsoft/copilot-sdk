@@ -26,7 +26,7 @@ import javax.annotation.processing.Generated;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record AuthLoginAccount(
     /** Opaque identifier supplied to the next login step to select this account. */
-    @JsonProperty("selectionId") String selectionId,
+    @JsonProperty("accountId") String accountId,
     /** Host coordinate owned by the selected account's provider. */
     @JsonProperty("host") String host,
     /** Human-readable login for the account choice. */
@@ -56,20 +56,20 @@ public record AuthLoginAccount(
     @com.microsoft.copilot.CopilotExperimental
     public static final class Builder {
         private Builder() {}
-        private String selectionId;
+        private String accountId;
         private String host;
         private String login;
         private AccountKind kind;
 
         /**
-         * Sets the {@code selectionId} property.
+         * Sets the {@code accountId} property.
          * @param value the property value
          * @return this builder
          * @since 2.0.0
          */
         @com.microsoft.copilot.CopilotExperimental
-        public Builder selectionId(String value) {
-            this.selectionId = value;
+        public Builder accountId(String value) {
+            this.accountId = value;
             return this;
         }
 
@@ -116,11 +116,11 @@ public record AuthLoginAccount(
          * @since 2.0.0
          */
         public AuthLoginAccount build() {
-            if (selectionId == null) throw new IllegalStateException("Missing required property: selectionId");
+            if (accountId == null) throw new IllegalStateException("Missing required property: accountId");
             if (host == null) throw new IllegalStateException("Missing required property: host");
             if (login == null) throw new IllegalStateException("Missing required property: login");
             if (kind == null) throw new IllegalStateException("Missing required property: kind");
-            return new AuthLoginAccount(selectionId, host, login, kind);
+            return new AuthLoginAccount(accountId, host, login, kind);
         }
     }
 }

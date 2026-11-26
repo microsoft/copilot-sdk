@@ -14,7 +14,7 @@ import com.microsoft.copilot.CopilotExperimental;
 import javax.annotation.processing.Generated;
 
 /**
- * The provider whose cached base identities should be listed.
+ * A decision for the handoff's repository mismatch.
  *
  * @apiNote This method is experimental and may change in a future version.
  * @since 1.0.0
@@ -23,58 +23,40 @@ import javax.annotation.processing.Generated;
 @javax.annotation.processing.Generated("copilot-sdk-codegen")
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @JsonIgnoreProperties(ignoreUnknown = true)
-public record SessionAccountsLoginListParams(
-    /** Target session identifier */
-    @JsonProperty("sessionId") String sessionId,
-    /** Login provider whose reusable base identities should be listed. */
-    @JsonProperty("provider") LoginProviderKind provider
+public record SessionHandoffConfirmResult(
+    /** Whether the requester permits the handoff to use the local repository. */
+    @JsonProperty("confirmed") Boolean confirmed
 ) {
 
     /**
      * Creates a record positionally.
      * Use {@link #builder()} for named construction.
      */
-    public SessionAccountsLoginListParams {}
+    public SessionHandoffConfirmResult {}
 
     /**
      * Returns a named builder.
      * @return a new builder
      * @since 2.0.0
      */
-    @com.microsoft.copilot.CopilotExperimental
     public static Builder builder() { return new Builder(); }
 
     /**
      * Named construction for this record.
      * @since 2.0.0
      */
-    @com.microsoft.copilot.CopilotExperimental
     public static final class Builder {
         private Builder() {}
-        private String sessionId;
-        private LoginProviderKind provider;
+        private Boolean confirmed;
 
         /**
-         * Sets the {@code sessionId} property.
+         * Sets the {@code confirmed} property.
          * @param value the property value
          * @return this builder
          * @since 2.0.0
          */
-        @com.microsoft.copilot.CopilotExperimental
-        public Builder sessionId(String value) {
-            this.sessionId = value;
-            return this;
-        }
-
-        /**
-         * Sets the {@code provider} property.
-         * @param value the property value
-         * @return this builder
-         * @since 2.0.0
-         */
-        @com.microsoft.copilot.CopilotExperimental
-        public Builder provider(LoginProviderKind value) {
-            this.provider = value;
+        public Builder confirmed(Boolean value) {
+            this.confirmed = value;
             return this;
         }
 
@@ -84,9 +66,9 @@ public record SessionAccountsLoginListParams(
          * @throws IllegalStateException if a required property is missing
          * @since 2.0.0
          */
-        public SessionAccountsLoginListParams build() {
-            if (provider == null) throw new IllegalStateException("Missing required property: provider");
-            return new SessionAccountsLoginListParams(sessionId, provider);
+        public SessionHandoffConfirmResult build() {
+            if (confirmed == null) throw new IllegalStateException("Missing required property: confirmed");
+            return new SessionHandoffConfirmResult(confirmed);
         }
     }
 }

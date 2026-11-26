@@ -26,10 +26,8 @@ import javax.annotation.processing.Generated;
 public record SessionAccountsLogoutParams(
     /** Target session identifier */
     @JsonProperty("sessionId") String sessionId,
-    /** Stable account id of the account to log out. Use this for canonical account entries that are not switchable. */
-    @JsonProperty("accountId") String accountId,
-    /** Opaque selection id of the account to log out; absent logs out the active account. */
-    @JsonProperty("selectionId") String selectionId
+    /** Account id returned by accounts.list, including accounts that are not switchable. When omitted, logs out the active account. Removes runtime-owned credentials; externally owned credentials are not deleted. */
+    @JsonProperty("accountId") String accountId
 ) {
 
     /**
@@ -55,7 +53,6 @@ public record SessionAccountsLogoutParams(
         private Builder() {}
         private String sessionId;
         private String accountId;
-        private String selectionId;
 
         /**
          * Sets the {@code sessionId} property.
@@ -82,25 +79,13 @@ public record SessionAccountsLogoutParams(
         }
 
         /**
-         * Sets the {@code selectionId} property.
-         * @param value the property value
-         * @return this builder
-         * @since 2.0.0
-         */
-        @com.microsoft.copilot.CopilotExperimental
-        public Builder selectionId(String value) {
-            this.selectionId = value;
-            return this;
-        }
-
-        /**
          * Builds a record after checking required property presence.
          * @return a new record
          * @throws IllegalStateException if a required property is missing
          * @since 2.0.0
          */
         public SessionAccountsLogoutParams build() {
-            return new SessionAccountsLogoutParams(sessionId, accountId, selectionId);
+            return new SessionAccountsLogoutParams(sessionId, accountId);
         }
     }
 }

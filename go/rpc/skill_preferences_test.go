@@ -23,6 +23,8 @@ func TestSkillPreferencesLegacyRequests(t *testing.T) {
 	}{
 		{request, map[string]any{"disabled": true, "name": "skill"}},
 		{replacement, map[string]any{"disabledSkills": []any{"skill"}}},
+		{SkillsDiscoverRequest{nil, nil, nil, nil}, map[string]any{}},
+		{SkillsGetDiscoveryPathsRequest{nil, nil, nil, nil}, map[string]any{}},
 	} {
 		if got := encodeRequest(t, test.request); !reflect.DeepEqual(got, test.want) {
 			t.Fatalf("legacy request %T = %v, want %v", test.request, got, test.want)
@@ -98,4 +100,73 @@ func ExampleSkillsConfigSetSkillDisabledOptions() {
 	}
 	fmt.Println(string(wire))
 	// Output: {"configDir":"/caller-profile","disabled":true,"name":"weather"}
+}
+
+func TestSkillDiscoveryLegacyAndProfileCalls(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+	client := jsonrpc2.NewClient(clientConn, clientConn)
+	server := jsonrpc2.NewClient(serverConn, serverConn)
+	requests := make(chan map[string]any, 4)
+	for _, method := range []string{"skills.discover", "skills.getDiscoveryPaths"} {
+		server.SetRequestHandler(method, func(raw json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
+			var params map[string]any
+			if err := json.Unmarshal(raw, &params); err != nil {
+				return nil, &jsonrpc2.Error{Code: -32602, Message: err.Error()}
+			}
+			params["method"] = method
+			requests <- params
+			return json.RawMessage(`{"skills":[],"paths":[]}`), nil
+		})
+	}
+	client.Start()
+	server.Start()
+	defer client.Stop()
+	defer server.Stop()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	api := NewServerRPC(client).Skills
+	if _, err := api.Discover(ctx, &SkillsDiscoverRequest{nil, nil, nil, nil}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := api.GetDiscoveryPaths(ctx, &SkillsGetDiscoveryPathsRequest{nil, nil, nil, nil}); err != nil {
+		t.Fatal(err)
+	}
+	configDir := "/caller/link/../profile"
+	homeDirectory := "/caller-home"
+	discover := SkillsDiscoverOptions{ConfigDir: &configDir, HomeDirectory: &homeDirectory}
+	paths := SkillsGetDiscoveryPathsOptions{ConfigDir: &configDir, HomeDirectory: &homeDirectory}
+	if _, err := api.DiscoverWithOptions(ctx, &discover); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := api.GetDiscoveryPathsWithOptions(ctx, &paths); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []map[string]any{
+		{"method": "skills.discover"},
+		{"method": "skills.getDiscoveryPaths"},
+		{"method": "skills.discover", "configDir": configDir, "homeDirectory": homeDirectory},
+		{"method": "skills.getDiscoveryPaths", "configDir": configDir, "homeDirectory": homeDirectory},
+	} {
+		select {
+		case got := <-requests:
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("skill discovery request = %v, want %v", got, want)
+			}
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+	}
+}
+
+func ExampleSkillsDiscoverOptions() {
+	configDir := "/caller-profile"
+	options := SkillsDiscoverOptions{ConfigDir: &configDir}
+	wire, err := json.Marshal(options)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(string(wire))
+	// Output: {"configDir":"/caller-profile"}
 }

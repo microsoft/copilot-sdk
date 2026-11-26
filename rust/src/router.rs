@@ -943,12 +943,6 @@ impl SessionRouter {
         self.state.lock().sessions.keys().cloned().collect()
     }
 
-    /// Count the currently-registered sessions without exposing their IDs.
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn session_count(&self) -> usize {
-        self.state.lock().sessions.len()
-    }
-
     /// Close all registered session channels without allowing new registrations.
     ///
     /// Used by [`Client::force_stop`](crate::Client::force_stop) to release
@@ -1048,6 +1042,7 @@ impl SessionRouter {
                         .sessions
                         .get(session_id.as_str())
                         .map(|s| s.requests.clone());
+                    let registered = sender.is_some();
                     let unrouted = match sender {
                         Some(sender) => sender.send(request).err().map(|error| error.0),
                         None => Some(request),
@@ -1056,6 +1051,20 @@ impl SessionRouter {
                     // ones (for example, after a `Session` was dropped without
                     // detaching) so the runtime does not wait for its timeout.
                     if let Some(request) = unrouted {
+                        if !registered
+                            && request.method.starts_with("sessionFs.")
+                            && let Some(inner) = weak_client.upgrade()
+                            && let Some(resolver) =
+                                inner.session_fs_provider_resolver.get().cloned()
+                        {
+                            tokio::spawn(crate::session_fs_dispatch::dispatch_unregistered(
+                                crate::Client::from_inner(inner),
+                                resolver,
+                                session_id,
+                                request,
+                            ));
+                            continue;
+                        }
                         warn!(
                             session_id = %session_id,
                             method = %request.method,
@@ -1113,3 +1122,6 @@ fn send_error(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(any(test, feature = "test-support"))]
+mod test_support;

@@ -676,6 +676,43 @@ PermissionHandler handler = (request, invocation) -> {
 };
 ```
 
+### URL approvals
+
+For a `url` prompt, `UrlPermissionPrompt.from(invocation.getPromptRequest())` reads the URL fields with their types. To remember an approval, answer with the scope it covers: `approveUrlForSession(domain)` for the running session or `approveUrlPermanently(domain)` across sessions. The runtime requires the domain for both: its URL decision type has no session or permanent approval without one. `getParentDomainPattern()` offers the URL's registrable domain and subdomains (for example `https://*.example.com`) when the runtime can offer it safely. It does not cover subdomains the Public Suffix List lists as separate owners, such as buckets under `s3.amazonaws.com`; those still prompt. That scope is session-only, so only return it from `approveUrlForSession`. As above, leave requests that still need a human unanswered before deciding automatically:
+
+```java
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+
+import com.microsoft.copilot.rpc.PermissionHandler;
+import com.microsoft.copilot.rpc.PermissionRequestResult;
+import com.microsoft.copilot.rpc.UrlPermissionPrompt;
+
+class UrlPermissionExample {
+    static PermissionHandler handler() {
+        return (request, invocation) -> {
+            var promptRequest = invocation.getPromptRequest();
+            var assistedApprovalClearsManagedRequirement = promptRequest != null
+                    && List.of("commands", "read", "write", "url", "workflow").contains(promptRequest.getKind())
+                    && !Boolean.TRUE.equals(promptRequest.getManagedApprovalRequired());
+            if (Boolean.TRUE.equals(request.getManagedApprovalRequired())
+                    && !assistedApprovalClearsManagedRequirement) {
+                return CompletableFuture.completedFuture(PermissionRequestResult.noResult());
+            }
+            var prompt = UrlPermissionPrompt.from(promptRequest);
+            if (prompt == null) {
+                return CompletableFuture.completedFuture(PermissionRequestResult.approveOnce());
+            }
+            if (prompt.getParentDomainPattern() != null) {
+                return CompletableFuture.completedFuture(
+                        PermissionRequestResult.approveUrlForSession(prompt.getParentDomainPattern()));
+            }
+            return CompletableFuture.completedFuture(PermissionRequestResult.reject("Only domain-wide approvals"));
+        };
+    }
+}
+```
+
 ### Reporting a person's answers
 
 When a person answers a prompt in your UI, label the result with a `PermissionDecisionContext` so Assisted Permissions can treat the answer as the person's own authority. Permission, user-input, plan-review, and elicitation results all accept the same label through `setDecisionContext(...)`:
@@ -869,7 +906,8 @@ Chain fluent modifiers to set tool options:
 
 - `.skipPermission(boolean)` — bypass permission prompts
 - `.defer(ToolDefer)` — control deferred execution (`AUTO`, `NEVER`)
-- `.overridesBuiltInTool(boolean)` — shadow built-in tools
+- `.overridesBuiltInTool(true)` — replace a same-named built-in or add your tool if there's no match
+- `.onlyOverridesBuiltInTool(true)` — replace a same-named built-in only when one is enabled for this session and the executing model (matched before available/excluded tool filters); otherwise ignore your tool. MCP tools such as `web_search` aren't built-ins and never match
 - `.idempotent(boolean)` — declares that repeating a call has no further effect (true of any tool without side effects); the runtime uses it to decide whether a lost call can be safely repeated, and it doesn't affect permissions
 
 ### String-schema `apply_patch` overrides

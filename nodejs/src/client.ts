@@ -124,6 +124,7 @@ import type {
     SessionCapabilities,
     SessionEvent,
     SessionFsConfig,
+    SessionFsProvider,
     SessionLifecycleEvent,
     SessionLifecycleEventType,
     SessionLifecycleHandler,
@@ -1115,10 +1116,12 @@ export class CopilotClient {
     private negotiatedProtocolVersion: number | null = null;
     /** Connection-level session filesystem config, set via constructor option. */
     private sessionFsConfig: SessionFsConfig | null = null;
+    private readonly resolveSessionFsProvider?: CopilotClientOptions["resolveSessionFsProvider"];
     private requestHandler: CopilotRequestHandler | null = null;
     private extensionLaunchProvider?: ExtensionLaunchProvider;
     private readonly network?: CopilotClientOptions["network"];
     private installationConfirmationHandler?: InstallationConfirmationHandler;
+    private readonly sessionHandoff?: CopilotClientOptions["sessionHandoff"];
     private builtinPluginDirectories: string[] = [];
     private onGitHubTelemetry?: (notification: GitHubTelemetryNotification) => void | Promise<void>;
     private clientGlobalHandlers: import("./generated/rpc.js").ClientGlobalApiHandlers = {};
@@ -1217,10 +1220,12 @@ export class CopilotClient {
         }
         const { clientId, clientSecret } = options.github ?? {};
         if (
-            (clientId !== undefined || clientSecret !== undefined) &&
-            (!clientId?.trim() || !clientSecret?.trim())
+            ((clientId !== undefined || clientSecret !== undefined) && !clientId?.trim()) ||
+            (clientSecret !== undefined && !clientSecret?.trim())
         ) {
-            throw new Error("github.clientId and github.clientSecret must both be non-empty");
+            throw new Error(
+                "GitHub OAuth requires a non-blank client ID and, if supplied, a non-blank client secret"
+            );
         }
         // Resolve the connection mode. `_internalConnection` is set by
         // `joinSession()` to opt into the parent-process stdio path; consumers
@@ -1327,6 +1332,11 @@ export class CopilotClient {
         this.onListModels = options.models?.onListModels;
         this.onGetTraceContext = options.observability?.onGetTraceContext;
         this.sessionFsConfig = options.sessionFs ?? null;
+        if (options.resolveSessionFsProvider && !this.sessionFsConfig) {
+            throw new Error("resolveSessionFsProvider requires sessionFs in client options.");
+        }
+        this.resolveSessionFsProvider = options.resolveSessionFsProvider;
+        this.sessionHandoff = options.sessionHandoff;
         this.requestHandler = options.models?.requestHandler ?? null;
         this.extensionLaunchProvider = options.extensions?.launchProvider;
         this.network = options.network ? snapshotNetworkConfig(options.network) : undefined;
@@ -1422,29 +1432,32 @@ export class CopilotClient {
             );
         }
         const provider = config.state.createSessionFsProvider(session);
-        if (this.sessionFsConfig.capabilities?.sqlite && !provider.sqlite) {
+        session.clientSessionApis.sessionFs = this.createSessionFsHandler(provider);
+    }
+
+    private createSessionFsHandler(provider: SessionFsProvider) {
+        const capabilities = this.sessionFsConfig?.capabilities;
+        if (capabilities?.sqlite && !provider.sqlite) {
             throw new Error(
                 "SessionFsConfig declares capabilities.sqlite but the provider does not implement sqlite."
             );
         }
-        if (
-            this.sessionFsConfig.capabilities?.binary &&
-            (!provider.readFileBytes || !provider.writeFileBytes)
-        ) {
+        if (capabilities?.binary && (!provider.readFileBytes || !provider.writeFileBytes)) {
             throw new Error(
                 "SessionFsConfig declares capabilities.binary but the provider does not implement readFileBytes and writeFileBytes."
             );
         }
-        if (this.sessionFsConfig.capabilities?.readFileRange && !provider.readFileRange) {
+        if (capabilities?.readFileRange && !provider.readFileRange) {
             throw new Error(
                 "SessionFsConfig declares capabilities.readFileRange but the provider does not implement readFileRange."
             );
         }
-        session.clientSessionApis.sessionFs = createSessionFsAdapter(provider);
+        return createSessionFsAdapter(provider);
     }
 
     private setupClientGlobalHandlers(): void {
         const handlers: import("./generated/rpc.js").ClientGlobalApiHandlers = {};
+        handlers.sessionHandoff = this.sessionHandoff;
         handlers.host = {
             exited: async (exit) => {
                 this.handleHostExit(exit);
@@ -2733,6 +2746,7 @@ export class CopilotClient {
                         description: tool.description,
                         parameters: toJsonSchema(tool.parameters),
                         overridesBuiltInTool: tool.overridesBuiltInTool,
+                        onlyOverridesBuiltInTool: tool.onlyOverridesBuiltInTool,
                         skipPermission: tool.skipPermission,
                         hasHandler: !!tool.handler,
                         defer: tool.defer,
@@ -2856,6 +2870,7 @@ export class CopilotClient {
                     : {}),
                 configDirectory: config.configDirectory,
                 enableConfigDiscovery: config.enableConfigDiscovery,
+                sessionLifecycleMode: config.sessionLifecycleMode,
                 instructions: {
                     refreshCustomInstructions: config.instructions?.refreshCustomInstructions,
                     organizationText: config.instructions?.organizationText,
@@ -3268,6 +3283,7 @@ export class CopilotClient {
                         description: tool.description,
                         parameters: toJsonSchema(tool.parameters),
                         overridesBuiltInTool: tool.overridesBuiltInTool,
+                        onlyOverridesBuiltInTool: tool.onlyOverridesBuiltInTool,
                         skipPermission: tool.skipPermission,
                         hasHandler: !!tool.handler,
                         defer: tool.defer,
@@ -3380,6 +3396,7 @@ export class CopilotClient {
                 workingDirectory: config.workingDirectory,
                 configDirectory: config.configDirectory,
                 enableConfigDiscovery: config.enableConfigDiscovery,
+                sessionLifecycleMode: config.sessionLifecycleMode,
                 state: {
                     skipEmbeddingRetrieval: config.state?.skipEmbeddingRetrieval,
                     embeddingCacheStorage: config.state?.embeddingCacheStorage,
@@ -5169,8 +5186,17 @@ export class CopilotClient {
         // Register client session API handlers.
         registerClientSessionApiHandlers(this.connection, (sessionId) => {
             const session = this.resolveSessionCallback(sessionId);
-            if (!session) throw new Error(`No session found for sessionId: ${sessionId}`);
-            return session.clientSessionApis;
+            if (session) return session.clientSessionApis;
+            const resolveProvider = this.resolveSessionFsProvider;
+            if (resolveProvider) {
+                const client = this;
+                return {
+                    get sessionFs() {
+                        return client.createSessionFsHandler(resolveProvider(sessionId));
+                    },
+                };
+            }
+            throw new Error(`No session found for sessionId: ${sessionId}`);
         });
 
         // Register client *global* API handlers (e.g. LLM inference) on the

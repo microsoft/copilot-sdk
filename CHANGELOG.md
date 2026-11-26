@@ -15,6 +15,12 @@ External tool definitions accept an optional `exposure` mode. Set it to `explici
 
 **Go source break:** `copilot.Tool` and `rpc.ProtocolExternalToolDefinition` gain `Exposure`. Positional literals must switch to keyed literals or add the new field.
 
+### Feature: conditional built-in tool overrides
+
+External tool definitions accept an optional `onlyOverridesBuiltInTool` flag. When a same-named built-in is enabled for the session and the executing model, the tool replaces it, as with `overridesBuiltInTool`; otherwise the tool is ignored instead of being registered as an ordinary tool. Hosts that don't know which model will run can register replacements for model-specific built-ins, such as `apply_patch` and `edit`, side by side.
+
+**Source break:** `ProtocolExternalToolDefinition` gains a field, as does Go's `copilot.Tool`. Go positional literals of either type and exhaustive Rust struct literals of the experimental `ProtocolExternalToolDefinition` must account for it; keyed Go literals and Rust literals using `..Default::default()` are unaffected. Java retains the previous `ProtocolExternalToolDefinition` constructor, and Python appends the new field after the existing positional parameters.
+
 ### Feature: skill catalog diagnostics in session events
 
 The `session.skills_loaded` event includes optional `errors` and `warnings` arrays. Older runtimes can omit these fields.

@@ -170,7 +170,7 @@ runtime-generated context.
 |-------|------|--------|
 | `permissionDecision` | `"allow" \| "deny" \| "ask"` | Override the permission check |
 | `permissionDecisionReason` | `string` | Shown to user if denied |
-| `modifiedArgs` | `unknown` | Replaces the tool arguments |
+| `modifiedArgs` | `unknown` | Replaces the tool arguments when `permissionDecision` is `"allow"` or not set; ignored with `"ask"` |
 | `additionalContext` | `string` | Injected into the conversation |
 
 ### onPreMcpToolCall

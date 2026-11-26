@@ -177,6 +177,8 @@ class Tool:
     #: the tool available only to custom agents whose ``tools`` list explicitly
     #: names it. This controls model visibility, not execution permission.
     exposure: ToolExposure | None = None
+    #: Replace a same-named built-in for the executing model; otherwise ignore this tool.
+    only_overrides_built_in_tool: bool = False
 
 
 T = TypeVar("T", bound=BaseModel)
@@ -189,6 +191,7 @@ def define_tool(
     *,
     description: str | None = None,
     overrides_built_in_tool: bool = False,
+    only_overrides_built_in_tool: bool = False,
     skip_permission: bool = False,
     defer: Literal["auto", "never"] | None = None,
     exposure: ToolExposure | None = None,
@@ -208,6 +211,7 @@ def define_tool(
     params_type: type[T],
     handler: None = None,
     overrides_built_in_tool: bool = False,
+    only_overrides_built_in_tool: bool = False,
     skip_permission: bool = False,
     defer: Literal["auto", "never"] | None = None,
     exposure: ToolExposure | None = None,
@@ -227,6 +231,7 @@ def define_tool(
     handler: Callable[[T, ToolInvocation], R],
     params_type: type[T],
     overrides_built_in_tool: bool = False,
+    only_overrides_built_in_tool: bool = False,
     skip_permission: bool = False,
     defer: Literal["auto", "never"] | None = None,
     exposure: ToolExposure | None = None,
@@ -245,6 +250,7 @@ def define_tool(
     handler: Callable[[Any, ToolInvocation], Any] | None = None,
     params_type: type[BaseModel] | None = None,
     overrides_built_in_tool: bool = False,
+    only_overrides_built_in_tool: bool = False,
     skip_permission: bool = False,
     defer: Literal["auto", "never"] | None = None,
     exposure: ToolExposure | None = None,
@@ -293,8 +299,10 @@ def define_tool(
         params_type: Optional Pydantic model type for parameters (inferred from
                     type hints when using as decorator)
         overrides_built_in_tool: When True, explicitly indicates this tool is intended
-                    to override a built-in tool of the same name. If not set and the
-                    name clashes with a built-in tool, the runtime will return an error.
+                    to override a built-in tool of the same name or act as an ordinary tool.
+        only_overrides_built_in_tool: Replace a same-named built-in for the executing
+                    model; otherwise ignore this tool. Takes precedence over
+                    overrides_built_in_tool.
         skip_permission: When True, the tool can execute without a permission prompt.
         defer: Controls whether the tool may be deferred (loaded lazily via tool search)
                     rather than always pre-loaded. When "auto", the tool can be deferred
@@ -409,6 +417,7 @@ def define_tool(
             parameters=schema,
             handler=wrapped_handler,
             overrides_built_in_tool=overrides_built_in_tool,
+            only_overrides_built_in_tool=only_overrides_built_in_tool,
             skip_permission=skip_permission,
             defer=defer,
             exposure=exposure,
@@ -433,6 +442,7 @@ def define_tool(
             parameters=schema,
             handler=None,
             overrides_built_in_tool=overrides_built_in_tool,
+            only_overrides_built_in_tool=only_overrides_built_in_tool,
             skip_permission=skip_permission,
             defer=defer,
             exposure=exposure,

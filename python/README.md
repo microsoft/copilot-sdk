@@ -668,10 +668,10 @@ Initial acquisition runs during session creation or resume. Cancellation, provid
 **Session Lifecycle Methods:**
 
 ```python
-# Get the session currently displayed in TUI (TUI+server mode only)
+# Get the displayed session (foreground UI or SDK callback)
 session_id = await client.get_foreground_session_id()
 
-# Request TUI to display a specific session (TUI+server mode only)
+# Select a session through the host UI or SDK callback
 await client.set_foreground_session_id("session-123")
 
 
@@ -954,7 +954,7 @@ the shared behavior and active-turn limitations.
 
 #### Overriding Built-in Tools
 
-If you register a tool with the same name as a built-in CLI tool (e.g. `edit_file`, `read_file`), the SDK will throw an error unless you explicitly opt in by setting `overrides_built_in_tool=True`. This flag signals that you intend to replace the built-in tool with your custom implementation.
+A name collision requires an explicit override. Set `overrides_built_in_tool=True` to replace a built-in or add your tool if there's no match. Set `only_overrides_built_in_tool=True` to replace a same-named built-in only when one is enabled for this session and the executing model (matched before available/excluded tool filters); otherwise the runtime ignores your tool. MCP tools such as `web_search` aren't built-ins and never match.
 
 ```python
 from pydantic import BaseModel, Field

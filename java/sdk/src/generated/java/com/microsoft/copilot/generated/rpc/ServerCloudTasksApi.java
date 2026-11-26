@@ -49,6 +49,17 @@ final class ServerCloudTasksApi {
     }
 
     /**
+     * Lists remote task metadata for an explicit account, with numbered pagination, optional full-catalog scans and structured HTTP failures. SDK hosts and the CLI use the same credential, experiment-aware endpoint and repository-enrichment pipeline.
+     *
+     * @apiNote This method is experimental and may change in a future version.
+     * @since 1.0.0
+     */
+    @CopilotExperimental
+    CompletableFuture<CloudTasksListResult> list(CloudTasksListParams params) {
+        return caller.invoke("cloudTasks.list", params, CloudTasksListResult.class);
+    }
+
+    /**
      * Reads one cloud coding-agent task from the Copilot API. This is the task a cloud agent runs on a host's behalf, not a background task inside a session, so it is answered above any session and the `tasks` group does not cover it. Hosts other than the CLI want this: a GitHub App or an SDK consumer that shows the state of a cloud agent run must read the same task record, and resolving it here keeps one credential-resolution, task-URL and circuit-breaker path instead of each host rebuilding them. The result is the HTTP outcome rather than the task itself: a caller must read `ok` and `statusCode` before `payloadJson`, because a 404 is reported as a non-ok result rather than an error, which is what lets a caller tell "no such task" apart from "the API call failed".
      *
      * @apiNote This method is experimental and may change in a future version.

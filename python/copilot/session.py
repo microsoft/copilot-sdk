@@ -214,6 +214,7 @@ def _tool_to_wire_definition(tool: Tool) -> ProtocolExternalToolDefinition:
         description=tool.description or "",
         parameters=tool.parameters or None,
         overrides_built_in_tool=True if tool.overrides_built_in_tool else None,
+        only_overrides_built_in_tool=True if tool.only_overrides_built_in_tool else None,
         skip_permission=True if tool.skip_permission else None,
         has_handler=tool.handler is not None,
         defer=defer,

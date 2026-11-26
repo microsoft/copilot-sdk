@@ -187,7 +187,7 @@ Return `null` or `undefined` to allow the tool to execute with no changes. Other
 |-------|------|-------------|
 | `permissionDecision` | `"allow"` \| `"deny"` \| `"ask"` | Whether to allow the tool call |
 | `permissionDecisionReason` | string | Explanation shown to user (for deny/ask) |
-| `modifiedArgs` | object | Modified arguments to pass to the tool |
+| `modifiedArgs` | object | Modified arguments to pass to the tool when `permissionDecision` is `"allow"` or not set. Ignored with `"ask"`: that hook's `modifiedArgs` is not applied, but a later `preToolUse` hook can still return `modifiedArgs` for the same call |
 | `additionalContext` | string | Extra context injected into the conversation |
 | `suppressOutput` | boolean | If true, tool output won't appear in conversation |
 

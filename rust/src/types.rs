@@ -129,7 +129,7 @@ pub use crate::generated::api_types::FusionTier;
 pub use crate::generated::api_types::PermissionsSetModeResult;
 pub use crate::generated::api_types::{
     AutopilotOptions, DiagnosticLogLevel, DiagnosticSourcesConfiguration, DiagnosticsConfiguration,
-    McpDiagnosticSourceConfiguration, SessionManagementScope,
+    McpDiagnosticSourceConfiguration, SessionLifecycleMode, SessionManagementScope,
 };
 use crate::generated::api_types::{
     CurrentToolMetadata, LifecycleDiagnosticsConfiguration, OpenCanvasInstance, SandboxConfig,
@@ -158,8 +158,8 @@ use crate::provider_token::BearerTokenProvider;
 pub use crate::session_fs::{
     DirEntry, DirEntryKind, FileByteRange, FileInfo, FsError, SessionFsBinaryProvider,
     SessionFsCapabilities, SessionFsConfig, SessionFsConventions, SessionFsProvider,
-    SessionFsReadFileRangeProvider, SessionFsSqliteProvider, SessionFsSqliteQueryResult,
-    SessionFsSqliteQueryType, SessionFsSqliteTransactionError,
+    SessionFsProviderResolver, SessionFsReadFileRangeProvider, SessionFsSqliteProvider,
+    SessionFsSqliteQueryResult, SessionFsSqliteQueryType, SessionFsSqliteTransactionError,
     SessionFsSqliteTransactionErrorClass, SessionFsSqliteTransactionStatement,
 };
 use crate::skill_provider::SkillProvider;
@@ -468,6 +468,10 @@ pub struct Tool {
     /// CLI's built-in implementation).
     #[serde(default, skip_serializing_if = "is_false")]
     pub overrides_built_in_tool: bool,
+    /// Replace a same-named built-in for the executing model; otherwise ignore this tool.
+    /// Takes precedence over [`Self::overrides_built_in_tool`].
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub only_overrides_built_in_tool: bool,
     /// When `true`, the CLI does not request permission before invoking
     /// this tool. Use with caution — the tool is responsible for any
     /// access control.
@@ -667,6 +671,12 @@ impl Tool {
         self
     }
 
+    /// Ignore this tool unless it replaces a built-in for the executing model.
+    pub fn with_only_overrides_built_in_tool(mut self, only_overrides: bool) -> Self {
+        self.only_overrides_built_in_tool = only_overrides;
+        self
+    }
+
     /// When `true`, the CLI will not request permission before invoking
     /// this tool. Use with caution — the tool is responsible for any
     /// access control.
@@ -779,6 +789,10 @@ impl std::fmt::Debug for Tool {
             .field("instructions", &self.instructions)
             .field("parameters", &self.parameters)
             .field("overrides_built_in_tool", &self.overrides_built_in_tool)
+            .field(
+                "only_overrides_built_in_tool",
+                &self.only_overrides_built_in_tool,
+            )
             .field("skip_permission", &self.skip_permission)
             .field("is_terminal", &self.is_terminal)
             .field("idempotent", &self.idempotent)
@@ -4140,6 +4154,11 @@ pub struct CreateSessionOptions {
     /// Enables runtime discovery of supported configuration. Explicitly supplied
     /// configuration takes precedence; explicit feature roots remain independent.
     pub enable_config_discovery: Option<bool>,
+    /// Controls local session end hooks: interactive defers them to shutdown;
+    /// per-turn runs them after each completed turn.
+    /// Omission inherits the host default, which is interactive for SDK-owned hosts.
+    /// Ignored for cloud sessions. Not persisted; supply it again on cold resume.
+    pub session_lifecycle_mode: Option<SessionLifecycleMode>,
     /// Source overrides, not extension activation or trust grants.
     /// Warm resumes cannot change overrides; cold omission restores defaults.
     pub extension_sources: Option<ExtensionSources>,
@@ -4207,6 +4226,7 @@ impl Default for CreateSessionOptions {
             mcp: Default::default(),
             config_directory: None,
             enable_config_discovery: None,
+            session_lifecycle_mode: None,
             extension_sources: None,
             extension_paths: None,
             filesystem: Default::default(),
@@ -4331,6 +4351,7 @@ impl CreateSessionOptions {
             },
             config_directory: self.config_directory,
             enable_config_discovery: self.enable_config_discovery,
+            session_lifecycle_mode: self.session_lifecycle_mode,
             extension_sources: self.extension_sources.clone(),
             extension_paths: self.extension_paths,
             filesystem: crate::wire::SessionCreateFilesystemWire {
@@ -4577,6 +4598,12 @@ impl CreateSessionOptions {
         self
     }
 
+    /// Set [`Self::session_lifecycle_mode`] for this new session.
+    pub fn with_session_lifecycle_mode(mut self, mode: SessionLifecycleMode) -> Self {
+        self.session_lifecycle_mode = Some(mode);
+        self
+    }
+
     /// Select extension sources without enabling extensions. Requires a supporting runtime.
     pub fn with_extension_sources(mut self, sources: ExtensionSources) -> Self {
         self.extension_sources = Some(sources);
@@ -4767,6 +4794,11 @@ pub struct ResumeSessionOptions {
     /// Enables runtime discovery of supported configuration. Explicitly supplied
     /// configuration takes precedence; explicit feature roots remain independent.
     pub enable_config_discovery: Option<bool>,
+    /// Controls local session end hooks on cold resume.
+    /// Interactive defers them to shutdown; per-turn runs them after each turn.
+    /// Omission inherits the host default, which is interactive for SDK-owned hosts.
+    /// Ignored for resident and cloud sessions. Not persisted.
+    pub session_lifecycle_mode: Option<SessionLifecycleMode>,
     /// Must match a loaded session's overrides; cold omission restores defaults.
     pub extension_sources: Option<ExtensionSources>,
     /// Replaces host-trusted standalone entries. Omission or an empty list removes them.
@@ -4885,6 +4917,7 @@ impl ResumeSessionOptions {
             },
             config_directory: self.config_directory,
             enable_config_discovery: self.enable_config_discovery,
+            session_lifecycle_mode: self.session_lifecycle_mode,
             extension_sources: self.extension_sources.clone(),
             extension_paths: self.extension_paths,
             instructions: crate::wire::SessionResumeInstructionWire {
@@ -4985,6 +5018,7 @@ impl ResumeSessionOptions {
             mcp: Default::default(),
             config_directory: None,
             enable_config_discovery: None,
+            session_lifecycle_mode: None,
             extension_sources: None,
             extension_paths: None,
             state: Default::default(),
@@ -5176,6 +5210,12 @@ impl ResumeSessionOptions {
     /// configuration takes precedence; explicit feature roots remain independent.
     pub fn with_enable_config_discovery(mut self, enable: bool) -> Self {
         self.enable_config_discovery = Some(enable);
+        self
+    }
+
+    /// Set [`Self::session_lifecycle_mode`] for a cold resume.
+    pub fn with_session_lifecycle_mode(mut self, mode: SessionLifecycleMode) -> Self {
+        self.session_lifecycle_mode = Some(mode);
         self
     }
 

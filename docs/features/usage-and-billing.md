@@ -692,7 +692,7 @@ The example uses the fields below. The generated `UsageGetMetricsResult` type is
 |---|---|---|
 | `totalNanoAiu` | `number` | Session-wide AI credit cost, in nano-AI units |
 | `totalPremiumRequestCost` | `number` | Premium request cost across all models, after multipliers |
-| `modelMetrics` | `Record<string, ModelMetric>` | Per-model breakdown; each entry has `usage.inputTokens` (which includes `usage.cacheReadTokens` and `usage.cacheWriteTokens`), `usage.outputTokens`, and `totalNanoAiu` |
+| `modelMetrics` | `Record<string, ModelMetric>` | Per-model breakdown; each entry reports `usage.inputTokens`, `usage.outputTokens`, `usage.cacheReadTokens`, `usage.cacheWriteTokens`, and `totalNanoAiu`. `usage.inputTokens` includes both cache counts |
 
 > [!NOTE]
 > Cost is reported in **nano-AI units** (the field is named `totalNanoAiu`). The exact conversion to AI credits and the precise meaning of premium request accounting are defined by GitHub Copilot billing, not by the SDK—treat [GitHub's Copilot billing documentation](https://docs.github.com/en/copilot/managing-copilot/understanding-and-managing-copilot-usage) as the source of truth and verify before surfacing currency-like values to users. The examples divide by `1e9` as a convenience, following the SI `nano` prefix; confirm this matches current billing before relying on it. The `modelMetrics` and `tokenDetails` maps are keyed by runtime strings (model IDs and token-type names) that the SDK type system does not validate.

@@ -47,6 +47,37 @@ public final class GeneratedConstructorMigrationGuard {
     private static final List<CompatibilityConstruction> APPROVED = List.of(
             new CompatibilityConstruction(
                     new Construction(
+                            "src/test/java/com/microsoft/copilot/LegacyRequestCompatibilityTest.java",
+                            "com.microsoft.copilot.LegacyRequestCompatibilityTest"
+                                    + "#sessionOptionsLegacyConstructorPreservesWireFields()V",
+                            "com.microsoft.copilot.generated.rpc.SessionOpenOptions",
+                            "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;"
+                                    + "Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;"
+                                    + "Ljava/lang/Boolean;Ljava/lang/Boolean;Ljava/lang/Boolean;"
+                                    + "Ljava/lang/String;Ljava/lang/String;Ljava/util/List;"
+                                    + "Lcom/microsoft/copilot/generated/rpc/SessionOpenInferenceOptions;"
+                                    + "Lcom/microsoft/copilot/generated/rpc/SessionOpenMcpOptions;"
+                                    + "Lcom/microsoft/copilot/generated/rpc/SessionOpenExperimentOptions;"
+                                    + "Lcom/microsoft/copilot/generated/rpc/SessionOpenGitHubOptions;"
+                                    + "Lcom/microsoft/copilot/generated/rpc/SessionOpenPolicyOptions;"
+                                    + "Lcom/microsoft/copilot/generated/rpc/SessionOpenFilesystemOptions;"
+                                    + "Lcom/microsoft/copilot/generated/rpc/SessionOpenToolOptions;"
+                                    + "Lcom/microsoft/copilot/generated/rpc/SessionOpenAgentOptions;"
+                                    + "Lcom/microsoft/copilot/generated/rpc/SessionOpenPermissionOptions;"
+                                    + "Lcom/microsoft/copilot/generated/rpc/SessionOpenSkillOptions;"
+                                    + "Lcom/microsoft/copilot/generated/rpc/SessionOpenInstructionOptions;"
+                                    + "Lcom/microsoft/copilot/generated/rpc/SessionOpenHookOptions;"
+                                    + "Lcom/microsoft/copilot/generated/rpc/SessionOpenPluginOptions;"
+                                    + "Lcom/microsoft/copilot/generated/rpc/SessionOpenGitOptions;"
+                                    + "Lcom/microsoft/copilot/generated/rpc/SessionOpenEventOptions;"
+                                    + "Lcom/microsoft/copilot/generated/rpc/SessionOpenInteractionOptions;"
+                                    + "Lcom/microsoft/copilot/generated/rpc/SessionOpenExecutionOptions;"
+                                    + "Lcom/microsoft/copilot/generated/rpc/SessionOpenStateOptions;"
+                                    + "Ljava/lang/String;Ljava/lang/Boolean;)V",
+                            "new"),
+                    "The base session-options constructor preserves positional wire fields without a lifecycle override."),
+            new CompatibilityConstruction(
+                    new Construction(
                             "src/test/java/com/microsoft/copilot/generated/GeneratedBuilderEvolutionTest.java",
                             "com.microsoft.copilot.generated.GeneratedBuilderEvolutionTest"
                                     + "#legacySkillsLoadedConstructorPreservesAbsentDiagnostics()V",

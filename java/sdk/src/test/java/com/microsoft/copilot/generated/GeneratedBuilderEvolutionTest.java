@@ -80,6 +80,12 @@ class GeneratedBuilderEvolutionTest {
             assertTrue(java.lang.reflect.Modifier.isPublic(canonical.getModifiers()), name);
         }
         Class<?>[] compatibilityParameters = switch (name) {
+            case "com.microsoft.copilot.generated.rpc.SkillsDiscoverParams",
+                    "com.microsoft.copilot.generated.rpc.SkillsGetDiscoveryPathsParams" ->
+                new Class<?>[]{List.class, List.class, List.class, Boolean.class};
+            case "com.microsoft.copilot.generated.rpc.SessionOpenOptions" -> Arrays.stream(type.getRecordComponents())
+                    .filter(component -> !component.getName().equals("sessionLifecycleMode"))
+                    .map(component -> component.getType()).toArray(Class<?>[]::new);
             case "com.microsoft.copilot.generated.rpc.SlashCommandInfo" -> new Class<?>[]{String.class, List.class,
                     String.class, com.microsoft.copilot.generated.rpc.SlashCommandKind.class,
                     com.microsoft.copilot.generated.rpc.SlashCommandInput.class, Boolean.class, Boolean.class,
@@ -130,7 +136,12 @@ class GeneratedBuilderEvolutionTest {
         if (compatibilityParameters != null) {
             var compatibility = type.getDeclaredConstructor(compatibilityParameters);
             assertTrue(java.lang.reflect.Modifier.isPublic(compatibility.getModifiers()), name);
-            assertFalse(compatibility.isAnnotationPresent(Deprecated.class), name);
+            if (type == com.microsoft.copilot.generated.rpc.SessionOpenOptions.class) {
+                assertEquals(34, compatibilityParameters.length, name);
+                assertTrue(compatibility.isAnnotationPresent(Deprecated.class), name);
+            } else {
+                assertFalse(compatibility.isAnnotationPresent(Deprecated.class), name);
+            }
             expected = Set.of(canonical, compatibility);
         }
         assertEquals(expected, Set.of(type.getDeclaredConstructors()),

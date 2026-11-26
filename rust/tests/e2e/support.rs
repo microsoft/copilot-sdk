@@ -470,6 +470,20 @@ impl E2eContext {
         self.proxy().url()
     }
 
+    #[cfg(feature = "in-process")]
+    pub fn network_fixture_url(&self) -> &str {
+        &self.proxy().network_fixture_url
+    }
+
+    #[cfg(feature = "in-process")]
+    pub fn configure_network_fixture(&self, config: &serde_json::Value) -> std::io::Result<()> {
+        CapiProxy::post_json_at(
+            self.network_fixture_url(),
+            "/configure",
+            &config.to_string(),
+        )
+    }
+
     pub fn snapshot_path(&self, category: &str, snapshot_name: &str) -> PathBuf {
         self.repo_root
             .join("test")
@@ -627,6 +641,10 @@ impl E2eContext {
         if let Some(quota_snapshots) = quota_snapshots {
             user["quota_snapshots"] = quota_snapshots;
         }
+        self.set_copilot_user_response(token, user);
+    }
+
+    pub fn set_copilot_user_response(&self, token: &str, user: serde_json::Value) {
         self.proxy()
             .set_copilot_user_by_token(token, user)
             .expect("configure copilot user");
@@ -1106,6 +1124,14 @@ pub fn event_types(events: &[SessionEvent]) -> Vec<&str> {
         .collect()
 }
 
+pub(super) fn is_inference_url(url: &str) -> bool {
+    let url = url.to_lowercase();
+    url.ends_with("/chat/completions")
+        || url.ends_with("/responses")
+        || url.ends_with("/v1/messages")
+        || url.ends_with("/messages")
+}
+
 /// Wraps a `/models` catalog body in the CAPI `GET /meta` shape, adding the
 /// Auto tier metadata the runtime needs to resolve the `auto` model.
 pub fn capi_meta_body(models: serde_json::Value) -> serde_json::Value {
@@ -1357,6 +1383,8 @@ struct CapiProxy {
     proxy_url: String,
     connect_proxy_url: String,
     ca_file_path: String,
+    #[cfg(feature = "in-process")]
+    network_fixture_url: String,
 }
 
 impl CapiProxy {
@@ -1428,20 +1456,37 @@ impl CapiProxy {
                             std::io::Error::other("proxy startup metadata missing caFilePath")
                         })?
                         .to_string();
-                    Ok::<_, std::io::Error>((proxy_url, connect_proxy_url, ca_file_path))
+                    let network_fixture_url = metadata
+                        .get("networkFixtureUrl")
+                        .and_then(|value| value.as_str())
+                        .ok_or_else(|| {
+                            std::io::Error::other(
+                                "proxy startup metadata missing networkFixtureUrl",
+                            )
+                        })?
+                        .to_string();
+                    Ok::<_, std::io::Error>((
+                        proxy_url,
+                        connect_proxy_url,
+                        ca_file_path,
+                        network_fixture_url,
+                    ))
                 })();
-                let (proxy_url, connect_proxy_url, ca_file_path) = match parsed {
-                    Ok(metadata) => metadata,
-                    Err(error) => {
-                        kill_and_wait_child(&mut child);
-                        return Err(error);
-                    }
-                };
+                let (proxy_url, connect_proxy_url, ca_file_path, _network_fixture_url) =
+                    match parsed {
+                        Ok(metadata) => metadata,
+                        Err(error) => {
+                            kill_and_wait_child(&mut child);
+                            return Err(error);
+                        }
+                    };
                 return Ok(Self {
                     child: Some(child),
                     proxy_url,
                     connect_proxy_url,
                     ca_file_path,
+                    #[cfg(feature = "in-process")]
+                    network_fixture_url: _network_fixture_url,
                 });
             }
             if line.contains("Listening: ") {
@@ -1535,7 +1580,11 @@ impl CapiProxy {
     }
 
     fn post_json(&self, path: &str, body: &str) -> std::io::Result<()> {
-        let response = self.request("POST", path, body)?;
+        Self::post_json_at(&self.proxy_url, path, body)
+    }
+
+    fn post_json_at(url: &str, path: &str, body: &str) -> std::io::Result<()> {
+        let response = Self::request_at(url, "POST", path, body)?;
         if !response.starts_with("HTTP/1.1 200") && !response.starts_with("HTTP/1.1 204") {
             return Err(std::io::Error::other(format!(
                 "proxy POST {path} failed: {response}"
@@ -1556,7 +1605,11 @@ impl CapiProxy {
     }
 
     fn request(&self, method: &str, path: &str, body: &str) -> std::io::Result<String> {
-        let (host, port) = parse_http_url(&self.proxy_url)?;
+        Self::request_at(&self.proxy_url, method, path, body)
+    }
+
+    fn request_at(url: &str, method: &str, path: &str, body: &str) -> std::io::Result<String> {
+        let (host, port) = parse_http_url(url)?;
         let mut stream = connect_with_timeout(&host, port)?;
         write!(
             stream,

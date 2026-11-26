@@ -1096,7 +1096,7 @@ When the model selects a tool, the SDK automatically runs your handler (in paral
 
 #### Overriding Built-in Tools
 
-If you register a tool with the same name as a built-in CLI tool (e.g. `edit_file`, `read_file`), the SDK will throw an error unless you explicitly opt in by setting `OverridesBuiltInTool = true`. This flag signals that you intend to replace the built-in tool with your custom implementation.
+A name collision requires an explicit override. Set `OverridesBuiltInTool = true` to replace a built-in or add your tool if there's no match. Set `OnlyOverridesBuiltInTool = true` to replace a same-named built-in only when one is enabled for this session and the executing model (matched before available/excluded tool filters); otherwise the runtime ignores your tool. MCP tools such as `web_search` aren't built-ins and never match.
 
 <!-- docs-validate: hidden -->
 <!--

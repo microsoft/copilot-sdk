@@ -278,9 +278,11 @@ public final class CopilotClient implements AutoCloseable {
         this.closeHook = closeHook;
         githubClientId = options.getGitHub().getClientId();
         githubClientSecret = options.getGitHub().getClientSecret();
-        if ((githubClientId != null || githubClientSecret != null) && (githubClientId == null
-                || githubClientId.isBlank() || githubClientSecret == null || githubClientSecret.isBlank())) {
-            throw new IllegalArgumentException("github.clientId and github.clientSecret must both be non-empty");
+        if (((githubClientId != null || githubClientSecret != null)
+                && (githubClientId == null || githubClientId.isBlank()))
+                || (githubClientSecret != null && githubClientSecret.isBlank())) {
+            throw new IllegalArgumentException(
+                    "GitHub OAuth requires a non-blank client ID and, if supplied, a non-blank client secret");
         }
 
         RuntimeConnection requestedConnection = this.options.getRuntime();
@@ -826,6 +828,8 @@ public final class CopilotClient implements AutoCloseable {
             connectParams.put("supportedTaskKinds", List.of("agent", "client", "shell"));
             if (githubClientId != null) {
                 connectParams.put("githubClientId", githubClientId);
+            }
+            if (githubClientSecret != null) {
                 connectParams.put("githubClientSecret", githubClientSecret);
             }
             if (this.options.getEntra() != null) {

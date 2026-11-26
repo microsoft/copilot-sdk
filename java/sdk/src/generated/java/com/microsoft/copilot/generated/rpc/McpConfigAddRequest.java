@@ -35,7 +35,7 @@ public final class McpConfigAddRequest {
     @JsonProperty("config")
     private final Object config;
 
-    /** Configuration root for the user MCP document. Omission retains the connection's root; overrides require a trusted host or direct SDK caller. */
+    /** Configuration root override. Omitted uses the current host's configuration root. Does not change the host or its authentication owner. */
     @JsonProperty("configDir")
     private String configDir;
 
@@ -71,7 +71,7 @@ public final class McpConfigAddRequest {
     /**
      * Returns the {@code configDir} property.
      *
-     * @return Configuration root for the user MCP document. Omission retains the connection's root; overrides require a trusted host or direct SDK caller.
+     * @return Configuration root override. Omitted uses the current host's configuration root. Does not change the host or its authentication owner.
      */
     public String getConfigDir() {
         return configDir;
@@ -80,7 +80,7 @@ public final class McpConfigAddRequest {
     /**
      * Sets the {@code configDir} property.
      *
-     * @param value Configuration root for the user MCP document. Omission retains the connection's root; overrides require a trusted host or direct SDK caller.
+     * @param value Configuration root override. Omitted uses the current host's configuration root. Does not change the host or its authentication owner.
      * @return this request
      */
     public McpConfigAddRequest setConfigDir(String value) {

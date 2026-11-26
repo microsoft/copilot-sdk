@@ -756,10 +756,8 @@ pub struct AccountsGetActiveResult {
     pub account: Option<Account>,
     /// Credential-free identity metadata for the active account, including resolved Copilot user information when available.
     pub auth_info: Option<AuthIdentity>,
-    /// Opaque credential selection id for the active authentication. This remains available when the canonical account is not currently switchable.
-    pub auth_selection_id: Option<String>,
 }
-crate::record_serde::wire_record!(AccountsGetActiveResult { account: "account", auth_info: "authInfo" if is_none, auth_selection_id: "authSelectionId" if is_none });
+crate::record_serde::wire_record!(AccountsGetActiveResult { account: "account", auth_info: "authInfo" if is_none });
 
 /// Options for listing the canonical account inventory.
 ///
@@ -786,12 +784,10 @@ crate::record_serde::wire_record!(AccountsListRequest { refresh: "refresh" if is
 /// </div>
 #[derive(Debug, Clone, Default)]
 pub struct AccountsLogoutRequest {
-    /// Stable account id of the account to log out. Use this for canonical account entries that are not switchable.
+    /// Account id returned by accounts.list, including accounts that are not switchable. When omitted, logs out the active account. Removes runtime-owned credentials; externally owned credentials are not deleted.
     pub account_id: Option<String>,
-    /// Opaque selection id of the account to log out; absent logs out the active account.
-    pub selection_id: Option<String>,
 }
-crate::record_serde::wire_record!(AccountsLogoutRequest { account_id: "accountId" if is_none, selection_id: "selectionId" if is_none });
+crate::record_serde::wire_record!(AccountsLogoutRequest { account_id: "accountId" if is_none });
 
 /// A GitHub credential to install and persist.
 ///
@@ -826,11 +822,11 @@ crate::record_serde::wire_record!(AccountsSetCredentialsRequest {
 /// </div>
 #[derive(Debug, Clone, Default)]
 pub struct AccountsSwitchActiveRequest {
-    /// Opaque selection id of the account to make active.
-    pub selection_id: String,
+    /// Account id returned by accounts.list. The runtime selects the account's credentials.
+    pub account_id: String,
 }
 crate::record_serde::wire_record!(AccountsSwitchActiveRequest {
-    selection_id: "selectionId"
+    account_id: "accountId"
 });
 
 /// The authentication identity to enroll in Copilot Free.
@@ -896,7 +892,7 @@ crate::record_serde::wire_record!(AuthLoginAdvanceRequest { flow_id: "flowId", i
 /// </div>
 #[derive(Debug, Clone, Default)]
 pub struct AuthLoginBeginRequest {
-    /// Opaque cached base identity id returned by accounts.login.list. Valid only with default mode; consumers must not parse it.
+    /// Opaque accountId of a saved base identity returned by accounts.list. Valid only with default mode; consumers must not parse it.
     pub account_id: Option<String>,
     /// The provider kind to sign in with.
     pub kind: LoginProviderKind,
@@ -938,23 +934,6 @@ pub struct AuthLoginCancelRequest {
     pub flow_id: String,
 }
 crate::record_serde::wire_record!(AuthLoginCancelRequest { flow_id: "flowId" });
-
-/// The provider whose cached base identities should be listed.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct AuthLoginListRequest {
-    /// Login provider whose reusable base identities should be listed.
-    pub provider: LoginProviderKind,
-}
-crate::record_serde::wire_record!(AuthLoginListRequest {
-    provider: "provider"
-});
 
 /// Runtime-to-owner cancellation request for a client-owned task.
 ///
@@ -5523,7 +5502,7 @@ pub(crate) struct RemoteCheckSendAdmissionResult {
 }
 crate::record_serde::wire_record!(RemoteCheckSendAdmissionResult { allowed: "allowed" });
 
-/// Signed-in accounts; empty when no accounts are available.
+/// Known accounts, including saved accounts when automatic authentication is disabled; empty when no accounts are known.
 ///
 /// <div class="warning">
 ///
@@ -5532,16 +5511,6 @@ crate::record_serde::wire_record!(RemoteCheckSendAdmissionResult { allowed: "all
 ///
 /// </div>
 pub type AccountsList = Vec<Account>;
-
-/// Cached base identities reusable by the selected login provider, active first.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-pub type AuthLoginIdentityList = Vec<AuthLoginIdentity>;
 
 /// Authentication providers offered for interactive login.
 ///

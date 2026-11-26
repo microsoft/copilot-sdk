@@ -730,10 +730,8 @@ internal sealed partial class FfiRuntimeHost : IDisposable
         public void Complete() => _channel.Writer.TryComplete();
 
 #if NET
-        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
-        {
-            return await ReadCoreAsync(buffer, cancellationToken).ConfigureAwait(false);
-        }
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+            ReadCoreAsync(buffer, cancellationToken);
 #endif
 
         private async ValueTask<int> ReadCoreAsync(Memory<byte> buffer, CancellationToken cancellationToken)

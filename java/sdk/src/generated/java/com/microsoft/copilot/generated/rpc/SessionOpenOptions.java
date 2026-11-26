@@ -32,6 +32,11 @@ public record SessionOpenOptions(
     @JsonProperty("clientName") String clientName,
     /** Structured client kind used for runtime behavior gates. */
     @JsonProperty("clientKind") String clientKind,
+    /** Controls local session end hooks: `interactive` defers them to shutdown; `per-turn` runs them after each completed turn.
+Omission or null selects `per-turn` on this raw API. The SDK helper defaults do not apply.
+Applied at creation and cold resume; ignored for resident and cloud sessions.
+Not persisted; supply it again on cold resume. */
+    @JsonProperty("sessionLifecycleMode") SessionLifecycleMode sessionLifecycleMode,
     /** Identifier sent to LSP-style integrations. */
     @JsonProperty("lspClientName") String lspClientName,
     /** Stable integration identifier for analytics. */
@@ -100,6 +105,49 @@ configuration takes precedence; explicit feature roots remain independent. */
     public SessionOpenOptions {}
 
     /**
+     * Creates a record without optional runtime metadata.
+     * @param sessionId the {@code sessionId} property
+     * @param name the {@code name} property
+     * @param model the {@code model} property
+     * @param clientName the {@code clientName} property
+     * @param clientKind the {@code clientKind} property
+     * @param lspClientName the {@code lspClientName} property
+     * @param integrationId the {@code integrationId} property
+     * @param workingDirectory the {@code workingDirectory} property
+     * @param remoteSteerable the {@code remoteSteerable} property
+     * @param remoteExporting the {@code remoteExporting} property
+     * @param remoteDefaultedOn the {@code remoteDefaultedOn} property
+     * @param detachedFromSpawningParentSessionId the {@code detachedFromSpawningParentSessionId} property
+     * @param detachedFromSpawningParentEngagementId the {@code detachedFromSpawningParentEngagementId} property
+     * @param sessionCapabilities the {@code sessionCapabilities} property
+     * @param inference the {@code inference} property
+     * @param mcp the {@code mcp} property
+     * @param experiments the {@code experiments} property
+     * @param gitHub the {@code github} property
+     * @param policy the {@code policy} property
+     * @param filesystem the {@code filesystem} property
+     * @param tools the {@code tools} property
+     * @param agents the {@code agents} property
+     * @param permissions the {@code permissions} property
+     * @param skills the {@code skills} property
+     * @param instructions the {@code instructions} property
+     * @param hooks the {@code hooks} property
+     * @param plugins the {@code plugins} property
+     * @param git the {@code git} property
+     * @param events the {@code events} property
+     * @param interaction the {@code interaction} property
+     * @param execution the {@code execution} property
+     * @param state the {@code state} property
+     * @param configDirectory the {@code configDirectory} property
+     * @param enableConfigDiscovery the {@code enableConfigDiscovery} property
+     * @deprecated Use {@link #builder()} for named configuration.
+     */
+    @Deprecated
+    public SessionOpenOptions(String sessionId, String name, String model, String clientName, String clientKind, String lspClientName, String integrationId, String workingDirectory, Boolean remoteSteerable, Boolean remoteExporting, Boolean remoteDefaultedOn, String detachedFromSpawningParentSessionId, String detachedFromSpawningParentEngagementId, List<SessionCapability> sessionCapabilities, SessionOpenInferenceOptions inference, SessionOpenMcpOptions mcp, SessionOpenExperimentOptions experiments, SessionOpenGitHubOptions gitHub, SessionOpenPolicyOptions policy, SessionOpenFilesystemOptions filesystem, SessionOpenToolOptions tools, SessionOpenAgentOptions agents, SessionOpenPermissionOptions permissions, SessionOpenSkillOptions skills, SessionOpenInstructionOptions instructions, SessionOpenHookOptions hooks, SessionOpenPluginOptions plugins, SessionOpenGitOptions git, SessionOpenEventOptions events, SessionOpenInteractionOptions interaction, SessionOpenExecutionOptions execution, SessionOpenStateOptions state, String configDirectory, Boolean enableConfigDiscovery) {
+        this(sessionId, name, model, clientName, clientKind, null, lspClientName, integrationId, workingDirectory, remoteSteerable, remoteExporting, remoteDefaultedOn, detachedFromSpawningParentSessionId, detachedFromSpawningParentEngagementId, sessionCapabilities, inference, mcp, experiments, gitHub, policy, filesystem, tools, agents, permissions, skills, instructions, hooks, plugins, git, events, interaction, execution, state, configDirectory, enableConfigDiscovery);
+    }
+
+    /**
      * Returns a named builder.
      * @return a new builder
      * @since 2.0.0
@@ -117,6 +165,7 @@ configuration takes precedence; explicit feature roots remain independent. */
         private String model;
         private String clientName;
         private String clientKind;
+        private SessionLifecycleMode sessionLifecycleMode;
         private String lspClientName;
         private String integrationId;
         private String workingDirectory;
@@ -199,6 +248,17 @@ configuration takes precedence; explicit feature roots remain independent. */
          */
         public Builder clientKind(String value) {
             this.clientKind = value;
+            return this;
+        }
+
+        /**
+         * Sets the {@code sessionLifecycleMode} property.
+         * @param value the property value
+         * @return this builder
+         * @since 2.0.0
+         */
+        public Builder sessionLifecycleMode(SessionLifecycleMode value) {
+            this.sessionLifecycleMode = value;
             return this;
         }
 
@@ -528,7 +588,7 @@ configuration takes precedence; explicit feature roots remain independent. */
          * @since 2.0.0
          */
         public SessionOpenOptions build() {
-            return new SessionOpenOptions(sessionId, name, model, clientName, clientKind, lspClientName, integrationId, workingDirectory, remoteSteerable, remoteExporting, remoteDefaultedOn, detachedFromSpawningParentSessionId, detachedFromSpawningParentEngagementId, sessionCapabilities, inference, mcp, experiments, gitHub, policy, filesystem, tools, agents, permissions, skills, instructions, hooks, plugins, git, events, interaction, execution, state, configDirectory, enableConfigDiscovery);
+            return new SessionOpenOptions(sessionId, name, model, clientName, clientKind, sessionLifecycleMode, lspClientName, integrationId, workingDirectory, remoteSteerable, remoteExporting, remoteDefaultedOn, detachedFromSpawningParentSessionId, detachedFromSpawningParentEngagementId, sessionCapabilities, inference, mcp, experiments, gitHub, policy, filesystem, tools, agents, permissions, skills, instructions, hooks, plugins, git, events, interaction, execution, state, configDirectory, enableConfigDiscovery);
         }
     }
 }

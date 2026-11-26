@@ -201,6 +201,9 @@ pub enum SessionErrorKind {
 
     /// The CLI could not delete the persisted session.
     DeleteFailed,
+
+    /// The host refused a foreground session change.
+    SetForegroundFailed,
 }
 
 impl fmt::Display for SessionErrorKind {
@@ -240,6 +243,7 @@ impl fmt::Display for SessionErrorKind {
             ),
             SessionErrorKind::DetachFailed => write!(f, "failed to detach session"),
             SessionErrorKind::DeleteFailed => write!(f, "failed to delete session"),
+            SessionErrorKind::SetForegroundFailed => write!(f, "failed to set foreground session"),
         }
     }
 }

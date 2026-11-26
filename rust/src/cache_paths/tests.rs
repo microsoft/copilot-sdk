@@ -4,6 +4,8 @@
 
 #![cfg(test)]
 
+const CLI_CACHE_DIR: &str = "cli";
+
 use std::ffi::OsStr;
 use std::fs;
 use std::io;
@@ -11,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use tempfile::tempdir;
 
-use super::{CLI_CACHE_DIR, cache_install_dir, private_temporary_cache, runtime_install_dir};
+use super::{cache_install_dir, private_temporary_cache, runtime_install_dir};
 
 #[test]
 fn build_and_runtime_share_versioned_cache_paths() {

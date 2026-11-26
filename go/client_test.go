@@ -1280,6 +1280,45 @@ func TestClient_StopDrainsShutdownResponseAfterProcessExit(t *testing.T) {
 	}
 }
 
+func TestClient_StopStartsIndependentDetachesWithinSharedDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		rpcClient, server, _ := newRuntimeShutdownRpcPair(t)
+		bothDetaching := make(chan struct{})
+		release := sync.OnceFunc(func() { close(bothDetaching) })
+		var admitted atomic.Int32
+		server.SetRequestHandler("session.detach", func(json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
+			if admitted.Add(1) == 2 {
+				release()
+			}
+			<-bothDetaching
+			return []byte(`{"success":true}`), nil
+		})
+		client := &Client{
+			client: rpcClient,
+			RPC:    rpc.NewServerRPC(rpcClient),
+			sessions: map[string]*Session{
+				"first":  newSession("first", rpcClient, "", false),
+				"second": newSession("second", rpcClient, "", false),
+			},
+		}
+		defer func() {
+			release()
+			client.ForceStop()
+			server.Stop()
+		}()
+
+		if err := client.Stop(); err != nil {
+			t.Fatalf("Stop failed before independent detaches could complete: %v", err)
+		}
+		if got := admitted.Load(); got != 2 {
+			t.Fatalf("admitted detaches = %d, want 2", got)
+		}
+		if len(client.sessions) != 0 {
+			t.Fatal("Stop did not clear sessions")
+		}
+	})
+}
+
 func TestClient_StopShutsDownRuntimeWhenSessionDetachNeverAnswers(t *testing.T) {
 	previousTimeout := runtimeShutdownTimeout
 	runtimeShutdownTimeout = 200 * time.Millisecond
@@ -1330,6 +1369,109 @@ func TestClient_StopShutsDownRuntimeWhenSessionDetachNeverAnswers(t *testing.T) 
 	}
 	if len(client.sessions) != 0 {
 		t.Fatal("Stop did not clear sessions")
+	}
+}
+
+func TestClient_StopClosesTransportWhenSessionDetachWriteStalls(t *testing.T) {
+	for _, transport := range []string{"external TCP", "owned stdio"} {
+		t.Run(transport, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				connection, peer := net.Pipe()
+				defer peer.Close()
+				rpcClient := jsonrpc2.NewClient(connection, connection)
+				rpcClient.Start()
+				defer rpcClient.Stop()
+				client := &Client{
+					client: rpcClient,
+					RPC:    rpc.NewServerRPC(rpcClient),
+					sessions: map[string]*Session{
+						"stalled": newSession("stalled", rpcClient, "", false),
+					},
+				}
+				if transport == "external TCP" {
+					client.isExternalServer = true
+					client.conn = connection
+				} else {
+					client.useStdio = true
+					client.process = &exec.Cmd{}
+					client.processStdin = connection
+					client.processDone = make(chan struct{})
+					close(client.processDone)
+				}
+
+				var stopErr error
+				stopped := make(chan struct{})
+				go func() {
+					stopErr = client.Stop()
+					close(stopped)
+				}()
+				defer func() {
+					connection.Close()
+					<-stopped
+				}()
+
+				// Consume one byte, then hold the detach frame inside Write.
+				if _, err := io.ReadFull(peer, make([]byte, 1)); err != nil {
+					t.Fatal(err)
+				}
+				synctest.Wait()
+				time.Sleep(runtimeShutdownTimeout)
+				if transport == "owned stdio" {
+					time.Sleep(runtimeShutdownTimeout)
+				}
+				synctest.Wait()
+
+				select {
+				case <-stopped:
+					if stopErr == nil || !strings.Contains(stopErr.Error(), "failed to disconnect session stalled") {
+						t.Fatalf("Stop error = %v, want the stalled detach failure", stopErr)
+					}
+				default:
+					t.Fatal("Stop did not close the transport after the shared detach deadline")
+				}
+				if len(client.sessions) != 0 {
+					t.Fatal("Stop did not clear sessions")
+				}
+				select {
+				case <-rpcClient.ConnectionClosed():
+				default:
+					t.Fatal("Stop did not finish transport cleanup")
+				}
+			})
+		})
+	}
+}
+
+func TestClient_StopPreservesDetachErrorBeforeRuntimeShutdownError(t *testing.T) {
+	rpcClient, server, _ := newRuntimeShutdownRpcPair(t)
+	t.Cleanup(server.Stop)
+	server.SetRequestHandler("session.detach", func(json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
+		return nil, &jsonrpc2.Error{Code: -32001, Message: "detach rejected"}
+	})
+	server.SetRequestHandler("runtime.shutdown", func(json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
+		return nil, &jsonrpc2.Error{Code: -32002, Message: "shutdown rejected"}
+	})
+	done := make(chan struct{})
+	close(done)
+	client := &Client{
+		process:     &exec.Cmd{},
+		processDone: done,
+		useStdio:    true,
+		client:      rpcClient,
+		RPC:         rpc.NewServerRPC(rpcClient),
+		sessions: map[string]*Session{
+			"rejected": newSession("rejected", rpcClient, "", false),
+		},
+	}
+	t.Cleanup(func() { client.ForceStop() })
+
+	stopError := client.Stop()
+	var first *jsonrpc2.Error
+	if !errors.As(stopError, &first) || first.Code != -32001 {
+		t.Fatalf("Stop error = %v, first RPC error = %v; want the detach error first", stopError, first)
+	}
+	if !strings.Contains(stopError.Error(), "shutdown rejected") {
+		t.Fatalf("Stop error = %v, want the runtime shutdown error retained", stopError)
 	}
 }
 

@@ -435,7 +435,7 @@ Ephemeral. Incremental chunk of the model's extended thinking, streamed in real 
 |------------|------|----------|-------------|
 | `reasoningId` | `string` | ✅ | Matches the corresponding `assistant.reasoning` event |
 | `deltaContent` | `string` | ✅ | Text chunk to append to reasoning content |
-| `fusion` | `FusionAttribution` | | Experimental. HydraFusion phase attribution; present without a `commitId` while a staged phase streams provisional reasoning that may still be discarded |
+| `fusion` | `FusionAttribution` | | Experimental. HydraFusion phase attribution; present without a `commitId` while a staged phase streams provisional reasoning that may still be discarded. Its `turnId` names the phase's turn, matching the `turnId` of the completed `assistant.reasoning` |
 
 ### `assistant.message`
 
@@ -473,7 +473,7 @@ Ephemeral. Incremental chunk of the assistant's text response, streamed in real 
 |------------|------|----------|-------------|
 | `messageId` | `string` | ✅ | Matches the corresponding `assistant.message` event |
 | `deltaContent` | `string` | ✅ | Text chunk to append to the message |
-| `fusion` | `FusionAttribution` | | Experimental. HydraFusion phase attribution; present without a `commitId` while a staged phase streams provisional text that may still be discarded |
+| `fusion` | `FusionAttribution` | | Experimental. HydraFusion phase attribution; present without a `commitId` while a staged phase streams provisional text that may still be discarded. Its `turnId` names the phase's turn, matching the `turnId` of the completed `assistant.message` |
 
 ### `assistant.turn_end`
 
@@ -721,6 +721,24 @@ The session has ended.
 | `modelMetrics` | `Record<string, ModelMetric>` | ✅ | Per-model usage breakdown |
 | `currentModel` | `string` | | Model selected at shutdown time |
 
+### `session.mcp_servers_loaded`
+
+Ephemeral. A snapshot of the MCP servers visible to the session, emitted when they finish loading or reloading: during local turn preparation, after a plugin change, or after an MCP configuration refresh. It carries no message or turn ID. Servers that policy filters out are left out, except managed servers, which stay listed with `status: "stopped"`. See [Events around a sent message](#events-around-a-sent-message).
+
+| Data Field | Type | Required | Description |
+|------------|------|----------|-------------|
+| `servers` | `McpServersLoadedServer[]` | ✅ | One entry per visible server: `name`, `status`, `source?`, `displayName?`, `error?`, `serverMetadata?` |
+
+### `session.mcp_server_status_changed`
+
+Ephemeral. One MCP server's connection status changed. It can arrive at any time, independent of a send.
+
+| Data Field | Type | Required | Description |
+|------------|------|----------|-------------|
+| `serverName` | `string` | ✅ | Name of the server whose status changed |
+| `status` | `McpServerStatus` | ✅ | `"connected"`, `"failed"`, `"needs-auth"`, `"pending"`, `"disabled"`, `"stopped"` or `"not_configured"` |
+| `error` | `string` | | Error message when the server entered a failed state |
+
 ## Permission and user input events
 
 These events are emitted when the agent needs approval or input from the user before continuing.
@@ -909,6 +927,10 @@ The user sent a message. Recorded for the session timeline.
 | `agentMode` | `string` | | Agent mode: `"interactive"`, `"plan"`, `"autopilot"`, or `"shell"` |
 | `interactionId` | `string` | | CAPI interaction ID |
 
+### `pending_messages.modified`
+
+Ephemeral. The session's pending message queue changed: a message was queued, taken off the queue to run, or removed. **Data payload is empty (`{}`)**; call `session.rpc.queue.pendingItems()` (experimental) to read the queue.
+
 ### `system.message`
 
 A system or developer prompt was injected into the conversation.
@@ -1033,6 +1055,17 @@ assistant.turn_end            → Turn complete
 session.idle                  → Ready for next message (ephemeral)
 ```
 
+### Events around a sent message
+
+For a normal local send that starts a turn, `user.message` arrives before that turn's `assistant.turn_start`. A steering send (`mode: "immediate"` while a turn is running) joins the turn already in progress, so its `user.message` can arrive after that turn's `assistant.turn_start`.
+
+- **MCP snapshots are optional.** When local turn preparation emits `session.mcp_servers_loaded`, it comes before that turn's `user.message`. A send may have no snapshot, and a plugin change or MCP configuration refresh can emit one with no send. The event carries no message or turn ID, so don't wait for it or treat it as a sign that tools are ready.
+- **MCP status changes are independent of sends.** `session.mcp_server_status_changed` can arrive at any time, including during a turn.
+- **`pending_messages.modified` is a hint to refresh the queue,** not a log of transitions. Its payload is empty, and one send can produce more than one.
+- **A turn can fail after `send()` returns.** `send()` can return a message ID before the turn's preparation runs. A later failure surfaces as `session.error`, possibly with no `user.message`.
+
+These three events are ephemeral and are not replayed on resume. Where supported, read the current state with `session.rpc.mcp.list()` and `session.rpc.queue.pendingItems()` (both experimental) instead of rebuilding it from events. For queueing and steering, see [Steering and queueing](./steering-and-queueing.md).
+
 ## Documented event types at a glance
 
 This table lists every event type documented on this page with its key `data` payload fields. Common envelope fields are documented above.
@@ -1047,7 +1080,7 @@ This table lists every event type documented on this page with its key `data` pa
 | `assistant.message` | | Assistant | `messageId`, `content`, `toolRequests?`, `outputTokens?`, `phase?` |
 | `assistant.message_delta` | ✅ | Assistant | `messageId`, `deltaContent` |
 | `assistant.turn_end` | | Assistant | `turnId` |
-| `assistant.usage` | ✅ | Assistant | `model`, `apiEndpoint?`, `inputTokens?`, `outputTokens?`, `cost?`, `duration?` |
+| `assistant.usage` | ✅ | Assistant | `model`, `apiEndpoint?`, `inputTokens?`, `outputTokens?`, `cacheReadTokens?`, `cacheWriteTokens?`, `cost?`, `duration?` |
 | `tool.user_requested` | | Tool | `toolCallId`, `toolName`, `arguments?` |
 | `tool.execution_start` | | Tool | `toolCallId`, `toolName`, `arguments?`, `mcpServerName?`, `mcpServerDisplayName?` |
 | `tool.shell_output` | ✅ | Tool | `toolCallId`, `text`, `stream?`, `sequence` |
@@ -1064,6 +1097,9 @@ This table lists every event type documented on this page with its key `data` pa
 | `session.usage_checkpoint` | | Session | `totalNanoAiu`, `totalPremiumRequests?` |
 | `session.task_complete` | | Session | `summary?` |
 | `session.shutdown` | | Session | `shutdownType`, `codeChanges`, `modelMetrics` |
+| `session.mcp_servers_loaded` | ✅ | Session | `servers` |
+| `session.mcp_server_status_changed` | ✅ | Session | `serverName`, `status`, `error?` |
+| `pending_messages.modified` | ✅ | Queue | *(empty)* |
 | `permission.requested` | | Permission | `requestId`, `permissionRequest` |
 | `permission.completed` | | Permission | `requestId`, `result.kind` |
 | `user_input.requested` | ✅ | User Input | `requestId`, `question`, `choices?` |

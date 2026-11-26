@@ -12,6 +12,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonInclude;
 
 import com.microsoft.copilot.generated.rpc.DiagnosticsConfiguration;
+import com.microsoft.copilot.generated.rpc.SessionLifecycleMode;
 import com.microsoft.copilot.generated.rpc.ExtensionSources;
 
 /**
@@ -619,6 +620,42 @@ public class CreateSessionOptions {
 
     private String configDirectory;
     private Boolean enableConfigDiscovery;
+    private SessionLifecycleMode sessionLifecycleMode;
+
+    /**
+     * Gets the local session hook lifetime.
+     *
+     * @return the explicit mode, or empty to inherit the host default
+     */
+    @JsonIgnore
+    public Optional<SessionLifecycleMode> getSessionLifecycleMode() {
+        return Optional.ofNullable(sessionLifecycleMode);
+    }
+
+    /**
+     * Selects local hook lifetime. Interactive defers end hooks to shutdown;
+     * per-turn runs them after each completed turn. The mode is not persisted.
+     * SDK-owned hosts default to interactive. Cloud sessions ignore this option.
+     *
+     * @param sessionLifecycleMode
+     *            the hook lifetime
+     * @return this options instance
+     */
+    public CreateSessionOptions setSessionLifecycleMode(SessionLifecycleMode sessionLifecycleMode) {
+        this.sessionLifecycleMode = sessionLifecycleMode;
+        return this;
+    }
+
+    /**
+     * Restores the host's default hook lifetime.
+     *
+     * @return this options instance
+     */
+    public CreateSessionOptions clearSessionLifecycleMode() {
+        this.sessionLifecycleMode = null;
+        return this;
+    }
+
     @JsonProperty("extensions")
     private SessionExtensionOptions extensions = new SessionExtensionOptions();
     private ExtensionSources extensionSources;
@@ -805,6 +842,7 @@ public class CreateSessionOptions {
         copy.plugins = this.plugins.clone();
         copy.configDirectory = this.configDirectory;
         copy.enableConfigDiscovery = this.enableConfigDiscovery;
+        copy.sessionLifecycleMode = this.sessionLifecycleMode;
         copy.extensions = this.extensions.clone();
         copy.extensionSources = this.extensionSources;
         copy.extensionPaths = this.extensionPaths == null ? null : new ArrayList<>(this.extensionPaths);

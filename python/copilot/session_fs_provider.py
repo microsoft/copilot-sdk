@@ -506,11 +506,8 @@ class _SessionFsAdapter:
     async def sqlite_exists(self, params: Any) -> SessionFSSqliteExistsResult:
         if not isinstance(self._p, SessionFsSqliteProvider):
             return SessionFSSqliteExistsResult.from_dict({"exists": False})
-        try:
-            result = await self._p.sqlite_exists()
-            return SessionFSSqliteExistsResult.from_dict({"exists": result})
-        except Exception:
-            return SessionFSSqliteExistsResult.from_dict({"exists": False})
+        result = await self._p.sqlite_exists()
+        return SessionFSSqliteExistsResult.from_dict({"exists": result})
 
 
 def _to_session_fs_error(exc: Exception) -> SessionFSError:

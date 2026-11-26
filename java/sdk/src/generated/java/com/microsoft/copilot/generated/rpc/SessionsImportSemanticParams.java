@@ -41,6 +41,8 @@ record SessionsImportSemanticParams(
     @JsonProperty("name") String name,
     /** Name of the embedding client. */
     @JsonProperty("clientName") String clientName,
+    /** Structured client kind used by runtime behavior gates. */
+    @JsonProperty("clientKind") String clientKind,
     @com.fasterxml.jackson.annotation.JsonIgnore java.util.Set<String> $explicitNulls
 ) {
 
@@ -72,6 +74,7 @@ record SessionsImportSemanticParams(
         private String workingDirectory;
         private String name;
         private String clientName;
+        private String clientKind;
 
         /**
          * Sets the {@code settings} property.
@@ -163,6 +166,17 @@ record SessionsImportSemanticParams(
         }
 
         /**
+         * Sets the {@code clientKind} property.
+         * @param value the property value
+         * @return this builder
+         * @since 2.0.0
+         */
+        public Builder clientKind(String value) {
+            this.clientKind = value;
+            return this;
+        }
+
+        /**
          * Builds a record after checking required property presence.
          * @return a new record
          * @throws IllegalStateException if a required property is missing
@@ -174,7 +188,7 @@ record SessionsImportSemanticParams(
             if (defaultWorkingDirectory == null) throw new IllegalStateException("Missing required property: defaultWorkingDirectory");
             java.util.Set<String> $explicitNulls = new java.util.LinkedHashSet<>();
             if ($presence0 && settings == null) $explicitNulls.add("settings");
-            return new SessionsImportSemanticParams(settings, jsonl, inputPath, defaultWorkingDirectory, dryRun, workingDirectory, name, clientName, $explicitNulls);
+            return new SessionsImportSemanticParams(settings, jsonl, inputPath, defaultWorkingDirectory, dryRun, workingDirectory, name, clientName, clientKind, $explicitNulls);
         }
     }
 
@@ -194,7 +208,7 @@ record SessionsImportSemanticParams(
             if (!tree.isObject()) return context.reportInputMismatch(SessionsImportSemanticParams.class, "Expected a JSON object");
             java.util.Set<String> $explicitNulls = new java.util.LinkedHashSet<>();
             if (tree.has("settings") && tree.get("settings").isNull()) $explicitNulls.add("settings");
-            return new SessionsImportSemanticParams(readProperty(context, tree, "settings", new com.fasterxml.jackson.core.type.TypeReference<Object>() {}), readProperty(context, tree, "jsonl", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "inputPath", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "defaultWorkingDirectory", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "dryRun", new com.fasterxml.jackson.core.type.TypeReference<Boolean>() {}), readProperty(context, tree, "workingDirectory", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "name", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "clientName", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), $explicitNulls);
+            return new SessionsImportSemanticParams(readProperty(context, tree, "settings", new com.fasterxml.jackson.core.type.TypeReference<Object>() {}), readProperty(context, tree, "jsonl", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "inputPath", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "defaultWorkingDirectory", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "dryRun", new com.fasterxml.jackson.core.type.TypeReference<Boolean>() {}), readProperty(context, tree, "workingDirectory", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "name", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "clientName", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "clientKind", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), $explicitNulls);
         }
 
         private static <T> T readProperty(com.fasterxml.jackson.databind.DeserializationContext context,

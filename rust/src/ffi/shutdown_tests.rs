@@ -94,7 +94,7 @@ fn async_stop_keeps_current_thread_executor_responsive_during_native_shutdown() 
                     operation_lock: parking_lot::Mutex::new(()),
                     foreground_order: Arc::new(tokio::sync::Mutex::new(())),
                     protocol_peers: parking_lot::Mutex::new(Some(Vec::new())),
-                    cleanup_done: tokio::sync::watch::channel(false).0,
+                    cleanup_done: tokio::sync::watch::channel(CleanupStatus::Pending).0,
                     library_path: PathBuf::from("test-runtime"),
                 }));
                 client.inner.rpc.force_close();
@@ -144,7 +144,7 @@ fn attached_client_closes_only_its_connection() {
         operation_lock: parking_lot::Mutex::new(()),
         foreground_order: Arc::new(tokio::sync::Mutex::new(())),
         protocol_peers: parking_lot::Mutex::new(Some(Vec::new())),
-        cleanup_done: tokio::sync::watch::channel(false).0,
+        cleanup_done: tokio::sync::watch::channel(CleanupStatus::Pending).0,
         library_path: PathBuf::from("test-runtime"),
     };
     shared.close();
@@ -181,7 +181,7 @@ async fn stopping_attached_client_does_not_shutdown_the_cli_engine() {
         operation_lock: parking_lot::Mutex::new(()),
         foreground_order: Arc::new(tokio::sync::Mutex::new(())),
         protocol_peers: parking_lot::Mutex::new(Some(Vec::new())),
-        cleanup_done: tokio::sync::watch::channel(false).0,
+        cleanup_done: tokio::sync::watch::channel(CleanupStatus::Pending).0,
         library_path: PathBuf::from("test-runtime"),
     }));
     client

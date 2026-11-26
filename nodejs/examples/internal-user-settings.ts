@@ -6,6 +6,15 @@ import { ResponseError } from "vscode-jsonrpc/node";
 import type { createInternalServerRpc, createServerRpc } from "../src/generated/rpc.js";
 import type { JsonValue, UserSettingsJsonValue } from "../src/index.js";
 
+export async function inspectGlobalState(
+    state: ReturnType<typeof createInternalServerRpc>["globalState"],
+    configDir: string
+) {
+    const diagnostics = await state.getDiagnostics({ configDir });
+    console.log("Global state diagnostics:", JSON.stringify(diagnostics));
+    return diagnostics;
+}
+
 // Ordinary reads remain compatible with existing JSON consumers and reject unsafe integers.
 export async function readJsonCompatibleSettings(
     settings: ReturnType<typeof createServerRpc>["user"]["settings"],

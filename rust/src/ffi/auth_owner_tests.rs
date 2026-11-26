@@ -26,6 +26,7 @@ struct State {
     allow_open: AtomicBool,
     allow_start: AtomicBool,
     allow_file_logging: AtomicBool,
+    close_attempted: tokio::sync::Notify,
     close_calls: AtomicUsize,
     default_starts: AtomicUsize,
     owner_starts: AtomicUsize,
@@ -60,6 +61,7 @@ impl Fixture {
             allow_open: AtomicBool::new(true),
             allow_start: AtomicBool::new(true),
             allow_file_logging: AtomicBool::new(true),
+            close_attempted: tokio::sync::Notify::new(),
             close_calls: AtomicUsize::new(0),
             default_starts: AtomicUsize::new(0),
             owner_starts: AtomicUsize::new(0),
@@ -223,6 +225,7 @@ unsafe extern "C" fn open(
 unsafe extern "C" fn close(id: u32) -> bool {
     let state = state(id);
     state.close_calls.fetch_add(1, Ordering::SeqCst);
+    state.close_attempted.notify_one();
     state.allow_close.load(Ordering::SeqCst)
 }
 
@@ -308,6 +311,115 @@ async fn deferred_close_retains_owner_until_shutdown() {
     fixture.expect(Event::Shutdown).await;
     fixture.expect(Event::OwnerDropped).await;
     assert!(fixture.state.shutdown_complete.load(Ordering::SeqCst));
+}
+
+#[test]
+fn client_stop_waits_for_deferred_native_cleanup() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .max_blocking_threads(1)
+        .build()
+        .unwrap()
+        .block_on(async {
+            let mut fixture = Fixture::new();
+            fixture.state.allow_close.store(false, Ordering::SeqCst);
+            let directory = tempfile::tempdir().unwrap();
+            let transport = fixture.host(Some(Behavior::Accept)).start().await.unwrap();
+            let client = crate::Client::from_streams(
+                crate::ClientMode::CodingAgent,
+                tokio::io::empty(),
+                tokio::io::sink(),
+                directory.path().to_owned(),
+            )
+            .unwrap();
+            *client.inner.ffi_host.lock() = Some(Arc::clone(&transport.1));
+            fixture.expect(Event::Admission).await;
+            drop(transport);
+            client.inner.rpc.force_close();
+
+            let mut stop = Box::pin(client.stop());
+            let initial = stop
+                .as_mut()
+                .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()));
+            fixture.state.close_attempted.notified().await;
+            // The only blocking worker must finish native close before this barrier.
+            tokio::task::spawn_blocking(|| ()).await.unwrap();
+            let before_cleanup = match initial {
+                std::task::Poll::Ready(result) => std::task::Poll::Ready(result),
+                std::task::Poll::Pending => stop
+                    .as_mut()
+                    .poll(&mut std::task::Context::from_waker(std::task::Waker::noop())),
+            };
+            let stopped_before_cleanup = before_cleanup.is_ready();
+            fixture.state.allow_close.store(true, Ordering::SeqCst);
+            let result = match before_cleanup {
+                std::task::Poll::Ready(result) => result,
+                std::task::Poll::Pending => stop.await,
+            };
+            let errors = result.expect_err("the RPC is deliberately closed");
+            let shutdown = fixture.events.try_recv();
+            let owner_dropped = fixture.events.try_recv();
+
+            assert_eq!(errors.0.len(), 1, "{errors:?}");
+            assert!(errors.0[0].is_transport_failure(), "{errors:?}");
+            assert!(
+                !stopped_before_cleanup,
+                "Client::stop returned before its deferred native cleanup"
+            );
+            assert_eq!(shutdown, Ok(Event::Shutdown));
+            assert_eq!(owner_dropped, Ok(Event::OwnerDropped));
+            assert!(fixture.state.shutdown_complete.load(Ordering::SeqCst));
+        });
+}
+
+#[tokio::test]
+async fn close_protocol_peers_awaits_other_receipts_after_failure() {
+    let mut parent = Fixture::new();
+    let mut failed = Fixture::new();
+    let mut deferred = Fixture::new();
+    let parent_host = parent.host(Some(Behavior::Accept)).start().await.unwrap();
+    let failed_peer = failed.host(Some(Behavior::Accept)).start().await.unwrap();
+    let deferred_peer = deferred.host(Some(Behavior::Accept)).start().await.unwrap();
+    parent.expect(Event::Admission).await;
+    failed.expect(Event::Admission).await;
+    deferred.expect(Event::Admission).await;
+    // Inject the failure receipt after safe cleanup rather than exhausting OS threads.
+    failed_peer.1.close();
+    failed_peer
+        .1
+        .cleanup_done
+        .send_replace(CleanupStatus::Failed(Arc::new(std::io::Error::other(
+            "cleanup worker could not start",
+        ))));
+    deferred.state.allow_close.store(false, Ordering::SeqCst);
+    *parent_host.1.protocol_peers.lock() = Some(vec![
+        Arc::downgrade(&failed_peer.1),
+        Arc::downgrade(&deferred_peer.1),
+    ]);
+
+    let mut close = Box::pin(parent_host.1.close_protocol_peers());
+    let first_poll = close
+        .as_mut()
+        .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()));
+    deferred.state.allow_close.store(true, Ordering::SeqCst);
+    let returned_early = first_poll.is_ready();
+    let result = match first_poll {
+        std::task::Poll::Ready(result) => result,
+        std::task::Poll::Pending => close.await,
+    };
+    let shutdown_at_return = deferred.events.try_recv();
+    deferred_peer.1.wait_for_cleanup().await.unwrap();
+
+    assert!(
+        !returned_early,
+        "peer cleanup returned with a pending receipt"
+    );
+    assert_eq!(shutdown_at_return, Ok(Event::Shutdown));
+    let error = result.expect_err("the first peer's cleanup failed");
+    assert!(
+        error.to_string().contains("cleanup worker could not start"),
+        "{error}"
+    );
 }
 
 #[tokio::test]

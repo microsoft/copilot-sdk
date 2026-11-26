@@ -54,6 +54,7 @@ type AhpHostAuthentication struct {
 
 // AhpSessionCreateRequest contains the settings selected by the AHP host.
 // Preserve Config when creating the session; add application prompts, tools and callbacks.
+// Use AhpSessionLifecycleMode with the factory context to preserve the selected lifecycle.
 // Experimental: AHP hosting may change or be removed.
 type AhpSessionCreateRequest struct {
 	Authentication AhpSessionAuthentication
@@ -62,11 +63,27 @@ type AhpSessionCreateRequest struct {
 
 // AhpSessionResumeRequest identifies a durable application session to resume.
 // Preserve Config, or return the exact retained original from the owning client.
+// Use AhpSessionLifecycleMode with the factory context on cold resume.
 // Experimental: AHP hosting may change or be removed.
 type AhpSessionResumeRequest struct {
 	Authentication AhpSessionAuthentication
 	SessionID      string
 	Config         *ResumeSessionOptions
+}
+
+type ahpSessionLifecycleModeKey struct{}
+
+// AhpSessionLifecycleMode returns the host-selected lifecycle mode from a factory context.
+// Pass it to CreateSessionWithLifecycleMode or ResumeSessionWithLifecycleMode with the request's Config.
+// An empty mode inherits the runtime default.
+// Experimental: AHP hosting may change or be removed.
+//
+// For example, an AhpHostOptions.CreateSession factory can return:
+//
+//	client.CreateSessionWithLifecycleMode(ctx, request.Config, AhpSessionLifecycleMode(ctx))
+func AhpSessionLifecycleMode(ctx context.Context) SessionLifecycleMode {
+	mode, _ := ctx.Value(ahpSessionLifecycleModeKey{}).(SessionLifecycleMode)
+	return mode
 }
 
 // AhpHostOptions configures an experimental, in-process AHP listener.
@@ -372,7 +389,7 @@ func (c *Client) captureAhpSession(session *Session, request any) error {
 	return nil
 }
 
-func decodeAhpConfig(config map[string]any, target any) error {
+func decodeAhpConfig(config map[string]any, target any) (SessionLifecycleMode, error) {
 	copy := make(map[string]any, len(config))
 	var token string
 	for key, value := range config {
@@ -380,7 +397,7 @@ func decodeAhpConfig(config map[string]any, target any) error {
 			var ok bool
 			token, ok = value.(string)
 			if !ok {
-				return errors.New("AHP gitHubToken must be a string")
+				return "", errors.New("AHP gitHubToken must be a string")
 			}
 			continue
 		}
@@ -391,12 +408,26 @@ func decodeAhpConfig(config map[string]any, target any) error {
 	}
 	data, err := groupSessionJSON(copy)
 	if err != nil {
-		return err
+		return "", err
+	}
+	var mode SessionLifecycleMode
+	var decoded any
+	switch options := target.(type) {
+	case *CreateSessionOptions:
+		decoded = &struct {
+			*CreateSessionOptions
+			SessionLifecycleMode *SessionLifecycleMode `json:"sessionLifecycleMode"`
+		}{options, &mode}
+	case *ResumeSessionOptions:
+		decoded = &struct {
+			*ResumeSessionOptions
+			SessionLifecycleMode *SessionLifecycleMode `json:"sessionLifecycleMode"`
+		}{options, &mode}
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		return err
+	if err := decoder.Decode(decoded); err != nil {
+		return "", err
 	}
 	// Per-session credentials are intentionally excluded from ordinary config JSON.
 	switch options := target.(type) {
@@ -405,7 +436,7 @@ func decodeAhpConfig(config map[string]any, target any) error {
 	case *ResumeSessionOptions:
 		options.GitHub.Token = token
 	}
-	return nil
+	return mode, nil
 }
 
 func containsAhpConfig(actual, expected any, root bool) bool {
@@ -566,16 +597,20 @@ func invokeAhpFactory(entry *ahpHandoff, config map[string]any, authentication A
 	}()
 	if resume {
 		var options ResumeSessionOptions
-		if err := decodeAhpConfig(config, &options); err != nil {
+		mode, err := decodeAhpConfig(config, &options)
+		if err != nil {
 			return nil, err
 		}
-		return entry.options.ResumeSession(entry.ctx, AhpSessionResumeRequest{Authentication: authentication, SessionID: entry.sessionID, Config: &options})
+		ctx := context.WithValue(entry.ctx, ahpSessionLifecycleModeKey{}, mode)
+		return entry.options.ResumeSession(ctx, AhpSessionResumeRequest{Authentication: authentication, SessionID: entry.sessionID, Config: &options})
 	}
 	var options CreateSessionOptions
-	if err := decodeAhpConfig(config, &options); err != nil {
+	mode, err := decodeAhpConfig(config, &options)
+	if err != nil {
 		return nil, err
 	}
-	return entry.options.CreateSession(entry.ctx, AhpSessionCreateRequest{Authentication: authentication, Config: &options})
+	ctx := context.WithValue(entry.ctx, ahpSessionLifecycleModeKey{}, mode)
+	return entry.options.CreateSession(ctx, AhpSessionCreateRequest{Authentication: authentication, Config: &options})
 }
 
 func (c *Client) cancelAhpAuthentication(params *rpc.HostAuthenticationCancelledNotification) {

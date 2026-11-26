@@ -530,11 +530,11 @@ Delete a session and its data from disk.
 
 ##### `GetForegroundSessionIdAsync(): Task<string?>`
 
-Get the ID of the session currently displayed in the TUI. Only available when connecting to a server running in TUI+server mode (`--ui-server`).
+Get the displayed session's ID. The server must have a foreground UI or an SDK host callback.
 
 ##### `SetForegroundSessionIdAsync(string sessionId): Task`
 
-Request the TUI to switch to displaying the specified session. Only available in TUI+server mode.
+Ask the host UI or SDK callback to display the specified session.
 
 ##### `OnLifecycle<T>(Action<T> handler): IDisposable where T : SessionLifecycleEvent`
 
@@ -1217,7 +1217,7 @@ When Copilot invokes `lookup_issue`, the client automatically runs your handler 
 
 #### Overriding Built-in Tools
 
-If you register a tool with the same name as a built-in CLI tool (e.g. `edit_file`, `read_file`), the runtime will return an error unless you explicitly opt in with `CopilotToolOptions.OverridesBuiltInTool`. This flag signals that you intend to replace the built-in tool with your custom implementation.
+A name collision requires an explicit override. Set `CopilotToolOptions.OverridesBuiltInTool` to replace a built-in or add your tool if there's no match. Set `OnlyOverridesBuiltInTool` to replace a same-named built-in only when one is enabled for this session and the executing model (matched before available/excluded tool filters); otherwise the runtime ignores your tool. MCP tools such as `web_search` aren't built-ins and never match.
 
 ```csharp
 using Microsoft.Extensions.AI;

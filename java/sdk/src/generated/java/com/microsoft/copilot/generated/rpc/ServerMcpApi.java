@@ -161,4 +161,15 @@ public final class ServerMcpApi {
         return caller.invoke("mcp.applyUninstall", params, McpInstallationResult.class);
     }
 
+    /**
+     * Previews MCP servers from an explicit plugin set without merging ambient user or workspace configuration or starting servers. Builtin selection uses only the runtime's registered builtin roots.
+     *
+     * @apiNote This method is experimental and may change in a future version.
+     * @since 1.0.0
+     */
+    @CopilotExperimental
+    public CompletableFuture<McpDiscoverPluginServersResult> discoverPluginServers(McpDiscoverPluginServersParams params) {
+        return caller.invoke("mcp.discoverPluginServers", params, McpDiscoverPluginServersResult.class);
+    }
+
 }

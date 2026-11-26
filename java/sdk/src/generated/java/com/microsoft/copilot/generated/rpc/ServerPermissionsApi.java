@@ -26,7 +26,7 @@ public final class ServerPermissionsApi {
     /** API methods for the {@code permissions.locations} sub-namespace. */
     final ServerPermissionsLocationsApi locations;
     /** API methods for the {@code permissions.folderTrust} sub-namespace. */
-    final ServerPermissionsFolderTrustApi folderTrust;
+    public final ServerPermissionsFolderTrustApi folderTrust;
 
     /** @param caller the RPC transport function */
     ServerPermissionsApi(RpcCaller caller) {

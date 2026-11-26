@@ -54,10 +54,11 @@ type ClientGitHubOptions struct {
 	// variable. This takes priority over other authentication methods.
 	Token string
 	// ClientID selects the GitHub OAuth app for runtime-managed GitHub.com sign-in
-	// and Entra-to-GitHub token exchange. It requires ClientSecret.
+	// and Entra-to-GitHub token exchange. Leave both OAuth options empty to use
+	// the Copilot CLI OAuth app.
 	ClientID string
-	// ClientSecret is the matching GitHub OAuth app secret. Leave both fields
-	// empty to use the Copilot CLI OAuth app.
+	// ClientSecret is the matching secret for browser sign-in. It is not
+	// required for Entra-to-GitHub token exchange or device sign-in.
 	ClientSecret string
 	// UseLoggedInUser controls whether to use the logged-in user for
 	// authentication. When true, the runtime attempts to use stored OAuth
@@ -752,9 +753,9 @@ func (options *ClientOptions) normalize() *clientOptions {
 		return &clientOptions{}
 	}
 	github := options.GitHub
-	if (github.ClientID != "" || github.ClientSecret != "") &&
-		(strings.TrimSpace(github.ClientID) == "" || strings.TrimSpace(github.ClientSecret) == "") {
-		panic("GitHub.ClientID and GitHub.ClientSecret must both be non-empty")
+	if ((github.ClientID != "" || github.ClientSecret != "") && strings.TrimSpace(github.ClientID) == "") ||
+		(github.ClientSecret != "" && strings.TrimSpace(github.ClientSecret) == "") {
+		panic("GitHub OAuth requires a non-blank client ID and, if supplied, a non-blank client secret")
 	}
 	result := &clientOptions{
 		InternalTestOptions:             options.InternalTestOptions,

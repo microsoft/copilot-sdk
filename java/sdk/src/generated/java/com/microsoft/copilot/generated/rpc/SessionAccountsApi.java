@@ -36,7 +36,7 @@ public final class SessionAccountsApi {
     }
 
     /**
-     * Lists signed-in accounts, including derived accounts. The active entry identifies the session's selected account.
+     * Lists known accounts, including saved identities and derived accounts even when automatic authentication is disabled. Listing does not select or sign in an account. The active entry identifies the session's selected account.
      * <p>
      * Invokes the method with no params, applying the runtime defaults.
      *
@@ -49,7 +49,7 @@ public final class SessionAccountsApi {
     }
 
     /**
-     * Lists signed-in accounts, including derived accounts. The active entry identifies the session's selected account.
+     * Lists known accounts, including saved identities and derived accounts even when automatic authentication is disabled. Listing does not select or sign in an account. The active entry identifies the session's selected account.
      * <p>
      * Note: the {@code sessionId} field in the params record is overridden
      * by the session-scoped wrapper; any value provided is ignored.
@@ -87,7 +87,7 @@ public final class SessionAccountsApi {
     }
 
     /**
-     * Switches the session's selected authentication to an available account.
+     * Switches to an available account by accountId. The runtime selects its credentials.
      * <p>
      * Note: the {@code sessionId} field in the params record is overridden
      * by the session-scoped wrapper; any value provided is ignored.
@@ -103,7 +103,7 @@ public final class SessionAccountsApi {
     }
 
     /**
-     * Logs out the specified account, or the active account when selectionId is omitted.
+     * Logs out the specified account, or the active account when accountId is omitted. Removes runtime-owned credentials without deleting externally owned credentials.
      * <p>
      * Note: the {@code sessionId} field in the params record is overridden
      * by the session-scoped wrapper; any value provided is ignored.

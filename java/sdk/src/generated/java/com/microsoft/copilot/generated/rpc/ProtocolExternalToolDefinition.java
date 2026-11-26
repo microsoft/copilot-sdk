@@ -37,6 +37,9 @@ public record ProtocolExternalToolDefinition(
     @JsonProperty("parameters") Map<String, Object> parameters,
     /** Whether this definition replaces a built-in tool with the same name. */
     @JsonProperty("overridesBuiltInTool") Boolean overridesBuiltInTool,
+    /** Replace a same-named built-in only when it exists for the executing model.
+Otherwise ignore this tool. This takes precedence over `overridesBuiltInTool`. */
+    @JsonProperty("onlyOverridesBuiltInTool") Boolean onlyOverridesBuiltInTool,
     /** Whether execution bypasses the normal tool permission prompt. */
     @JsonProperty("skipPermission") Boolean skipPermission,
     /** Whether the SDK has a local handler for this tool. Set by the SDK, not the model.
@@ -89,7 +92,7 @@ tool's `name` remains its unique invocation name either way. */
      * @param namespace the {@code namespace} property
      */
     public ProtocolExternalToolDefinition(String name, String description, String title, Map<String, Object> parameters, Boolean overridesBuiltInTool, Boolean skipPermission, Boolean hasHandler, ProtocolExternalToolDefer defer, Boolean isTerminal, Boolean idempotent, Map<String, Object> metadata, ProtocolExternalToolNamespace namespace) {
-        this(name, description, title, parameters, overridesBuiltInTool, skipPermission, hasHandler, defer, null, isTerminal, idempotent, metadata, namespace);
+        this(name, description, title, parameters, overridesBuiltInTool, null, skipPermission, hasHandler, defer, null, isTerminal, idempotent, metadata, namespace);
     }
 
     /**
@@ -112,6 +115,7 @@ tool's `name` remains its unique invocation name either way. */
         private String title;
         private Map<String, Object> parameters;
         private Boolean overridesBuiltInTool;
+        private Boolean onlyOverridesBuiltInTool;
         private Boolean skipPermission;
         private Boolean hasHandler;
         private ProtocolExternalToolDefer defer;
@@ -178,6 +182,18 @@ tool's `name` remains its unique invocation name either way. */
         @com.microsoft.copilot.CopilotExperimental
         public Builder overridesBuiltInTool(Boolean value) {
             this.overridesBuiltInTool = value;
+            return this;
+        }
+
+        /**
+         * Sets the {@code onlyOverridesBuiltInTool} property.
+         * @param value the property value
+         * @return this builder
+         * @since 2.0.0
+         */
+        @com.microsoft.copilot.CopilotExperimental
+        public Builder onlyOverridesBuiltInTool(Boolean value) {
+            this.onlyOverridesBuiltInTool = value;
             return this;
         }
 
@@ -286,7 +302,7 @@ tool's `name` remains its unique invocation name either way. */
         public ProtocolExternalToolDefinition build() {
             if (name == null) throw new IllegalStateException("Missing required property: name");
             if (description == null) throw new IllegalStateException("Missing required property: description");
-            return new ProtocolExternalToolDefinition(name, description, title, parameters, overridesBuiltInTool, skipPermission, hasHandler, defer, exposure, isTerminal, idempotent, metadata, namespace);
+            return new ProtocolExternalToolDefinition(name, description, title, parameters, overridesBuiltInTool, onlyOverridesBuiltInTool, skipPermission, hasHandler, defer, exposure, isTerminal, idempotent, metadata, namespace);
         }
     }
 }

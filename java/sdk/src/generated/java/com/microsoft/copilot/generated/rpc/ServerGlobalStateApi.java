@@ -59,4 +59,15 @@ final class ServerGlobalStateApi {
         return caller.invoke("globalState.writeKey", params, Void.class);
     }
 
+    /**
+     * Reports whether the normalized state contains any keys and identifies a state file that JSONC recovery cannot read. Credential values and excluded fields never cross this boundary. Hosts use this to report a damaged profile or distinguish an existing profile from a fresh installation, even when every stored field is excluded from globalState.load. An absent or empty configDir uses the server's configured home.
+     *
+     * @apiNote This method is experimental and may change in a future version.
+     * @since 1.0.0
+     */
+    @CopilotExperimental
+    CompletableFuture<GlobalStateDiagnosticsResult> getDiagnostics(GlobalStateGetDiagnosticsParams params) {
+        return caller.invoke("globalState.getDiagnostics", params, GlobalStateDiagnosticsResult.class);
+    }
+
 }

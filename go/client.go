@@ -893,10 +893,25 @@ func (c *Client) Stop() error {
 	// A hung runtime never answers session.detach, so every detach shares one
 	// deadline; past it, Stop moves on to runtime shutdown and termination.
 	detachCtx, cancelDetach := context.WithTimeout(context.Background(), runtimeShutdownTimeout)
-	for _, session := range sessions {
-		if err := session.disconnect(detachCtx); err != nil {
-			errs = append(errs, fmt.Errorf("failed to disconnect session %s: %w", session.SessionID, err))
-		}
+	detachErrors := make([]error, len(sessions))
+	var detaches sync.WaitGroup
+	for i, session := range sessions {
+		detaches.Go(func() {
+			if err := session.disconnect(detachCtx); err != nil {
+				detachErrors[i] = fmt.Errorf("failed to disconnect session %s: %w", session.SessionID, err)
+			}
+		})
+	}
+	detachesDone := make(chan struct{})
+	go func() {
+		detaches.Wait()
+		close(detachesDone)
+	}()
+	select {
+	case <-detachesDone:
+	case <-detachCtx.Done():
+		// A stream Write does not observe the context. Transport cleanup below
+		// interrupts that write before Stop joins the remaining detaches.
 	}
 	cancelDetach()
 
@@ -1012,6 +1027,7 @@ func (c *Client) Stop() error {
 	if c.client != nil {
 		c.client.Stop()
 	}
+	<-detachesDone
 	c.retireTransport()
 
 	// Clear models cache
@@ -1024,7 +1040,7 @@ func (c *Client) Stop() error {
 		c.actualPort.Store(0)
 	}
 
-	return errors.Join(errs...)
+	return errors.Join(append(detachErrors, errs...)...)
 }
 
 // retireTransport clears the stopped transport. Callers that passed
@@ -1338,7 +1354,19 @@ func validateAskUserVariant(variant AskUserVariant) error {
 }
 
 func (c *Client) CreateSession(ctx context.Context, input *CreateSessionOptions) (*Session, error) {
+	return c.createSession(ctx, input.normalize())
+}
+
+// CreateSessionWithLifecycleMode creates a session with an explicit end-hook lifecycle.
+// An empty mode inherits the host default. Cloud sessions ignore the mode.
+// The mode is not persisted; supply it again on cold resume.
+func (c *Client) CreateSessionWithLifecycleMode(ctx context.Context, input *CreateSessionOptions, mode SessionLifecycleMode) (*Session, error) {
 	config := input.normalize()
+	config.SessionLifecycleMode = mode
+	return c.createSession(ctx, config)
+}
+
+func (c *Client) createSession(ctx context.Context, config *sessionOptions) (*Session, error) {
 	if config == nil {
 		config = &sessionOptions{}
 	}
@@ -1400,6 +1428,7 @@ func (c *Client) CreateSession(ctx context.Context, input *CreateSessionOptions)
 	req.OrganizationCustomInstructions = config.OrganizationCustomInstructions
 	req.EnableOnDemandInstructionDiscovery = config.EnableOnDemandInstructionDiscovery
 	req.EnableFileHooks = config.EnableFileHooks
+	req.SessionLifecycleMode = config.SessionLifecycleMode
 	req.EnableHostGitOperations = config.EnableHostGitOperations
 	req.EnableSessionStore = config.EnableSessionStore
 	req.EnableSkills = config.EnableSkills
@@ -1875,7 +1904,18 @@ func (c *Client) CreateSession(ctx context.Context, input *CreateSessionOptions)
 
 // ResumeSession resumes an existing conversation with its history and configuration.
 func (c *Client) ResumeSession(ctx context.Context, sessionID string, input *ResumeSessionOptions) (*Session, error) {
+	return c.resumeSession(ctx, sessionID, input.normalize())
+}
+
+// ResumeSessionWithLifecycleMode resumes a session with an explicit end-hook lifecycle.
+// An empty mode inherits the host default. Resident and cloud sessions ignore the mode.
+func (c *Client) ResumeSessionWithLifecycleMode(ctx context.Context, sessionID string, input *ResumeSessionOptions, mode SessionLifecycleMode) (*Session, error) {
 	config := input.normalize()
+	config.SessionLifecycleMode = mode
+	return c.resumeSession(ctx, sessionID, config)
+}
+
+func (c *Client) resumeSession(ctx context.Context, sessionID string, config *resumeOptions) (*Session, error) {
 	runtimeRefreshHandler := config.OnMCPAuthRuntimeRefresh
 	permissionEnvelopeHandler := config.OnPermissionRequestWithEnvelope
 	recovery := config.AutoModeRecovery
@@ -2027,6 +2067,7 @@ func (c *Client) ResumeSession(ctx context.Context, sessionID string, input *Res
 	req.OrganizationCustomInstructions = config.OrganizationCustomInstructions
 	req.EnableOnDemandInstructionDiscovery = config.EnableOnDemandInstructionDiscovery
 	req.EnableFileHooks = config.EnableFileHooks
+	req.SessionLifecycleMode = config.SessionLifecycleMode
 	req.EnableHostGitOperations = config.EnableHostGitOperations
 	req.EnableSessionStore = config.EnableSessionStore
 	req.EnableSkills = config.EnableSkills

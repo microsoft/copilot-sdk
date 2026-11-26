@@ -27,7 +27,7 @@ import javax.annotation.processing.Generated;
 record ConnectParams(
     /** GitHub.com OAuth application client ID for runtime-managed sign-in and Entra token exchange. */
     @JsonProperty("githubClientId") String gitHubClientId,
-    /** Matching OAuth application secret. Required whenever githubClientId is supplied. Omit both fields to use the built-in CLI registration. */
+    /** Matching OAuth application secret for browser sign-in. Not required for Entra token exchange or device sign-in. Omit both fields to use the built-in CLI registration. */
     @JsonProperty("githubClientSecret") String gitHubClientSecret,
     /** Entra application used by this client's authentication flows. Required to enable built-in Microsoft Entra sign-in and token renewal; other authentication methods remain available. */
     @CopilotExperimental

@@ -50,9 +50,6 @@ export type {
     AuthLoginBeginRequest,
     AuthLoginBegun,
     AuthLoginCancelRequest,
-    AuthLoginIdentity,
-    AuthLoginIdentityList,
-    AuthLoginListRequest,
     AuthLoginMethod,
     AuthLoginMode,
     AuthLoginResultDto,
@@ -94,6 +91,7 @@ export type {
     DecisionUsage,
     DecisionViolation,
 } from "./generated/rpc.js";
+export type { McpConfigAddRequest, McpConfigRemoveRequest } from "./generated/rpc.js";
 export type {
     PermissionsExtensionApproval,
     PermissionsExtensionApprovalsGrantRequest,
@@ -115,6 +113,10 @@ export type {
     SecretsFilterResult,
     SecretsRemoveFilterValuesRequest,
     SecretsRemoveFilterValuesResult,
+} from "./generated/rpc.js";
+export type {
+    FolderTrustAddTrustedParams,
+    PermissionsFolderTrustAddTrustedResult,
 } from "./generated/rpc.js";
 export type {
     ImportDiagnostic,
@@ -145,6 +147,41 @@ export type {
     SkillsRemoveSourceOutcome,
     SkillsRemoveSourceRequest,
     SkillsRemoveSourceResult,
+} from "./generated/rpc.js";
+export type {
+    ContentFilterMode,
+    FilterMapping,
+    InstalledPlugin,
+    InstalledPluginSource,
+    InstalledPluginSourceGitHub,
+    InstalledPluginSourceLocal,
+    InstalledPluginSourceUrl,
+    LocalSkillDefinition,
+    LocalSkillDefinitionList,
+    LocalSkillDefinitionSource,
+    McpDiscoverPluginServersRequest,
+    McpSafeForTelemetry,
+    McpSafeForTelemetryFields,
+    McpServerAuthConfig,
+    McpServerAuthConfigRedirectPort,
+    McpServerConfig,
+    McpServerConfigDeferTools,
+    McpServerConfigHttp,
+    McpServerConfigHttpOauthGrantType,
+    McpServerConfigHttpType,
+    McpServerConfigStdio,
+    McpServerConfigStdioType,
+    McpServersConfig,
+    PluginDirectoryMetadata,
+    PluginsScanDirectoriesRequest,
+    PluginsScanDirectoriesResult,
+    SkillScanInputs,
+    SkillScanSource,
+    SkillsCacheGeneration,
+    SkillsDiscoverRequest,
+    SkillsGetDiscoveryPathsRequest,
+    SkillsLoadRequest,
+    SkillsLoadResult,
 } from "./generated/rpc.js";
 export type {
     CredentialContextErrorCode,
@@ -505,6 +542,7 @@ export type {
     SessionLifecycleEventMetadata,
     SessionLifecycleEventType,
     SessionLifecycleHandler,
+    SessionLifecycleMode,
     SessionHooks,
     SessionCreatedEvent,
     SessionDeletedEvent,

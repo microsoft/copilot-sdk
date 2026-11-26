@@ -126,6 +126,10 @@ func TestSpawnedJavaScriptUsesChildPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	directory := t.TempDir()
+	// Keep the CommonJS fixture independent of an enclosing package's module type.
+	if err := os.WriteFile(filepath.Join(directory, "package.json"), []byte(`{"type":"commonjs"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	script := filepath.Join(directory, "runtime.js")
 	if err := os.WriteFile(script, fixture, 0o600); err != nil {
 		t.Fatal(err)

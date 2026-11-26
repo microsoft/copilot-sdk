@@ -3175,6 +3175,9 @@ func toolDefinitionsForWire(tools []Tool) []sdkToolDefinition {
 		if tool.OverridesBuiltInTool {
 			definition.OverridesBuiltInTool = &tool.OverridesBuiltInTool
 		}
+		if tool.OnlyOverridesBuiltInTool {
+			definition.OnlyOverridesBuiltInTool = &tool.OnlyOverridesBuiltInTool
+		}
 		if tool.SkipPermission {
 			definition.SkipPermission = &tool.SkipPermission
 		}

@@ -4453,6 +4453,7 @@ public abstract class SessionOptionsBase
         Filesystem = (SessionFilesystemOptions)other.Filesystem.Clone();
         ConfigDirectory = other.ConfigDirectory;
         EnableConfigDiscovery = other.EnableConfigDiscovery;
+        SessionLifecycleMode = other.SessionLifecycleMode;
         ExtensionSources = other.ExtensionSources is { } sources
             ? new() { User = sources.User, Project = sources.Project, Plugins = sources.Plugins }
             : null;
@@ -4524,6 +4525,16 @@ public abstract class SessionOptionsBase
     /// </summary>
     [JsonPropertyName("enableConfigDiscovery")]
     public bool? EnableConfigDiscovery { get; set; }
+
+    /// <summary>
+    /// Controls local session end hooks. Interactive defers them to shutdown;
+    /// per-turn runs them after each completed turn.
+    /// Omission inherits the host default, which is interactive for SDK-owned hosts.
+    /// Applied at creation and cold resume; ignored for resident and cloud sessions.
+    /// Not persisted; supply it again on cold resume.
+    /// </summary>
+    [JsonPropertyName("sessionLifecycleMode")]
+    public SessionLifecycleMode? SessionLifecycleMode { get; set; }
 
     /// <summary>
     /// Selects extension sources without enabling extensions or configuration discovery.
@@ -5273,12 +5284,12 @@ public class ClientGitHubOptions
 {
     /// <summary>
     /// GitHub OAuth app ID for runtime-managed GitHub.com sign-in and Entra-to-GitHub token exchange.
-    /// Requires <see cref="ClientSecret"/>.
+    /// Omit both OAuth options to use the Copilot CLI OAuth app.
     /// </summary>
     [JsonPropertyName("clientId")]
     public string? ClientId { get; set; }
 
-    /// <summary>Matching GitHub OAuth app secret. Leave both options unset to use the Copilot CLI OAuth app.</summary>
+    /// <summary>Matching secret for browser sign-in. Not required for Entra-to-GitHub token exchange or device sign-in.</summary>
     [JsonIgnore]
     public string? ClientSecret { get; set; }
 

@@ -15,6 +15,7 @@ public static class CopilotTool
 {
     /// <summary>The key used in <see cref="AITool.AdditionalProperties"/> to indicate that a tool intentionally overrides a built-in Copilot tool with the same name.</summary>
     internal const string OverridesBuiltInToolKey = "is_override";
+    internal const string OnlyOverridesBuiltInToolKey = "only_overrides_built_in_tool";
 
     /// <summary>The key used in <see cref="AITool.AdditionalProperties"/> to indicate that a tool can execute without a permission prompt.</summary>
     internal const string SkipPermissionKey = "skip_permission";
@@ -113,7 +114,7 @@ public static class CopilotTool
 
         static void ApplyToolOptions(AIFunctionFactoryOptions factoryOptions, CopilotToolOptions? toolOptions)
         {
-            if (toolOptions is not null && (toolOptions.OverridesBuiltInTool || toolOptions.SkipPermission || toolOptions.IsTerminal || toolOptions.Idempotent || toolOptions.Defer is not null || toolOptions.Exposure is not null || toolOptions.Metadata is not null || toolOptions.Namespace is not null))
+            if (toolOptions is not null && (toolOptions.OverridesBuiltInTool || toolOptions.OnlyOverridesBuiltInTool || toolOptions.SkipPermission || toolOptions.IsTerminal || toolOptions.Idempotent || toolOptions.Defer is not null || toolOptions.Exposure is not null || toolOptions.Metadata is not null || toolOptions.Namespace is not null))
             {
                 Dictionary<string, object?> additionalProperties = new(StringComparer.Ordinal);
                 if (factoryOptions.AdditionalProperties is not null)
@@ -127,6 +128,11 @@ public static class CopilotTool
                 if (toolOptions.OverridesBuiltInTool)
                 {
                     additionalProperties[OverridesBuiltInToolKey] = true;
+                }
+
+                if (toolOptions.OnlyOverridesBuiltInTool)
+                {
+                    additionalProperties[OnlyOverridesBuiltInToolKey] = true;
                 }
 
                 if (toolOptions.SkipPermission)
@@ -184,6 +190,12 @@ public sealed class CopilotToolOptions
     /// the resulting <see cref="AIFunction"/> will include "is_override": true in its <see cref="AITool.AdditionalProperties"/>.
     /// </remarks>
     public bool OverridesBuiltInTool { get; set; }
+
+    /// <summary>
+    /// Replace a same-named built-in for the executing model; otherwise ignore this tool.
+    /// Takes precedence over <see cref="OverridesBuiltInTool"/>.
+    /// </summary>
+    public bool OnlyOverridesBuiltInTool { get; set; }
 
     /// <summary>
     /// Gets or sets a value indicating whether this tool can execute without a permission prompt.

@@ -48,13 +48,13 @@ public final class AssistantUsageEvent extends SessionEvent {
         @JsonProperty("modelDisplayName") String modelDisplayName,
         /** Runtime-owned identity shared with the durable accounting receipt. */
         @JsonProperty("accounting") UsageAccountingIdentity accounting,
-        /** Number of input tokens consumed */
+        /** Total input tokens consumed, including cache-read and cache-write tokens */
         @JsonProperty("inputTokens") Long inputTokens,
         /** Number of output tokens produced */
         @JsonProperty("outputTokens") Long outputTokens,
-        /** Number of tokens read from prompt cache */
+        /** Number of input tokens read from prompt cache; included in inputTokens */
         @JsonProperty("cacheReadTokens") Long cacheReadTokens,
-        /** Number of tokens written to prompt cache */
+        /** Number of input tokens written to prompt cache; included in inputTokens */
         @JsonProperty("cacheWriteTokens") Long cacheWriteTokens,
         /** Updated prompt-cache expiration for this model call. Present only when the call establishes or refreshes known cache state. */
         @JsonProperty("cacheExpiresAt") OffsetDateTime cacheExpiresAt,

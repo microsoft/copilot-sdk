@@ -5,9 +5,11 @@
 //! and serializes the schema response with `FsError` mapped onto the wire's
 //! `SessionFsError` variant.
 
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
 use base64::Engine as _;
+use futures_util::FutureExt;
 use serde::Serialize;
 use serde_json::Value;
 use tracing::warn;
@@ -26,10 +28,78 @@ use crate::generated::api_types::{
     SessionFsSqliteTransactionResult as GeneratedSqliteTransactionResult, SessionFsStatRequest,
     SessionFsStatResult, SessionFsWriteFileBytesRequest, SessionFsWriteFileRequest,
 };
-use crate::session_fs::{FsError, FsErrorKind, SessionFsProvider};
-use crate::{Client, JsonRpcRequest, JsonRpcResponse, error_codes};
+use crate::jsonrpc::ResponseWriter;
+use crate::session_fs::{FsError, FsErrorKind, SessionFsProvider, SessionFsProviderResolver};
+use crate::{Client, ClientInner, Error, ErrorKind, JsonRpcRequest, JsonRpcResponse, error_codes};
 
 const MAX_BINARY_BYTES: usize = (64 * 1024 * 1024 - 1024) / 4 * 3;
+
+pub(crate) fn validate_provider(
+    client: &ClientInner,
+    provider: &dyn SessionFsProvider,
+) -> crate::Result<()> {
+    if client.session_fs_sqlite_declared && provider.sqlite().is_none() {
+        return Err(Error::with_message(
+            ErrorKind::InvalidConfig,
+            "SessionFs capabilities declare SQLite support but the provider \
+             does not implement SessionFsSqliteProvider",
+        ));
+    }
+    if client.session_fs_binary_declared && provider.binary().is_none() {
+        return Err(Error::with_message(
+            ErrorKind::InvalidConfig,
+            "SessionFs capabilities declare binary support but the provider does not implement SessionFsBinaryProvider",
+        ));
+    }
+    if client.session_fs_read_file_range_declared && provider.byte_ranges().is_none() {
+        return Err(Error::with_message(
+            ErrorKind::InvalidConfig,
+            "SessionFs capabilities declare byte-range reads but the provider does not implement SessionFsReadFileRangeProvider",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) async fn dispatch_unregistered(
+    client: Client,
+    resolver: Arc<dyn SessionFsProviderResolver>,
+    session_id: String,
+    request: JsonRpcRequest,
+) {
+    let closed = client.inner.rpc.connection_closed_token();
+    let owner = Arc::downgrade(&client.inner);
+    let responses = client.inner.rpc.response_writer();
+    drop(client);
+    let request_id = request.id;
+    let operation = async {
+        let provider = resolver.resolve(&session_id)?;
+        {
+            let owner = owner.upgrade().ok_or_else(|| {
+                Error::with_message(
+                    ErrorKind::Protocol(crate::ProtocolErrorKind::RequestCancelled),
+                    "Filesystem provider connection is closed",
+                )
+            })?;
+            validate_provider(&owner, provider.as_ref())?;
+        }
+        dispatch(&responses, Some(&provider), request).await;
+        Ok::<(), Error>(())
+    };
+    tokio::select! {
+        biased;
+        _ = closed.cancelled() => {}
+        result = AssertUnwindSafe(operation).catch_unwind() => {
+            match result {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => send_error(&responses, request_id, &error.to_string()).await,
+                Err(_) => {
+                    warn!(session_id, "session filesystem resolver callback panicked");
+                    send_error(&responses, request_id, "session filesystem resolver callback panicked").await;
+                }
+            }
+        }
+    }
+}
 
 /// The success response [`respond`] encodes: [`JsonRpcResponse`]'s fields and
 /// their names, with the typed result in place of a `serde_json::Value`.
@@ -47,10 +117,10 @@ struct TypedResponse<'a, T: Serialize> {
 /// a `readFile` of a long session's `events.jsonl` on resume, is then held
 /// once, escaped, while the frame is written.
 ///
-/// The frame skips [`Client::send_response`]'s depth check: each typed result
+/// The frame skips [`ResponseWriter::send_response`]'s depth check: each typed result
 /// has a fixed, shallow shape. A result holding values the app supplies goes
 /// through [`respond_sorted`].
-async fn respond<T: Serialize>(client: &Client, request_id: u64, result: T) {
+async fn respond<T: Serialize>(client: &ResponseWriter, request_id: u64, result: T) {
     let frame = match crate::jsonrpc::encode_frame(&TypedResponse {
         jsonrpc: "2.0",
         id: request_id,
@@ -72,9 +142,9 @@ async fn respond<T: Serialize>(client: &Client, request_id: u64, result: T) {
 /// sorted order a `Value` writes; typed, they would go out in hash order.
 ///
 /// A row's cells are values the app's provider returns, so a reply can nest
-/// deeper than the CLI reads; [`Client::send_response`] answers that request
+/// deeper than the CLI reads; [`ResponseWriter::send_response`] answers that request
 /// with an error instead.
-async fn respond_sorted<T: Serialize>(client: &Client, request_id: u64, result: T) {
+async fn respond_sorted<T: Serialize>(client: &ResponseWriter, request_id: u64, result: T) {
     match serde_json::to_value(&result) {
         Ok(value)
             if crate::jsonrpc::nests_deeper_than(&value, crate::jsonrpc::PEER_MAX_NESTING - 1) =>
@@ -96,7 +166,7 @@ async fn respond_sorted<T: Serialize>(client: &Client, request_id: u64, result: 
     }
 }
 
-async fn send_error(client: &Client, request_id: u64, message: &str) {
+async fn send_error(client: &ResponseWriter, request_id: u64, message: &str) {
     let _ = client
         .send_response(&JsonRpcResponse {
             jsonrpc: "2.0".to_string(),
@@ -119,7 +189,7 @@ fn parse_params<T: serde::de::DeserializeOwned>(request: &mut JsonRpcRequest) ->
 }
 
 pub(crate) async fn read_file(
-    client: &Client,
+    client: &ResponseWriter,
     provider: &Arc<dyn SessionFsProvider>,
     mut request: JsonRpcRequest,
 ) {
@@ -145,7 +215,7 @@ pub(crate) async fn read_file(
 }
 
 pub(crate) async fn read_file_bytes(
-    client: &Client,
+    client: &ResponseWriter,
     provider: &Arc<dyn SessionFsProvider>,
     mut request: JsonRpcRequest,
 ) {
@@ -192,7 +262,7 @@ fn binary_read_response(
 }
 
 pub(crate) async fn read_file_range(
-    client: &Client,
+    client: &ResponseWriter,
     provider: &Arc<dyn SessionFsProvider>,
     mut request: JsonRpcRequest,
 ) {
@@ -266,7 +336,7 @@ async fn read_file_range_response(
 }
 
 pub(crate) async fn write_file(
-    client: &Client,
+    client: &ResponseWriter,
     provider: &Arc<dyn SessionFsProvider>,
     mut request: JsonRpcRequest,
 ) {
@@ -288,7 +358,7 @@ pub(crate) async fn write_file(
 }
 
 pub(crate) async fn write_file_bytes(
-    client: &Client,
+    client: &ResponseWriter,
     provider: &Arc<dyn SessionFsProvider>,
     mut request: JsonRpcRequest,
 ) {
@@ -335,7 +405,7 @@ pub(crate) async fn write_file_bytes(
 }
 
 pub(crate) async fn append_file(
-    client: &Client,
+    client: &ResponseWriter,
     provider: &Arc<dyn SessionFsProvider>,
     mut request: JsonRpcRequest,
 ) {
@@ -357,7 +427,7 @@ pub(crate) async fn append_file(
 }
 
 pub(crate) async fn exists(
-    client: &Client,
+    client: &ResponseWriter,
     provider: &Arc<dyn SessionFsProvider>,
     mut request: JsonRpcRequest,
 ) {
@@ -381,7 +451,7 @@ pub(crate) async fn exists(
 }
 
 pub(crate) async fn stat(
-    client: &Client,
+    client: &ResponseWriter,
     provider: &Arc<dyn SessionFsProvider>,
     mut request: JsonRpcRequest,
 ) {
@@ -408,7 +478,7 @@ pub(crate) async fn stat(
 }
 
 pub(crate) async fn mkdir(
-    client: &Client,
+    client: &ResponseWriter,
     provider: &Arc<dyn SessionFsProvider>,
     mut request: JsonRpcRequest,
 ) {
@@ -428,7 +498,7 @@ pub(crate) async fn mkdir(
 }
 
 pub(crate) async fn readdir(
-    client: &Client,
+    client: &ResponseWriter,
     provider: &Arc<dyn SessionFsProvider>,
     mut request: JsonRpcRequest,
 ) {
@@ -454,7 +524,7 @@ pub(crate) async fn readdir(
 }
 
 pub(crate) async fn readdir_with_types(
-    client: &Client,
+    client: &ResponseWriter,
     provider: &Arc<dyn SessionFsProvider>,
     mut request: JsonRpcRequest,
 ) {
@@ -485,7 +555,7 @@ pub(crate) async fn readdir_with_types(
 }
 
 pub(crate) async fn rm(
-    client: &Client,
+    client: &ResponseWriter,
     provider: &Arc<dyn SessionFsProvider>,
     mut request: JsonRpcRequest,
 ) {
@@ -506,7 +576,7 @@ pub(crate) async fn rm(
 }
 
 pub(crate) async fn rename(
-    client: &Client,
+    client: &ResponseWriter,
     provider: &Arc<dyn SessionFsProvider>,
     mut request: JsonRpcRequest,
 ) {
@@ -525,7 +595,7 @@ pub(crate) async fn rename(
 }
 
 pub(crate) async fn sqlite_query(
-    client: &Client,
+    client: &ResponseWriter,
     provider: &Arc<dyn SessionFsProvider>,
     mut request: JsonRpcRequest,
 ) {
@@ -594,7 +664,7 @@ pub(crate) async fn sqlite_query(
 }
 
 pub(crate) async fn sqlite_transaction(
-    client: &Client,
+    client: &ResponseWriter,
     provider: &Arc<dyn SessionFsProvider>,
     mut request: JsonRpcRequest,
 ) {
@@ -657,7 +727,7 @@ pub(crate) async fn sqlite_transaction(
 }
 
 pub(crate) async fn sqlite_exists(
-    client: &Client,
+    client: &ResponseWriter,
     provider: &Arc<dyn SessionFsProvider>,
     mut request: JsonRpcRequest,
 ) {
@@ -672,7 +742,10 @@ pub(crate) async fn sqlite_exists(
     let result = match provider.sqlite() {
         Some(sqlite) => match sqlite.sqlite_exists().await {
             Ok(exists) => SessionFsSqliteExistsResult { exists },
-            Err(_) => SessionFsSqliteExistsResult { exists: false },
+            Err(error) => {
+                send_error(client, id, &error.to_string()).await;
+                return;
+            }
         },
         None => SessionFsSqliteExistsResult { exists: false },
     };
@@ -683,7 +756,7 @@ pub(crate) async fn sqlite_exists(
 /// `true` if the request was a session-fs method (whether or not a provider
 /// was registered), `false` otherwise (caller should continue matching).
 pub(crate) async fn dispatch(
-    client: &Client,
+    client: &ResponseWriter,
     provider: Option<&Arc<dyn SessionFsProvider>>,
     request: JsonRpcRequest,
 ) -> bool {

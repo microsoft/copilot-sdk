@@ -131,19 +131,24 @@ def test_assisted_approval_assessment_is_a_discriminated_union():
     assert pending.to_dict()["assistedApprovalAssessment"] == assessment.to_dict()
 
 
-def test_login_identity_deserializes_concrete_fields():
-    value = rpc.AuthLoginIdentity.from_dict(
-        {
-            "accountId": "entra:opaque-account",
-            "active": True,
-            "label": "person@contoso.example",
-        }
-    )
+def test_account_deserializes_base_identity_metadata():
+    payload = {
+        "accountId": "entra:opaque-account",
+        "active": False,
+        "host": "https://login.microsoftonline.com",
+        "kind": "entra",
+        "supportsInference": False,
+        "login": "person@contoso.example",
+        "label": "person@contoso.example",
+    }
+    value = rpc.Account.from_dict(payload)
 
-    assert isinstance(value, rpc.AuthLoginIdentity)
+    assert isinstance(value, rpc.Account)
     assert value.account_id == "entra:opaque-account"
-    assert value.active is True
+    assert value.active is False
     assert value.label == "person@contoso.example"
+    assert value.supports_inference is False
+    assert value.to_dict() == payload
 
 
 def test_catalog_candidate_provenance_serialises_every_catalog_media_type():

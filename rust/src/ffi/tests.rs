@@ -39,6 +39,7 @@ fn explicit_image_does_not_require_a_cli_entrypoint() {
         Vec::new(),
         Vec::new(),
         FfiHostTarget {
+            configuration: None,
             auth_owner: None,
             server_id: Some(42),
             library_path: Some(&image),
@@ -286,7 +287,7 @@ fn callback_state_is_retained_until_connection_close_succeeds() {
         operation_lock: parking_lot::Mutex::new(()),
         foreground_order: Arc::new(tokio::sync::Mutex::new(())),
         protocol_peers: parking_lot::Mutex::new(Some(Vec::new())),
-        cleanup_done: tokio::sync::watch::channel(false).0,
+        cleanup_done: tokio::sync::watch::channel(CleanupStatus::Pending).0,
         library_path: PathBuf::from("test-runtime"),
     };
 

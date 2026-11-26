@@ -21,9 +21,16 @@ public final class ServerHostApi {
 
     private final RpcCaller caller;
 
+    /** API methods for the {@code host.transports} sub-namespace. */
+    public final ServerHostTransportsApi transports;
+    /** API methods for the {@code host.callbacks} sub-namespace. */
+    public final ServerHostCallbacksApi callbacks;
+
     /** @param caller the RPC transport function */
     ServerHostApi(RpcCaller caller) {
         this.caller = caller;
+        this.transports = new ServerHostTransportsApi(caller);
+        this.callbacks = new ServerHostCallbacksApi(caller);
     }
 
     /**

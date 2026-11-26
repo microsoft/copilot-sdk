@@ -30,7 +30,8 @@ public class ClientGitHubOptions {
      * token exchange.
      *
      * @param clientId
-     *            the GitHub OAuth app ID; requires a matching secret
+     *            the GitHub OAuth app ID; leave both OAuth options unset to use the
+     *            Copilot CLI app
      * @return this options instance
      */
     public ClientGitHubOptions setClientId(String clientId) {
@@ -50,8 +51,8 @@ public class ClientGitHubOptions {
      * Sets the secret for the configured GitHub OAuth app.
      *
      * @param clientSecret
-     *            the matching secret; leave both options unset to use the Copilot
-     *            CLI app
+     *            the matching secret for browser sign-in; not required for Entra
+     *            token exchange or device sign-in
      * @return this options instance
      */
     public ClientGitHubOptions setClientSecret(String clientSecret) {

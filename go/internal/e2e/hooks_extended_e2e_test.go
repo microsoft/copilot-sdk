@@ -11,6 +11,74 @@ import (
 	"github.com/microsoft/copilot-sdk/go/v2/internal/e2e/testharness"
 )
 
+func TestSessionLifecycleModeE2E(t *testing.T) {
+	t.Parallel()
+	for _, testCase := range []struct {
+		name       string
+		coldResume bool
+	}{
+		{name: "create"},
+		{name: "cold resume", coldResume: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			ctx := testharness.NewTestContext(t)
+			ctx.ConfigureSnapshot(t, "hooks_extended/should_invoke_sessionend_hook")
+			client := ctx.NewClient()
+			t.Cleanup(client.ForceStop)
+
+			ended := make(chan struct{})
+			var endOnce sync.Once
+			hooks := copilot.SessionHookOptions{Handlers: &copilot.SessionHooks{
+				OnSessionEnd: func(copilot.SessionEndHookInput, copilot.HookInvocation) (*copilot.SessionEndHookOutput, error) {
+					endOnce.Do(func() { close(ended) })
+					return nil, nil
+				},
+			}}
+			permissions := copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}
+			var session *copilot.Session
+			var err error
+			if testCase.coldResume {
+				session, err = client.CreateSession(t.Context(), &copilot.CreateSessionOptions{
+					Name:        "lifecycle-mode-resume",
+					Permissions: permissions,
+				})
+				if err != nil {
+					t.Fatalf("Failed to create the persisted session: %v", err)
+				}
+				sessionID := session.SessionID
+				if err := client.Stop(); err != nil {
+					t.Fatalf("Failed to stop the original host: %v", err)
+				}
+				client = ctx.NewClient()
+				t.Cleanup(client.ForceStop)
+				session, err = client.ResumeSessionWithLifecycleMode(t.Context(), sessionID, &copilot.ResumeSessionOptions{
+					Permissions: permissions,
+					Hooks:       hooks,
+				}, copilot.SessionLifecycleModePerTurn)
+			} else {
+				session, err = client.CreateSessionWithLifecycleMode(t.Context(), &copilot.CreateSessionOptions{
+					Permissions: permissions,
+					Hooks:       hooks,
+				}, copilot.SessionLifecycleModePerTurn)
+			}
+			if err != nil {
+				t.Fatalf("Failed to open the per-turn session: %v", err)
+			}
+			if _, err := session.SendAndWait(t.Context(), copilot.MessageOptions{Prompt: "Say bye"}); err != nil {
+				t.Fatalf("Failed to complete the turn: %v", err)
+			}
+			select {
+			case <-ended:
+			case <-time.After(10 * time.Second):
+				t.Fatal("The per-turn session end hook did not run before disconnect")
+			}
+			if err := session.Disconnect(); err != nil {
+				t.Fatalf("Failed to disconnect the session: %v", err)
+			}
+		})
+	}
+}
+
 // Mirrors dotnet/test/HookLifecycleAndOutputTests.cs (snapshot category "hooks_extended").
 //
 // Covers the general-purpose handlers on copilot.SessionHooks: OnPreToolUse,

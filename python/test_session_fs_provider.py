@@ -10,7 +10,25 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from copilot import SessionFsWriteFailure
-from copilot.session_fs_provider import SessionFsProvider, create_session_fs_adapter
+from copilot.rpc import SessionFSSqliteExistsRequest
+from copilot.session_fs_provider import (
+    SessionFsProvider,
+    SessionFsSqliteProvider,
+    create_session_fs_adapter,
+)
+
+
+async def test_sqlite_exists_distinguishes_failure_from_absence():
+    request = SessionFSSqliteExistsRequest(session_id="test-session")
+    provider = Mock(spec=SessionFsSqliteProvider)
+    provider.sqlite_exists = AsyncMock(side_effect=OSError("database unavailable"))
+    adapter = create_session_fs_adapter(provider)
+
+    with pytest.raises(OSError, match="database unavailable"):
+        await adapter.sqlite_exists(request)
+
+    provider.sqlite_exists = AsyncMock(return_value=False)
+    assert not (await adapter.sqlite_exists(request)).exists
 
 
 @pytest.mark.parametrize(

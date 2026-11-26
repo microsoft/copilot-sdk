@@ -1380,6 +1380,7 @@ macro_rules! host_settings {
             "gitHubToken" => github.token,
             "mcpOAuthTokenStorage" => mcp.oauth_token_storage,
             "enableConfigDiscovery" => enable_config_discovery,
+            "sessionLifecycleMode" => session_lifecycle_mode,
             "extensionSources" => extension_sources,
             "extensionPaths" => extension_paths,
             "featureFlags" => experiments.flags,

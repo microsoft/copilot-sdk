@@ -17,7 +17,7 @@ import javax.annotation.processing.Generated;
  * @since 1.0.0
  */
 @javax.annotation.processing.Generated("copilot-sdk-codegen")
-final class ServerPermissionsFolderTrustApi {
+public final class ServerPermissionsFolderTrustApi {
 
     private final RpcCaller caller;
 
@@ -35,6 +35,17 @@ final class ServerPermissionsFolderTrustApi {
     @CopilotExperimental
     CompletableFuture<FolderTrustCheckResult> checkTrust(PermissionsFolderTrustCheckTrustParams params) {
         return caller.invoke("permissions.folderTrust.checkTrust", params, FolderTrustCheckResult.class);
+    }
+
+    /**
+     * Remembers a local folder in the caller's persisted trusted-folders list without creating or changing a session. CLI-backed desktop hosts can use this before session creation through their existing CLI-owned SDK connection. The runtime canonicalizes the path and applies its existing Git-root and atomic persistence rules. An explicit configDir selects the caller's configuration root; otherwise COPILOT_HOME and the OS home apply, not the server or session root. Rejects persistence failures with the existing Failed to add trusted folder prefix. Requires a live, privately admitted CLI host connection or direct internal runtime dispatch. Ordinary SDK clients and AHP peers cannot grant this local trust.
+     *
+     * @apiNote This method is experimental and may change in a future version.
+     * @since 1.0.0
+     */
+    @CopilotExperimental
+    public CompletableFuture<PermissionsFolderTrustAddTrustedResult> addTrusted(PermissionsFolderTrustAddTrustedParams params) {
+        return caller.invoke("permissions.folderTrust.addTrusted", params, PermissionsFolderTrustAddTrustedResult.class);
     }
 
 }

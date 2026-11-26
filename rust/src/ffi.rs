@@ -121,6 +121,13 @@ extern "C" fn on_outbound(user_data: *mut c_void, bytes: *const u8, len: usize) 
     }
 }
 
+#[derive(Clone)]
+enum CleanupStatus {
+    Pending,
+    Complete,
+    Failed(Arc<std::io::Error>),
+}
+
 /// Bound exports and connection lifecycle state, shared between the
 /// synchronous frame sender and the owning [`Client`]. The cdylib itself is loaded
 /// process-globally and never unloaded (see [`load_library`]), so this holds
@@ -143,7 +150,7 @@ pub(crate) struct FfiShared {
     operation_lock: parking_lot::Mutex<()>,
     foreground_order: Arc<tokio::sync::Mutex<()>>,
     protocol_peers: parking_lot::Mutex<Option<Vec<Weak<FfiShared>>>>,
-    cleanup_done: tokio::sync::watch::Sender<bool>,
+    cleanup_done: tokio::sync::watch::Sender<CleanupStatus>,
     library_path: PathBuf,
 }
 
@@ -513,15 +520,35 @@ impl FfiShared {
         for peer in &peers {
             peer.close();
         }
+        let mut first_error = None;
         for peer in peers {
-            let mut done = peer.cleanup_done.subscribe();
-            while !*done.borrow_and_update() {
-                done.changed().await.map_err(|error| {
-                    Error::with_message(ErrorKind::InvalidConfig, error.to_string())
-                })?;
+            if let Err(error) = peer.wait_for_cleanup().await {
+                first_error.get_or_insert(error);
             }
         }
-        Ok(())
+        first_error.map_or(Ok(()), Err)
+    }
+
+    async fn wait_for_cleanup(&self) -> Result<(), Error> {
+        let mut done = self.cleanup_done.subscribe();
+        loop {
+            match done.borrow_and_update().clone() {
+                CleanupStatus::Pending => {}
+                CleanupStatus::Complete => return Ok(()),
+                CleanupStatus::Failed(error) => return Err(Error::new(ErrorKind::Io, error)),
+            }
+            done.changed()
+                .await
+                .map_err(|error| Error::new(ErrorKind::Io, error))?;
+        }
+    }
+
+    pub(crate) async fn close_and_wait(self: Arc<Self>) -> Result<(), Error> {
+        let host = Arc::clone(&self);
+        tokio::task::spawn_blocking(move || host.close())
+            .await
+            .map_err(|error| Error::new(ErrorKind::Io, error))?;
+        self.wait_for_cleanup().await
     }
 
     pub(crate) fn server_id(&self) -> Option<u32> {
@@ -621,7 +648,7 @@ impl FfiShared {
                 if let Err(error) = std::thread::Builder::new()
                     .name("copilot-ffi-cleanup".to_owned())
                     .spawn(move || {
-                        let _auth_owner = cleanup_auth_owner;
+                        let auth_owner = cleanup_auth_owner;
                         loop {
                             let quiesced = match connection_close_and_wait {
                                 Some(close) => unsafe { close(conn, 100) },
@@ -642,7 +669,8 @@ impl FfiShared {
                                 "FFI runtime host shutdown did not recognize server"
                             );
                         }
-                        cleanup_done.send_replace(true);
+                        drop(auth_owner);
+                        cleanup_done.send_replace(CleanupStatus::Complete);
                         debug!(library = %library_path.display(), "FFI runtime connection closed");
                     })
                 {
@@ -653,6 +681,8 @@ impl FfiShared {
                         library = %self.library_path.display(),
                         "failed to start deferred FFI cleanup thread; callback state retained"
                     );
+                    self.cleanup_done
+                        .send_replace(CleanupStatus::Failed(Arc::new(error)));
                 }
                 return;
             }
@@ -666,7 +696,7 @@ impl FfiShared {
             );
         }
         self.auth_owner.lock().take();
-        self.cleanup_done.send_replace(true);
+        self.cleanup_done.send_replace(CleanupStatus::Complete);
         debug!(library = %self.library_path.display(), "FFI runtime connection closed");
     }
 }
@@ -861,14 +891,8 @@ impl InProcessProtocolConnection {
     /// this returns. This operation never shuts down the borrowed server.
     /// Cancellation does not interrupt native cleanup; a later close can join it.
     pub async fn close(&self) -> Result<(), Error> {
-        let mut done = self.shared.cleanup_done.subscribe();
         self.shared.close();
-        while !*done.borrow_and_update() {
-            done.changed().await.map_err(|error| {
-                Error::with_message(ErrorKind::InvalidConfig, error.to_string())
-            })?;
-        }
-        Ok(())
+        self.shared.wait_for_cleanup().await
     }
 }
 
@@ -939,6 +963,7 @@ async fn open_protocol_peer(
             Vec::new(),
             FfiHostTarget {
                 auth_owner: None,
+                configuration: None,
                 server_id: Some(server_id),
                 library_path: Some(parent.library_path()),
                 session_binding: None,
@@ -1336,6 +1361,7 @@ pub(crate) struct FfiHost {
 
 pub(crate) struct FfiHostTarget<'a> {
     pub auth_owner: Option<Arc<dyn crate::InProcessAuthOwner>>,
+    pub configuration: Option<crate::RuntimeHostConfiguration>,
     pub server_id: Option<u32>,
     pub library_path: Option<&'a Path>,
     pub session_binding: Option<crate::InProcessSessionBinding>,
@@ -1353,11 +1379,12 @@ impl FfiHost {
         cli_entrypoint: Option<&Path>,
         integration_id: Option<&str>,
         environment: Vec<(String, String)>,
-        args: Vec<String>,
+        mut args: Vec<String>,
         target: FfiHostTarget<'_>,
     ) -> Result<Self, Error> {
         let FfiHostTarget {
             auth_owner,
+            configuration,
             server_id: attached_server_id,
             library_path: runtime_library_path,
             session_binding,
@@ -1420,6 +1447,12 @@ impl FfiHost {
             &library_path,
             auth_owner.is_some(),
         )?;
+        if let Some(configuration) = configuration {
+            args.push(format!(
+                "--sdk-host-configuration={}",
+                serde_json::to_string(&configuration)?
+            ));
+        }
         let session_connection_open = bind_optional::<SessionConnectionOpenFn>(
             lib,
             b"copilot_runtime_session_connection_open\0",
@@ -1554,12 +1587,19 @@ impl FfiHost {
         };
 
         let owns_host = self.attached_server_id.is_none();
+        let start = |owner: Option<AuthOwnerCallback>, state: *mut c_void| {
+            if let (Some(owner), Some(start)) = (owner, self.host_start_with_auth_owner) {
+                // SAFETY: the owner callback and byte spans remain live throughout startup.
+                unsafe { start(argv.as_ptr(), argv.len(), env_ptr, env_len, owner, state) }
+            } else {
+                // SAFETY: startup borrows the byte spans only for this call.
+                unsafe { (self.host_start)(argv.as_ptr(), argv.len(), env_ptr, env_len) }
+            }
+        };
         let server_id = match self.attached_server_id {
             Some(server_id) => server_id,
             None => {
-                if let (Some(owner), Some(start)) =
-                    (self.auth_owner.as_ref(), self.host_start_with_auth_owner)
-                {
+                if let Some(owner) = self.auth_owner.as_ref() {
                     struct Admission<'a> {
                         owner: &'a dyn crate::InProcessAuthOwner,
                         error: parking_lot::Mutex<Option<Error>>,
@@ -1593,23 +1633,13 @@ impl FfiHost {
                         owner: owner.as_ref(),
                         error: parking_lot::Mutex::new(None),
                     };
-                    // SAFETY: byte spans and callback state remain live throughout startup.
-                    let server = unsafe {
-                        start(
-                            argv.as_ptr(),
-                            argv.len(),
-                            env_ptr,
-                            env_len,
-                            bind,
-                            (&mut admission as *mut Admission<'_>).cast(),
-                        )
-                    };
+                    let server = start(Some(bind), (&mut admission as *mut Admission<'_>).cast());
                     if let Some(error) = admission.error.into_inner() {
                         return Err(error);
                     }
                     server
                 } else {
-                    unsafe { (self.host_start)(argv.as_ptr(), argv.len(), env_ptr, env_len) }
+                    start(None, std::ptr::null_mut())
                 }
             }
         };
@@ -1707,7 +1737,7 @@ impl FfiHost {
             operation_lock: parking_lot::Mutex::new(()),
             foreground_order: Arc::new(tokio::sync::Mutex::new(())),
             protocol_peers: parking_lot::Mutex::new(Some(Vec::new())),
-            cleanup_done: tokio::sync::watch::channel(false).0,
+            cleanup_done: tokio::sync::watch::channel(CleanupStatus::Pending).0,
             library_path: self.library_path.clone(),
         });
         if let Some(path) = self.file_logging_path.as_deref() {

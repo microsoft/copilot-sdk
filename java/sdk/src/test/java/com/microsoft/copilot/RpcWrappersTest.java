@@ -40,6 +40,7 @@ import com.microsoft.copilot.generated.rpc.ConnectorSessionAccount;
 import com.microsoft.copilot.generated.rpc.EnvironmentsListRequest;
 import com.microsoft.copilot.generated.rpc.McpConfigAddParams;
 import com.microsoft.copilot.generated.rpc.McpDiscoverParams;
+import com.microsoft.copilot.generated.rpc.McpDiscoverRequest;
 import com.microsoft.copilot.generated.rpc.RpcCaller;
 import com.microsoft.copilot.generated.rpc.ServerRpc;
 import com.microsoft.copilot.generated.rpc.SessionAgentSelectParams;
@@ -68,6 +69,8 @@ import com.microsoft.copilot.generated.rpc.SessionUpdateAgentOptions;
 import com.microsoft.copilot.generated.rpc.SessionUpdateExecutionOptions;
 import com.microsoft.copilot.generated.rpc.SessionUpdateSkillOptions;
 import com.microsoft.copilot.generated.rpc.SubagentSettingsConfig;
+import com.microsoft.copilot.generated.rpc.SkillsDiscoverParams;
+import com.microsoft.copilot.generated.rpc.SkillsDiscoverResult;
 import com.microsoft.copilot.rpc.AgentInfo;
 import com.microsoft.copilot.rpc.PermissionHandler;
 import com.microsoft.copilot.rpc.PermissionInvocation;
@@ -87,6 +90,23 @@ import com.microsoft.copilot.rpc.PermissionRequestResult;
  * </ul>
  */
 class RpcWrappersTest {
+
+    @Test
+    @AllowCopilotExperimental
+    void skills_discovery_preserves_null_calls_and_method_references() {
+        var stub = new StubCaller();
+        var server = new ServerRpc(stub);
+        java.util.function.Function<SkillsDiscoverParams, CompletableFuture<SkillsDiscoverResult>> discover = server.skills::discover;
+        server.skills.discover(null).join();
+        discover.apply(null).join();
+        var request = SkillsDiscoverParams.builder().configDir("preview-config").build();
+        server.skills.discover(request).join();
+        assertEquals(List.of("skills.discover", "skills.discover", "skills.discover"),
+                stub.calls.stream().map(StubCaller.Call::method).toList());
+        assertNull(stub.calls.get(0).params());
+        assertNull(stub.calls.get(1).params());
+        assertSame(request, stub.calls.get(2).params());
+    }
 
     @Test
     void internalEnvironmentSelectorKeepsWireSerializationWithoutPublicAccessors() throws Exception {
@@ -218,10 +238,14 @@ class RpcWrappersTest {
 
         var params = McpDiscoverParams.builder().workingDirectory("/workspace").includeEffectiveSource(null).build();
         server.mcp.discover(params);
+        var request = new McpDiscoverRequest().setWorkingDirectory("/typed-workspace");
+        server.mcp.discoverWithOptions(request);
 
-        assertEquals(1, stub.calls.size());
+        assertEquals(2, stub.calls.size());
         assertEquals("mcp.discover", stub.calls.get(0).method());
         assertSame(params, stub.calls.get(0).params());
+        assertEquals("mcp.discover", stub.calls.get(1).method());
+        assertSame(request, stub.calls.get(1).params());
     }
 
     // ── SessionRpc tests ──────────────────────────────────────────────────────

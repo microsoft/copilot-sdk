@@ -46,6 +46,7 @@
 use std::borrow::{Borrow, Cow};
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 
@@ -60,6 +61,25 @@ pub use crate::generated::api_types::{
     SessionFsSqliteTransactionStatement,
 };
 use crate::{Custom, Repr};
+
+/// Resolves filesystem storage before an SDK session handle exists.
+///
+/// Existing session providers take precedence. The SDK calls this resolver per request,
+/// without holding its session registry lock. Each ID must resolve to the same storage namespace.
+/// Return a provider without performing I/O; its asynchronous methods own filesystem work.
+pub trait SessionFsProviderResolver: Send + Sync + 'static {
+    /// Resolve storage for the exact session ID supplied by the runtime.
+    fn resolve(&self, session_id: &str) -> crate::Result<Arc<dyn SessionFsProvider>>;
+}
+
+impl<F> SessionFsProviderResolver for F
+where
+    F: Fn(&str) -> crate::Result<Arc<dyn SessionFsProvider>> + Send + Sync + 'static,
+{
+    fn resolve(&self, session_id: &str) -> crate::Result<Arc<dyn SessionFsProvider>> {
+        self(session_id)
+    }
+}
 
 /// Optional capabilities declared by a session filesystem provider.
 #[non_exhaustive]

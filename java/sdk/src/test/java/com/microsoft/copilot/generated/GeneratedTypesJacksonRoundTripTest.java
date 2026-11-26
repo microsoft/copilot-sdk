@@ -76,10 +76,10 @@ class GeneratedTypesJacksonRoundTripTest {
         var builtLogin = SessionAccountsLoginBeginResult.builder().flowId("flow").step(step).build();
         assertEquals(MAPPER.readTree(loginJson), MAPPER.valueToTree(builtLogin));
 
-        String accountJson = "{\"sessionId\":\"session\",\"selectionId\":\"selected\"}";
+        String accountJson = "{\"sessionId\":\"session\",\"accountId\":\"selected\"}";
         var account = MAPPER.readValue(accountJson, SessionAccountsSwitchActiveParams.class);
-        assertEquals("selected", account.selectionId());
-        var builtAccount = SessionAccountsSwitchActiveParams.builder().sessionId("session").selectionId("selected")
+        assertEquals("selected", account.accountId());
+        var builtAccount = SessionAccountsSwitchActiveParams.builder().sessionId("session").accountId("selected")
                 .build();
         assertEquals(MAPPER.readTree(accountJson), MAPPER.valueToTree(builtAccount));
     }

@@ -10,6 +10,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.List;
 
 import com.microsoft.copilot.generated.rpc.DiagnosticsConfiguration;
+import com.microsoft.copilot.generated.rpc.SessionLifecycleMode;
 
 /**
  * Internal request object for creating a new session.
@@ -24,6 +25,19 @@ import com.microsoft.copilot.generated.rpc.DiagnosticsConfiguration;
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public final class CreateSessionRequest {
+
+    @JsonProperty("sessionLifecycleMode")
+    private SessionLifecycleMode sessionLifecycleMode;
+
+    /** Gets the local hook lifetime. @return the explicit mode, or null */
+    public SessionLifecycleMode getSessionLifecycleMode() {
+        return sessionLifecycleMode;
+    }
+
+    /** Sets the local hook lifetime. @param mode the explicit mode */
+    public void setSessionLifecycleMode(SessionLifecycleMode mode) {
+        this.sessionLifecycleMode = mode;
+    }
 
     @JsonProperty("model")
     private String model;

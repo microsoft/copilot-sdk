@@ -42,7 +42,7 @@ fn windows_runtime_archive_preserves_oneauth_and_its_terms_beside_the_runtime() 
         ("package/copilot-runtime.exe", b"runtime wrapper"),
         ("package/prebuilds/win32-x64/runtime.node", b"runtime"),
         (
-            "package/prebuilds/win32-x64/OneAuthInterop.dll",
+            "package/prebuilds/win32-x64/MicrosoftAuthClientCore.dll",
             b"native authentication",
         ),
         (
@@ -56,7 +56,7 @@ fn windows_runtime_archive_preserves_oneauth_and_its_terms_beside_the_runtime() 
         .unpack(root.path())
         .unwrap();
     assert_eq!(
-        fs::read(root.path().join("OneAuthInterop.dll")).unwrap(),
+        fs::read(root.path().join("MicrosoftAuthClientCore.dll")).unwrap(),
         b"native authentication"
     );
     assert_eq!(

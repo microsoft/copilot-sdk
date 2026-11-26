@@ -328,8 +328,9 @@ public class SessionFsE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
         AssertFsError(await handler.RenameAsync(new SessionFsRenameRequest { Src = "missing.txt", Dest = "dest.txt" }));
         AssertFsError((await handler.SqliteQueryAsync(new SessionFsSqliteQueryRequest { Query = "select 1" })).Error);
 
-        var sqliteExists = await handler.SqliteExistsAsync(new SessionFsSqliteExistsRequest());
-        Assert.False(sqliteExists.Exists);
+        var sqliteExistsError = await Assert.ThrowsAsync<FileNotFoundException>(
+            () => handler.SqliteExistsAsync(new SessionFsSqliteExistsRequest()));
+        Assert.Equal("missing", sqliteExistsError.Message);
 
         var unknown = (ISessionFsHandler)new ThrowingSessionFsProvider(new InvalidOperationException("bad path"));
         var unknownError = await unknown.WriteFileAsync(new SessionFsWriteFileRequest { Path = "bad.txt", Content = "content" });

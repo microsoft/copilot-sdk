@@ -28,9 +28,7 @@ public record SessionAccountsGetActiveResult(
     @JsonInclude(JsonInclude.Include.ALWAYS)
     @JsonProperty("account") Account account,
     /** Credential-free identity metadata for the active account, including resolved Copilot user information when available. */
-    @JsonProperty("authInfo") AuthIdentity authInfo,
-    /** Opaque credential selection id for the active authentication. This remains available when the canonical account is not currently switchable. */
-    @JsonProperty("authSelectionId") String authSelectionId
+    @JsonProperty("authInfo") AuthIdentity authInfo
 ) {
 
     /**
@@ -57,7 +55,6 @@ public record SessionAccountsGetActiveResult(
         private Account account;
         private boolean $presence0;
         private AuthIdentity authInfo;
-        private String authSelectionId;
 
         /**
          * Sets the {@code account} property.
@@ -85,18 +82,6 @@ public record SessionAccountsGetActiveResult(
         }
 
         /**
-         * Sets the {@code authSelectionId} property.
-         * @param value the property value
-         * @return this builder
-         * @since 2.0.0
-         */
-        @com.microsoft.copilot.CopilotExperimental
-        public Builder authSelectionId(String value) {
-            this.authSelectionId = value;
-            return this;
-        }
-
-        /**
          * Builds a record after checking required property presence.
          * @return a new record
          * @throws IllegalStateException if a required property is missing
@@ -104,7 +89,7 @@ public record SessionAccountsGetActiveResult(
          */
         public SessionAccountsGetActiveResult build() {
             if (!$presence0) throw new IllegalStateException("Missing required property: account");
-            return new SessionAccountsGetActiveResult(account, authInfo, authSelectionId);
+            return new SessionAccountsGetActiveResult(account, authInfo);
         }
     }
 }

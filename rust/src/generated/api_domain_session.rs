@@ -2693,6 +2693,9 @@ pub struct ProtocolExternalToolDefinition {
     /// are presented to the model as one group; elsewhere the tool stays flat. The
     /// tool's `name` remains its unique invocation name either way.
     pub namespace: Option<ProtocolExternalToolNamespace>,
+    /// Replace a same-named built-in only when it exists for the executing model.
+    /// Otherwise ignore this tool. This takes precedence over `overridesBuiltInTool`.
+    pub only_overrides_built_in_tool: Option<bool>,
     /// Whether this definition replaces a built-in tool with the same name.
     pub overrides_built_in_tool: Option<bool>,
     /// JSON Schema describing the tool's input arguments.
@@ -2702,7 +2705,7 @@ pub struct ProtocolExternalToolDefinition {
     /// Optional human-readable display title.
     pub title: Option<String>,
 }
-crate::record_serde::wire_record!(ProtocolExternalToolDefinition { defer: "defer" if is_none, description: "description", exposure: "exposure" if is_none, idempotent: "idempotent" if is_none, is_terminal: "isTerminal" if is_none, metadata: "metadata" if is_none, name: "name", namespace: "namespace" if is_none, overrides_built_in_tool: "overridesBuiltInTool" if is_none, parameters: "parameters" if is_none, skip_permission: "skipPermission" if is_none, title: "title" if is_none });
+crate::record_serde::wire_record!(ProtocolExternalToolDefinition { defer: "defer" if is_none, description: "description", exposure: "exposure" if is_none, idempotent: "idempotent" if is_none, is_terminal: "isTerminal" if is_none, metadata: "metadata" if is_none, name: "name", namespace: "namespace" if is_none, only_overrides_built_in_tool: "onlyOverridesBuiltInTool" if is_none, overrides_built_in_tool: "overridesBuiltInTool" if is_none, parameters: "parameters" if is_none, skip_permission: "skipPermission" if is_none, title: "title" if is_none });
 
 /// Reattach to an existing MC session without creating a new one.
 ///
@@ -4017,6 +4020,64 @@ pub struct SessionFsWriteFileRequest {
 }
 crate::record_serde::wire_record!(SessionFsWriteFileRequest { session_id: "sessionId", path: "path", content: "content", mode: "mode" if is_none });
 
+/// Requests confirmation before a handoff uses a different local repository.
+#[derive(Debug, Clone, Default)]
+pub struct SessionHandoffConfirmationRequest {
+    /// The callback ID supplied by the handoff requester.
+    pub callback_id: String,
+    /// The owner/name of the local repository.
+    pub local_repo: String,
+    /// The owner/name recorded by the remote session.
+    pub remote_repo: String,
+}
+crate::record_serde::wire_record!(SessionHandoffConfirmationRequest {
+    callback_id: "callbackId",
+    local_repo: "localRepo",
+    remote_repo: "remoteRepo"
+});
+
+/// A decision for the handoff's repository mismatch.
+#[derive(Debug, Clone, Default)]
+pub struct SessionHandoffConfirmationResponse {
+    /// Whether the requester permits the handoff to use the local repository.
+    pub confirmed: bool,
+}
+crate::record_serde::wire_record!(SessionHandoffConfirmationResponse {
+    confirmed: "confirmed"
+});
+
+/// `sessions.open` handoff progress update with step, status, and optional message.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct SessionsOpenProgress {
+    /// Optional step message.
+    pub message: Option<String>,
+    /// Step status.
+    pub status: SessionsOpenProgressStatus,
+    /// Handoff step.
+    pub step: SessionsOpenProgressStep,
+}
+crate::record_serde::wire_record!(SessionsOpenProgress { message: "message" if is_none, status: "status", step: "step" });
+
+/// Progress for one remote handoff requested through `sessions.open`.
+#[derive(Debug, Clone, Default)]
+pub struct SessionHandoffProgressNotification {
+    /// The callback ID supplied by the handoff requester.
+    pub callback_id: String,
+    /// The runtime-owned handoff step and its current status.
+    pub update: SessionsOpenProgress,
+}
+crate::record_serde::wire_record!(SessionHandoffProgressNotification {
+    callback_id: "callbackId",
+    update: "update"
+});
+
 /// Counts of prepared or imported session records.
 ///
 /// <div class="warning">
@@ -4070,6 +4131,80 @@ pub struct SessionImportRequest {
     pub working_directory: Option<String>,
 }
 crate::record_serde::wire_record!(SessionImportRequest { default_working_directory: "defaultWorkingDirectory", dry_run: "dryRun" if is_none, input_path: "inputPath", jsonl: "jsonl", name: "name" if is_none, working_directory: "workingDirectory" if is_none });
+
+/// Extensible [`SessionImportRequest`], including inputs added after it was published.
+///
+/// Required inputs are [`SessionImportOptions::new`] arguments; optional inputs have fluent setters.
+/// Input-only: it serialises to the flat wire request and is not deserialisable.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionImportOptions {
+    #[serde(flatten)]
+    legacy: SessionImportRequest,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    client_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    client_name: Option<String>,
+}
+
+impl SessionImportOptions {
+    /// Creates options with the required inputs.
+    pub fn new(
+        jsonl: impl Into<String>,
+        input_path: impl Into<String>,
+        default_working_directory: impl Into<String>,
+    ) -> Self {
+        Self {
+            legacy: SessionImportRequest {
+                jsonl: jsonl.into(),
+                input_path: input_path.into(),
+                default_working_directory: default_working_directory.into(),
+                working_directory: None,
+                name: None,
+                dry_run: None,
+            },
+            client_kind: None,
+            client_name: None,
+        }
+    }
+
+    /// Explicit directory override.
+    pub fn working_directory(mut self, value: impl Into<String>) -> Self {
+        self.legacy.working_directory = Some(value.into());
+        self
+    }
+
+    /// Explicit session name override.
+    pub fn name(mut self, value: impl Into<String>) -> Self {
+        self.legacy.name = Some(value.into());
+        self
+    }
+
+    /// Validate without creating a session.
+    pub fn dry_run(mut self, value: bool) -> Self {
+        self.legacy.dry_run = Some(value);
+        self
+    }
+
+    /// Structured client kind used by runtime behavior gates.
+    pub fn client_kind(mut self, value: impl Into<String>) -> Self {
+        self.client_kind = Some(value.into());
+        self
+    }
+
+    /// Identifier of the application that owns the imported session.
+    pub fn client_name(mut self, value: impl Into<String>) -> Self {
+        self.client_name = Some(value.into());
+        self
+    }
+}
 
 /// Result of a semantic session import.
 ///
@@ -5542,6 +5677,12 @@ pub struct SessionOpenOptions {
     /// Optional stable session identifier to use for a new session.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<SessionId>,
+    /// Controls local session end hooks: `interactive` defers them to shutdown; `per-turn` runs them after each completed turn.
+    /// Omission or null selects `per-turn` on this raw API. The SDK helper defaults do not apply.
+    /// Applied at creation and cold resume; ignored for resident and cloud sessions.
+    /// Not persisted; supply it again on cold resume.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_lifecycle_mode: Option<SessionLifecycleMode>,
     /// Skill loading, sources, and provider capability.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skills: Option<SessionOpenSkillOptions>,
@@ -5694,14 +5835,16 @@ crate::record_serde::wire_record!(SessionsOpenCloud { kind: "kind", on_task_crea
 /// </div>
 #[derive(Debug, Clone, Default)]
 pub struct SessionsOpenHandoff {
+    /// Correlates optional progress and confirmation callbacks on the requesting SDK connection.
+    pub callback_id: Option<String>,
     /// Fetch a remote session and hand it off to a new local session.
     pub kind: SessionsOpenHandoffKind,
     /// Remote session metadata for the session to hand off (typically obtained from `sessions.list` with `source: "remote"`).
     pub metadata: RemoteSessionMetadataValue,
-    /// In-process confirmation callback `(request) => boolean | Promise<boolean>` invoked when the handoff needs the caller to confirm a non-fatal blocker (e.g. a repository mismatch between the current working directory and the remote session). Returning `true` proceeds with the handoff; returning `false` (or omitting the callback) aborts it. Marked internal because a function reference cannot cross the JSON-RPC boundary, for the same reasons as `onProgress`.
+    /// Legacy in-process confirmation callback. SDK connections use callbackId and sessionHandoff.confirm requests instead; missing or declined confirmation refuses a repository mismatch.
     #[doc(hidden)]
     pub(crate) on_confirm: Option<serde_json::Value>,
-    /// In-process progress callback `(update) => void` invoked for each handoff step. Marked internal because a function reference cannot cross the JSON-RPC boundary. The host-side `handoffSession` is already declared as `AsyncGenerator<HandoffProgress, HandoffResult>`; the schema layer flattens it because it does not yet support streaming methods. The wire-clean replacement is to expose the AsyncGenerator directly (or use vscode-jsonrpc `$/progress` notifications) once the schema/transport layer supports it.
+    /// Legacy in-process progress callback. SDK connections use callbackId and sessionHandoff.progress notifications instead; function references cannot cross JSON-RPC.
     #[doc(hidden)]
     pub(crate) on_progress: Option<serde_json::Value>,
     /// Session construction options for the new local session.
@@ -5709,26 +5852,7 @@ pub struct SessionsOpenHandoff {
     /// Task type determines the handoff strategy (CCA fetches events; CLI prepares a transient session).
     pub task_type: Option<SessionsOpenHandoffTaskType>,
 }
-crate::record_serde::wire_record!(SessionsOpenHandoff { kind: "kind", metadata: "metadata", on_confirm: "onConfirm" if is_none, on_progress: "onProgress" if is_none, options: "options" if is_none, task_type: "taskType" if is_none });
-
-/// `sessions.open` handoff progress update with step, status, and optional message.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct SessionsOpenProgress {
-    /// Optional step message.
-    pub message: Option<String>,
-    /// Step status.
-    pub status: SessionsOpenProgressStatus,
-    /// Handoff step.
-    pub step: SessionsOpenProgressStep,
-}
-crate::record_serde::wire_record!(SessionsOpenProgress { message: "message" if is_none, status: "status", step: "step" });
+crate::record_serde::wire_record!(SessionsOpenHandoff { callback_id: "callbackId" if is_none, kind: "kind", metadata: "metadata", on_confirm: "onConfirm" if is_none, on_progress: "onProgress" if is_none, options: "options" if is_none, task_type: "taskType" if is_none });
 
 /// Result of opening a session.
 ///
@@ -5754,7 +5878,7 @@ pub struct SessionOpenResult {
     pub(crate) session_api: Option<serde_json::Value>,
     /// Opened session ID. Omitted when status is `not_found`.
     pub session_id: Option<SessionId>,
-    /// Startup prompts queued by user-level hook configs at session creation. Only populated when status is `created`; resumed sessions return an empty array.
+    /// Startup prompts from local hook configs after creation or handoff. Resumed sessions return an empty array.
     pub startup_prompts: Option<Vec<String>>,
     /// Outcome of the open request.
     pub status: SessionsOpenStatus,
@@ -7036,6 +7160,85 @@ pub struct SessionsImportSemanticRequest {
     pub working_directory: Option<String>,
 }
 crate::record_serde::wire_record!(SessionsImportSemanticRequest { client_name: "clientName" if is_none, default_working_directory: "defaultWorkingDirectory", dry_run: "dryRun" if is_none, input_path: "inputPath", jsonl: "jsonl", name: "name" if is_none, settings: "settings" if is_none, working_directory: "workingDirectory" if is_none });
+
+/// Extensible [`SessionsImportSemanticRequest`], including inputs added after it was published.
+///
+/// Required inputs are [`SessionsImportSemanticOptions::new`] arguments; optional inputs have fluent setters.
+/// Input-only: it serialises to the flat wire request and is not deserialisable.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionsImportSemanticOptions {
+    #[serde(flatten)]
+    legacy: SessionsImportSemanticRequest,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    client_kind: Option<String>,
+}
+
+impl SessionsImportSemanticOptions {
+    /// Creates options with the required inputs.
+    pub fn new(
+        jsonl: impl Into<String>,
+        input_path: impl Into<String>,
+        default_working_directory: impl Into<String>,
+    ) -> Self {
+        Self {
+            legacy: SessionsImportSemanticRequest {
+                jsonl: jsonl.into(),
+                input_path: input_path.into(),
+                default_working_directory: default_working_directory.into(),
+                settings: None,
+                dry_run: None,
+                working_directory: None,
+                name: None,
+                client_name: None,
+            },
+            client_kind: None,
+        }
+    }
+
+    /// Runtime settings overrides, with the original caller's configuration root.
+    pub fn settings(mut self, value: serde_json::Value) -> Self {
+        self.legacy.settings = Some(value);
+        self
+    }
+
+    /// Validate without authentication, network access, or writes.
+    pub fn dry_run(mut self, value: bool) -> Self {
+        self.legacy.dry_run = Some(value);
+        self
+    }
+
+    /// Explicit working directory override.
+    pub fn working_directory(mut self, value: impl Into<String>) -> Self {
+        self.legacy.working_directory = Some(value.into());
+        self
+    }
+
+    /// Explicit session name override.
+    pub fn name(mut self, value: impl Into<String>) -> Self {
+        self.legacy.name = Some(value.into());
+        self
+    }
+
+    /// Name of the embedding client.
+    pub fn client_name(mut self, value: impl Into<String>) -> Self {
+        self.legacy.client_name = Some(value.into());
+        self
+    }
+
+    /// Structured client kind used by runtime behavior gates.
+    pub fn client_kind(mut self, value: impl Into<String>) -> Self {
+        self.client_kind = Some(value.into());
+        self
+    }
+}
 
 /// Semantic session import outcome.
 ///
@@ -9706,7 +9909,7 @@ pub struct SessionsOpenResult {
     pub(crate) session_api: Option<serde_json::Value>,
     /// Opened session ID. Omitted when status is `not_found`.
     pub session_id: Option<SessionId>,
-    /// Startup prompts queued by user-level hook configs at session creation. Only populated when status is `created`; resumed sessions return an empty array.
+    /// Startup prompts from local hook configs after creation or handoff. Resumed sessions return an empty array.
     pub startup_prompts: Option<Vec<String>>,
     /// Outcome of the open request.
     pub status: SessionsOpenStatus,
@@ -13424,10 +13627,8 @@ pub struct SessionAccountsGetActiveResult {
     pub account: Option<Account>,
     /// Credential-free identity metadata for the active account, including resolved Copilot user information when available.
     pub auth_info: Option<AuthIdentity>,
-    /// Opaque credential selection id for the active authentication. This remains available when the canonical account is not currently switchable.
-    pub auth_selection_id: Option<String>,
 }
-crate::record_serde::wire_record!(SessionAccountsGetActiveResult { account: "account", auth_info: "authInfo" if is_none, auth_selection_id: "authSelectionId" if is_none });
+crate::record_serde::wire_record!(SessionAccountsGetActiveResult { account: "account", auth_info: "authInfo" if is_none });
 
 /// Identifies the target session.
 ///
@@ -15643,6 +15844,49 @@ crate::record_serde::wire_record!(SessionSkillsListResult { skills: "skills" });
 ///
 /// </div>
 #[derive(Debug, Clone, Default)]
+pub struct SessionSkillsGetDefinitionsParams {
+    /// Target session identifier
+    pub session_id: SessionId,
+}
+crate::record_serde::wire_record!(SessionSkillsGetDefinitionsParams {
+    session_id: "sessionId"
+});
+
+/// Local definitions and diagnostics from an admitted runtime session.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct SessionSkillsGetDefinitionsResult {
+    /// Working directory used for relative diagnostic paths.
+    pub display_cwd: String,
+    /// Diagnostics for definitions that could not load.
+    pub errors: Vec<String>,
+    /// Definitions in canonical precedence order, including disabled local skills.
+    pub skills: Vec<LocalSkillDefinition>,
+    /// Nonfatal diagnostics for loaded definitions.
+    pub warnings: Vec<String>,
+}
+crate::record_serde::wire_record!(SessionSkillsGetDefinitionsResult {
+    display_cwd: "displayCwd",
+    errors: "errors",
+    skills: "skills",
+    warnings: "warnings"
+});
+
+/// Identifies the target session.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
 pub struct SessionSkillsGetInvokedParams {
     /// Target session identifier
     pub session_id: SessionId,
@@ -15699,6 +15943,43 @@ pub struct SessionSkillsReloadResult {
     pub warnings: Vec<String>,
 }
 crate::record_serde::wire_record!(SessionSkillsReloadResult {
+    errors: "errors",
+    warnings: "warnings"
+});
+
+/// Identifies the target session.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct SessionSkillsGetDiagnosticsParams {
+    /// Target session identifier
+    pub session_id: SessionId,
+}
+crate::record_serde::wire_record!(SessionSkillsGetDiagnosticsParams {
+    session_id: "sessionId"
+});
+
+/// Diagnostics from reloading skill definitions, with warnings and errors as separate lists.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct SessionSkillsGetDiagnosticsResult {
+    /// Errors emitted while loading skills (e.g. skills that failed to load entirely)
+    pub errors: Vec<String>,
+    /// Warnings emitted while loading skills (e.g. skills that loaded but had issues)
+    pub warnings: Vec<String>,
+}
+crate::record_serde::wire_record!(SessionSkillsGetDiagnosticsResult {
     errors: "errors",
     warnings: "warnings"
 });
@@ -15776,6 +16057,43 @@ pub struct SessionSkillsResourcesRemoveResult {
     pub path: String,
 }
 crate::record_serde::wire_record!(SessionSkillsResourcesRemoveResult { kind: "kind", name: "name" if is_none, path: "path" });
+
+/// Reads skill diagnostics through the original authenticated local attachment.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct SessionSkillsSourceGetDiagnosticsParams {
+    /// Identity of the active local attachment to the owning session.
+    pub attach_id: i64,
+}
+crate::record_serde::wire_record!(SessionSkillsSourceGetDiagnosticsParams {
+    attach_id: "attachId"
+});
+
+/// Diagnostics from reloading skill definitions, with warnings and errors as separate lists.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct SessionSkillsSourceGetDiagnosticsResult {
+    /// Errors emitted while loading skills (e.g. skills that failed to load entirely)
+    pub errors: Vec<String>,
+    /// Warnings emitted while loading skills (e.g. skills that loaded but had issues)
+    pub warnings: Vec<String>,
+}
+crate::record_serde::wire_record!(SessionSkillsSourceGetDiagnosticsResult {
+    errors: "errors",
+    warnings: "warnings"
+});
 
 /// Per-source session diagnostics configuration.
 ///
@@ -19953,7 +20271,7 @@ pub type SessionGitHubAuthLogoutUserResult = bool;
 /// </div>
 pub type SessionGitHubAuthLastAuthErrorsResult = Vec<AuthValidationError>;
 
-/// Signed-in accounts; empty when no accounts are available.
+/// Known accounts, including saved accounts when automatic authentication is disabled; empty when no accounts are known.
 ///
 /// <div class="warning">
 ///
@@ -19982,16 +20300,6 @@ pub type SessionAccountsLastErrorsResult = Vec<AuthValidationError>;
 ///
 /// </div>
 pub type SessionAccountsLogoutResult = bool;
-
-/// Cached base identities reusable by the selected login provider, active first.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-pub type SessionAccountsLoginListResult = Vec<AuthLoginIdentity>;
 
 /// Authentication providers offered for interactive login.
 ///
@@ -22360,6 +22668,104 @@ impl<'de> Deserialize<'de> for SessionFsSqliteTransactionErrorClass {
     }
 }
 
+/// Step status.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub enum SessionsOpenProgressStatus {
+    /// The step has started and has not yet finished.
+    #[serde(rename = "in-progress")]
+    InProgress,
+    /// The step has completed successfully.
+    #[serde(rename = "complete")]
+    Complete,
+    /// Unknown variant for forward compatibility.
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+impl<'de> Deserialize<'de> for SessionsOpenProgressStatus {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let index = crate::enum_serde::deserialize_variant(
+            deserializer,
+            "SessionsOpenProgressStatus",
+            &["in-progress", "complete", "Unknown"],
+            Some(2),
+        )?;
+        Ok(match index {
+            0 => Self::InProgress,
+            1 => Self::Complete,
+            _ => Self::Unknown,
+        })
+    }
+}
+
+/// Handoff step.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub enum SessionsOpenProgressStep {
+    /// Loading the source session's events from the remote service.
+    #[serde(rename = "load-session")]
+    LoadSession,
+    /// Validating that the local repository matches the remote session's repository.
+    #[serde(rename = "validate-repo")]
+    ValidateRepo,
+    /// Checking the local working tree for uncommitted changes, which stay in place and are carried onto the checked-out branch.
+    #[serde(rename = "check-changes")]
+    CheckChanges,
+    /// Checking out the branch associated with the remote session in the local working tree.
+    #[serde(rename = "checkout-branch")]
+    CheckoutBranch,
+    /// Creating the new local session and seeding it with the source session's events.
+    #[serde(rename = "create-session")]
+    CreateSession,
+    /// Persisting the newly-created local session to disk.
+    #[serde(rename = "save-session")]
+    SaveSession,
+    /// Unknown variant for forward compatibility.
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+impl<'de> Deserialize<'de> for SessionsOpenProgressStep {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let index = crate::enum_serde::deserialize_variant(
+            deserializer,
+            "SessionsOpenProgressStep",
+            &[
+                "load-session",
+                "validate-repo",
+                "check-changes",
+                "checkout-branch",
+                "create-session",
+                "save-session",
+                "Unknown",
+            ],
+            Some(6),
+        )?;
+        Ok(match index {
+            0 => Self::LoadSession,
+            1 => Self::ValidateRepo,
+            2 => Self::CheckChanges,
+            3 => Self::CheckoutBranch,
+            4 => Self::CreateSession,
+            5 => Self::SaveSession,
+            _ => Self::Unknown,
+        })
+    }
+}
+
 /// Constant value. Always "github".
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub enum SessionInstalledPluginSourceGitHubSource {
@@ -22976,104 +23382,6 @@ pub enum SessionOpenParams {
     Remote(SessionsOpenRemote),
     Cloud(SessionsOpenCloud),
     Handoff(SessionsOpenHandoff),
-}
-
-/// Step status.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-pub enum SessionsOpenProgressStatus {
-    /// The step has started and has not yet finished.
-    #[serde(rename = "in-progress")]
-    InProgress,
-    /// The step has completed successfully.
-    #[serde(rename = "complete")]
-    Complete,
-    /// Unknown variant for forward compatibility.
-    #[default]
-    #[serde(other)]
-    Unknown,
-}
-impl<'de> Deserialize<'de> for SessionsOpenProgressStatus {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "SessionsOpenProgressStatus",
-            &["in-progress", "complete", "Unknown"],
-            Some(2),
-        )?;
-        Ok(match index {
-            0 => Self::InProgress,
-            1 => Self::Complete,
-            _ => Self::Unknown,
-        })
-    }
-}
-
-/// Handoff step.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-pub enum SessionsOpenProgressStep {
-    /// Loading the source session's events from the remote service.
-    #[serde(rename = "load-session")]
-    LoadSession,
-    /// Validating that the local repository matches the remote session's repository.
-    #[serde(rename = "validate-repo")]
-    ValidateRepo,
-    /// Checking the local working tree for uncommitted changes, which stay in place and are carried onto the checked-out branch.
-    #[serde(rename = "check-changes")]
-    CheckChanges,
-    /// Checking out the branch associated with the remote session in the local working tree.
-    #[serde(rename = "checkout-branch")]
-    CheckoutBranch,
-    /// Creating the new local session and seeding it with the source session's events.
-    #[serde(rename = "create-session")]
-    CreateSession,
-    /// Persisting the newly-created local session to disk.
-    #[serde(rename = "save-session")]
-    SaveSession,
-    /// Unknown variant for forward compatibility.
-    #[default]
-    #[serde(other)]
-    Unknown,
-}
-impl<'de> Deserialize<'de> for SessionsOpenProgressStep {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let index = crate::enum_serde::deserialize_variant(
-            deserializer,
-            "SessionsOpenProgressStep",
-            &[
-                "load-session",
-                "validate-repo",
-                "check-changes",
-                "checkout-branch",
-                "create-session",
-                "save-session",
-                "Unknown",
-            ],
-            Some(6),
-        )?;
-        Ok(match index {
-            0 => Self::LoadSession,
-            1 => Self::ValidateRepo,
-            2 => Self::CheckChanges,
-            3 => Self::CheckoutBranch,
-            4 => Self::CreateSession,
-            5 => Self::SaveSession,
-            _ => Self::Unknown,
-        })
-    }
 }
 
 /// Outcome of the open request.

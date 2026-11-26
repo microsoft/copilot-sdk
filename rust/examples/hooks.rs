@@ -1,8 +1,7 @@
 //! Session hooks for logging and auditing.
 //!
-//! Demonstrates `SessionHooks` to intercept lifecycle events — logging every
-//! tool invocation, summarizing prompts, and recording session start/end
-//! for audit purposes.
+//! Demonstrates `SessionHooks` with per-turn session end hooks.
+//! One session handles two prompts and reports an end hook after each turn.
 //!
 //! ```sh
 //! cargo run -p copilot-sdk --example hooks
@@ -17,7 +16,7 @@ use copilot_sdk::hooks::{
     HookEvent, HookOutput, PostToolUseOutput, PreToolUseOutput, SessionEndOutput, SessionHooks,
     SessionStartOutput,
 };
-use copilot_sdk::types::{CreateSessionOptions, MessageOptions};
+use copilot_sdk::types::{CreateSessionOptions, MessageOptions, SessionLifecycleMode};
 use copilot_sdk::{Client, ClientOptions};
 
 /// Hooks implementation that logs lifecycle events to stdout.
@@ -73,11 +72,8 @@ impl SessionHooks for AuditHooks {
                 HookOutput::None
             }
 
-            HookEvent::SessionEnd { input, ctx } => {
-                println!(
-                    "[audit] session {} ended (reason={})",
-                    ctx.session_id, input.reason,
-                );
+            HookEvent::SessionEnd { input, .. } => {
+                println!("[audit] session end hook (reason={})", input.reason);
                 HookOutput::SessionEnd(SessionEndOutput {
                     session_summary: Some("Audited session complete.".to_string()),
                     ..Default::default()
@@ -104,28 +100,28 @@ async fn main() -> Result<(), copilot_sdk::Error> {
     // hooks: true is set automatically when a hooks handler is provided.
     let config = CreateSessionOptions::default()
         .with_permissions(|group| group.with_on_request(Arc::new(ApproveAllHandler)))
+        .with_session_lifecycle_mode(SessionLifecycleMode::PerTurn)
         .with_hooks(|group| group.with_handlers(Arc::new(AuditHooks)));
     let session = client.create_session(config).await?;
 
-    println!(
-        "Session {} with audit hooks. Sending a message...\n",
-        session.id()
-    );
+    println!("Session {} with per-turn audit hooks.\n", session.id());
 
-    let response = session
-        .send_and_wait(
-            MessageOptions::new("Say hello in three languages.")
-                .with_wait_timeout(Duration::from_secs(60)),
-        )
-        .await?;
+    for prompt in [
+        "Say hello in three languages.",
+        "Say goodbye in three languages.",
+    ] {
+        let response = session
+            .send_and_wait(MessageOptions::new(prompt).with_wait_timeout(Duration::from_secs(60)))
+            .await?;
 
-    if let Some(event) = response {
-        let text = event
-            .data
-            .get("content")
-            .and_then(|c| c.as_str())
-            .unwrap_or("<no response>");
-        println!("\n{text}");
+        if let Some(event) = response {
+            let text = event
+                .data
+                .get("content")
+                .and_then(|c| c.as_str())
+                .unwrap_or("<no response>");
+            println!("\n{text}");
+        }
     }
 
     session.disconnect().await?;

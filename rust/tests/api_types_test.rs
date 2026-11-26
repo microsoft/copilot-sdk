@@ -24,6 +24,120 @@ fn assistant_turn_start_keeps_public_struct_update_syntax() {
 }
 
 #[test]
+fn semantic_import_preserves_complete_request_literals_and_flat_wire_params() {
+    let request = copilot_sdk::rpc::SessionsImportSemanticRequest {
+        client_name: Some("importer".into()),
+        default_working_directory: "/fallback".into(),
+        dry_run: Some(false),
+        input_path: "/input.jsonl".into(),
+        jsonl: "input".into(),
+        name: Some("imported".into()),
+        settings: Some(serde_json::json!({"configDir": "/profile"})),
+        working_directory: Some("/workspace".into()),
+    };
+    assert_eq!(
+        serde_json::to_value(request).unwrap(),
+        serde_json::json!({
+            "clientName": "importer", "defaultWorkingDirectory": "/fallback",
+            "dryRun": false, "inputPath": "/input.jsonl", "jsonl": "input",
+            "name": "imported", "settings": {"configDir": "/profile"},
+            "workingDirectory": "/workspace"
+        })
+    );
+}
+
+#[test]
+fn semantic_import_options_preserve_client_kind_and_legacy_wire_fields() {
+    let options =
+        copilot_sdk::rpc::SessionsImportSemanticOptions::new("input", "/input.jsonl", "/fallback")
+            .settings(serde_json::json!({"configDir": "/profile"}))
+            .dry_run(false)
+            .working_directory("/workspace")
+            .name("imported")
+            .client_name("importer");
+    let expected = serde_json::json!({
+        "clientName": "importer", "defaultWorkingDirectory": "/fallback",
+        "dryRun": false, "inputPath": "/input.jsonl", "jsonl": "input",
+        "name": "imported", "settings": {"configDir": "/profile"},
+        "workingDirectory": "/workspace"
+    });
+    assert_eq!(serde_json::to_value(&options).unwrap(), expected);
+    let mut with_kind = expected;
+    with_kind["clientKind"] = serde_json::json!("cli");
+    assert_eq!(
+        serde_json::to_value(options.client_kind("cli")).unwrap(),
+        with_kind
+    );
+}
+
+#[test]
+fn released_client_options_preserve_complete_struct_literals() {
+    let _: copilot_sdk::ClientOptions = copilot_sdk::ClientOptions {
+        runtime: None,
+        internal_test_options: None,
+        network: None,
+        session_fs: None,
+        mode: copilot_sdk::ClientMode::CodingAgent,
+        client_info: None,
+        entra: None,
+        plugins: Default::default(),
+        extensions: Default::default(),
+        installations: Default::default(),
+        github: Default::default(),
+        observability: Default::default(),
+        models: Default::default(),
+    };
+}
+
+#[test]
+fn released_in_process_options_preserve_complete_struct_literals() {
+    let _: copilot_sdk::InProcessRuntimeOptions = copilot_sdk::InProcessRuntimeOptions {
+        owned: Default::default(),
+        run_on_ui_thread: None,
+        runtime_library_path: None,
+        auth_owner: None,
+        host_telemetry: None,
+        eager_power_shell_resolution: None,
+        file_logging_path: None,
+    };
+}
+
+#[cfg(feature = "runtime")]
+#[tokio::test]
+async fn configured_host_rejects_non_owned_connections_before_connecting() {
+    use copilot_sdk::{
+        AttachedInProcessRuntimeOptions, Client, ClientMode, ClientOptions, RuntimeConnection,
+        RuntimeHostConfiguration, SpawnedProcessOptions,
+    };
+
+    for runtime in [
+        RuntimeConnection::for_tcp("127.0.0.1", 1),
+        RuntimeConnection::for_spawned_stdio(SpawnedProcessOptions::new()),
+        RuntimeConnection::AttachedInProcess(AttachedInProcessRuntimeOptions {
+            server_id: 1,
+            runtime_library_path: "unused-runtime.node".into(),
+            session_binding: None,
+            run_on_ui_thread: None,
+            file_logging_path: None,
+        }),
+    ] {
+        let label = format!("{runtime:?}");
+        let error = Client::start_with_host_configuration(
+            ClientOptions::new(ClientMode::CodingAgent).with_runtime(runtime),
+            RuntimeHostConfiguration::default(),
+        )
+        .await
+        .expect_err("only SDK-owned in-process startup can configure the host");
+        assert!(
+            error
+                .to_string()
+                .contains("host configuration requires SDK-owned in-process startup"),
+            "{label}: {error}"
+        );
+    }
+}
+
+#[test]
 fn released_session_records_preserve_complete_struct_literals() {
     use copilot_sdk::rpc::{
         AutopilotObjectiveState, AutopilotObjectiveStatus, Extension, ExtensionSource,
@@ -717,6 +831,7 @@ fn external_tool_definitions_preserve_public_struct_literals() {
         metadata: None,
         name: "lookup".to_owned(),
         namespace: None,
+        only_overrides_built_in_tool: None,
         overrides_built_in_tool: None,
         parameters: None,
         skip_permission: None,

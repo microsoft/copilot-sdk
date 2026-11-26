@@ -274,7 +274,8 @@ async fn resume_factory_registered_before_start_retains_original_and_preserves_s
             "config": {
                 "sessionId": "durable", "workingDirectory": "/workspace",
                 "extensionPaths": ["selected/extension.mjs"],
-                "continuePendingWork": false, "suppressResumeEvent": true
+                "continuePendingWork": false, "suppressResumeEvent": true,
+                "sessionLifecycleMode": "interactive"
             }
         }
     }))
@@ -284,6 +285,7 @@ async fn resume_factory_registered_before_start_retains_original_and_preserves_s
     assert_eq!(resume["params"]["sessionId"], "durable");
     assert_eq!(resume["params"]["workingDirectory"], "/workspace");
     assert_eq!(resume["params"]["continuePendingWork"], false);
+    assert_eq!(resume["params"]["sessionLifecycleMode"], "interactive");
     assert_eq!(resume["params"]["suppressResumeEvent"], true);
     peer.respond(&resume, json!({"sessionId": "durable"})).await;
     let reload = peer.request().await;
@@ -394,12 +396,14 @@ async fn factory_registered_before_start_response_retains_exact_original_once() 
             "sessionId": "requested", "workingDirectory": "/workspace",
             "streaming": true,
             "enableConfigDiscovery": false,
+            "sessionLifecycleMode": "per-turn",
             "enableMcpApps": true, "mcpOAuthTokenStorage": "in-memory"
         }),
     )
     .await;
     let create = peer.created().await;
     assert_eq!(create["params"]["workingDirectory"], "/workspace");
+    assert_eq!(create["params"]["sessionLifecycleMode"], "per-turn");
     assert_eq!(create["params"]["mcp"]["enableApps"], true);
     assert_eq!(create["params"]["permissions"]["request"], false);
     assert_eq!(create["params"]["mcp"]["oauthTokenStorage"], "in-memory");
@@ -634,6 +638,7 @@ fn host_settings_round_trip_without_callbacks_or_losing_constraints() {
         "extensionSources": {"user": false, "project": true, "plugins": false},
         "enableExperimentalMode": true, "featureFlags": {"flag": true},
         "infiniteSessions": {"enabled": false, "backgroundCompactionThreshold": 0.7},
+        "sessionLifecycleMode": "interactive",
         "enableSessionStore": true, "memory": {"enabled": false},
         "streaming": true,
         "gitHubToken": "test", "enableManagedSettings": false,

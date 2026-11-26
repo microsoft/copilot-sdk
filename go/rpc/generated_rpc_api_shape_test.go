@@ -14,9 +14,28 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/microsoft/copilot-sdk/go/v2/internal/jsonrpc2"
 )
 
 var (
+	_ = ClientGlobalAPIHandlers{
+		AcpHandler(nil),
+		EmbedderHandler(nil),
+		EntraTokenHandler(nil),
+		ExtensionLaunchProviderHandler(nil),
+		GitHubTelemetryHandler(nil),
+		GitHubTokenHandler(nil),
+		HooksHandler(nil),
+		HostHandler(nil),
+		InstallationsHandler(nil),
+		LlmInferenceHandler(nil),
+		MCPHandler(nil),
+		NetworkHandler(nil),
+		RemoteHostsHandler(nil),
+		UIThreadHandler(nil),
+	}
+	_ func(*jsonrpc2.Client, *ClientGlobalAPIHandlers) = RegisterClientGlobalAPIHandlers
 	_ interface {
 		Import(context.Context, *MemoryImportRequest) (*MemoryImportResult, error)
 	} = (*ServerMemoriesAPI)(nil)
@@ -34,6 +53,31 @@ var (
 	_ UIElicitationFieldValue = UIElicitationBooleanValue(false)
 	_ UIElicitationFieldValue = UIElicitationNumberValue(0)
 )
+
+func TestInstalledPluginSourceLegacyLiterals(t *testing.T) {
+	source := "owner/plugin"
+	for _, test := range []struct {
+		value any
+		want  string
+	}{
+		{InstalledPluginSource{nil, nil, nil, &source}, `"owner/plugin"`},
+		{SessionInstalledPluginSource{nil, nil, nil, &source}, `"owner/plugin"`},
+		{InstalledPluginSourceGitHub{nil, nil, source, nil, "github"}, `{"repo":"owner/plugin","source":"github"}`},
+		{InstalledPluginSourceLocal{"/plugins/local", "local"}, `{"path":"/plugins/local","source":"local"}`},
+		{InstalledPluginSourceURL{nil, nil, nil, "url", "https://example.com/plugin.git"}, `{"source":"url","url":"https://example.com/plugin.git"}`},
+		{SessionInstalledPluginSourceGitHub{nil, nil, source, nil, "github"}, `{"repo":"owner/plugin","source":"github"}`},
+		{SessionInstalledPluginSourceLocal{"/plugins/local", "local"}, `{"path":"/plugins/local","source":"local"}`},
+		{SessionInstalledPluginSourceURL{nil, nil, nil, "url", "https://example.com/plugin.git"}, `{"source":"url","url":"https://example.com/plugin.git"}`},
+	} {
+		wire, err := json.Marshal(test.value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(wire) != test.want {
+			t.Errorf("%T wire = %s, want %s", test.value, wire, test.want)
+		}
+	}
+}
 
 func TestMCPDiscoveryFormattingRedactsConfigurationWithoutChangingJSON(t *testing.T) {
 	const secret = "discovery-formatting-test-secret"
@@ -108,6 +152,88 @@ func TestGeneratedRPCAPIShape(t *testing.T) {
 	assertInterfaceType(t, file, "UIElicitationFieldValue")
 	assertTypeExpr(t, fileSet, findTypeSpec(t, file, "UIElicitationStringArrayValue").Type, "[]string")
 	assertStructFieldType(t, file, fileSet, "UIElicitationResponse", "Content", "map[string]UIElicitationFieldValue")
+}
+
+func TestSessionImportLegacyRequestWire(t *testing.T) {
+	dryRun, name, directory := true, "imported", "/workspace"
+	request := SessionImportRequest{"/fallback", &dryRun, "/input.jsonl", "input", &name, &directory}
+	raw := captureParams(t, "sessions.import", func(ctx context.Context, srv *serverAPI, _ *sessionAPI) error {
+		_, err := (*ServerSessionsAPI)(srv).Import(ctx, &request)
+		return err
+	})
+	assertSessionImportParams(t, raw, map[string]any{
+		"defaultWorkingDirectory": "/fallback", "dryRun": true, "inputPath": "/input.jsonl",
+		"jsonl": "input", "name": "imported", "workingDirectory": "/workspace",
+	})
+}
+
+func TestSessionImportOptionsWire(t *testing.T) {
+	clientName, clientKind := "importer", "sdk"
+	options := SessionImportOptions{
+		DefaultWorkingDirectory: "/fallback", InputPath: "/input.jsonl", Jsonl: "input",
+		ClientName: &clientName, ClientKind: &clientKind,
+	}
+	raw := captureParams(t, "sessions.import", func(ctx context.Context, srv *serverAPI, _ *sessionAPI) error {
+		_, err := (*ServerSessionsAPI)(srv).ImportWithOptions(ctx, &options)
+		return err
+	})
+	assertSessionImportParams(t, raw, map[string]any{
+		"defaultWorkingDirectory": "/fallback", "inputPath": "/input.jsonl", "jsonl": "input",
+		"clientName": "importer", "clientKind": "sdk",
+	})
+}
+
+func TestSessionsImportSemanticLegacyRequestWire(t *testing.T) {
+	clientName, dryRun, name, directory := "importer", false, "imported", "/workspace"
+	request := SessionsImportSemanticRequest{
+		&clientName, "/fallback", &dryRun, "/input.jsonl", "input", &name,
+		map[string]any{"configDir": "/profile"}, &directory,
+	}
+	raw := captureParams(t, "sessions.importSemantic", func(ctx context.Context, srv *serverAPI, _ *sessionAPI) error {
+		_, err := (*InternalServerSessionsAPI)(srv).ImportSemantic(ctx, &request)
+		return err
+	})
+	assertSessionImportParams(t, raw, map[string]any{
+		"clientName": "importer", "defaultWorkingDirectory": "/fallback", "dryRun": false,
+		"inputPath": "/input.jsonl", "jsonl": "input", "name": "imported",
+		"settings": map[string]any{"configDir": "/profile"}, "workingDirectory": "/workspace",
+	})
+}
+
+func TestSessionsImportSemanticOptionsWire(t *testing.T) {
+	clientName, clientKind, dryRun, name, directory := "importer", "cli", false, "imported", "/workspace"
+	options := SessionsImportSemanticOptions{
+		ClientName: &clientName, DefaultWorkingDirectory: "/fallback", DryRun: &dryRun,
+		InputPath: "/input.jsonl", Jsonl: "input", Name: &name,
+		Settings: map[string]any{"configDir": "/profile"}, WorkingDirectory: &directory,
+	}
+	want := map[string]any{
+		"clientName": "importer", "defaultWorkingDirectory": "/fallback", "dryRun": false,
+		"inputPath": "/input.jsonl", "jsonl": "input", "name": "imported",
+		"settings": map[string]any{"configDir": "/profile"}, "workingDirectory": "/workspace",
+	}
+	for _, kind := range []*string{nil, &clientKind} {
+		options.ClientKind = kind
+		if kind != nil {
+			want["clientKind"] = *kind
+		}
+		raw := captureParams(t, "sessions.importSemantic", func(ctx context.Context, srv *serverAPI, _ *sessionAPI) error {
+			_, err := (*InternalServerSessionsAPI)(srv).ImportSemanticWithOptions(ctx, &options)
+			return err
+		})
+		assertSessionImportParams(t, raw, want)
+	}
+}
+
+func assertSessionImportParams(t *testing.T, raw json.RawMessage, want map[string]any) {
+	t.Helper()
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("sessions.import params = %#v, want %#v", got, want)
+	}
 }
 
 func TestSubagentSettingsReadModifyWrite(t *testing.T) {

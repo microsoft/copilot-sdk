@@ -6,6 +6,7 @@ import os
 
 import pytest
 
+from copilot import SessionLifecycleMode
 from copilot.session import PermissionHandler
 
 from .testharness import E2ETestContext
@@ -15,6 +16,22 @@ pytestmark = pytest.mark.asyncio(loop_scope="module")
 
 
 class TestHooks:
+    async def test_lifecycle_mode_enum_on_create_and_resume(self, ctx: E2ETestContext):
+        session = await ctx.client.create_session(
+            permissions={"on_request": PermissionHandler.approve_all},
+            session_lifecycle_mode=SessionLifecycleMode.PER_TURN,
+        )
+        session_id = session.session_id
+
+        # An empty session has no persisted history, so resume it while it is resident.
+        resumed = await ctx.client.resume_session(
+            session_id,
+            permissions={"on_request": PermissionHandler.approve_all},
+            session_lifecycle_mode=SessionLifecycleMode.INTERACTIVE,
+        )
+        assert resumed.session_id == session_id
+        await resumed.disconnect()
+
     async def test_should_invoke_pretooluse_hook_when_model_runs_a_tool(self, ctx: E2ETestContext):
         """Test that preToolUse hook is invoked when model runs a tool"""
         pre_tool_use_inputs = []

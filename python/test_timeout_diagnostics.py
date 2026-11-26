@@ -21,6 +21,8 @@ from e2e.timeout_diagnostics import (
     add_timeout_diagnostics,
 )
 
+pytest_plugins = ["pytester"]
+
 
 @pytest.mark.parametrize("blocked_write", [False, True])
 async def test_timeout_report_identifies_pending_rpc_without_payloads(
@@ -277,12 +279,16 @@ async def test_signal_snapshot_precedes_task_cleanup_and_keeps_original_failure(
 
 
 @pytest.mark.parametrize("phase", ["call", "teardown"] if hasattr(signal, "SIGALRM") else ["call"])
-def test_timeout_report_survives_xdist_without_stdout_capture(tmp_path, phase):
+def test_timeout_report_survives_xdist_without_stdout_capture(pytester, monkeypatch, phase):
+    tmp_path = pytester.path
     # Deliver the real POSIX signal at a safe loop boundary, not during callback
     # queue mutation. Windows emulates the exception because thread timeouts exit.
     (tmp_path / "conftest.py").write_text(
-        """
+        f"""
+import sys
 import pytest
+
+sys.path.insert(0, {str(Path(__file__).parent.resolve())!r})
 from e2e.timeout_diagnostics import add_timeout_diagnostics
 from e2e.timeout_diagnostics import pytest_timeout_set_timer as pytest_timeout_set_timer
 
@@ -341,42 +347,33 @@ def test_stalled(runner, cleanup):
     )
     with (tmp_path / "test_stalled.py").open("a", encoding="utf-8") as source:
         source.write(f"\nPHASE = {phase!r}\n")
-    env = dict(os.environ)
-    env["PYTHONPATH"] = str(Path(__file__).parent.resolve())
+    monkeypatch.setenv("PYTHONPATH", str(Path(__file__).parent.resolve()))
     # This fixture owns its asyncio.Runner; unrelated plugins add startup and shutdown work.
-    env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pytest",
-            "-p",
-            "xdist.plugin",
-            "-p",
-            "pytest_timeout",
-            "-v",
-            "-s",
-            "-n",
-            "1",
-            "--dist=loadfile",
-            "--basetemp",
-            str(tmp_path / "workers"),
-            "--rootdir",
-            str(tmp_path),
-            str(tmp_path / "test_stalled.py"),
-        ],
-        cwd=tmp_path,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
+    monkeypatch.setenv("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
+    # Reuse this worker as the controller; pytester isolates the inner session,
+    # and xdist/execnet owns its worker. The suite watchdog still bounds a hang.
+    result = pytester.runpytest_inprocess(
+        "-p",
+        "xdist.plugin",
+        "-p",
+        "pytest_timeout",
+        "-v",
+        "-s",
+        "-n",
+        "1",
+        "--dist=loadfile",
+        "--basetemp",
+        str(tmp_path / "workers"),
+        "--rootdir",
+        str(tmp_path),
+        str(tmp_path / "test_stalled.py"),
     )
-    assert result.returncode == 1, result.stdout + result.stderr
-    assert ("1 failed" if phase == "call" else "1 error") in result.stdout
-    assert "Async timeout diagnostics" in result.stdout
-    assert f"Phase: {phase}" in result.stdout
-    assert "stalled_rpc" in result.stdout
-    assert "awaiting FutureIter" in result.stdout
+    stdout = result.stdout.str()
+    assert result.ret == pytest.ExitCode.TESTS_FAILED, stdout + result.stderr.str()
+    assert ("1 failed" if phase == "call" else "1 error") in stdout
+    assert "Async timeout diagnostics" in stdout
+    assert f"Phase: {phase}" in stdout
+    assert "stalled_rpc" in stdout
+    assert "awaiting FutureIter" in stdout
     (artifact,) = (tmp_path / ".pytest-diagnostics").glob("*.txt")
     assert "stalled_rpc" in artifact.read_text(encoding="utf-8")

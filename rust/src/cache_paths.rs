@@ -3,8 +3,6 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 const SDK_CACHE_DIR: &str = "copilot-sdk";
-#[cfg(test)]
-const CLI_CACHE_DIR: &str = "cli";
 const RUNTIME_CACHE_DIR: &str = "runtime";
 
 #[cfg(unix)]

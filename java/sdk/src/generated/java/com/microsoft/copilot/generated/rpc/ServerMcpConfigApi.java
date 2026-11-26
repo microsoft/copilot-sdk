@@ -76,6 +76,65 @@ public final class ServerMcpConfigApi {
     }
 
     /**
+     * Reads a persisted MCP document or fresh raw user membership from the selected MCP configuration root. Uses a separate result to preserve existing normalized list response construction in all SDKs.
+     * <p>
+     * Invokes the method with no params, applying the runtime defaults.
+     *
+     * @apiNote This method is experimental and may change in a future version.
+     * @since 1.0.0
+     */
+    @CopilotExperimental
+    CompletableFuture<McpConfigReadResult> read() {
+        return read(null);
+    }
+
+    /**
+     * Reads a persisted MCP document or fresh raw user membership from the selected MCP configuration root. Uses a separate result to preserve existing normalized list response construction in all SDKs.
+     *
+     * @apiNote This method is experimental and may change in a future version.
+     * @since 1.0.0
+     */
+    @CopilotExperimental
+    CompletableFuture<McpConfigReadResult> read(McpConfigReadParams params) {
+        return caller.invoke("mcp.config.read", params == null ? java.util.Map.of() : params, McpConfigReadResult.class);
+    }
+
+    /**
+     * Writes a complete persisted MCP configuration document atomically under the existing installation ownership lease and updates its validated cache. Unlike per-server mutations, preserves document-level fields and bulk replacement semantics.
+     *
+     * @apiNote This method is experimental and may change in a future version.
+     * @since 1.0.0
+     */
+    @CopilotExperimental
+    CompletableFuture<Void> write(McpConfigWriteParams params) {
+        return caller.invoke("mcp.config.write", params, Void.class);
+    }
+
+    /**
+     * Lists regular JSON files and their modification and birth times in the selected MCP configuration directory, using the existing platform metadata and ordering rules.
+     * <p>
+     * Invokes the method with no params, applying the runtime defaults.
+     *
+     * @apiNote This method is experimental and may change in a future version.
+     * @since 1.0.0
+     */
+    @CopilotExperimental
+    CompletableFuture<McpConfigFilesResult> files() {
+        return files(null);
+    }
+
+    /**
+     * Lists regular JSON files and their modification and birth times in the selected MCP configuration directory, using the existing platform metadata and ordering rules.
+     *
+     * @apiNote This method is experimental and may change in a future version.
+     * @since 1.0.0
+     */
+    @CopilotExperimental
+    CompletableFuture<McpConfigFilesResult> files(McpConfigFilesParams params) {
+        return caller.invoke("mcp.config.files", params == null ? java.util.Map.of() : params, McpConfigFilesResult.class);
+    }
+
+    /**
      * Updates an MCP server in user configuration.
      *
      * @apiNote This method is experimental and may change in a future version.

@@ -4,6 +4,7 @@
 use copilot_sdk::rpc::{
     DiscoveredMcpServer, McpDiscoverOptions, McpDiscoverRequest, McpDiscoverResult,
     McpServerSource, Plugin, PluginList, PluginListResult, PluginsListRequest,
+    SkillsGetDiscoveryPathsRequest,
 };
 use copilot_sdk::session::Session;
 use copilot_sdk::{Client, Error};
@@ -36,6 +37,24 @@ async fn _invocation_plugins(
 
 async fn _session_plugins_with_verified_source(session: &Session) -> Result<PluginList, Error> {
     session.rpc().plugins().list().await
+}
+
+#[test]
+fn skill_discovery_paths_preserve_exhaustive_request_literals() {
+    let request = SkillsGetDiscoveryPathsRequest {
+        exclude_host_skills: Some(true),
+        ignored_skills_locations: None,
+        project_paths: Some(vec!["/project".to_owned()]),
+        skill_directories: Some(vec!["/extra".to_owned()]),
+    };
+    assert_eq!(
+        serde_json::to_value(request).unwrap(),
+        json!({
+            "excludeHostSkills": true,
+            "projectPaths": ["/project"],
+            "skillDirectories": ["/extra"],
+        }),
+    );
 }
 
 #[test]

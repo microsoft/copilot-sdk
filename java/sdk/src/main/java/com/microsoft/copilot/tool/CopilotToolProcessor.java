@@ -385,6 +385,9 @@ public class CopilotToolProcessor extends AbstractProcessor {
             out.println("                " + isTerminalArg);
         }
         out.print("            )");
+        if (annotation.onlyOverridesBuiltInTool()) {
+            out.print(".onlyOverridesBuiltInTool(true)");
+        }
     }
 
     /**

@@ -1376,15 +1376,6 @@ impl Session {
         .with_force_stop(self.client.inner.force_stop_requested.clone())
     }
 
-    /// Count the resume events retained for a subscriber that has not claimed
-    /// them yet, or `None` once nothing is retained for one. This is
-    /// test-harness plumbing, not part of the supported SDK API.
-    #[cfg(any(test, feature = "test-support"))]
-    #[doc(hidden)]
-    pub fn unclaimed_resume_backlog_len_for_test(&self) -> Option<usize> {
-        self.resume_bootstrap.as_ref()?.unclaimed_len()
-    }
-
     /// The underlying Client (for advanced use cases).
     pub fn client(&self) -> &Client {
         &self.client
@@ -2929,7 +2920,7 @@ impl Client {
         let external_tools_shutdown = self.inner.rpc.connection_closed_token();
 
         let spawn_loop: EventLoopSpawner = {
-            let client = Client::from_inner(self.inner.clone());
+            let client = self.clone_for_session();
             let idle_waiter = idle_waiter.clone();
             let completion_observers = completion_observers.clone();
             let capabilities = capabilities.clone();
@@ -3129,7 +3120,7 @@ impl Client {
             cwd: self.cwd().clone(),
             workspace_path: create_result.workspace_path,
             remote_url: create_result.remote_url,
-            client: Client::from_inner(self.inner.clone()),
+            client: self.clone_for_session(),
             event_loop: ParkingLotMutex::new(Some(event_loop)),
             shutdown,
             external_tools_shutdown,
@@ -3327,7 +3318,7 @@ impl Client {
         .restoring_on_failure(replaced);
         let event_loop = spawn_event_loop(
             session_id.clone(),
-            Client::from_inner(self.inner.clone()),
+            self.clone_for_session(),
             handlers,
             hooks,
             transforms,
@@ -3455,7 +3446,7 @@ impl Client {
             cwd: self.cwd().clone(),
             workspace_path: resume_result.workspace_path,
             remote_url: resume_result.remote_url,
-            client: Client::from_inner(self.inner.clone()),
+            client: self.clone_for_session(),
             event_loop: ParkingLotMutex::new(Some(event_loop)),
             shutdown,
             external_tools_shutdown,
@@ -3492,25 +3483,7 @@ impl Client {
             return Err(ErrorKind::Session(SessionErrorKind::SessionFsProviderRequired).into());
         }
         if let Some(provider) = provider {
-            if self.inner.session_fs_sqlite_declared && provider.sqlite().is_none() {
-                return Err(Error::with_message(
-                    ErrorKind::InvalidConfig,
-                    "SessionFs capabilities declare SQLite support but the provider \
-                     does not implement SessionFsSqliteProvider",
-                ));
-            }
-            if self.inner.session_fs_binary_declared && provider.binary().is_none() {
-                return Err(Error::with_message(
-                    ErrorKind::InvalidConfig,
-                    "SessionFs capabilities declare binary support but the provider does not implement SessionFsBinaryProvider",
-                ));
-            }
-            if self.inner.session_fs_read_file_range_declared && provider.byte_ranges().is_none() {
-                return Err(Error::with_message(
-                    ErrorKind::InvalidConfig,
-                    "SessionFs capabilities declare byte-range reads but the provider does not implement SessionFsReadFileRangeProvider",
-                ));
-            }
+            crate::session_fs_dispatch::validate_provider(&self.inner, provider)?;
         }
         Ok(())
     }
@@ -5308,7 +5281,12 @@ async fn handle_request(
     let shell_authentication = ctx.shell_authentication;
 
     if request.method.starts_with("sessionFs.") {
-        crate::session_fs_dispatch::dispatch(client, session_fs_provider, request).await;
+        crate::session_fs_dispatch::dispatch(
+            &client.inner.rpc.response_writer(),
+            session_fs_provider,
+            request,
+        )
+        .await;
         return;
     }
 
@@ -5717,6 +5695,9 @@ fn inject_transform_sections(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(any(test, feature = "test-support"))]
+mod test_support;
 
 #[cfg(test)]
 mod startup_tasks_tests;

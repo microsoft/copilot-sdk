@@ -67,6 +67,7 @@ from ._generated.rpc import (
     RemoteSessionMode,  # noqa: F401
     SandboxConfig,
     ServerRpc,
+    SessionLifecycleMode,
     SessionsFindByPrefixRequest,
     UIThreadRunRequest,
     _ConnectResult,
@@ -2242,6 +2243,7 @@ class CreateSessionOptions(TypedDict, total=False):
     state: SessionStateOptions | None
     config_directory: str | None
     enable_config_discovery: bool | None
+    session_lifecycle_mode: SessionLifecycleMode | None
     skills: SessionSkillOptions | None
     plugins: SessionPluginOptions | None
     canvases: SessionCanvasOptions | None
@@ -2279,6 +2281,7 @@ class ResumeSessionOptions(TypedDict, total=False):
     state: SessionStateOptions | None
     config_directory: str | None
     enable_config_discovery: bool | None
+    session_lifecycle_mode: SessionLifecycleMode | None
     skills: SessionSkillOptions | None
     plugins: SessionPluginOptions | None
     canvases: ResumeSessionCanvasOptions | None
@@ -2440,9 +2443,10 @@ class CopilotClient:
             github.token: GitHub token for authentication. Takes priority over
                 other auth methods.
             github.client_id: GitHub OAuth app ID for runtime-managed GitHub.com sign-in
-                and Entra-to-GitHub token exchange. Requires ``github.client_secret``.
-            github.client_secret: Matching GitHub OAuth app secret. Leave both unset
-                to use the Copilot CLI OAuth app.
+                and Entra-to-GitHub token exchange. Leave both OAuth options unset to use
+                the Copilot CLI OAuth app.
+            github.client_secret: Matching secret for browser sign-in. Not required for
+                Entra-to-GitHub token exchange or device sign-in.
             runtime.base_directory: Base directory for Copilot data (session state,
                 config, etc.). Sets the ``COPILOT_HOME`` environment variable on
                 the spawned runtime. When ``None``, the runtime defaults to
@@ -2525,9 +2529,14 @@ class CopilotClient:
         github_token = (github or {}).get("token", None)
         client_id = (github or {}).get("client_id")
         client_secret = (github or {}).get("client_secret")
-        if client_id is not None or client_secret is not None:
-            if not (client_id and client_id.strip() and client_secret and client_secret.strip()):
-                raise ValueError("github.client_id and github.client_secret must both be non-empty")
+        if (
+            (client_id is not None or client_secret is not None)
+            and not (client_id and client_id.strip())
+        ) or (client_secret is not None and not client_secret.strip()):
+            raise ValueError(
+                "GitHub OAuth requires a non-blank client ID and, if supplied, "
+                "a non-blank client secret"
+            )
         self._github_client_id = client_id
         self._github_client_secret = client_secret
         base_directory = (
@@ -3113,37 +3122,45 @@ class CopilotClient:
             self._session_admission_closed = True
             sessions_to_destroy = list(self._sessions.values())
         self._cancel_pending_shell_authentication_requests()
+        # Preserve a tool handler's awaiting dispatch before detach runs in child tasks.
+        for session in sessions_to_destroy:
+            session._cancel_pending_external_tools()
 
         # A hung runtime never answers session.detach, so every detach shares one
         # deadline; past it, stop() moves on to runtime shutdown and termination.
         loop = asyncio.get_running_loop()
         detach_deadline = loop.time() + _RUNTIME_SHUTDOWN_TIMEOUT_SECONDS
+
+        async def disconnect_session(session: CopilotSession) -> StopError | None:
+            try:
+                await asyncio.wait_for(
+                    session.disconnect(), timeout=max(0.0, detach_deadline - loop.time())
+                )
+                return None
+            except TimeoutError:
+                return StopError(
+                    message=f"Failed to disconnect session {session.session_id}: "
+                    "session.detach did not complete within the "
+                    f"{_RUNTIME_SHUTDOWN_TIMEOUT_SECONDS}s shutdown timeout"
+                )
+            except Exception as e:
+                logger.debug(
+                    "Error while cleaning up Copilot session %s",
+                    session.session_id,
+                    exc_info=True,
+                )
+                return StopError(message=f"Failed to disconnect session {session.session_id}: {e}")
+            finally:
+                session._mark_disconnected()
+
         try:
-            for session in sessions_to_destroy:
-                try:
-                    await asyncio.wait_for(
-                        session.disconnect(), timeout=max(0.0, detach_deadline - loop.time())
-                    )
-                except TimeoutError:
-                    errors.append(
-                        StopError(
-                            message=f"Failed to disconnect session {session.session_id}: "
-                            "session.detach did not complete within the "
-                            f"{_RUNTIME_SHUTDOWN_TIMEOUT_SECONDS}s shutdown timeout"
-                        )
-                    )
-                except Exception as e:
-                    logger.debug(
-                        "Error while cleaning up Copilot session %s",
-                        session.session_id,
-                        exc_info=True,
-                    )
-                    errors.append(
-                        StopError(message=f"Failed to disconnect session {session.session_id}: {e}")
-                    )
-                finally:
-                    session._mark_disconnected()
+            session_errors = await asyncio.gather(
+                *(disconnect_session(session) for session in sessions_to_destroy)
+            )
+            errors.extend(error for error in session_errors if error is not None)
         finally:
+            for session in sessions_to_destroy:
+                session._mark_disconnected()
             with self._sessions_lock:
                 self._sessions.clear()
         with self._github_token_providers_lock:
@@ -3454,6 +3471,7 @@ class CopilotClient:
         state: SessionStateOptions | None = None,
         config_directory: str | None = None,
         enable_config_discovery: bool | None = None,
+        session_lifecycle_mode: SessionLifecycleMode | None = None,
         skills: SessionSkillOptions | None = None,
         plugins: SessionPluginOptions | None = None,
         canvases: SessionCanvasOptions | None = None,
@@ -3608,6 +3626,10 @@ class CopilotClient:
             enable_config_discovery: Enables runtime discovery of supported
                 configuration. Explicitly supplied configuration takes precedence
                 over discovered values.
+            session_lifecycle_mode: Controls local session end hooks. ``interactive``
+                defers them to shutdown; ``per-turn`` runs them after each completed turn.
+                None inherits the host default, which is interactive for SDK-owned hosts.
+                Ignored for cloud sessions. Not persisted; supply it again on cold resume.
             state.skip_embedding_retrieval: When True, skips embedding-based retrieval.
             instructions.organization_text: Organization-level custom instructions.
             instructions.on_demand_discovery: Enables on-demand instruction file
@@ -4124,6 +4146,8 @@ class CopilotClient:
         # Add config discovery flag if provided
         if enable_config_discovery is not None:
             payload["enableConfigDiscovery"] = enable_config_discovery
+        if session_lifecycle_mode is not None:
+            payload["sessionLifecycleMode"] = SessionLifecycleMode(session_lifecycle_mode).value
         if extension_sources is not None:
             payload["extensionSources"] = extension_sources
         if extension_paths is not None:
@@ -4620,6 +4644,7 @@ class CopilotClient:
         state: SessionStateOptions | None = None,
         config_directory: str | None = None,
         enable_config_discovery: bool | None = None,
+        session_lifecycle_mode: SessionLifecycleMode | None = None,
         skills: SessionSkillOptions | None = None,
         plugins: SessionPluginOptions | None = None,
         canvases: ResumeSessionCanvasOptions | None = None,
@@ -4765,6 +4790,10 @@ class CopilotClient:
             enable_config_discovery: Enables runtime discovery of supported
                 configuration. Explicitly supplied configuration takes precedence
                 over discovered values.
+            session_lifecycle_mode: Controls local session end hooks on cold resume.
+                ``interactive`` defers them to shutdown; ``per-turn`` runs them after each turn.
+                None inherits the host default, which is interactive for SDK-owned hosts.
+                Ignored for resident and cloud sessions. Not persisted.
             state.skip_embedding_retrieval: When True, skips embedding-based retrieval.
             instructions.organization_text: Organization-level custom instructions.
             instructions.on_demand_discovery: Enables on-demand instruction file
@@ -5223,6 +5252,8 @@ class CopilotClient:
             payload["configDir"] = config_directory
         if enable_config_discovery is not None:
             payload["enableConfigDiscovery"] = enable_config_discovery
+        if session_lifecycle_mode is not None:
+            payload["sessionLifecycleMode"] = SessionLifecycleMode(session_lifecycle_mode).value
         if extension_sources is not None:
             payload["extensionSources"] = extension_sources
         if extension_paths is not None:
@@ -6118,6 +6149,7 @@ class CopilotClient:
                 connect_params["entraTokenProvider"] = True
             if self._github_client_id is not None:
                 connect_params["githubClientId"] = self._github_client_id
+            if self._github_client_secret is not None:
                 connect_params["githubClientSecret"] = self._github_client_secret
             if self._effective_connection_token is not None:
                 connect_params["token"] = self._effective_connection_token

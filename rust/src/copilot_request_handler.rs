@@ -1329,24 +1329,24 @@ impl CopilotRequestDispatcher {
     /// it cancels a response it rejects, such as one over its size limit, while
     /// the handler's end is in flight. An exchange created for that frame would
     /// never be removed.
-    fn get_or_create_exchange(&self, request_id: String) -> Option<Arc<CopilotRequestExchange>> {
+    fn get_or_create_exchange(&self, request_id: &str) -> Option<Arc<CopilotRequestExchange>> {
         // The runtime dispatches httpRequestStart and httpRequestChunk frames
         // independently. get-or-create keeps the adapter correct regardless of
         // arrival order: a body chunk (including the terminal end frame) that
         // races ahead of its start frame is buffered into the same exchange
         // rather than dropped, which would otherwise hang the body drain.
         let mut pending = self.pending.lock();
-        if let Some(exchange) = pending.get(&request_id) {
+        if let Some(exchange) = pending.get(request_id) {
             return Some(exchange.clone());
         }
-        if self.finished.lock().contains(&request_id) {
+        if self.finished.lock().contains(request_id) {
             return None;
         }
         let exchange = Arc::new(CopilotRequestExchange::new(
-            request_id.clone(),
+            request_id.to_owned(),
             self.client_weak(),
         ));
-        pending.insert(request_id, exchange.clone());
+        pending.insert(request_id.to_owned(), exchange.clone());
         Some(exchange)
     }
 
@@ -1361,8 +1361,8 @@ impl CopilotRequestDispatcher {
 
         // Adopt any exchange a racing chunk already created — with its buffered
         // body — rather than dropping those frames.
-        let request_id = params.request_id.clone().into_inner();
-        let Some(exchange) = self.get_or_create_exchange(request_id.clone()) else {
+        let request_id = params.request_id.as_ref();
+        let Some(exchange) = self.get_or_create_exchange(request_id) else {
             self.send_error(
                 id,
                 &format!(
@@ -1389,7 +1389,7 @@ impl CopilotRequestDispatcher {
                     ))
                 });
             finalize_exchange(&exchange_for_task, result).await;
-            dispatcher.remove_pending(&request_id);
+            dispatcher.remove_pending(&exchange_for_task.request_id);
         });
 
         self.ack(id).await;
@@ -1407,7 +1407,7 @@ impl CopilotRequestDispatcher {
         // May arrive before the matching start frame; get-or-create so the body
         // is buffered, never lost.
         // A frame for a finished request has nothing left to deliver to.
-        if let Some(exchange) = self.get_or_create_exchange(params.request_id.to_string()) {
+        if let Some(exchange) = self.get_or_create_exchange(&params.request_id) {
             apply_chunk(&exchange, params);
         }
 

@@ -6057,6 +6057,58 @@ func (r *HistoryImportConversationRequest) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+func unmarshalHostAgentRegistryPrepareSpawnResult(data []byte) (HostAgentRegistryPrepareSpawnResult, error) {
+	if string(data) == "null" {
+		return nil, nil
+	}
+	type rawUnion struct {
+		Kind HostAgentRegistryPrepareSpawnResultKind `json:"kind"`
+	}
+	var raw rawUnion
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+
+	switch raw.Kind {
+	case HostAgentRegistryPrepareSpawnResultKindPrepared:
+		var d HostAgentRegistrySpawnPrepared
+		if err := json.Unmarshal(data, &d); err != nil {
+			return nil, err
+		}
+		return &d, nil
+	case HostAgentRegistryPrepareSpawnResultKindValidationError:
+		var d AgentRegistrySpawnValidationError
+		if err := json.Unmarshal(data, &d); err != nil {
+			return nil, err
+		}
+		return &d, nil
+	default:
+		return &RawHostAgentRegistryPrepareSpawnResultData{Discriminator: raw.Kind, Raw: data}, nil
+	}
+}
+
+func (r RawHostAgentRegistryPrepareSpawnResultData) MarshalJSON() ([]byte, error) {
+	if r.Raw != nil {
+		return r.Raw, nil
+	}
+	return json.Marshal(struct {
+		Kind HostAgentRegistryPrepareSpawnResultKind `json:"kind"`
+	}{
+		Kind: r.Discriminator,
+	})
+}
+
+func (r HostAgentRegistrySpawnPrepared) MarshalJSON() ([]byte, error) {
+	type alias HostAgentRegistrySpawnPrepared
+	return json.Marshal(struct {
+		Kind HostAgentRegistryPrepareSpawnResultKind `json:"kind"`
+		alias
+	}{
+		Kind:  r.hostAgentRegistryPrepareSpawnResultKind(),
+		alias: alias(r),
+	})
+}
+
 func unmarshalHostAuthentication(data []byte) (HostAuthentication, error) {
 	if string(data) == "null" {
 		return nil, nil
@@ -6812,6 +6864,143 @@ func (r *InstallationConfirmationRequest) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+func matchesInstalledPluginSourceWithRawInstalledPluginSourceGitHub(data []byte) bool {
+	var rawObject map[string]json.RawMessage
+	if err := json.Unmarshal(data, &rawObject); err != nil {
+		return false
+	}
+	if _, ok := rawObject["repo"]; !ok {
+		return false
+	}
+	if _, ok := rawObject["source"]; !ok {
+		return false
+	}
+	if rawSource, ok := rawObject["source"]; ok {
+		var rawSourceString string
+		if err := json.Unmarshal(rawSource, &rawSourceString); err != nil {
+			return false
+		}
+		switch rawSourceString {
+		case "github":
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func matchesInstalledPluginSourceWithRawInstalledPluginSourceLocal(data []byte) bool {
+	var rawObject map[string]json.RawMessage
+	if err := json.Unmarshal(data, &rawObject); err != nil {
+		return false
+	}
+	if _, ok := rawObject["path"]; !ok {
+		return false
+	}
+	if _, ok := rawObject["source"]; !ok {
+		return false
+	}
+	if rawSource, ok := rawObject["source"]; ok {
+		var rawSourceString string
+		if err := json.Unmarshal(rawSource, &rawSourceString); err != nil {
+			return false
+		}
+		switch rawSourceString {
+		case "local":
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func matchesInstalledPluginSourceWithRawInstalledPluginSourceURL(data []byte) bool {
+	var rawObject map[string]json.RawMessage
+	if err := json.Unmarshal(data, &rawObject); err != nil {
+		return false
+	}
+	if _, ok := rawObject["source"]; !ok {
+		return false
+	}
+	if _, ok := rawObject["url"]; !ok {
+		return false
+	}
+	if rawSource, ok := rawObject["source"]; ok {
+		var rawSourceString string
+		if err := json.Unmarshal(rawSource, &rawSourceString); err != nil {
+			return false
+		}
+		switch rawSourceString {
+		case "url":
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func (r InstalledPluginSourceWithRaw) MarshalJSON() ([]byte, error) {
+	if r.InstalledPluginSourceGitHub != nil {
+		return json.Marshal(r.InstalledPluginSourceGitHub)
+	}
+	if r.InstalledPluginSourceLocal != nil {
+		return json.Marshal(r.InstalledPluginSourceLocal)
+	}
+	if r.InstalledPluginSourceURL != nil {
+		return json.Marshal(r.InstalledPluginSourceURL)
+	}
+	if r.String != nil {
+		return json.Marshal(r.String)
+	}
+	if r.Raw != nil {
+		return r.Raw, nil
+	}
+	return []byte("null"), nil
+}
+
+func (r *InstalledPluginSourceWithRaw) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		*r = InstalledPluginSourceWithRaw{}
+		return nil
+	}
+	if matchesInstalledPluginSourceWithRawInstalledPluginSourceGitHub(data) {
+		var value InstalledPluginSourceGitHub
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		*r = InstalledPluginSourceWithRaw{InstalledPluginSourceGitHub: &value}
+		return nil
+	}
+	if matchesInstalledPluginSourceWithRawInstalledPluginSourceLocal(data) {
+		var value InstalledPluginSourceLocal
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		*r = InstalledPluginSourceWithRaw{InstalledPluginSourceLocal: &value}
+		return nil
+	}
+	if matchesInstalledPluginSourceWithRawInstalledPluginSourceURL(data) {
+		var value InstalledPluginSourceURL
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		*r = InstalledPluginSourceWithRaw{InstalledPluginSourceURL: &value}
+		return nil
+	}
+	{
+		var value string
+		if err := json.Unmarshal(data, &value); err == nil {
+			*r = InstalledPluginSourceWithRaw{String: &value}
+			return nil
+		}
+	}
+	if len(data) > 0 && data[0] == '{' && json.Valid(data) {
+		*r = InstalledPluginSourceWithRaw{Raw: append(json.RawMessage(nil), data...)}
+		return nil
+	}
+	return errors.New("data did not match any union variant for InstalledPluginSourceWithRaw")
+}
+
 func unmarshalLocalModelDiskRequirement(data []byte) (LocalModelDiskRequirement, error) {
 	if string(data) == "null" {
 		return nil, nil
@@ -7268,6 +7457,28 @@ func (r RawMCPSerializableServerConfigData) MarshalJSON() ([]byte, error) {
 	return []byte("null"), nil
 }
 
+func (r *MCPConfigAddOptions) UnmarshalJSON(data []byte) error {
+	type rawMCPConfigAddOptions struct {
+		Config    json.RawMessage `json:"config"`
+		ConfigDir *string         `json:"configDir,omitempty"`
+		Name      string          `json:"name"`
+	}
+	var raw rawMCPConfigAddOptions
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if raw.Config != nil {
+		value, err := unmarshalMCPSerializableServerConfig(raw.Config)
+		if err != nil {
+			return err
+		}
+		r.Config = value
+	}
+	r.ConfigDir = raw.ConfigDir
+	r.Name = raw.Name
+	return nil
+}
+
 func (r *MCPConfigAddRequest) UnmarshalJSON(data []byte) error {
 	type rawMCPConfigAddRequest struct {
 		Config    json.RawMessage `json:"config"`
@@ -7371,6 +7582,14 @@ func (r *MCPConfigUpdateRequest) UnmarshalJSON(data []byte) error {
 	}
 	r.Name = raw.Name
 	return nil
+}
+
+func (r MCPDiscoverPluginServersRequest) MarshalJSON() ([]byte, error) {
+	type wire MCPDiscoverPluginServersRequest
+	if r.InstalledPlugins == nil {
+		r.InstalledPlugins = []InstalledPluginWithRawSource{}
+	}
+	return json.Marshal(wire(r))
 }
 
 func (r MCPDiscoveryOptions) String() string {
@@ -9709,6 +9928,31 @@ func (r MCPSecretSaveRequest) GoString() string {
 	return fmt.Sprintf("MCPSecretSaveRequest{ConfigDir:%#v, SecretID:%#v, Value:<redacted>}", r.ConfigDir, r.SecretID)
 }
 
+func (r *MCPServersConfig) UnmarshalJSON(data []byte) error {
+	type rawMCPServersConfig struct {
+		DisabledServers []string                   `json:"disabledServers,omitzero"`
+		EnabledServers  []string                   `json:"enabledServers,omitzero"`
+		MCPServers      map[string]json.RawMessage `json:"mcpServers"`
+	}
+	var raw rawMCPServersConfig
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	r.DisabledServers = raw.DisabledServers
+	r.EnabledServers = raw.EnabledServers
+	if raw.MCPServers != nil {
+		r.MCPServers = make(map[string]MCPServerConfig, len(raw.MCPServers))
+		for key, rawValue := range raw.MCPServers {
+			value, err := unmarshalMCPServerConfig(rawValue)
+			if err != nil {
+				return err
+			}
+			r.MCPServers[key] = value
+		}
+	}
+	return nil
+}
+
 func matchesMCPStartServerConfigMCPServerConfigHTTP(data []byte) bool {
 	var rawType struct {
 		Type json.RawMessage `json:"type"`
@@ -11659,6 +11903,14 @@ func (r PluginInstallationResultOutcome) MarshalJSON() ([]byte, error) {
 		Kind:  r.pluginInstallationResultKind(),
 		alias: alias(r),
 	})
+}
+
+func (r PluginsScanDirectoriesRequest) MarshalJSON() ([]byte, error) {
+	type wire PluginsScanDirectoriesRequest
+	if r.Paths == nil {
+		r.Paths = []string{}
+	}
+	return json.Marshal(wire(r))
 }
 
 func unmarshalPushAttachment(data []byte) (PushAttachment, error) {
@@ -15297,6 +15549,20 @@ func (r SkillInstallationResultOutcome) MarshalJSON() ([]byte, error) {
 		Kind:  r.skillInstallationResultKind(),
 		alias: alias(r),
 	})
+}
+
+func (r SkillScanInputs) MarshalJSON() ([]byte, error) {
+	type wire SkillScanInputs
+	if r.CommandSources == nil {
+		r.CommandSources = []SkillScanSource{}
+	}
+	if r.CustomDirectories == nil {
+		r.CustomDirectories = []string{}
+	}
+	if r.SkillSources == nil {
+		r.SkillSources = []SkillScanSource{}
+	}
+	return json.Marshal(wire(r))
 }
 
 func (r SkillsInstallSourceRequest) MarshalJSON() ([]byte, error) {

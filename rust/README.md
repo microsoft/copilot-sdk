@@ -1431,6 +1431,7 @@ let config = config.with_tools(|group| group.with_definitions(vec![apply_patch])
 # }
 ```
 
+Use `.with_only_overrides_built_in_tool(true)` instead to omit your tool unless a same-named built-in is enabled for this session and the executing model (matched before available/excluded tool filters). MCP tools such as `web_search` aren't built-ins and never match.
 String-schema `apply_patch` overrides cannot contain JSON Schema references;
 use an object schema if references are needed.
 

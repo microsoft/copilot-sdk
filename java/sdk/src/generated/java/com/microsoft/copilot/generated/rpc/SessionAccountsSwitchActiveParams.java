@@ -26,8 +26,8 @@ import javax.annotation.processing.Generated;
 public record SessionAccountsSwitchActiveParams(
     /** Target session identifier */
     @JsonProperty("sessionId") String sessionId,
-    /** Opaque selection id of the account to make active. */
-    @JsonProperty("selectionId") String selectionId
+    /** Account id returned by accounts.list. The runtime selects the account's credentials. */
+    @JsonProperty("accountId") String accountId
 ) {
 
     /**
@@ -52,7 +52,7 @@ public record SessionAccountsSwitchActiveParams(
     public static final class Builder {
         private Builder() {}
         private String sessionId;
-        private String selectionId;
+        private String accountId;
 
         /**
          * Sets the {@code sessionId} property.
@@ -67,14 +67,14 @@ public record SessionAccountsSwitchActiveParams(
         }
 
         /**
-         * Sets the {@code selectionId} property.
+         * Sets the {@code accountId} property.
          * @param value the property value
          * @return this builder
          * @since 2.0.0
          */
         @com.microsoft.copilot.CopilotExperimental
-        public Builder selectionId(String value) {
-            this.selectionId = value;
+        public Builder accountId(String value) {
+            this.accountId = value;
             return this;
         }
 
@@ -85,8 +85,8 @@ public record SessionAccountsSwitchActiveParams(
          * @since 2.0.0
          */
         public SessionAccountsSwitchActiveParams build() {
-            if (selectionId == null) throw new IllegalStateException("Missing required property: selectionId");
-            return new SessionAccountsSwitchActiveParams(sessionId, selectionId);
+            if (accountId == null) throw new IllegalStateException("Missing required property: accountId");
+            return new SessionAccountsSwitchActiveParams(sessionId, accountId);
         }
     }
 }

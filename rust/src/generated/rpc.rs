@@ -431,10 +431,6 @@ pub const SESSION_METHOD_PATHS: &[(&str, &[&str])] = &[
         &["accounts", "setCredentials"],
     ),
     (
-        "session.accounts.login.list",
-        &["accounts", "login", "list"],
-    ),
-    (
         "session.accounts.login.begin",
         &["accounts", "login", "begin"],
     ),
@@ -644,10 +640,18 @@ pub const SESSION_METHOD_PATHS: &[(&str, &[&str])] = &[
     ("session.tasks.remove", &["tasks", "remove"]),
     ("session.tasks.sendMessage", &["tasks", "sendMessage"]),
     ("session.skills.list", &["skills", "list"]),
+    (
+        "session.skills.getDefinitions",
+        &["skills", "getDefinitions"],
+    ),
     ("session.skills.getInvoked", &["skills", "getInvoked"]),
     ("session.skills.enable", &["skills", "enable"]),
     ("session.skills.disable", &["skills", "disable"]),
     ("session.skills.reload", &["skills", "reload"]),
+    (
+        "session.skills.getDiagnostics",
+        &["skills", "getDiagnostics"],
+    ),
     ("session.skills.ensureLoaded", &["skills", "ensureLoaded"]),
     (
         "session.skills.inspectInventory",
@@ -660,6 +664,10 @@ pub const SESSION_METHOD_PATHS: &[(&str, &[&str])] = &[
     (
         "session.skills.resources.remove",
         &["skills", "resources", "remove"],
+    ),
+    (
+        "session.skillsSource.getDiagnostics",
+        &["skillsSource", "getDiagnostics"],
     ),
     (
         "session.diagnostics.configure",
@@ -3933,6 +3941,35 @@ impl<'a> ClientRpcCloudTasks<'a> {
             .await
     }
 
+    /// Lists remote task metadata for an explicit account, with numbered pagination, optional full-catalog scans and structured HTTP failures. SDK hosts and the CLI use the same credential, experiment-aware endpoint and repository-enrichment pipeline.
+    ///
+    /// Wire method: `cloudTasks.list`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - Lists Mission Control task metadata under an explicit account, preserving numbered pagination.
+    ///
+    /// # Returns
+    ///
+    /// Remote task metadata and pagination, including structured HTTP or partial-archive failures.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub(crate) async fn list(
+        &self,
+        params: CloudTasksListParams,
+    ) -> Result<CloudTasksListResult, Error> {
+        let wire_params = serde_json::to_value(params)?;
+        self.client
+            .call_typed(rpc_methods::CLOUDTASKS_LIST, Some(wire_params))
+            .await
+    }
+
     /// Reads one cloud coding-agent task from the Copilot API. This is the task a cloud agent runs on a host's behalf, not a background task inside a session, so it is answered above any session and the `tasks` group does not cover it. Hosts other than the CLI want this: a GitHub App or an SDK consumer that shows the state of a cloud agent run must read the same task record, and resolving it here keeps one credential-resolution, task-URL and circuit-breaker path instead of each host rebuilding them. The result is the HTTP outcome rather than the task itself: a caller must read `ok` and `statusCode` before `payloadJson`, because a 404 is reported as a non-ok result rather than an error, which is what lets a caller tell "no such task" apart from "the API call failed".
     ///
     /// Wire method: `cloudTasks.get`.
@@ -6444,6 +6481,35 @@ impl<'a> ClientRpcGlobalState<'a> {
             .await?;
         Ok(())
     }
+
+    /// Reports whether the normalized state contains any keys and identifies a state file that JSONC recovery cannot read. Credential values and excluded fields never cross this boundary. Hosts use this to report a damaged profile or distinguish an existing profile from a fresh installation, even when every stored field is excluded from globalState.load. An absent or empty configDir uses the server's configured home.
+    ///
+    /// Wire method: `globalState.getDiagnostics`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - Selects the configuration directory whose machine-wide state to read.
+    ///
+    /// # Returns
+    ///
+    /// Read-only state health for hosts that report recovery problems or first-launch status.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub(crate) async fn get_diagnostics(
+        &self,
+        params: GlobalStateLoadForConfigDirRequest,
+    ) -> Result<GlobalStateDiagnosticsResult, Error> {
+        let wire_params = serde_json::to_value(params)?;
+        self.client
+            .call_typed(rpc_methods::GLOBALSTATE_GETDIAGNOSTICS, Some(wire_params))
+            .await
+    }
 }
 
 /// `hooks.*` RPCs.
@@ -6490,6 +6556,20 @@ pub struct ClientRpcHost<'a> {
 }
 
 impl<'a> ClientRpcHost<'a> {
+    /// `host.callbacks.*` sub-namespace.
+    pub fn callbacks(&self) -> ClientRpcHostCallbacks<'a> {
+        ClientRpcHostCallbacks {
+            client: self.client,
+        }
+    }
+
+    /// `host.transports.*` sub-namespace.
+    pub fn transports(&self) -> ClientRpcHostTransports<'a> {
+        ClientRpcHostTransports {
+            client: self.client,
+        }
+    }
+
     /// Reads or atomically creates the stable compute UUID used by hosted environments in the selected canonical settings document. Preserves concurrent edits and refuses malformed files or identities.
     ///
     /// Wire method: `host.getOrCreateComputeId`.
@@ -6934,6 +7014,127 @@ impl<'a> ClientRpcHost<'a> {
         let wire_params = serde_json::to_value(params)?;
         self.client
             .call_typed(rpc_methods::HOST_READY, Some(wire_params))
+            .await
+    }
+}
+
+/// `host.callbacks.*` RPCs.
+#[derive(Clone, Copy)]
+pub struct ClientRpcHostCallbacks<'a> {
+    pub(crate) client: &'a Client,
+}
+
+impl<'a> ClientRpcHostCallbacks<'a> {
+    /// Registers narrow foreground and controller-local spawn callbacks on the original SDK-owned runtime connection. Other connections cannot register them. Replaces this owner's previous registration and cancels its pending callbacks. Omitted flags disable their callback; disabling both clears the registration. The runtime keeps canonical session ownership.
+    ///
+    /// Wire method: `host.callbacks.register`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - Callbacks supplied by the original SDK-owned runtime controller.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub async fn register(&self, params: HostCallbacksRegisterRequest) -> Result<(), Error> {
+        let wire_params = serde_json::to_value(params)?;
+        let _: serde::de::IgnoredAny = self
+            .client
+            .call_typed(rpc_methods::HOST_CALLBACKS_REGISTER, Some(wire_params))
+            .await?;
+        Ok(())
+    }
+}
+
+/// `host.transports.*` RPCs.
+#[derive(Clone, Copy)]
+pub struct ClientRpcHostTransports<'a> {
+    pub(crate) client: &'a Client,
+}
+
+impl<'a> ClientRpcHostTransports<'a> {
+    /// Starts a runtime-owned JSON-RPC or ACP transport on this connection's existing engine. Requires native SDK host-controller admission; ordinary protocol clients cannot start listeners. The runtime owns connections and cleanup.
+    ///
+    /// Wire method: `host.transports.start`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - Starts a transport on the caller's existing runtime host. Requires private admission of the owning native SDK connection.
+    ///
+    /// # Returns
+    ///
+    /// A transport that is ready to accept requests on the existing runtime engine.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub async fn start(
+        &self,
+        params: HostTransportStartRequest,
+    ) -> Result<HostTransportStartResult, Error> {
+        let wire_params = serde_json::to_value(params)?;
+        self.client
+            .call_typed(rpc_methods::HOST_TRANSPORTS_START, Some(wire_params))
+            .await
+    }
+
+    /// Stops a transport owned by this SDK connection and waits for its connections to finish cleanup. Does not stop the runtime host or other transports.
+    ///
+    /// Wire method: `host.transports.stop`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - Selects a transport owned by this SDK connection.
+    ///
+    /// # Returns
+    ///
+    /// Empty acknowledgement for a completed host lifecycle operation.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub async fn stop(&self, params: HostTransportRequest) -> Result<HostEmptyResult, Error> {
+        let wire_params = serde_json::to_value(params)?;
+        self.client
+            .call_typed(rpc_methods::HOST_TRANSPORTS_STOP, Some(wire_params))
+            .await
+    }
+
+    /// Waits for an owned transport to end and reports transport failures. Waiting does not request shutdown; owner disconnection or runtime shutdown stops the transport.
+    ///
+    /// Wire method: `host.transports.wait`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - Selects a transport owned by this SDK connection.
+    ///
+    /// # Returns
+    ///
+    /// Empty acknowledgement for a completed host lifecycle operation.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub async fn wait(&self, params: HostTransportRequest) -> Result<HostEmptyResult, Error> {
+        let wire_params = serde_json::to_value(params)?;
+        self.client
+            .call_typed(rpc_methods::HOST_TRANSPORTS_WAIT, Some(wire_params))
             .await
     }
 }
@@ -8511,6 +8712,35 @@ impl<'a> ClientRpcMcp<'a> {
             .call_typed(rpc_methods::MCP_APPLYUNINSTALL, Some(wire_params))
             .await
     }
+
+    /// Previews MCP servers from an explicit plugin set without merging ambient user or workspace configuration or starting servers. Builtin selection uses only the runtime's registered builtin roots.
+    ///
+    /// Wire method: `mcp.discoverPluginServers`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - Plugin-only MCP configuration preview, without ambient user or workspace servers.
+    ///
+    /// # Returns
+    ///
+    /// MCP server configurations keyed by server name.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub async fn discover_plugin_servers(
+        &self,
+        params: McpDiscoverPluginServersRequest,
+    ) -> Result<McpServersConfig, Error> {
+        let wire_params = serde_json::to_value(params)?;
+        self.client
+            .call_typed(rpc_methods::MCP_DISCOVERPLUGINSERVERS, Some(wire_params))
+            .await
+    }
 }
 
 /// `mcp.computerUse.*` RPCs.
@@ -8659,6 +8889,132 @@ impl<'a> ClientRpcMcpConfig<'a> {
             .call_typed(rpc_methods::MCP_CONFIG_ADD, Some(wire_params))
             .await?;
         Ok(())
+    }
+
+    /// Reads a persisted MCP document or fresh raw user membership from the selected MCP configuration root. Uses a separate result to preserve existing normalized list response construction in all SDKs.
+    ///
+    /// Wire method: `mcp.config.read`.
+    ///
+    /// # Returns
+    ///
+    /// Persisted MCP document or raw user membership. Separate from the existing normalized list result to preserve public SDK construction patterns.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub(crate) async fn read(&self) -> Result<McpConfigReadResult, Error> {
+        let wire_params = serde_json::json!({});
+        self.client
+            .call_typed(rpc_methods::MCP_CONFIG_READ, Some(wire_params))
+            .await
+    }
+
+    /// Reads a persisted MCP document or fresh raw user membership from the selected MCP configuration root. Uses a separate result to preserve existing normalized list response construction in all SDKs.
+    ///
+    /// Wire method: `mcp.config.read`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - Persisted MCP document or fresh raw membership selection. Does not change the existing normalized list response.
+    ///
+    /// # Returns
+    ///
+    /// Persisted MCP document or raw user membership. Separate from the existing normalized list result to preserve public SDK construction patterns.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub(crate) async fn read_with_params(
+        &self,
+        params: McpConfigReadRequest,
+    ) -> Result<McpConfigReadResult, Error> {
+        let wire_params = serde_json::to_value(params)?;
+        self.client
+            .call_typed(rpc_methods::MCP_CONFIG_READ, Some(wire_params))
+            .await
+    }
+
+    /// Writes a complete persisted MCP configuration document atomically under the existing installation ownership lease and updates its validated cache. Unlike per-server mutations, preserves document-level fields and bulk replacement semantics.
+    ///
+    /// Wire method: `mcp.config.write`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - Atomic bulk MCP document write. Uses the same runtime-owned installation leases, validation, metadata preservation, and cache update as persisted configuration writes.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub(crate) async fn write(&self, params: McpConfigWriteRequest) -> Result<(), Error> {
+        let wire_params = serde_json::to_value(params)?;
+        let _: serde::de::IgnoredAny = self
+            .client
+            .call_typed(rpc_methods::MCP_CONFIG_WRITE, Some(wire_params))
+            .await?;
+        Ok(())
+    }
+
+    /// Lists regular JSON files and their modification and birth times in the selected MCP configuration directory, using the existing platform metadata and ordering rules.
+    ///
+    /// Wire method: `mcp.config.files`.
+    ///
+    /// # Returns
+    ///
+    /// Regular JSON files in the MCP configuration directory, newest modification time first. Unreadable or absent directories return an empty list.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub(crate) async fn files(&self) -> Result<McpConfigFilesResult, Error> {
+        let wire_params = serde_json::json!({});
+        self.client
+            .call_typed(rpc_methods::MCP_CONFIG_FILES, Some(wire_params))
+            .await
+    }
+
+    /// Lists regular JSON files and their modification and birth times in the selected MCP configuration directory, using the existing platform metadata and ordering rules.
+    ///
+    /// Wire method: `mcp.config.files`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - MCP configuration directory selection for metadata enumeration.
+    ///
+    /// # Returns
+    ///
+    /// Regular JSON files in the MCP configuration directory, newest modification time first. Unreadable or absent directories return an empty list.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub(crate) async fn files_with_params(
+        &self,
+        params: McpConfigFilesRequest,
+    ) -> Result<McpConfigFilesResult, Error> {
+        let wire_params = serde_json::to_value(params)?;
+        self.client
+            .call_typed(rpc_methods::MCP_CONFIG_FILES, Some(wire_params))
+            .await
     }
 
     /// Updates an MCP server in user configuration.
@@ -9689,7 +10045,7 @@ impl<'a> ClientRpcPermissions<'a> {
     }
 
     /// `permissions.folderTrust.*` sub-namespace.
-    pub(crate) fn folder_trust(&self) -> ClientRpcPermissionsFolderTrust<'a> {
+    pub fn folder_trust(&self) -> ClientRpcPermissionsFolderTrust<'a> {
         ClientRpcPermissionsFolderTrust {
             client: self.client,
         }
@@ -9841,7 +10197,7 @@ impl<'a> ClientRpcPermissionsExtensionApprovals<'a> {
 
 /// `permissions.folderTrust.*` RPCs.
 #[derive(Clone, Copy)]
-pub(crate) struct ClientRpcPermissionsFolderTrust<'a> {
+pub struct ClientRpcPermissionsFolderTrust<'a> {
     pub(crate) client: &'a Client,
 }
 
@@ -9873,6 +10229,38 @@ impl<'a> ClientRpcPermissionsFolderTrust<'a> {
         self.client
             .call_typed(
                 rpc_methods::PERMISSIONS_FOLDERTRUST_CHECKTRUST,
+                Some(wire_params),
+            )
+            .await
+    }
+
+    /// Remembers a local folder in the caller's persisted trusted-folders list without creating or changing a session. CLI-backed desktop hosts can use this before session creation through their existing CLI-owned SDK connection. The runtime canonicalizes the path and applies its existing Git-root and atomic persistence rules. An explicit configDir selects the caller's configuration root; otherwise COPILOT_HOME and the OS home apply, not the server or session root. Rejects persistence failures with the existing Failed to add trusted folder prefix. Requires a live, privately admitted CLI host connection or direct internal runtime dispatch. Ordinary SDK clients and AHP peers cannot grant this local trust.
+    ///
+    /// Wire method: `permissions.folderTrust.addTrusted`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - Local folder and configuration root for persistent trust.
+    ///
+    /// # Returns
+    ///
+    /// Indicates whether the operation succeeded.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub async fn add_trusted(
+        &self,
+        params: FolderTrustAddTrustedParams,
+    ) -> Result<PermissionsFolderTrustAddTrustedResult, Error> {
+        let wire_params = serde_json::to_value(params)?;
+        self.client
+            .call_typed(
+                rpc_methods::PERMISSIONS_FOLDERTRUST_ADDTRUSTED,
                 Some(wire_params),
             )
             .await
@@ -10329,6 +10717,35 @@ impl<'a> ClientRpcPlugins<'a> {
         let wire_params = serde_json::to_value(params)?;
         self.client
             .call_typed(rpc_methods::PLUGINS_ACTIVATE, Some(wire_params))
+            .await
+    }
+
+    /// Inspects explicit plugin directories without installation or activation. Configuration editors can preview recognized mounts and manifest diagnostics in caller precedence order.
+    ///
+    /// Wire method: `plugins.scanDirectories`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - Explicit directories to inspect without installing or activating their contents.
+    ///
+    /// # Returns
+    ///
+    /// Recognized directory mounts and their manifest diagnostics.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub async fn scan_directories(
+        &self,
+        params: PluginsScanDirectoriesRequest,
+    ) -> Result<PluginsScanDirectoriesResult, Error> {
+        let wire_params = serde_json::to_value(params)?;
+        self.client
+            .call_typed(rpc_methods::PLUGINS_SCANDIRECTORIES, Some(wire_params))
             .await
     }
 }
@@ -13005,6 +13422,37 @@ impl<'a> ClientRpcSessions<'a> {
             .await
     }
 
+    /// Validates semantic session JSONL and imports canonical events into a fresh local session with rollback. Dry runs perform no authentication, network calls, or writes.
+    ///
+    /// Wire method: `sessions.importSemantic`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - Semantic conversation input for local import or validation.
+    ///
+    /// # Returns
+    ///
+    /// Semantic session import outcome.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    ///
+    /// Accepts [`SessionsImportSemanticOptions`], including inputs added after [`SessionsImportSemanticRequest`].
+    pub(crate) async fn import_semantic_with_options(
+        &self,
+        params: SessionsImportSemanticOptions,
+    ) -> Result<SessionsImportSemanticResult, Error> {
+        let wire_params = serde_json::to_value(params)?;
+        self.client
+            .call_typed(rpc_methods::SESSIONS_IMPORTSEMANTIC, Some(wire_params))
+            .await
+    }
+
     /// Validates semantic session JSONL and imports a new local session. Dry runs create no session.
     ///
     /// Wire method: `sessions.import`.
@@ -13025,6 +13473,37 @@ impl<'a> ClientRpcSessions<'a> {
     ///
     /// </div>
     pub async fn import(&self, params: SessionImportRequest) -> Result<SessionImportResult, Error> {
+        let wire_params = serde_json::to_value(params)?;
+        self.client
+            .call_typed(rpc_methods::SESSIONS_IMPORT, Some(wire_params))
+            .await
+    }
+
+    /// Validates semantic session JSONL and imports a new local session. Dry runs create no session.
+    ///
+    /// Wire method: `sessions.import`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - Input for a semantic session import.
+    ///
+    /// # Returns
+    ///
+    /// Result of a semantic session import.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    ///
+    /// Accepts [`SessionImportOptions`], including inputs added after [`SessionImportRequest`].
+    pub async fn import_with_options(
+        &self,
+        params: SessionImportOptions,
+    ) -> Result<SessionImportResult, Error> {
         let wire_params = serde_json::to_value(params)?;
         self.client
             .call_typed(rpc_methods::SESSIONS_IMPORT, Some(wire_params))
@@ -14613,6 +15092,76 @@ impl<'a> ClientRpcSkills<'a> {
             .await
     }
 
+    /// Loads complete local skill definitions for editor previews and inline expansion. The runtime resolves configured sources, plugin activation, trust, and cache invalidation. Explicit source inputs support clients with their own discovery scope.
+    ///
+    /// Wire method: `skills.load`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - Local discovery options. The runtime owns configuration, parsing, and caches.
+    ///
+    /// # Returns
+    ///
+    /// Parsed definitions and source diagnostics from one canonical runtime load.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub async fn load(&self, params: SkillsLoadRequest) -> Result<SkillsLoadResult, Error> {
+        let wire_params = serde_json::to_value(params)?;
+        self.client
+            .call_typed(rpc_methods::SKILLS_LOAD, Some(wire_params))
+            .await
+    }
+
+    /// Invalidates the runtime's parsed skill cache and returns its new generation. The next load reads source definitions again.
+    ///
+    /// Wire method: `skills.invalidate`.
+    ///
+    /// # Returns
+    ///
+    /// Current runtime skill cache generation.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub async fn invalidate(&self) -> Result<SkillsCacheGeneration, Error> {
+        let wire_params = serde_json::json!({});
+        self.client
+            .call_typed(rpc_methods::SKILLS_INVALIDATE, Some(wire_params))
+            .await
+    }
+
+    /// Reads the runtime's skill cache generation without scanning source directories.
+    ///
+    /// Wire method: `skills.getCacheGeneration`.
+    ///
+    /// # Returns
+    ///
+    /// Current runtime skill cache generation.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub async fn get_cache_generation(&self) -> Result<SkillsCacheGeneration, Error> {
+        let wire_params = serde_json::json!({});
+        self.client
+            .call_typed(rpc_methods::SKILLS_GETCACHEGENERATION, Some(wire_params))
+            .await
+    }
+
     /// Discovers skills across global and project sources.
     ///
     /// Wire method: `skills.discover`.
@@ -14633,6 +15182,37 @@ impl<'a> ClientRpcSkills<'a> {
     ///
     /// </div>
     pub async fn discover(&self, params: SkillsDiscoverRequest) -> Result<ServerSkillList, Error> {
+        let wire_params = serde_json::to_value(params)?;
+        self.client
+            .call_typed(rpc_methods::SKILLS_DISCOVER, Some(wire_params))
+            .await
+    }
+
+    /// Discovers skills across global and project sources.
+    ///
+    /// Wire method: `skills.discover`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - Optional project paths and additional skill directories to include in discovery.
+    ///
+    /// # Returns
+    ///
+    /// Skills discovered across global and project sources.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    ///
+    /// Accepts [`SkillsDiscoverOptions`], including inputs added after [`SkillsDiscoverRequest`].
+    pub async fn discover_with_options(
+        &self,
+        params: SkillsDiscoverOptions,
+    ) -> Result<ServerSkillList, Error> {
         let wire_params = serde_json::to_value(params)?;
         self.client
             .call_typed(rpc_methods::SKILLS_DISCOVER, Some(wire_params))
@@ -14661,6 +15241,37 @@ impl<'a> ClientRpcSkills<'a> {
     pub async fn get_discovery_paths(
         &self,
         params: SkillsGetDiscoveryPathsRequest,
+    ) -> Result<SkillDiscoveryPathList, Error> {
+        let wire_params = serde_json::to_value(params)?;
+        self.client
+            .call_typed(rpc_methods::SKILLS_GETDISCOVERYPATHS, Some(wire_params))
+            .await
+    }
+
+    /// Returns the canonical directories where a client may create skills that the runtime will recognize, including ones that do not exist yet. Project directories become active once created.
+    ///
+    /// Wire method: `skills.getDiscoveryPaths`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - Optional project paths to enumerate.
+    ///
+    /// # Returns
+    ///
+    /// Canonical locations where skills can be created so the runtime will recognize them.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    ///
+    /// Accepts [`SkillsGetDiscoveryPathsOptions`], including inputs added after [`SkillsGetDiscoveryPathsRequest`].
+    pub async fn get_discovery_paths_with_options(
+        &self,
+        params: SkillsGetDiscoveryPathsOptions,
     ) -> Result<SkillDiscoveryPathList, Error> {
         let wire_params = serde_json::to_value(params)?;
         self.client
@@ -16629,6 +17240,13 @@ impl<'a> SessionRpc<'a> {
         }
     }
 
+    /// `session.skillsSource.*` sub-namespace.
+    pub(crate) fn skills_source(&self) -> SessionRpcSkillsSource<'a> {
+        SessionRpcSkillsSource {
+            session: self.session,
+        }
+    }
+
     /// `session.tasks.*` sub-namespace.
     pub fn tasks(&self) -> SessionRpcTasks<'a> {
         SessionRpcTasks {
@@ -17134,13 +17752,13 @@ impl<'a> SessionRpcAccounts<'a> {
         }
     }
 
-    /// Lists signed-in accounts, including derived accounts. The active entry identifies the session's selected account.
+    /// Lists known accounts, including saved identities and derived accounts even when automatic authentication is disabled. Listing does not select or sign in an account. The active entry identifies the session's selected account.
     ///
     /// Wire method: `session.accounts.list`.
     ///
     /// # Returns
     ///
-    /// Signed-in accounts; empty when no accounts are available.
+    /// Known accounts, including saved accounts when automatic authentication is disabled; empty when no accounts are known.
     ///
     /// <div class="warning">
     ///
@@ -17157,7 +17775,7 @@ impl<'a> SessionRpcAccounts<'a> {
             .await
     }
 
-    /// Lists signed-in accounts, including derived accounts. The active entry identifies the session's selected account.
+    /// Lists known accounts, including saved identities and derived accounts even when automatic authentication is disabled. Listing does not select or sign in an account. The active entry identifies the session's selected account.
     ///
     /// Wire method: `session.accounts.list`.
     ///
@@ -17167,7 +17785,7 @@ impl<'a> SessionRpcAccounts<'a> {
     ///
     /// # Returns
     ///
-    /// Signed-in accounts; empty when no accounts are available.
+    /// Known accounts, including saved accounts when automatic authentication is disabled; empty when no accounts are known.
     ///
     /// <div class="warning">
     ///
@@ -17234,7 +17852,7 @@ impl<'a> SessionRpcAccounts<'a> {
             .await
     }
 
-    /// Switches the session's selected authentication to an available account.
+    /// Switches to an available account by accountId. The runtime selects its credentials.
     ///
     /// Wire method: `session.accounts.switchActive`.
     ///
@@ -17263,7 +17881,7 @@ impl<'a> SessionRpcAccounts<'a> {
         Ok(())
     }
 
-    /// Logs out the specified account, or the active account when selectionId is omitted.
+    /// Logs out the specified account, or the active account when accountId is omitted. Removes runtime-owned credentials without deleting externally owned credentials.
     ///
     /// Wire method: `session.accounts.logout`.
     ///
@@ -17334,34 +17952,6 @@ pub struct SessionRpcAccountsLogin<'a> {
 }
 
 impl<'a> SessionRpcAccountsLogin<'a> {
-    /// Lists cached base identities reusable by a login provider, with the active identity first. Pass an accountId to login.begin to reuse an identity.
-    ///
-    /// Wire method: `session.accounts.login.list`.
-    ///
-    /// # Parameters
-    ///
-    /// * `params` - The provider whose cached base identities should be listed.
-    ///
-    /// # Returns
-    ///
-    /// Cached base identities reusable by the selected login provider, active first.
-    ///
-    /// <div class="warning">
-    ///
-    /// **Experimental.** This API is part of an experimental wire-protocol surface
-    /// and may change or be removed in future SDK or CLI releases. Pin both the
-    /// SDK and CLI versions if your code depends on it.
-    ///
-    /// </div>
-    pub async fn list(&self, params: AuthLoginListRequest) -> Result<AuthLoginIdentityList, Error> {
-        let mut wire_params = serde_json::to_value(params)?;
-        wire_params["sessionId"] = serde_json::Value::String(self.session.id().to_string());
-        self.session
-            .client()
-            .call_typed(rpc_methods::SESSION_ACCOUNTS_LOGIN_LIST, Some(wire_params))
-            .await
-    }
-
     /// Begin an interactive login flow for a provider kind, optionally selecting how to authorize (`method`: `web` by default, or `device-code`), and return its opaque flow id and first step.
     ///
     /// Wire method: `session.accounts.login.begin`.
@@ -28214,6 +28804,32 @@ impl<'a> SessionRpcSkills<'a> {
             .await
     }
 
+    /// Returns complete local skill definitions and load diagnostics from the session's canonical inventory. Ensures the inventory is loaded without a separate discovery or managed-policy ingestion. Provider-backed skills are not local definitions.
+    ///
+    /// Wire method: `session.skills.getDefinitions`.
+    ///
+    /// # Returns
+    ///
+    /// Local definitions and diagnostics from an admitted runtime session.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub async fn get_definitions(&self) -> Result<LocalSkillDefinitionList, Error> {
+        let wire_params = serde_json::json!({ "sessionId": self.session.id() });
+        self.session
+            .client()
+            .call_typed(
+                rpc_methods::SESSION_SKILLS_GETDEFINITIONS,
+                Some(wire_params),
+            )
+            .await
+    }
+
     /// Returns the skills that have been invoked during this session.
     ///
     /// Wire method: `session.skills.getInvoked`.
@@ -28309,6 +28925,32 @@ impl<'a> SessionRpcSkills<'a> {
         self.session
             .client()
             .call_typed(rpc_methods::SESSION_SKILLS_RELOAD, Some(wire_params))
+            .await
+    }
+
+    /// Returns diagnostics from the session's most recent skill load without reloading definitions or waiting for MCP discovery.
+    ///
+    /// Wire method: `session.skills.getDiagnostics`.
+    ///
+    /// # Returns
+    ///
+    /// Diagnostics from reloading skill definitions, with warnings and errors as separate lists.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub async fn get_diagnostics(&self) -> Result<SkillsLoadDiagnostics, Error> {
+        let wire_params = serde_json::json!({ "sessionId": self.session.id() });
+        self.session
+            .client()
+            .call_typed(
+                rpc_methods::SESSION_SKILLS_GETDIAGNOSTICS,
+                Some(wire_params),
+            )
             .await
     }
 
@@ -28432,6 +29074,48 @@ impl<'a> SessionRpcSkillsResources<'a> {
             .client()
             .call_typed(
                 rpc_methods::SESSION_SKILLS_RESOURCES_REMOVE,
+                Some(wire_params),
+            )
+            .await
+    }
+}
+
+/// `session.skillsSource.*` RPCs.
+#[derive(Clone, Copy)]
+pub(crate) struct SessionRpcSkillsSource<'a> {
+    pub(crate) session: &'a Session,
+}
+
+impl<'a> SessionRpcSkillsSource<'a> {
+    /// Reads skill diagnostics from the original authenticated local attachment without reloading definitions.
+    ///
+    /// Wire method: `session.skillsSource.getDiagnostics`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - Reads skill diagnostics through the original authenticated local attachment.
+    ///
+    /// # Returns
+    ///
+    /// Diagnostics from reloading skill definitions, with warnings and errors as separate lists.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub(crate) async fn get_diagnostics(
+        &self,
+        params: SessionSkillsSourceGetDiagnosticsParams,
+    ) -> Result<SkillsLoadDiagnostics, Error> {
+        let mut wire_params = serde_json::to_value(params)?;
+        wire_params["sessionId"] = serde_json::Value::String(self.session.id().to_string());
+        self.session
+            .client()
+            .call_typed(
+                rpc_methods::SESSION_SKILLSSOURCE_GETDIAGNOSTICS,
                 Some(wire_params),
             )
             .await

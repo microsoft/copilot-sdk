@@ -161,7 +161,8 @@ final class SessionRequestBuilder {
         return ProtocolExternalToolDefinition.builder()
                 .name(tool.name() != null || !substituteRequiredNulls ? tool.name() : "")
                 .description(tool.description() != null ? tool.description() : "").parameters(parameters)
-                .overridesBuiltInTool(tool.overridesBuiltInTool()).skipPermission(tool.skipPermission())
+                .overridesBuiltInTool(tool.overridesBuiltInTool())
+                .onlyOverridesBuiltInTool(tool.onlyOverridesBuiltInTool()).skipPermission(tool.skipPermission())
                 .hasHandler(tool.handler() != null).defer(toProtocolDefer(tool.defer())).isTerminal(tool.isTerminal())
                 .metadata(tool.metadata()).namespace(toProtocolNamespace(tool.namespace(), substituteRequiredNulls))
                 .idempotent(tool.idempotent()).exposure(toProtocolExposure(tool.exposure())).build();
@@ -296,6 +297,7 @@ final class SessionRequestBuilder {
         request.setPermissions(request.getPermissions().setSandbox(config.getPermissions().getSandbox()));
         request.setConfigDirectory(config.getConfigDirectory());
         config.getEnableConfigDiscovery().ifPresent(request::setEnableConfigDiscovery);
+        config.getSessionLifecycleMode().ifPresent(request::setSessionLifecycleMode);
         if (config.getExtensions().getEnabled() != null || config.getExtensions().getSdkPath() != null) {
             request.setExtensions(config.getExtensions().clone());
         }
@@ -434,6 +436,7 @@ final class SessionRequestBuilder {
                 request.getFilesystem().setAdditionalDirectories(config.getFilesystem().getAdditionalDirectories()));
         request.setConfigDirectory(config.getConfigDirectory());
         config.getEnableConfigDiscovery().ifPresent(request::setEnableConfigDiscovery);
+        config.getSessionLifecycleMode().ifPresent(request::setSessionLifecycleMode);
         if (config.getExtensions().getEnabled() != null || config.getExtensions().getSdkPath() != null) {
             request.setExtensions(config.getExtensions().clone());
         }

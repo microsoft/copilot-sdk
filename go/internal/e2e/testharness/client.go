@@ -25,3 +25,7 @@ func (c *Client) sessionConfig(config *copilot.CreateSessionOptions) *copilot.Cr
 func (c *Client) CreateSession(ctx context.Context, config *copilot.CreateSessionOptions) (*copilot.Session, error) {
 	return c.Client.CreateSession(ctx, c.sessionConfig(config))
 }
+
+func (c *Client) CreateSessionWithLifecycleMode(ctx context.Context, config *copilot.CreateSessionOptions, mode copilot.SessionLifecycleMode) (*copilot.Session, error) {
+	return c.Client.CreateSessionWithLifecycleMode(ctx, c.sessionConfig(config), mode)
+}

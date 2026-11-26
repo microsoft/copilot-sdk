@@ -62,7 +62,7 @@ export type AccountHealth =
   | "available"
   /** The account is intentionally unavailable, for example because access is disabled or the platform is unsupported. */
   | "unavailable"
-  /** Availability is unknown because a transient or retryable check failed. */
+  /** Availability has not been checked, or a transient or retryable check failed. */
   | "warning"
   /** Authentication or saved credentials require user action. */
   | "error";
@@ -286,7 +286,7 @@ export type AccountLogoutRequest1 = {
   [k: string]: unknown | undefined;
 };
 /**
- * Signed-in accounts; empty when no accounts are available.
+ * Known accounts, including saved accounts when automatic authentication is disabled; empty when no accounts are known.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
  * via the `definition` "AccountsList".
@@ -951,18 +951,10 @@ export type AuthLoginResultStatus =
   | "completed"
   /** Persistence needs explicit consent to store the token in plaintext. */
   | "needs-plaintext-consent"
-  /** Credentials are saved; select an account using a returned selectionId as advance input to complete sign-in. */
+  /** Credentials are saved; select an account using a returned accountId as advance input to complete sign-in. */
   | "needs-account-selection"
   /** The user declined plaintext persistence. */
   | "declined";
-/**
- * Cached base identities reusable by the selected login provider, active first.
- *
- * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
- * via the `definition` "AuthLoginIdentityList".
- */
-/** @experimental */
-export type AuthLoginIdentityList = AuthLoginIdentity[];
 /**
  * Authentication providers offered for interactive login.
  *
@@ -4661,6 +4653,14 @@ export type HistoryRewindOutcome =
   /** Files and conversation were rewound, but obsolete file snapshots could not be removed; only conversation-and-files rewinds produce this. */
   | "snapshot-prune-failed";
 /**
+ * Pure preparation outcome before the runtime admits a launch commit.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "HostAgentRegistryPrepareSpawnResult".
+ */
+/** @experimental */
+export type HostAgentRegistryPrepareSpawnResult = HostAgentRegistrySpawnPrepared | AgentRegistrySpawnValidationError;
+/**
  * Validated admission credential, or null when the application rejects it.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
@@ -4797,6 +4797,30 @@ export type HostSessionAuthentication =
        */
       mode: "none";
     };
+/**
+ * Byte transport for a runtime-owned protocol server.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "HostTransportKind".
+ */
+/** @experimental */
+export type HostTransportKind =
+  /** Bind a TCP listener; zero or omitted port selects an available port. */
+  | "tcp"
+  /** Own the runtime process's standard input and output. Incomplete output prevents reuse until the process restarts. */
+  | "stdio";
+/**
+ * Protocol served by a runtime-owned transport.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "HostTransportProtocol".
+ */
+/** @experimental */
+export type HostTransportProtocol =
+  /** Serve the SDK JSON-RPC protocol on the existing runtime engine. */
+  | "json-rpc"
+  /** Serve Agent Client Protocol on the existing runtime engine. */
+  | "acp";
 /**
  * A supported image-service operation.
  *
@@ -5396,6 +5420,28 @@ export type SessionContextHostType =
   /** Session repository is hosted on Azure DevOps. */
   | "ado";
 /**
+ * Source tiers that can supply a local skill definition.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "LocalSkillDefinitionSource".
+ */
+/** @experimental */
+export type LocalSkillDefinitionSource =
+  /** The current project. */
+  | "project"
+  /** An enclosing project directory. */
+  | "inherited"
+  /** Personal Copilot skills. */
+  | "personal-copilot"
+  /** Personal agent skills. */
+  | "personal-agents"
+  /** An enabled plugin. */
+  | "plugin"
+  /** An explicit custom directory. */
+  | "custom"
+  /** A skill shipped with the runtime. */
+  | "builtin";
+/**
  * Log severity level. Determines how the message is displayed in the timeline. Defaults to "info".
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
@@ -5792,6 +5838,19 @@ export type McpCallToolResult = McpToolResult | null;
  */
 /** @experimental */
 export type McpSerializableServerConfig = McpServerConfigStdio | McpServerConfigHttp;
+/**
+ * Persisted MCP configuration projection. The default document view returns persisted JSON.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "McpConfigReadView".
+ */
+/** @experimental */
+/** @internal */
+export type McpConfigReadView =
+  /** Return the persisted MCP document. */
+  | "document"
+  /** Return fresh raw user names without reading the validated cache. */
+  | "membership";
 /**
  * Structured MCP elicitation mode.
  *
@@ -8636,6 +8695,18 @@ export type ResponseFormat = {
   type: "json_schema";
 };
 /**
+ * Hook lifetime for a local session.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "SessionLifecycleMode".
+ */
+/** @experimental */
+export type SessionLifecycleMode =
+  /** Run session end hooks at session shutdown. */
+  | "interactive"
+  /** Run session end hooks after each completed turn. */
+  | "per-turn";
+/**
  * Origin of the sandbox choice supplied by the host. This value describes preference or session intent; it does not authorize bypassing managed policy.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
@@ -8917,6 +8988,38 @@ export type SessionFsSqliteTransactionErrorClass =
   | "fatal"
   /** The transport failed after the provider may have committed; retrying could duplicate effects. */
   | "postCommitAmbiguous";
+/**
+ * Handoff step.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "SessionsOpenProgressStep".
+ */
+/** @experimental */
+export type SessionsOpenProgressStep =
+  /** Loading the source session's events from the remote service. */
+  | "load-session"
+  /** Validating that the local repository matches the remote session's repository. */
+  | "validate-repo"
+  /** Checking the local working tree for uncommitted changes, which stay in place and are carried onto the checked-out branch. */
+  | "check-changes"
+  /** Checking out the branch associated with the remote session in the local working tree. */
+  | "checkout-branch"
+  /** Creating the new local session and seeding it with the source session's events. */
+  | "create-session"
+  /** Persisting the newly-created local session to disk. */
+  | "save-session";
+/**
+ * Step status.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "SessionsOpenProgressStatus".
+ */
+/** @experimental */
+export type SessionsOpenProgressStatus =
+  /** The step has started and has not yet finished. */
+  | "in-progress"
+  /** The step has completed successfully. */
+  | "complete";
 /**
  * Source descriptor for direct repo installs (when marketplace is empty)
  *
@@ -9220,38 +9323,6 @@ export type SessionsOpenStatus =
   | "connected"
   /** Remote session was handed off to a new local session. */
   | "handed_off";
-/**
- * Handoff step.
- *
- * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
- * via the `definition` "SessionsOpenProgressStep".
- */
-/** @experimental */
-export type SessionsOpenProgressStep =
-  /** Loading the source session's events from the remote service. */
-  | "load-session"
-  /** Validating that the local repository matches the remote session's repository. */
-  | "validate-repo"
-  /** Checking the local working tree for uncommitted changes, which stay in place and are carried onto the checked-out branch. */
-  | "check-changes"
-  /** Checking out the branch associated with the remote session in the local working tree. */
-  | "checkout-branch"
-  /** Creating the new local session and seeding it with the source session's events. */
-  | "create-session"
-  /** Persisting the newly-created local session to disk. */
-  | "save-session";
-/**
- * Step status.
- *
- * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
- * via the `definition` "SessionsOpenProgressStatus".
- */
-/** @experimental */
-export type SessionsOpenProgressStatus =
-  /** The step has started and has not yet finished. */
-  | "in-progress"
-  /** The step has completed successfully. */
-  | "complete";
 /**
  * An original-host persistence barrier stage.
  *
@@ -11068,7 +11139,7 @@ export interface AcceptedEnqueueCommandResult {
   queueId: string;
 }
 /**
- * One canonical signed-in account entry shared by account-list and account-switch surfaces.
+ * One known account, including saved identities and accounts that are not currently authenticated or selectable.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
  * via the `definition` "Account".
@@ -11076,9 +11147,9 @@ export interface AcceptedEnqueueCommandResult {
 /** @experimental */
 export interface Account {
   /**
-   * Stable opaque account id used for forest lineage and account management.
+   * Stable opaque account id used for selection, logout, and forest lineage. Credential sources for the same identified account share one account entry.
    */
-  accountId?: string;
+  accountId: string;
   /**
    * Authentication host URL.
    */
@@ -11096,6 +11167,10 @@ export interface Account {
    */
   kind: AccountKind;
   /**
+   * Whether this is an inference account, independently of its current health or selectability. False for base sign-in identities.
+   */
+  supportsInference: boolean;
+  /**
    * Human-readable credential source used to authenticate this account, such as `gh` or `GITHUB_TOKEN`.
    */
   authSource?: string;
@@ -11107,10 +11182,6 @@ export interface Account {
    * Whether this is the active account.
    */
   active: boolean;
-  /**
-   * Opaque selection id accepted by switchActive. Absent when switching is not currently valid.
-   */
-  selectionId?: string;
   /**
    * Whether the account is currently a valid switch target.
    */
@@ -12342,10 +12413,6 @@ export interface AccountsGetActiveResult {
    * Credential-free identity metadata for the active account, including resolved Copilot user information when available.
    */
   authInfo?: AuthIdentity;
-  /**
-   * Opaque credential selection id for the active authentication. This remains available when the canonical account is not currently switchable.
-   */
-  authSelectionId?: string;
 }
 /**
  * Options for listing the canonical account inventory.
@@ -12369,13 +12436,9 @@ export interface AccountsListRequest {
 /** @experimental */
 export interface AccountsLogoutRequest {
   /**
-   * Stable account id of the account to log out. Use this for canonical account entries that are not switchable.
+   * Account id returned by accounts.list, including accounts that are not switchable. When omitted, logs out the active account. Removes runtime-owned credentials; externally owned credentials are not deleted.
    */
   accountId?: string;
-  /**
-   * Opaque selection id of the account to log out; absent logs out the active account.
-   */
-  selectionId?: string;
 }
 /**
  * A GitHub credential to install and persist.
@@ -12407,9 +12470,9 @@ export interface AccountsSetCredentialsRequest {
 /** @experimental */
 export interface AccountsSwitchActiveRequest {
   /**
-   * Opaque selection id of the account to make active.
+   * Account id returned by accounts.list. The runtime selects the account's credentials.
    */
-  selectionId: string;
+  accountId: string;
 }
 /**
  * The authentication identity to enroll in Copilot Free.
@@ -14510,7 +14573,7 @@ export interface AuthLoginAccount {
   /**
    * Opaque identifier supplied to the next login step to select this account.
    */
-  selectionId: string;
+  accountId: string;
   /**
    * Host coordinate owned by the selected account's provider.
    */
@@ -14562,7 +14625,7 @@ export interface AuthLoginBeginRequest {
    */
   mode?: AuthLoginMode;
   /**
-   * Opaque cached base identity id returned by accounts.login.list. Valid only with default mode; consumers must not parse it.
+   * Opaque accountId of a saved base identity returned by accounts.list. Valid only with default mode; consumers must not parse it.
    */
   accountId?: string;
 }
@@ -14620,40 +14683,6 @@ export interface AuthLoginCancelRequest {
    * Opaque flow id from begin.
    */
   flowId: string;
-}
-/**
- * A cached base identity a provider can reuse for login without asking the user to choose an account again.
- *
- * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
- * via the `definition` "AuthLoginIdentity".
- */
-/** @experimental */
-export interface AuthLoginIdentity {
-  /**
-   * Opaque provider-owned identity id. Pass it back to accounts.login.begin; consumers must not parse it.
-   */
-  accountId: string;
-  /**
-   * Human-readable sign-in label owned by the runtime.
-   */
-  label: string;
-  /**
-   * Whether this base identity owns the session's active derived account.
-   */
-  active: boolean;
-}
-/**
- * The provider whose cached base identities should be listed.
- *
- * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
- * via the `definition` "AuthLoginListRequest".
- */
-/** @experimental */
-export interface AuthLoginListRequest {
-  /**
-   * Login provider whose reusable base identities should be listed.
-   */
-  provider: LoginProviderKind;
 }
 /**
  * An authentication provider offered for interactive login.
@@ -18680,6 +18709,114 @@ export interface CloudTasksGetSharingStatusParams {
   taskId: string;
 }
 /**
+ * Lists Mission Control task metadata under an explicit account, preserving numbered pagination.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "CloudTasksListParams".
+ */
+/** @experimental */
+/** @internal */
+export interface CloudTasksListParams {
+  /**
+   * Account whose remote tasks are listed.
+   */
+  authInfo: JsonValue;
+  /**
+   * Retained credential context for the account, when supplied by the host.
+   */
+  authContextId?: string;
+  /**
+   * Embedding client attribution sent to Mission Control.
+   */
+  integrationId: string;
+  /**
+   * Include archived tasks as well as active tasks.
+   */
+  includeArchived: boolean;
+  /**
+   * Maximum tasks requested per service page.
+   */
+  limit: number;
+  /**
+   * Fetch all numbered pages instead of only the first page.
+   */
+  allPages: boolean;
+  /**
+   * Positive numbered page to fetch; cannot be combined with allPages.
+   */
+  page?: number;
+  /**
+   * Maximum raw records to read before filtering and deduplication.
+   */
+  maxRecords?: number;
+  /**
+   * Preserve all tasks instead of only resumable remote sessions.
+   */
+  taskCatalog: boolean;
+  /**
+   * GitHub repository-enrichment endpoint override.
+   */
+  debugGithubApiUrl?: string;
+  /**
+   * Overall listing deadline in milliseconds.
+   */
+  timeoutMs: number;
+}
+/**
+ * Remote task metadata and pagination, including structured HTTP or partial-archive failures.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "CloudTasksListResult".
+ */
+/** @experimental */
+/** @internal */
+export interface CloudTasksListResult {
+  /**
+   * Whether the active task listing succeeded.
+   */
+  ok: boolean;
+  /**
+   * Whether raw task pages indicate more records may remain.
+   */
+  hasMore: boolean;
+  /**
+   * Raw task records read before filtering and deduplication.
+   */
+  recordCount: number;
+  /**
+   * Server-requested cooldown in milliseconds.
+   */
+  retryAfterMs?: number;
+  /**
+   * JSON array of remote session metadata on success.
+   */
+  sessionsJson?: string;
+  /**
+   * Archived-task failure accompanying a successful active listing.
+   */
+  archivedFailure?: string;
+  /**
+   * Whether the overall listing deadline expired.
+   */
+  timedOut: boolean;
+  /**
+   * HTTP status for a failed listing.
+   */
+  statusCode?: number;
+  /**
+   * Explanation of a failed listing.
+   */
+  errorMessage?: string;
+  /**
+   * Service failure classification.
+   */
+  errorKind?: string;
+  /**
+   * Original service error payload serialized as JSON.
+   */
+  errorPayloadJson?: string;
+}
+/**
  * Identifies one cloud coding-agent task to resolve to an openable session, the credential to resolve it under, and the local candidates the caller has already rejected.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
@@ -19826,7 +19963,7 @@ export interface ConnectRequest {
    */
   githubClientId?: string;
   /**
-   * Matching OAuth application secret. Required whenever githubClientId is supplied. Omit both fields to use the built-in CLI registration.
+   * Matching OAuth application secret for browser sign-in. Not required for Entra token exchange or device sign-in. Omit both fields to use the built-in CLI registration.
    */
   githubClientSecret?: string;
   /**
@@ -19904,6 +20041,11 @@ export interface ConnectResult {
    * Server package version
    */
   version: string;
+  /**
+   * Reports support for typed SDK host configuration in the existing startup arguments.
+   * SDKs that supply host configuration must reject an absent or false acknowledgement.
+   */
+  runtimeHostConfiguration?: boolean;
   /**
    * Acknowledges that this connection's host-owned Entra token provider is enabled. Clients requesting it must reject a missing or false acknowledgement.
    *
@@ -23524,6 +23666,23 @@ export interface FolderTrustAddParams {
   path: string;
 }
 /**
+ * Local folder and configuration root for persistent trust.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "FolderTrustAddTrustedParams".
+ */
+/** @experimental */
+export interface FolderTrustAddTrustedParams {
+  /**
+   * Local folder to trust. The runtime applies its existing canonicalization and Git-root rules.
+   */
+  path: string;
+  /**
+   * Configuration directory override. When absent, use COPILOT_HOME or the OS home, not a session or server root.
+   */
+  configDir?: string;
+}
+/**
  * Folder path to check for trust.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
@@ -25715,6 +25874,23 @@ export interface GitWorktreeSummaryRequest {
   maxFiles: number;
 }
 /**
+ * Read-only state health for hosts that report recovery problems or first-launch status.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "GlobalStateDiagnosticsResult".
+ */
+/** @experimental */
+export interface GlobalStateDiagnosticsResult {
+  /**
+   * Whether the normalized state contains any keys, including keys excluded from SDK reads.
+   */
+  hasState: boolean;
+  /**
+   * State file that JSONC recovery cannot read as an object; absent for missing or readable files.
+   */
+  unreadablePath?: string | null;
+}
+/**
  * Selects the configuration directory whose machine-wide state to read.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
@@ -26666,6 +26842,94 @@ export interface HooksDiscoverResult {
   errors: string[];
 }
 /**
+ * ACP host inputs. These values belong to the embedding application, not an incoming ACP client.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "HostAcpTransportOptions".
+ */
+/** @experimental */
+export interface HostAcpTransportOptions {
+  /**
+   * Directory for materialized ACP prompt attachments.
+   */
+  tempDirectory: string;
+  /**
+   * Agent version announced during ACP initialization.
+   */
+  agentVersion: string;
+  /**
+   * Program advertised for interactive authentication.
+   */
+  loginCommand: string;
+  /**
+   * Arguments advertised for interactive authentication.
+   */
+  loginArgs: string[];
+  /**
+   * Host-resolved session defaults, with the same authority as ACP launcher options.
+   */
+  sessionDefaults?: {
+    [k: string]: JsonValue | undefined;
+  };
+}
+/**
+ * Successful validation without a child launch or retained request resources.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "HostAgentRegistrySpawnPrepared".
+ */
+/** @experimental */
+export interface HostAgentRegistrySpawnPrepared {
+  /**
+   * Discriminator for successful pure validation, not launch authorization.
+   */
+  kind: "prepared";
+}
+/**
+ * A controller-local launch request shared unchanged by preparation and commit, not an SDK session creation callback.
+ * Preparation must not launch a child or retain request resources.
+ * The launch callback must not await validation or controller queries before launch. It may await registry readiness afterward.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "HostAgentRegistrySpawnRequest".
+ */
+/** @experimental */
+export interface HostAgentRegistrySpawnRequest {
+  /**
+   * Runtime-issued identity shared by preparation and the launch commit for these exact inputs.
+   */
+  requestId: string;
+  /**
+   * Original launch inputs. Preparation validates them without launch effects or retained request resources.
+   */
+  request: AgentRegistrySpawnRequest;
+  /**
+   * Controller session whose runtime permission policy governs launch admission after preparation.
+   */
+  controllerSessionId: string;
+  /**
+   * Runtime-derived identity of the requesting connection.
+   */
+  caller: HostCallbackCaller;
+}
+/**
+ * Runtime-derived identity of the connection that requested a host interaction.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "HostCallbackCaller".
+ */
+/** @experimental */
+export interface HostCallbackCaller {
+  /**
+   * Connection identifier assigned by this runtime, not supplied by the request.
+   */
+  connectionId: number;
+  /**
+   * Whether this runtime admitted the caller as an extension.
+   */
+  isExtension: boolean;
+}
+/**
  * A decrypted credential presented by a supervised hosting participant.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
@@ -26715,6 +26979,27 @@ export interface HostAuthenticationCancelledNotification {
    * Validation attempt whose signal must be aborted.
    */
   requestId: string;
+}
+/**
+ * Callbacks supplied by the original SDK-owned runtime controller.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "HostCallbacksRegisterRequest".
+ */
+/** @experimental */
+export interface HostCallbacksRegisterRequest {
+  /**
+   * Ask this connection to select the session displayed by its user interface. Defaults to false.
+   */
+  foregroundSessionChange?: boolean;
+  /**
+   * Enable controller-local preparation and launch callbacks. The host's SESSIONS_SIDEBAR_TAB flag must also be enabled.
+   */
+  agentRegistrySpawn?: boolean;
+  /**
+   * Local session owned by this connection whose permission policy governs spawn. Required when spawn is enabled.
+   */
+  controllerSessionId?: string;
 }
 /**
  * Cancels a pending validation on the supervised participant's connection.
@@ -26978,6 +27263,40 @@ export interface HostExitedNotification {
    * Explicit startup or teardown failure, when present.
    */
   error?: string | null;
+}
+/**
+ * A request to select a session in the controller's user interface.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "HostForegroundSessionRequest".
+ */
+/** @experimental */
+export interface HostForegroundSessionRequest {
+  /**
+   * Requested session, or null to clear a rejected selection. Create or resume inactive sessions before accepting.
+   */
+  sessionId: string | null;
+  /**
+   * Runtime-derived identity of the requesting connection.
+   */
+  caller: HostCallbackCaller;
+}
+/**
+ * The controller's decision on a foreground-session request.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "HostForegroundSessionResult".
+ */
+/** @experimental */
+export interface HostForegroundSessionResult {
+  /**
+   * Whether the controller selected the requested SDK session or cleared its selection.
+   */
+  success: boolean;
+  /**
+   * Reason for a refused request, when available.
+   */
+  error?: string;
 }
 /**
  * Reads a running host's catalog or the runtime's saved default catalog.
@@ -27398,6 +27717,70 @@ export interface HostStartResult {
    * Separate host process ID, when provided by a legacy runtime. Absent for in-process listeners.
    */
   pid?: number;
+}
+/**
+ * Selects a transport owned by this SDK connection.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "HostTransportRequest".
+ */
+/** @experimental */
+export interface HostTransportRequest {
+  /**
+   * Runtime-generated identity returned by host.transports.start.
+   */
+  transportId: string;
+}
+/**
+ * Starts a transport on the caller's existing runtime host. Requires private admission of the owning native SDK connection.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "HostTransportStartRequest".
+ */
+/** @experimental */
+export interface HostTransportStartRequest {
+  /**
+   * Protocol to serve.
+   */
+  protocol: HostTransportProtocol;
+  /**
+   * TCP listener or process standard streams.
+   */
+  transport: HostTransportKind;
+  /**
+   * TCP address. Omitted values bind the IPv4 loopback address.
+   * ACP accepts only loopback addresses. Non-loopback JSON-RPC requires a connection token.
+   */
+  hostname?: string;
+  /**
+   * TCP port. Zero or omission requests an available port.
+   */
+  port?: number;
+  /**
+   * SDK JSON-RPC connection token. Required for non-loopback JSON-RPC listeners; unsupported for ACP.
+   */
+  connectionToken?: string;
+  /**
+   * Required ACP launcher inputs. Omit for JSON-RPC.
+   */
+  acp?: HostAcpTransportOptions;
+}
+/**
+ * A transport that is ready to accept requests on the existing runtime engine.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "HostTransportStartResult".
+ */
+/** @experimental */
+export interface HostTransportStartResult {
+  /**
+   * Runtime-generated identity, scoped to the owning SDK connection.
+   */
+  transportId: string;
+  /**
+   * Actual TCP socket address. Absent for standard streams.
+   */
+  address?: string;
 }
 /**
  * Withdraws an application publication without deleting its underlying local session.
@@ -29250,6 +29633,100 @@ export interface SessionContext {
    * Active git branch
    */
   branch?: string;
+}
+/**
+ * Complete parsed definition for editor previews and inline skill expansion.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "LocalSkillDefinition".
+ */
+/** @experimental */
+export interface LocalSkillDefinition {
+  /**
+   * Declared name before invocation collision resolution.
+   */
+  name: string;
+  /**
+   * Description of the skill.
+   */
+  description: string;
+  /**
+   * Source that owns this definition.
+   */
+  source: LocalSkillDefinitionSource;
+  /**
+   * Absolute definition file path.
+   */
+  filePath: string;
+  /**
+   * Absolute directory that holds supporting files.
+   */
+  baseDir: string;
+  /**
+   * Checkout boundary for fresh reads of repository definitions.
+   */
+  repositoryBoundary?: string;
+  /**
+   * Allowed tool specifications from frontmatter.
+   */
+  allowedTools: string[];
+  /**
+   * Complete skill file text, including YAML frontmatter.
+   */
+  content: string;
+  /**
+   * Whether a user can invoke this definition.
+   */
+  userInvocable: boolean;
+  /**
+   * Whether model invocation is disabled.
+   */
+  disableModelInvocation: boolean;
+  /**
+   * Whether a command file supplied this definition.
+   */
+  isCommand: boolean;
+  /**
+   * Freeform argument hint for a command picker.
+   */
+  argumentHint?: string;
+  /**
+   * Owning plugin's name.
+   */
+  pluginName?: string;
+  /**
+   * Owning plugin's version.
+   */
+  pluginVersion?: string;
+  /**
+   * Collision-resolved invocation identity.
+   */
+  invocationName?: string;
+}
+/**
+ * Local definitions and diagnostics from an admitted runtime session.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "LocalSkillDefinitionList".
+ */
+/** @experimental */
+export interface LocalSkillDefinitionList {
+  /**
+   * Definitions in canonical precedence order, including disabled local skills.
+   */
+  skills: LocalSkillDefinition[];
+  /**
+   * Nonfatal diagnostics for loaded definitions.
+   */
+  warnings: string[];
+  /**
+   * Diagnostics for definitions that could not load.
+   */
+  errors: string[];
+  /**
+   * Working directory used for relative diagnostic paths.
+   */
+  displayCwd: string;
 }
 /**
  * Which stored location permissions were dropped because their directory is gone.
@@ -31440,10 +31917,6 @@ export interface McpComputerUseApplyConfigurationResult {
 /** @experimental */
 export interface McpConfigAddRequest {
   /**
-   * Configuration root for the user MCP document. Omission retains the connection's root; overrides require a trusted host or direct SDK caller.
-   */
-  configDir?: string;
-  /**
    * Unique name for the MCP server
    */
   name: string;
@@ -31451,6 +31924,10 @@ export interface McpConfigAddRequest {
    * MCP server configuration (stdio process or remote HTTP/SSE)
    */
   config: McpSerializableServerConfig;
+  /**
+   * Configuration root override. Omitted uses the current host's configuration root. Does not change the host or its authentication owner.
+   */
+  configDir?: string;
 }
 /**
  * Validates and combines additional MCP documents in source order.
@@ -31518,6 +31995,56 @@ export interface McpConfigEnableRequest {
    * Items: MCP server name used as a configuration key.
    */
   names: string[];
+}
+/**
+ * One regular JSON file in the MCP configuration directory.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "McpConfigFile".
+ */
+/** @experimental */
+/** @internal */
+export interface McpConfigFile {
+  /**
+   * File name relative to the MCP configuration directory.
+   */
+  file: string;
+  /**
+   * Modification time in milliseconds since the Unix epoch.
+   */
+  mtimeMs: number;
+  /**
+   * Birth time in milliseconds since the Unix epoch, using the existing platform fallback when unavailable.
+   */
+  birthtimeMs: number;
+}
+/**
+ * MCP configuration directory selection for metadata enumeration.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "McpConfigFilesRequest".
+ */
+/** @experimental */
+/** @internal */
+export interface McpConfigFilesRequest {
+  /**
+   * Configuration root override. Omitted uses the host's root without changing its authentication owner.
+   */
+  configDir?: string;
+}
+/**
+ * Regular JSON files in the MCP configuration directory, newest modification time first. Unreadable or absent directories return an empty list.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "McpConfigFilesResult".
+ */
+/** @experimental */
+/** @internal */
+export interface McpConfigFilesResult {
+  /**
+   * File metadata with stable ordering for equal whole-millisecond modification times.
+   */
+  files: McpConfigFile[];
 }
 /**
  * Selects an explicit user MCP configuration root without changing the connection owner.
@@ -31652,6 +32179,46 @@ export interface McpConfigSourceDiagnostic {
   reason: string;
 }
 /**
+ * Persisted MCP document or fresh raw membership selection. Does not change the existing normalized list response.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "McpConfigReadRequest".
+ */
+/** @experimental */
+/** @internal */
+export interface McpConfigReadRequest {
+  /**
+   * Configuration root override. Omitted uses the host's root without changing its authentication owner.
+   */
+  configDir?: string;
+  /**
+   * Configuration name beneath mcp-config. Omitted or empty selects mcp-config.json, with the existing extensionless fallback.
+   */
+  subDir?: string;
+  /**
+   * Result view. Omitted or document returns persisted JSON. Membership returns fresh raw user names without reading or clearing the validated cache.
+   */
+  view?: McpConfigReadView;
+}
+/**
+ * Persisted MCP document or raw user membership. Separate from the existing normalized list result to preserve public SDK construction patterns.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "McpConfigReadResult".
+ */
+/** @experimental */
+/** @internal */
+export interface McpConfigReadResult {
+  /**
+   * Validated persisted JSON, including unknown document fields. Present only for the document view when the file exists. Installation-owned entries are visible only to the admitted host.
+   */
+  configJson?: string;
+  /**
+   * Fresh raw user server names, including invalid entries and excluding installation-owned entries. Present only for the membership view.
+   */
+  names?: string[];
+}
+/**
  * MCP server name to remove from user configuration.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
@@ -31660,10 +32227,6 @@ export interface McpConfigSourceDiagnostic {
 /** @experimental */
 export interface McpConfigRemoveRequest {
   /**
-   * Configuration root for the user MCP document and credentials. Omission retains the connection's root; overrides require a trusted host or direct SDK caller.
-   */
-  configDir?: string;
-  /**
    * Name of the MCP server to remove
    */
   name: string;
@@ -31671,6 +32234,10 @@ export interface McpConfigRemoveRequest {
    * OAuth Client ID Metadata Document URL whose persisted credentials should also be removed.
    */
   authClientIdMetadataUrl?: string;
+  /**
+   * Configuration root override. Omitted uses the current host's configuration root. Credential cleanup uses the same selected root without changing the authentication owner.
+   */
+  configDir?: string;
 }
 /**
  * MCP server name and replacement configuration to write to user configuration.
@@ -31804,6 +32371,28 @@ export interface McpConfigUserServerNamesResult {
   names: string[];
 }
 /**
+ * Atomic bulk MCP document write. Uses the same runtime-owned installation leases, validation, metadata preservation, and cache update as persisted configuration writes.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "McpConfigWriteRequest".
+ */
+/** @experimental */
+/** @internal */
+export interface McpConfigWriteRequest {
+  /**
+   * Configuration root override. Omitted uses the host's root without changing its authentication owner.
+   */
+  configDir?: string;
+  /**
+   * Configuration name beneath mcp-config. Omitted or empty selects mcp-config.json, with the existing extensionless fallback.
+   */
+  subDir?: string;
+  /**
+   * Complete MCP configuration JSON document. Unknown top-level fields remain intact. Invalid server entries use the existing persistence validation rules.
+   */
+  configJson: string;
+}
+/**
  * Name of the MCP server to disable for the session.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
@@ -31819,6 +32408,32 @@ export interface McpDisableRequest {
    * Name of the MCP server to disable
    */
   serverName: string;
+}
+/**
+ * Plugin-only MCP configuration preview, without ambient user or workspace servers.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "McpDiscoverPluginServersRequest".
+ */
+/** @experimental */
+export interface McpDiscoverPluginServersRequest {
+  /**
+   * Explicit non-builtin plugin records to inspect.
+   */
+  installedPlugins: InstalledPlugin[];
+  /**
+   * Names selected from the runtime's registered builtins, regardless of their enabled defaults.
+   * Preview does not activate plugins. Requests cannot attest builtin roots.
+   */
+  builtinPluginNames?: string[];
+  /**
+   * Configuration directory override. Omission uses the server context.
+   */
+  configDir?: string;
+  /**
+   * Host home directory. Omission uses the runtime home directory.
+   */
+  homeDirectory?: string;
 }
 /**
  * Optional working directory used as context for MCP server discovery.
@@ -34145,10 +34760,19 @@ export interface McpReleaseSessionDisableRequest {
 /** @experimental */
 /** @internal */
 export interface McpReloadConfig {
+  /**
+   * MCP server configurations indexed by server name.
+   */
   mcpServers: {
     [k: string]: McpServerConfig | undefined;
   };
+  /**
+   * Server names explicitly disabled by configuration.
+   */
   disabledServers?: string[];
+  /**
+   * Server names explicitly enabled by configuration.
+   */
   enabledServers?: string[];
   /**
    * Reload reason for the runtime-owned registry policy check.
@@ -34885,6 +35509,29 @@ export interface McpServerList {
    * Host-level state, omitted when no MCP host is initialized.
    */
   host?: McpHostState;
+}
+/**
+ * MCP server configurations keyed by server name.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "McpServersConfig".
+ */
+/** @experimental */
+export interface McpServersConfig {
+  /**
+   * MCP server configurations indexed by server name.
+   */
+  mcpServers: {
+    [k: string]: McpServerConfig | undefined;
+  };
+  /**
+   * Server names explicitly disabled by configuration.
+   */
+  disabledServers?: string[];
+  /**
+   * Server names explicitly enabled by configuration.
+   */
+  enabledServers?: string[];
 }
 /**
  * Context tokens one MCP server's tool definitions cost.
@@ -39897,6 +40544,27 @@ export interface PluginCheckUpdateRequest {
   marketplace: string;
 }
 /**
+ * Directory metadata resolved by the runtime for an explicit plugin mount.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "PluginDirectoryMetadata".
+ */
+/** @experimental */
+export interface PluginDirectoryMetadata {
+  /**
+   * Plugin cache path identifying the corresponding installed-plugin record.
+   */
+  pluginPath: string;
+  /**
+   * Canonical directory eligible for the host's existing plugin read grant.
+   */
+  canonicalDirectory?: string;
+  /**
+   * Description reported by the plugin manifest.
+   */
+  description?: string;
+}
+/**
  * Inspects persisted and live plugins under an explicit effective configuration without changing the existing user-only plugins.list API.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
@@ -40786,6 +41454,44 @@ export interface UIPluginActivationContext {
   trustSource: string;
 }
 /**
+ * Explicit directories to inspect without installing or activating their contents.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "PluginsScanDirectoriesRequest".
+ */
+/** @experimental */
+export interface PluginsScanDirectoriesRequest {
+  /**
+   * Plugin directories in caller precedence order.
+   */
+  paths: string[];
+  /**
+   * Base directory for relative paths. Empty retains launcher-relative resolution.
+   */
+  workingDirectory: string;
+}
+/**
+ * Recognized directory mounts and their manifest diagnostics.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "PluginsScanDirectoriesResult".
+ */
+/** @experimental */
+export interface PluginsScanDirectoriesResult {
+  /**
+   * Synthetic installed-plugin records for valid directories.
+   */
+  plugins: InstalledPlugin[];
+  /**
+   * Runtime-resolved directory metadata, in the same order as the plugin records.
+   */
+  directories: PluginDirectoryMetadata[];
+  /**
+   * Report-and-ignore diagnostics for rejected directories or manifest fields.
+   */
+  warnings: string[];
+}
+/**
  * Name (or spec) of the plugin to uninstall.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
@@ -40953,6 +41659,11 @@ export interface ProtocolExternalToolDefinition {
    * Whether this definition replaces a built-in tool with the same name.
    */
   overridesBuiltInTool?: boolean;
+  /**
+   * Replace a same-named built-in only when it exists for the executing model.
+   * Otherwise ignore this tool. This takes precedence over `overridesBuiltInTool`.
+   */
+  onlyOverridesBuiltInTool?: boolean;
   /**
    * Whether execution bypasses the normal tool permission prompt.
    */
@@ -43449,6 +44160,157 @@ export interface RuntimeCommandCatalogRequest {
    * Show Forge chronicle choices. This affects metadata only, not command admission.
    */
   forgeAgentEnabled?: boolean;
+}
+/**
+ * Session defaults for an SDK-owned in-process runtime. Omitted values retain runtime defaults.
+ * Authentication remains with the live auth owner or the SDK's authentication configuration.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "RuntimeHostConfiguration".
+ */
+/** @experimental */
+export interface RuntimeHostConfiguration {
+  /**
+   * State and configuration directory. Applied before authentication and settings initialization.
+   */
+  configDirectory?: string;
+  /**
+   * Working directory for host defaults and relative launcher paths; does not change process cwd.
+   */
+  workingDirectory?: string;
+  /**
+   * Consumer integration identity for sessions created by the host.
+   */
+  integrationId?: string;
+  /**
+   * Capabilities that the host provides to its sessions.
+   */
+  sessionCapabilities?: string[];
+  /**
+   * Whether the host supports MCP App requests.
+   */
+  mcpAppsRequestEnabled?: boolean;
+  /**
+   * Whether sessions accept instructions from all configured MCP servers.
+   */
+  allowAllMcpServerInstructions?: boolean;
+  /**
+   * Require managed settings even when a session request does not opt in.
+   */
+  requireManagedSettings?: boolean;
+  /**
+   * Hook default for SDK creation and cold resume. Raw sessions.open retains its existing defaults.
+   */
+  sessionLifecycleMode?: SessionLifecycleMode;
+  /**
+   * Persist local sessions that have no user-supplied name.
+   */
+  persistUnnamedSessions?: boolean;
+  /**
+   * Claim existing local storage before reading a resumed session, including resident resumes.
+   */
+  claimSessionOnResume?: boolean;
+  /**
+   * Refuse cold resume when another live process owns the session. Claims before reading history.
+   */
+  rejectResumeOfSessionInUse?: boolean;
+  /**
+   * Resolved host feature flags. Session construction retains caller-specific flags separately.
+   */
+  featureFlags?: JsonValue;
+  /**
+   * Resolved host experimental feature flags.
+   */
+  experimentalFeatureFlags?: JsonValue;
+  /**
+   * Resolved host non-experimental feature flags.
+   */
+  nonExperimentalFeatureFlags?: JsonValue;
+  /**
+   * Explicit host preference for context-management tools.
+   */
+  contextManagementToolsConfigPreference?: boolean;
+  /**
+   * Explicit host preference for subagent context-management tools.
+   */
+  contextManagementToolsSubagentsConfigPreference?: boolean;
+  /**
+   * Audience inputs used by the host's experiment assignment cache.
+   */
+  expAudience?: RuntimeHostExpAudience;
+  /**
+   * Explicit host override for the CONNECTORS flag.
+   */
+  connectorsHostOverride?: boolean;
+  /**
+   * Explicit host override for the managed MCP experiment.
+   */
+  managedMcpExpOverride?: JsonValue;
+  /**
+   * Resolved host value of the MANAGED_MCP_SERVERS flag.
+   */
+  managedMcpHostOverride?: boolean;
+  /**
+   * Host-owned connectors setting, when it replaces the stored user preference.
+   */
+  connectorsHostConfigPreference?: boolean;
+  /**
+   * Host flag-resolution environment, separate from the live credential owner.
+   */
+  connectorFlagEnvironment?: {
+    [k: string]: string | undefined;
+  };
+  /**
+   * Default model family for new sessions.
+   */
+  modelFamily?: string;
+  /**
+   * Host-owned built-in plugin descriptors.
+   */
+  builtinPlugins?: JsonValue[];
+  /**
+   * Additional host plugin descriptors.
+   */
+  additionalPlugins?: JsonValue[];
+  /**
+   * Additional MCP server defaults. Explicit session entries take precedence.
+   */
+  additionalMcpServers?: {
+    [k: string]: unknown | undefined;
+  };
+  /**
+   * Directory that contains host-provided built-in skills.
+   */
+  builtinSkillsDirectory?: string;
+  /**
+   * Optional destination for session event logs.
+   */
+  eventsLogDirectory?: string;
+  /**
+   * Include subagent events in the configured event logs.
+   */
+  eventsLogIncludesSubagents?: boolean;
+}
+/**
+ * Host experiment audience inputs. These values do not contain credentials.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "RuntimeHostExpAudience".
+ */
+/** @experimental */
+export interface RuntimeHostExpAudience {
+  /**
+   * Whether the host enables experimental features.
+   */
+  isExperimental: boolean;
+  /**
+   * Whether the host enables streamer mode.
+   */
+  streamerMode: boolean;
+  /**
+   * Time of the first launch, in milliseconds since the Unix epoch.
+   */
+  firstLaunchAtMillis?: number;
 }
 /**
  * An authorization URL for the host browser.
@@ -46500,6 +47362,78 @@ export interface SessionFsWriteFileRequest {
   mode?: number;
 }
 /**
+ * Requests confirmation before a handoff uses a different local repository.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "SessionHandoffConfirmationRequest".
+ */
+/** @experimental */
+export interface SessionHandoffConfirmationRequest {
+  /**
+   * The callback ID supplied by the handoff requester.
+   */
+  callbackId: string;
+  /**
+   * The owner/name of the local repository.
+   */
+  localRepo: string;
+  /**
+   * The owner/name recorded by the remote session.
+   */
+  remoteRepo: string;
+}
+/**
+ * A decision for the handoff's repository mismatch.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "SessionHandoffConfirmationResponse".
+ */
+/** @experimental */
+export interface SessionHandoffConfirmationResponse {
+  /**
+   * Whether the requester permits the handoff to use the local repository.
+   */
+  confirmed: boolean;
+}
+/**
+ * Progress for one remote handoff requested through `sessions.open`.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "SessionHandoffProgressNotification".
+ */
+/** @experimental */
+export interface SessionHandoffProgressNotification {
+  /**
+   * The callback ID supplied by the handoff requester.
+   */
+  callbackId: string;
+  /**
+   * The runtime-owned handoff step and its current status.
+   */
+  update: SessionsOpenProgress;
+}
+/**
+ * `sessions.open` handoff progress update with step, status, and optional message.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "SessionsOpenProgress".
+ */
+/** @experimental */
+export interface SessionsOpenProgress {
+  /**
+   * Handoff step.
+   */
+  step: SessionsOpenProgressStep;
+  /**
+   * Step status.
+   */
+  status: SessionsOpenProgressStatus;
+  /**
+   * Optional step message.
+   */
+  message?: string;
+}
+/**
  * Counts of prepared or imported session records.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
@@ -46556,6 +47490,14 @@ export interface SessionImportRequest {
    * Explicit session name override.
    */
   name?: string | null;
+  /**
+   * Identifier of the application that owns the imported session.
+   */
+  clientName?: string | null;
+  /**
+   * Structured client kind used by runtime behavior gates.
+   */
+  clientKind?: string | null;
   /**
    * Validate without creating a session.
    */
@@ -47712,6 +48654,13 @@ export interface SessionOpenOptions {
    */
   clientKind?: string;
   /**
+   * Controls local session end hooks: `interactive` defers them to shutdown; `per-turn` runs them after each completed turn.
+   * Omission or null selects `per-turn` on this raw API. The SDK helper defaults do not apply.
+   * Applied at creation and cold resume; ignored for resident and cloud sessions.
+   * Not persisted; supply it again on cold resume.
+   */
+  sessionLifecycleMode?: SessionLifecycleMode;
+  /**
    * Identifier sent to LSP-style integrations.
    */
   lspClientName?: string;
@@ -48334,13 +49283,17 @@ export interface SessionsOpenHandoff {
    */
   taskType?: SessionsOpenHandoffTaskType;
   /**
-   * In-process progress callback `(update) => void` invoked for each handoff step. Marked internal because a function reference cannot cross the JSON-RPC boundary. The host-side `handoffSession` is already declared as `AsyncGenerator<HandoffProgress, HandoffResult>`; the schema layer flattens it because it does not yet support streaming methods. The wire-clean replacement is to expose the AsyncGenerator directly (or use vscode-jsonrpc `$/progress` notifications) once the schema/transport layer supports it.
+   * Correlates optional progress and confirmation callbacks on the requesting SDK connection.
+   */
+  callbackId?: string;
+  /**
+   * Legacy in-process progress callback. SDK connections use callbackId and sessionHandoff.progress notifications instead; function references cannot cross JSON-RPC.
    *
    * @internal
    */
   onProgress?: OpaqueInProcessValue;
   /**
-   * In-process confirmation callback `(request) => boolean | Promise<boolean>` invoked when the handoff needs the caller to confirm a non-fatal blocker (e.g. a repository mismatch between the current working directory and the remote session). Returning `true` proceeds with the handoff; returning `false` (or omitting the callback) aborts it. Marked internal because a function reference cannot cross the JSON-RPC boundary, for the same reasons as `onProgress`.
+   * Legacy in-process confirmation callback. SDK connections use callbackId and sessionHandoff.confirm requests instead; missing or declined confirmation refuses a repository mismatch.
    *
    * @internal
    */
@@ -48379,7 +49332,7 @@ export interface SessionOpenResult {
    */
   sessionApi?: OpaqueInProcessValue;
   /**
-   * Startup prompts queued by user-level hook configs at session creation. Only populated when status is `created`; resumed sessions return an empty array.
+   * Startup prompts from local hook configs after creation or handoff. Resumed sessions return an empty array.
    */
   startupPrompts?: string[];
   /**
@@ -48394,27 +49347,6 @@ export interface SessionOpenResult {
    * Handoff progress steps, present when status is `handed_off`.
    */
   progress?: SessionsOpenProgress[];
-}
-/**
- * `sessions.open` handoff progress update with step, status, and optional message.
- *
- * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
- * via the `definition` "SessionsOpenProgress".
- */
-/** @experimental */
-export interface SessionsOpenProgress {
-  /**
-   * Handoff step.
-   */
-  step: SessionsOpenProgressStep;
-  /**
-   * Step status.
-   */
-  status: SessionsOpenProgressStatus;
-  /**
-   * Optional step message.
-   */
-  message?: string;
 }
 /**
  * A typed request to the original host's retained persistence resources.
@@ -49722,6 +50654,10 @@ export interface SessionsImportSemanticRequest {
    * Name of the embedding client.
    */
   clientName?: string;
+  /**
+   * Structured client kind used by runtime behavior gates.
+   */
+  clientKind?: string;
 }
 /**
  * Semantic session import outcome.
@@ -51699,6 +52635,81 @@ export interface SkillResourceSetEnabledRequest {
   enabled: boolean;
 }
 /**
+ * Current runtime skill cache generation.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "SkillsCacheGeneration".
+ */
+/** @experimental */
+export interface SkillsCacheGeneration {
+  /**
+   * Monotonic runtime cache invalidation generation.
+   */
+  generation: number;
+}
+/**
+ * Explicit discovery inputs for clients that compose their own source set.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "SkillScanInputs".
+ */
+/** @experimental */
+export interface SkillScanInputs {
+  /**
+   * Monorepo traversal start. Omission scans only the explicit repository boundary.
+   */
+  traversalDirectory?: string;
+  /**
+   * Repository boundary for project discovery. Omit it outside a repository.
+   */
+  projectRoot?: string;
+  /**
+   * Additional user-configured skill directories.
+   */
+  customDirectories: string[];
+  /**
+   * Explicit skill directories and their source metadata.
+   */
+  skillSources: SkillScanSource[];
+  /**
+   * Explicit command directories and their source metadata.
+   */
+  commandSources: SkillScanSource[];
+}
+/**
+ * A skill or command directory supplied explicitly by a client.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "SkillScanSource".
+ */
+/** @experimental */
+export interface SkillScanSource {
+  /**
+   * Stable source identifier for an owning plugin, when supplied.
+   */
+  pluginId?: string;
+  /**
+   * Absolute directory to scan.
+   */
+  path: string;
+  /**
+   * Discovery source, such as plugin, project, or custom.
+   */
+  source: LocalSkillDefinitionSource;
+  /**
+   * Owning plugin's name, when applicable.
+   */
+  pluginName?: string;
+  /**
+   * Owning plugin's version, when applicable.
+   */
+  pluginVersion?: string;
+  /**
+   * Source precedence tier, when explicitly supplied.
+   */
+  tier?: string;
+}
+/**
  * Skill names to mark as disabled in global configuration, replacing any previous list.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
@@ -51753,6 +52764,26 @@ export interface SkillsDisableRequest {
  */
 /** @experimental */
 export interface SkillsDiscoverRequest {
+  /**
+   * Configuration directory override. Omission uses the server context.
+   */
+  configDir?: string;
+  /**
+   * Host home directory for personal discovery roots.
+   */
+  homeDirectory?: string;
+  /**
+   * Host-resolved directory for bundled skill definitions.
+   */
+  builtinDir?: string;
+  /**
+   * Excludes user and workspace sources for a policy-constrained preview.
+   */
+  blockUserAndWorkspaceSkills?: boolean;
+  /**
+   * Complete settings object for an unsaved configuration preview.
+   */
+  configOverride?: JsonValue;
   /**
    * Optional list of project directory paths to scan for project-scoped skills
    */
@@ -51809,6 +52840,19 @@ export interface SkillSetEnabledRequest {
   policySessionId: string;
 }
 /**
+ * Reads skill diagnostics through the original authenticated local attachment.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "SkillsGetAttachedDiagnosticsRequest".
+ */
+/** @experimental */
+export interface SkillsGetAttachedDiagnosticsRequest {
+  /**
+   * Identity of the active local attachment to the owning session.
+   */
+  attachId: number;
+}
+/**
  * Optional project paths to enumerate.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
@@ -51816,6 +52860,14 @@ export interface SkillSetEnabledRequest {
  */
 /** @experimental */
 export interface SkillsGetDiscoveryPathsRequest {
+  /**
+   * Configuration directory override. Omission uses the server context.
+   */
+  configDir?: string;
+  /**
+   * Host home directory for personal discovery roots.
+   */
+  homeDirectory?: string;
   /**
    * Explicit discovery-only skill roots to enumerate, including configured missing directories. Relative paths resolve against the request's effective working directory when supplied. These are not filesystem grants or preferred creation targets. Null and omission are equivalent.
    */
@@ -51965,6 +53017,125 @@ export interface SkillsLoadDiagnostics {
    * Errors emitted while loading skills (e.g. skills that failed to load entirely)
    */
   errors: string[];
+}
+/**
+ * Local discovery options. The runtime owns configuration, parsing, and caches.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "SkillsLoadRequest".
+ */
+/** @experimental */
+export interface SkillsLoadRequest {
+  /**
+   * Working directory for monorepo traversal and error display.
+   */
+  cwd: string;
+  /**
+   * Configuration directory override. Omission uses the server context.
+   */
+  configDir?: string;
+  /**
+   * Host home directory. Omission uses the runtime's home directory.
+   */
+  homeDirectory?: string;
+  /**
+   * Host skill-directory environment value. Empty disables environment roots.
+   * Omission reads COPILOT_SKILLS_DIRS from the runtime environment.
+   */
+  environmentSkillDirectories?: string;
+  /**
+   * Directory that contains the host's bundled skills.
+   * Lockdown uses the runtime bundle instead.
+   */
+  builtinDirectory?: string;
+  /**
+   * Explicit sources instead of runtime configuration and plugin resolution.
+   * Lockdown ignores caller source labels and resolves plugin sources itself.
+   */
+  inputs?: SkillScanInputs;
+  /**
+   * Session-only plugins, such as directories mounted by the host.
+   */
+  additionalPlugins?: InstalledPlugin[];
+  /**
+   * Live user and repository plugin enablement, when the client has a preview.
+   */
+  enabledPlugins?: {
+    [k: string]: boolean | undefined;
+  };
+  /**
+   * Supplied soft Team defaults avoid a separate Team lookup.
+   * Explicit settings and managed policy take precedence.
+   */
+  teamDefaultEnabledPlugins?: {
+    [k: string]: boolean | undefined;
+  };
+  /**
+   * Whether to include ambient configuration discovery. Defaults to true.
+   */
+  enableConfigDiscovery?: boolean;
+  /**
+   * Whether to scan skills. False returns no definitions. Defaults to true.
+   */
+  enableSkills?: boolean;
+  /**
+   * Explicit excluded locations. An empty list overrides configured exclusions.
+   */
+  ignoredSkillLocations?: string[];
+  /**
+   * Keeps only plugin and builtin sources during skills lockdown.
+   */
+  blockUserAndWorkspaceSkills?: boolean;
+  /**
+   * Whether to reuse parsed definitions. Defaults to true.
+   */
+  useCache?: boolean;
+  /**
+   * Checks source contents before reading cached definitions.
+   */
+  checkSources?: boolean;
+  /**
+   * Checks sources without loading definitions or refreshing optional Team defaults.
+   * Defaults to false.
+   */
+  checkOnly?: boolean;
+}
+/**
+ * Parsed definitions and source diagnostics from one canonical runtime load.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "SkillsLoadResult".
+ */
+/** @experimental */
+export interface SkillsLoadResult {
+  /**
+   * Definitions in canonical precedence order.
+   */
+  skills: LocalSkillDefinition[];
+  /**
+   * Nonfatal diagnostics for loaded definitions.
+   */
+  warnings: string[];
+  /**
+   * Diagnostics for definitions that could not load.
+   */
+  errors: string[];
+  /**
+   * Nonfatal configuration diagnostics from discovery, separate from definition warnings.
+   */
+  configurationWarnings?: string[];
+  /**
+   * Working directory used for relative diagnostic paths.
+   */
+  displayCwd: string;
+  /**
+   * Monotonic runtime cache invalidation generation.
+   */
+  cacheGeneration: number;
+  /**
+   * Whether source observation requires a refresh.
+   */
+  sourcesChanged: boolean;
 }
 /**
  * Caller-owned inventory and storage roots for direct file removal.
@@ -58056,6 +59227,99 @@ export interface HostReleaseSessionRequest {
   handoffId: string;
 }
 /**
+ * A transport that is ready to accept requests on the existing runtime engine.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "HostTransportsStartResult".
+ */
+/** @experimental */
+export interface HostTransportsStartResult {
+  /**
+   * Runtime-generated identity, scoped to the owning SDK connection.
+   */
+  transportId: string;
+  /**
+   * Actual TCP socket address. Absent for standard streams.
+   */
+  address?: string;
+}
+/**
+ * Starts a transport on the caller's existing runtime host. Requires private admission of the owning native SDK connection.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "HostTransportsStartRequest".
+ */
+/** @experimental */
+export interface HostTransportsStartRequest {
+  /**
+   * Protocol to serve.
+   */
+  protocol: HostTransportProtocol;
+  /**
+   * TCP listener or process standard streams.
+   */
+  transport: HostTransportKind;
+  /**
+   * TCP address. Omitted values bind the IPv4 loopback address.
+   * ACP accepts only loopback addresses. Non-loopback JSON-RPC requires a connection token.
+   */
+  hostname?: string;
+  /**
+   * TCP port. Zero or omission requests an available port.
+   */
+  port?: number;
+  /**
+   * SDK JSON-RPC connection token. Required for non-loopback JSON-RPC listeners; unsupported for ACP.
+   */
+  connectionToken?: string;
+  /**
+   * Required ACP launcher inputs. Omit for JSON-RPC.
+   */
+  acp?: HostAcpTransportOptions;
+}
+/**
+ * Empty acknowledgement for a completed host lifecycle operation.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "HostTransportsStopResult".
+ */
+/** @experimental */
+export interface HostTransportsStopResult {}
+/**
+ * Selects a transport owned by this SDK connection.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "HostTransportsStopRequest".
+ */
+/** @experimental */
+export interface HostTransportsStopRequest {
+  /**
+   * Runtime-generated identity returned by host.transports.start.
+   */
+  transportId: string;
+}
+/**
+ * Empty acknowledgement for a completed host lifecycle operation.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "HostTransportsWaitResult".
+ */
+/** @experimental */
+export interface HostTransportsWaitResult {}
+/**
+ * Selects a transport owned by this SDK connection.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "HostTransportsWaitRequest".
+ */
+/** @experimental */
+export interface HostTransportsWaitRequest {
+  /**
+   * Runtime-generated identity returned by host.transports.start.
+   */
+  transportId: string;
+}
+/**
  * Empty acknowledgement for a completed host lifecycle operation.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
@@ -58543,6 +59807,32 @@ export interface RemoteHostsUnsubscribeSessionRequest {
   sessionUri: string;
 }
 /**
+ * Current runtime skill cache generation.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "SkillsInvalidateResult".
+ */
+/** @experimental */
+export interface SkillsInvalidateResult {
+  /**
+   * Monotonic runtime cache invalidation generation.
+   */
+  generation: number;
+}
+/**
+ * Current runtime skill cache generation.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "SkillsGetCacheGenerationResult".
+ */
+/** @experimental */
+export interface SkillsGetCacheGenerationResult {
+  /**
+   * Monotonic runtime cache invalidation generation.
+   */
+  generation: number;
+}
+/**
  * Result of a semantic session import.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
@@ -58611,6 +59901,14 @@ export interface SessionsImportRequest {
    * Explicit session name override.
    */
   name?: string | null;
+  /**
+   * Identifier of the application that owns the imported session.
+   */
+  clientName?: string | null;
+  /**
+   * Structured client kind used by runtime behavior gates.
+   */
+  clientKind?: string | null;
   /**
    * Validate without creating a session.
    */
@@ -60282,6 +61580,23 @@ export interface McpGitHubResolveForInvocationRequest {
   audience: McpInvocationAudience;
 }
 /**
+ * Read-only state health for hosts that report recovery problems or first-launch status.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "GlobalStateGetDiagnosticsResult".
+ */
+/** @experimental */
+export interface GlobalStateGetDiagnosticsResult {
+  /**
+   * Whether the normalized state contains any keys, including keys excluded from SDK reads.
+   */
+  hasState: boolean;
+  /**
+   * State file that JSONC recovery cannot read as an object; absent for missing or readable files.
+   */
+  unreadablePath?: string | null;
+}
+/**
  * An HTTP request through the shared network transport.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
@@ -60499,6 +61814,60 @@ export interface LspListRequest {
    * Absolute working directory used for project and plugin discovery.
    */
   workingDirectory: string;
+}
+/**
+ * Lists Mission Control task metadata under an explicit account, preserving numbered pagination.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "CloudTasksListRequest".
+ */
+/** @experimental */
+/** @internal */
+export interface CloudTasksListRequest {
+  /**
+   * Account whose remote tasks are listed.
+   */
+  authInfo: JsonValue;
+  /**
+   * Retained credential context for the account, when supplied by the host.
+   */
+  authContextId?: string;
+  /**
+   * Embedding client attribution sent to Mission Control.
+   */
+  integrationId: string;
+  /**
+   * Include archived tasks as well as active tasks.
+   */
+  includeArchived: boolean;
+  /**
+   * Maximum tasks requested per service page.
+   */
+  limit: number;
+  /**
+   * Fetch all numbered pages instead of only the first page.
+   */
+  allPages: boolean;
+  /**
+   * Positive numbered page to fetch; cannot be combined with allPages.
+   */
+  page?: number;
+  /**
+   * Maximum raw records to read before filtering and deduplication.
+   */
+  maxRecords?: number;
+  /**
+   * Preserve all tasks instead of only resumable remote sessions.
+   */
+  taskCatalog: boolean;
+  /**
+   * GitHub repository-enrichment endpoint override.
+   */
+  debugGithubApiUrl?: string;
+  /**
+   * Overall listing deadline in milliseconds.
+   */
+  timeoutMs: number;
 }
 
 /** @experimental */
@@ -61857,6 +63226,44 @@ export interface SessionAgentListRequest {
    */
   includePrompt?: boolean;
 }
+/**
+ * Local definitions and diagnostics from an admitted runtime session.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "SessionSkillsGetDefinitionsResult".
+ */
+/** @experimental */
+export interface SessionSkillsGetDefinitionsResult {
+  /**
+   * Definitions in canonical precedence order, including disabled local skills.
+   */
+  skills: LocalSkillDefinition[];
+  /**
+   * Nonfatal diagnostics for loaded definitions.
+   */
+  warnings: string[];
+  /**
+   * Diagnostics for definitions that could not load.
+   */
+  errors: string[];
+  /**
+   * Working directory used for relative diagnostic paths.
+   */
+  displayCwd: string;
+}
+/**
+ * Reads skill diagnostics through the original authenticated local attachment.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "SessionSkillsSourceGetDiagnosticsRequest".
+ */
+/** @experimental */
+export interface SessionSkillsSourceGetDiagnosticsRequest {
+  /**
+   * Identity of the active local attachment to the owning session.
+   */
+  attachId: number;
+}
 
 /** @experimental */
 export interface SessionProviderGetEndpointRequest {
@@ -62944,6 +64351,145 @@ export interface InstallationsConfirmRequest {
   review: InstallationReview;
 }
 /**
+ * The controller's decision on a foreground-session request.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "RuntimeHostForegroundSessionChangeResult".
+ */
+/** @experimental */
+export interface RuntimeHostForegroundSessionChangeResult {
+  /**
+   * Whether the controller selected the requested SDK session or cleared its selection.
+   */
+  success: boolean;
+  /**
+   * Reason for a refused request, when available.
+   */
+  error?: string;
+}
+/**
+ * A request to select a session in the controller's user interface.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "RuntimeHostForegroundSessionChangeRequest".
+ */
+/** @experimental */
+export interface RuntimeHostForegroundSessionChangeRequest {
+  /**
+   * Requested session, or null to clear a rejected selection. Create or resume inactive sessions before accepting.
+   */
+  sessionId: string | null;
+  /**
+   * Runtime-derived identity of the requesting connection.
+   */
+  caller: HostCallbackCaller;
+}
+/**
+ * A controller-local launch request shared unchanged by preparation and commit, not an SDK session creation callback.
+ * Preparation must not launch a child or retain request resources.
+ * The launch callback must not await validation or controller queries before launch. It may await registry readiness afterward.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "RuntimeHostAgentRegistryPrepareSpawnRequest".
+ */
+/** @experimental */
+export interface RuntimeHostAgentRegistryPrepareSpawnRequest {
+  /**
+   * Runtime-issued identity shared by preparation and the launch commit for these exact inputs.
+   */
+  requestId: string;
+  /**
+   * Original launch inputs. Preparation validates them without launch effects or retained request resources.
+   */
+  request: AgentRegistrySpawnRequest;
+  /**
+   * Controller session whose runtime permission policy governs launch admission after preparation.
+   */
+  controllerSessionId: string;
+  /**
+   * Runtime-derived identity of the requesting connection.
+   */
+  caller: HostCallbackCaller;
+}
+/**
+ * A controller-local launch request shared unchanged by preparation and commit, not an SDK session creation callback.
+ * Preparation must not launch a child or retain request resources.
+ * The launch callback must not await validation or controller queries before launch. It may await registry readiness afterward.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "RuntimeHostAgentRegistrySpawnRequest".
+ */
+/** @experimental */
+export interface RuntimeHostAgentRegistrySpawnRequest {
+  /**
+   * Runtime-issued identity shared by preparation and the launch commit for these exact inputs.
+   */
+  requestId: string;
+  /**
+   * Original launch inputs. Preparation validates them without launch effects or retained request resources.
+   */
+  request: AgentRegistrySpawnRequest;
+  /**
+   * Controller session whose runtime permission policy governs launch admission after preparation.
+   */
+  controllerSessionId: string;
+  /**
+   * Runtime-derived identity of the requesting connection.
+   */
+  caller: HostCallbackCaller;
+}
+/**
+ * Progress for one remote handoff requested through `sessions.open`.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "SessionHandoffProgressRequest".
+ */
+/** @experimental */
+export interface SessionHandoffProgressRequest {
+  /**
+   * The callback ID supplied by the handoff requester.
+   */
+  callbackId: string;
+  /**
+   * The runtime-owned handoff step and its current status.
+   */
+  update: SessionsOpenProgress;
+}
+/**
+ * A decision for the handoff's repository mismatch.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "SessionHandoffConfirmResult".
+ */
+/** @experimental */
+export interface SessionHandoffConfirmResult {
+  /**
+   * Whether the requester permits the handoff to use the local repository.
+   */
+  confirmed: boolean;
+}
+/**
+ * Requests confirmation before a handoff uses a different local repository.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "SessionHandoffConfirmRequest".
+ */
+/** @experimental */
+export interface SessionHandoffConfirmRequest {
+  /**
+   * The callback ID supplied by the handoff requester.
+   */
+  callbackId: string;
+  /**
+   * The owner/name of the local repository.
+   */
+  localRepo: string;
+  /**
+   * The owner/name recorded by the remote session.
+   */
+  remoteRepo: string;
+}
+/**
  * The result of one host-owned ACP telemetry step.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
@@ -63014,6 +64560,36 @@ export function createServerRpc(connection: MessageConnection) {
              */
             start: async (params: HostStartRequest): Promise<HostStartResult> =>
                 connection.sendRequest("host.start", params),
+            /** @experimental */
+            transports: {
+                /**
+                 * Starts a runtime-owned JSON-RPC or ACP transport on this connection's existing engine. Requires native SDK host-controller admission; ordinary protocol clients cannot start listeners. The runtime owns connections and cleanup.
+                 *
+                 * @param params Starts a transport on the caller's existing runtime host. Requires private admission of the owning native SDK connection.
+                 *
+                 * @returns A transport that is ready to accept requests on the existing runtime engine.
+                 */
+                start: async (params: HostTransportsStartRequest): Promise<HostTransportsStartResult> =>
+                    connection.sendRequest("host.transports.start", params),
+                /**
+                 * Stops a transport owned by this SDK connection and waits for its connections to finish cleanup. Does not stop the runtime host or other transports.
+                 *
+                 * @param params Selects a transport owned by this SDK connection.
+                 *
+                 * @returns Empty acknowledgement for a completed host lifecycle operation.
+                 */
+                stop: async (params: HostTransportsStopRequest): Promise<HostTransportsStopResult> =>
+                    connection.sendRequest("host.transports.stop", params),
+                /**
+                 * Waits for an owned transport to end and reports transport failures. Waiting does not request shutdown; owner disconnection or runtime shutdown stops the transport.
+                 *
+                 * @param params Selects a transport owned by this SDK connection.
+                 *
+                 * @returns Empty acknowledgement for a completed host lifecycle operation.
+                 */
+                wait: async (params: HostTransportsWaitRequest): Promise<HostTransportsWaitResult> =>
+                    connection.sendRequest("host.transports.wait", params),
+            },
             /**
              * Stops a listener owned by this SDK connection and joins its cleanup without deleting sessions.
              *
@@ -63023,6 +64599,16 @@ export function createServerRpc(connection: MessageConnection) {
              */
             dispose: async (params: HostDisposeRequest): Promise<HostDisposeResult> =>
                 connection.sendRequest("host.dispose", params),
+            /** @experimental */
+            callbacks: {
+                /**
+                 * Registers narrow foreground and controller-local spawn callbacks on the original SDK-owned runtime connection. Other connections cannot register them. Replaces this owner's previous registration and cancels its pending callbacks. Omitted flags disable their callback; disabling both clears the registration. The runtime keeps canonical session ownership.
+                 *
+                 * @param params Callbacks supplied by the original SDK-owned runtime controller.
+                 */
+                register: async (params: HostCallbacksRegisterRequest): Promise<void> =>
+                    connection.sendRequest("host.callbacks.register", params),
+            },
             /**
              * Changes remote creation admission on a host owned by this SDK connection without disconnecting clients. Acknowledgement means subsequent admissions use the new policy; already-admitted creation may complete.
              *
@@ -63184,6 +64770,15 @@ export function createServerRpc(connection: MessageConnection) {
                 refresh: async (params: PluginsMarketplacesRefreshRequest): Promise<MarketplaceRefreshResult> =>
                     connection.sendRequest("plugins.marketplaces.refresh", params),
             },
+            /**
+             * Inspects explicit plugin directories without installation or activation. Configuration editors can preview recognized mounts and manifest diagnostics in caller precedence order.
+             *
+             * @param params Explicit directories to inspect without installing or activating their contents.
+             *
+             * @returns Recognized directory mounts and their manifest diagnostics.
+             */
+            scanDirectories: async (params: PluginsScanDirectoriesRequest): Promise<PluginsScanDirectoriesResult> =>
+                connection.sendRequest("plugins.scanDirectories", params),
         },
         /** @experimental */
         skills: {
@@ -63288,6 +64883,29 @@ export function createServerRpc(connection: MessageConnection) {
                 setSkillDisabled: async (params: SkillsConfigSetSkillDisabledRequest): Promise<void> =>
                     connection.sendRequest("skills.config.setSkillDisabled", params),
             },
+            /**
+             * Loads complete local skill definitions for editor previews and inline expansion. The runtime resolves configured sources, plugin activation, trust, and cache invalidation. Explicit source inputs support clients with their own discovery scope.
+             *
+             * @param params Local discovery options. The runtime owns configuration, parsing, and caches.
+             *
+             * @returns Parsed definitions and source diagnostics from one canonical runtime load.
+             */
+            load: async (params: SkillsLoadRequest): Promise<SkillsLoadResult> =>
+                connection.sendRequest("skills.load", params),
+            /**
+             * Invalidates the runtime's parsed skill cache and returns its new generation. The next load reads source definitions again.
+             *
+             * @returns Current runtime skill cache generation.
+             */
+            invalidate: async (): Promise<SkillsInvalidateResult> =>
+                connection.sendRequest("skills.invalidate", {}),
+            /**
+             * Reads the runtime's skill cache generation without scanning source directories.
+             *
+             * @returns Current runtime skill cache generation.
+             */
+            getCacheGeneration: async (): Promise<SkillsGetCacheGenerationResult> =>
+                connection.sendRequest("skills.getCacheGeneration", {}),
             /**
              * Discovers skills across global and project sources.
              *
@@ -64015,6 +65633,18 @@ export function createServerRpc(connection: MessageConnection) {
                 revoke: async (params: PermissionsExtensionApprovalsRevokeRequest): Promise<PermissionsExtensionApprovalsRevokeResult> =>
                     connection.sendRequest("permissions.extensionApprovals.revoke", params),
             },
+            /** @experimental */
+            folderTrust: {
+                /**
+                 * Remembers a local folder in the caller's persisted trusted-folders list without creating or changing a session. CLI-backed desktop hosts can use this before session creation through their existing CLI-owned SDK connection. The runtime canonicalizes the path and applies its existing Git-root and atomic persistence rules. An explicit configDir selects the caller's configuration root; otherwise COPILOT_HOME and the OS home apply, not the server or session root. Rejects persistence failures with the existing Failed to add trusted folder prefix. Requires a live, privately admitted CLI host connection or direct internal runtime dispatch. Ordinary SDK clients and AHP peers cannot grant this local trust.
+                 *
+                 * @param params Local folder and configuration root for persistent trust.
+                 *
+                 * @returns Indicates whether the operation succeeded.
+                 */
+                addTrusted: async (params: FolderTrustAddTrustedParams): Promise<PermissionsFolderTrustAddTrustedResult> =>
+                    connection.sendRequest("permissions.folderTrust.addTrusted", params),
+            },
         },
         /** @experimental */
         user: {
@@ -64494,6 +66124,15 @@ export function createServerRpc(connection: MessageConnection) {
                 cancel: async (params: McpInstallationOperationRequest): Promise<McpInstallationManagementResult> =>
                     connection.sendRequest("mcp.installations.cancel", params),
             },
+            /**
+             * Previews MCP servers from an explicit plugin set without merging ambient user or workspace configuration or starting servers. Builtin selection uses only the runtime's registered builtin roots.
+             *
+             * @param params Plugin-only MCP configuration preview, without ambient user or workspace servers.
+             *
+             * @returns MCP server configurations keyed by server name.
+             */
+            discoverPluginServers: async (params: McpDiscoverPluginServersRequest): Promise<McpServersConfig> =>
+                connection.sendRequest("mcp.discoverPluginServers", params),
         },
         /** @experimental */
         extensions: {
@@ -66740,6 +68379,31 @@ export function createInternalServerRpc(connection: MessageConnection) {
             /** @experimental */
             config: {
                 /**
+                 * Reads a persisted MCP document or fresh raw user membership from the selected MCP configuration root. Uses a separate result to preserve existing normalized list response construction in all SDKs.
+                 *
+                 * @param params Persisted MCP document or fresh raw membership selection. Does not change the existing normalized list response.
+                 *
+                 * @returns Persisted MCP document or raw user membership. Separate from the existing normalized list result to preserve public SDK construction patterns.
+                 */
+                read: async (params?: McpConfigReadRequest): Promise<McpConfigReadResult> =>
+                    connection.sendRequest("mcp.config.read", params ?? {}),
+                /**
+                 * Writes a complete persisted MCP configuration document atomically under the existing installation ownership lease and updates its validated cache. Unlike per-server mutations, preserves document-level fields and bulk replacement semantics.
+                 *
+                 * @param params Atomic bulk MCP document write. Uses the same runtime-owned installation leases, validation, metadata preservation, and cache update as persisted configuration writes.
+                 */
+                write: async (params: McpConfigWriteRequest): Promise<void> =>
+                    connection.sendRequest("mcp.config.write", params),
+                /**
+                 * Lists regular JSON files and their modification and birth times in the selected MCP configuration directory, using the existing platform metadata and ordering rules.
+                 *
+                 * @param params MCP configuration directory selection for metadata enumeration.
+                 *
+                 * @returns Regular JSON files in the MCP configuration directory, newest modification time first. Unreadable or absent directories return an empty list.
+                 */
+                files: async (params?: McpConfigFilesRequest): Promise<McpConfigFilesResult> =>
+                    connection.sendRequest("mcp.config.files", params ?? {}),
+                /**
                  * Validates and composes additional MCP documents in precedence order without modifying persisted configuration.
                  *
                  * @param params Validates and combines additional MCP documents in source order.
@@ -66979,6 +68643,15 @@ export function createInternalServerRpc(connection: MessageConnection) {
              */
             writeKey: async (params: GlobalStateWriteKeyRequest): Promise<void> =>
                 connection.sendRequest("globalState.writeKey", params),
+            /**
+             * Reports whether the normalized state contains any keys and identifies a state file that JSONC recovery cannot read. Credential values and excluded fields never cross this boundary. Hosts use this to report a damaged profile or distinguish an existing profile from a fresh installation, even when every stored field is excluded from globalState.load. An absent or empty configDir uses the server's configured home.
+             *
+             * @param params Selects the configuration directory whose machine-wide state to read.
+             *
+             * @returns Read-only state health for hosts that report recovery problems or first-launch status.
+             */
+            getDiagnostics: async (params: GlobalStateLoadForConfigDirRequest): Promise<GlobalStateGetDiagnosticsResult> =>
+                connection.sendRequest("globalState.getDiagnostics", params),
         },
         /** @experimental */
         settings: {
@@ -67227,6 +68900,15 @@ export function createInternalServerRpc(connection: MessageConnection) {
              */
             delete: async (params: CloudTasksDeleteParams): Promise<CloudTasksDeleteResult> =>
                 connection.sendRequest("cloudTasks.delete", params),
+            /**
+             * Lists remote task metadata for an explicit account, with numbered pagination, optional full-catalog scans and structured HTTP failures. SDK hosts and the CLI use the same credential, experiment-aware endpoint and repository-enrichment pipeline.
+             *
+             * @param params Lists Mission Control task metadata under an explicit account, preserving numbered pagination.
+             *
+             * @returns Remote task metadata and pagination, including structured HTTP or partial-archive failures.
+             */
+            list: async (params: CloudTasksListRequest): Promise<CloudTasksListResult> =>
+                connection.sendRequest("cloudTasks.list", params),
             /**
              * Reads one cloud coding-agent task from the Copilot API. This is the task a cloud agent runs on a host's behalf, not a background task inside a session, so it is answered above any session and the `tasks` group does not cover it. Hosts other than the CLI want this: a GitHub App or an SDK consumer that shows the state of a cloud agent run must read the same task record, and resolving it here keeps one credential-resolution, task-URL and circuit-breaker path instead of each host rebuilding them. The result is the HTTP outcome rather than the task itself: a caller must read `ok` and `statusCode` before `payloadJson`, because a 404 is reported as a non-ok result rather than an error, which is what lets a caller tell "no such task" apart from "the API call failed".
              *
@@ -68327,11 +70009,11 @@ export function createSessionRpc(connection: MessageConnection, sessionId: strin
         /** @experimental */
         accounts: {
             /**
-             * Lists signed-in accounts, including derived accounts. The active entry identifies the session's selected account.
+             * Lists known accounts, including saved identities and derived accounts even when automatic authentication is disabled. Listing does not select or sign in an account. The active entry identifies the session's selected account.
              *
              * @param params Options for listing the canonical account inventory.
              *
-             * @returns Signed-in accounts; empty when no accounts are available.
+             * @returns Known accounts, including saved accounts when automatic authentication is disabled; empty when no accounts are known.
              */
             list: async (params?: AccountsListRequest): Promise<AccountsList> =>
                 connection.sendRequest("session.accounts.list", { ...params, sessionId }),
@@ -68350,14 +70032,14 @@ export function createSessionRpc(connection: MessageConnection, sessionId: strin
             lastErrors: async (): Promise<AuthValidationErrors> =>
                 connection.sendRequest("session.accounts.lastErrors", { sessionId }),
             /**
-             * Switches the session's selected authentication to an available account.
+             * Switches to an available account by accountId. The runtime selects its credentials.
              *
              * @param params Select a signed-in account for this session.
              */
             switchActive: async (params: AccountsSwitchActiveRequest): Promise<void> =>
                 connection.sendRequest("session.accounts.switchActive", { ...params, sessionId }),
             /**
-             * Logs out the specified account, or the active account when selectionId is omitted.
+             * Logs out the specified account, or the active account when accountId is omitted. Removes runtime-owned credentials without deleting externally owned credentials.
              *
              * @param params Log out a signed-in account.
              *
@@ -68374,15 +70056,6 @@ export function createSessionRpc(connection: MessageConnection, sessionId: strin
                 connection.sendRequest("session.accounts.setCredentials", { ...params, sessionId }),
             /** @experimental */
             login: {
-                /**
-                 * Lists cached base identities reusable by a login provider, with the active identity first. Pass an accountId to login.begin to reuse an identity.
-                 *
-                 * @param params The provider whose cached base identities should be listed.
-                 *
-                 * @returns Cached base identities reusable by the selected login provider, active first.
-                 */
-                list: async (params: AuthLoginListRequest): Promise<AuthLoginIdentityList> =>
-                    connection.sendRequest("session.accounts.login.list", { ...params, sessionId }),
                 /**
                  * Begin an interactive login flow for a provider kind, optionally selecting how to authorize (`method`: `web` by default, or `device-code`), and return its opaque flow id and first step.
                  *
@@ -69107,6 +70780,13 @@ export function createSessionRpc(connection: MessageConnection, sessionId: strin
             list: async (): Promise<SkillList> =>
                 connection.sendRequest("session.skills.list", { sessionId }),
             /**
+             * Returns complete local skill definitions and load diagnostics from the session's canonical inventory. Ensures the inventory is loaded without a separate discovery or managed-policy ingestion. Provider-backed skills are not local definitions.
+             *
+             * @returns Local definitions and diagnostics from an admitted runtime session.
+             */
+            getDefinitions: async (): Promise<SessionSkillsGetDefinitionsResult> =>
+                connection.sendRequest("session.skills.getDefinitions", { sessionId }),
+            /**
              * Returns the skills that have been invoked during this session.
              *
              * @returns Skills invoked during this session, ordered by invocation time (most recent last).
@@ -69134,6 +70814,13 @@ export function createSessionRpc(connection: MessageConnection, sessionId: strin
              */
             reload: async (): Promise<SkillsLoadDiagnostics> =>
                 connection.sendRequest("session.skills.reload", { sessionId }),
+            /**
+             * Returns diagnostics from the session's most recent skill load without reloading definitions or waiting for MCP discovery.
+             *
+             * @returns Diagnostics from reloading skill definitions, with warnings and errors as separate lists.
+             */
+            getDiagnostics: async (): Promise<SkillsLoadDiagnostics> =>
+                connection.sendRequest("session.skills.getDiagnostics", { sessionId }),
             /**
              * Ensures the session's skill definitions have been loaded from disk.
              */
@@ -70981,6 +72668,18 @@ export function createInternalSessionRpc(connection: MessageConnection, sessionI
             },
         },
         /** @experimental */
+        skillsSource: {
+            /**
+             * Reads skill diagnostics from the original authenticated local attachment without reloading definitions.
+             *
+             * @param params Reads skill diagnostics through the original authenticated local attachment.
+             *
+             * @returns Diagnostics from reloading skill definitions, with warnings and errors as separate lists.
+             */
+            getDiagnostics: async (params: SessionSkillsSourceGetDiagnosticsRequest): Promise<SkillsLoadDiagnostics> =>
+                connection.sendRequest("session.skillsSource.getDiagnostics", { ...params, sessionId }),
+        },
+        /** @experimental */
         diagnostics: {
             /** @experimental */
             lifecycle: {
@@ -71775,6 +73474,58 @@ export interface InstallationsHandler {
     confirm(params: InstallationsConfirmRequest): Promise<InstallationsConfirmResult>;
 }
 
+/** Handler for `runtimeHost` client global API methods. */
+/** @experimental */
+export interface RuntimeHostHandler {
+    /**
+     * Asks the runtime controller to select a session in its user interface, or to clear selection when sessionId is null. The controller uses normal SDK creation or resume for inactive sessions before accepting. A successful response does not create a session or grant ownership; the runtime verifies the active session before publishing the foreground change. Selection returns a busy error while a conflicting SDK lifecycle operation owns the target. If final admission rejects an accepted selection, the runtime asks the same live controller to restore its canonical selection, even if the original registration or requester has retired.
+     *
+     * @param params A request to select a session in the controller's user interface.
+     *
+     * @returns The controller's decision on a foreground-session request.
+     */
+    foregroundSessionChange(params: RuntimeHostForegroundSessionChangeRequest): Promise<RuntimeHostForegroundSessionChangeResult>;
+    /**
+     * Asks the original runtime controller to validate launch inputs asynchronously without launching a child or retaining request resources. A prepared result does not authorize launch. After validation, the runtime revalidates the current registration, controller and permission policy before admitting the launch-only callback with exactly the same payload and requestId.
+     *
+     * @param params A controller-local launch request shared unchanged by preparation and commit, not an SDK session creation callback.
+     * Preparation must not launch a child or retain request resources.
+     * The launch callback must not await validation or controller queries before launch. It may await registry readiness afterward.
+     *
+     * @returns Pure preparation outcome before the runtime admits a launch commit.
+     */
+    agentRegistryPrepareSpawn(params: RuntimeHostAgentRegistryPrepareSpawnRequest): Promise<HostAgentRegistryPrepareSpawnResult>;
+    /**
+     * Commits an admitted controller-local child launch with exactly the payload and requestId from runtimeHost.agentRegistryPrepareSpawn. The host launches before any asynchronous validation or controller query, then may await registry readiness and return the existing agentRegistry.spawn result. Admission is not retroactively revoked by later policy changes. This is not a session factory; the caller attaches and sends any initial prompt separately.
+     *
+     * @param params A controller-local launch request shared unchanged by preparation and commit, not an SDK session creation callback.
+     * Preparation must not launch a child or retain request resources.
+     * The launch callback must not await validation or controller queries before launch. It may await registry readiness afterward.
+     *
+     * @returns Outcome of an agentRegistry.spawn call.
+     */
+    agentRegistrySpawn(params: RuntimeHostAgentRegistrySpawnRequest): Promise<AgentRegistrySpawnResult>;
+}
+
+/** Handler for `sessionHandoff` client global API methods. */
+/** @experimental */
+export interface SessionHandoffHandler {
+    /**
+     * Reports a runtime-owned handoff step to its requesting connection. The callbackId comes from sessions.open. Progress delivery does not control the operation.
+     *
+     * @param params Progress for one remote handoff requested through `sessions.open`.
+     */
+    progress(params: SessionHandoffProgressRequest): Promise<void>;
+    /**
+     * Asks the handoff requester to confirm a repository mismatch before Git or session mutation. Missing, invalid, failed, or declined confirmation refuses the handoff.
+     *
+     * @param params Requests confirmation before a handoff uses a different local repository.
+     *
+     * @returns A decision for the handoff's repository mismatch.
+     */
+    confirm(params: SessionHandoffConfirmRequest): Promise<SessionHandoffConfirmResult>;
+}
+
 /** All client global API handler groups. */
 export interface ClientGlobalApiHandlers {
     host?: HostHandler;
@@ -71786,6 +73537,8 @@ export interface ClientGlobalApiHandlers {
     entraToken?: EntraTokenHandler;
     uiThread?: UiThreadHandler;
     installations?: InstallationsHandler;
+    runtimeHost?: RuntimeHostHandler;
+    sessionHandoff?: SessionHandoffHandler;
 }
 
 /**
@@ -71857,6 +73610,42 @@ export function registerClientGlobalApiHandlers(
     connection.onRequest("installations.confirm", async (params: InstallationsConfirmRequest) => {
         const handler = handlers.installations;
         if (!handler) throw new Error("No installations client-global handler registered");
+        return handler.confirm(params);
+    });
+    connection.onRequest("runtimeHost.foregroundSessionChange", async (params: RuntimeHostForegroundSessionChangeRequest) => {
+        const handler = handlers.runtimeHost;
+        if (!handler) throw new Error("No runtimeHost client-global handler registered");
+        return handler.foregroundSessionChange(params);
+    });
+    connection.onRequest("runtimeHost.agentRegistryPrepareSpawn", async (params: RuntimeHostAgentRegistryPrepareSpawnRequest) => {
+        const handler = handlers.runtimeHost;
+        if (!handler) throw new Error("No runtimeHost client-global handler registered");
+        return handler.agentRegistryPrepareSpawn(params);
+    });
+    connection.onRequest("runtimeHost.agentRegistrySpawn", async (params: RuntimeHostAgentRegistrySpawnRequest) => {
+        const handler = handlers.runtimeHost;
+        if (!handler) throw new Error("No runtimeHost client-global handler registered");
+        return handler.agentRegistrySpawn(params);
+    });
+    let sessionHandoffProgressClosed = false;
+    const stopSessionHandoffProgress = () => { sessionHandoffProgressClosed = true; };
+    connection.onClose(stopSessionHandoffProgress);
+    connection.onDispose(stopSessionHandoffProgress);
+    let sessionHandoffProgressQueue: Promise<void> = Promise.resolve();
+    connection.onNotification("sessionHandoff.progress", (params: SessionHandoffProgressRequest) => {
+        sessionHandoffProgressQueue = sessionHandoffProgressQueue.then(async () => {
+            if (sessionHandoffProgressClosed) return;
+            const handler = handlers.sessionHandoff;
+            if (!handler) return;
+            await handler.progress(params);
+        }).catch((error) => {
+            console.error("Client-global notification handler sessionHandoff.progress failed", error);
+        });
+        return sessionHandoffProgressQueue;
+    });
+    connection.onRequest("sessionHandoff.confirm", async (params: SessionHandoffConfirmRequest) => {
+        const handler = handlers.sessionHandoff;
+        if (!handler) throw new Error("No sessionHandoff client-global handler registered");
         return handler.confirm(params);
     });
 }

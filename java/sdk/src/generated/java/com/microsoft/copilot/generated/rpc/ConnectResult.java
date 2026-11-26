@@ -29,6 +29,9 @@ record ConnectResult(
     @JsonProperty("protocolVersion") Long protocolVersion,
     /** Server package version */
     @JsonProperty("version") String version,
+    /** Reports support for typed SDK host configuration in the existing startup arguments.
+SDKs that supply host configuration must reject an absent or false acknowledgement. */
+    @JsonProperty("runtimeHostConfiguration") Boolean runtimeHostConfiguration,
     /** Acknowledges that this connection's host-owned Entra token provider is enabled. Clients requesting it must reject a missing or false acknowledgement. */
     @CopilotExperimental
     @JsonProperty("entraTokenProvider") Boolean entraTokenProvider,
@@ -58,6 +61,7 @@ record ConnectResult(
         private Boolean ok;
         private Long protocolVersion;
         private String version;
+        private Boolean runtimeHostConfiguration;
         private Boolean entraTokenProvider;
         private List<TaskKind> taskKinds;
 
@@ -95,6 +99,17 @@ record ConnectResult(
         }
 
         /**
+         * Sets the {@code runtimeHostConfiguration} property.
+         * @param value the property value
+         * @return this builder
+         * @since 2.0.0
+         */
+        public Builder runtimeHostConfiguration(Boolean value) {
+            this.runtimeHostConfiguration = value;
+            return this;
+        }
+
+        /**
          * Sets the {@code entraTokenProvider} property.
          * @param value the property value
          * @return this builder
@@ -127,7 +142,7 @@ record ConnectResult(
             if (ok == null) throw new IllegalStateException("Missing required property: ok");
             if (protocolVersion == null) throw new IllegalStateException("Missing required property: protocolVersion");
             if (version == null) throw new IllegalStateException("Missing required property: version");
-            return new ConnectResult(ok, protocolVersion, version, entraTokenProvider, taskKinds);
+            return new ConnectResult(ok, protocolVersion, version, runtimeHostConfiguration, entraTokenProvider, taskKinds);
         }
     }
 }

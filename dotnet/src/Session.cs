@@ -1009,6 +1009,7 @@ public sealed partial class CopilotSession : IAsyncDisposable
             Description = definition.Description ?? string.Empty,
             Parameters = ToJsonElementDictionary(definition.Parameters),
             OverridesBuiltInTool = definition.OverridesBuiltInTool,
+            OnlyOverridesBuiltInTool = definition.OnlyOverridesBuiltInTool,
             SkipPermission = definition.SkipPermission,
             HasHandler = definition.HasHandler,
             Defer = definition.Defer switch
@@ -1722,8 +1723,8 @@ public sealed partial class CopilotSession : IAsyncDisposable
         static string GetSingleParameterName(AIFunction tool)
         {
             if (tool.Name == "apply_patch" &&
-                tool.AdditionalProperties.TryGetValue(CopilotTool.OverridesBuiltInToolKey, out var isOverride) &&
-                isOverride is true &&
+                ((tool.AdditionalProperties.TryGetValue(CopilotTool.OverridesBuiltInToolKey, out var isOverride) && isOverride is true) ||
+                 (tool.AdditionalProperties.TryGetValue(CopilotTool.OnlyOverridesBuiltInToolKey, out var onlyOverride) && onlyOverride is true)) &&
                 tool.JsonSchema.TryGetProperty("type", out var schemaType) &&
                 schemaType.ValueKind == JsonValueKind.String &&
                 schemaType.GetString() == "string")

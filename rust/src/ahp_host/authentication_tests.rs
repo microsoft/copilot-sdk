@@ -23,13 +23,8 @@ async fn requires_authentication_before_host_start_in_every_mode() {
     for mode in [crate::ClientMode::CodingAgent, crate::ClientMode::Empty] {
         let (client_write, read) = duplex(1 << 20);
         let (write, client_read) = duplex(1 << 20);
-        let client = Client::from_streams_with_mode_for_test(
-            client_read,
-            client_write,
-            PathBuf::from("."),
-            mode,
-        )
-        .unwrap();
+        let client =
+            Client::from_streams(mode, client_read, client_write, PathBuf::from(".")).unwrap();
         let mut peer = Peer { read, write };
         let options = AhpHostOptions::new().with_local_server(Default::default());
         let error = client.start_ahp_host(options).await.unwrap_err();

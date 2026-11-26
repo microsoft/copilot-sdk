@@ -21,13 +21,13 @@ import javax.annotation.processing.Generated;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record UsageMetricsModelMetricUsage(
-    /** Total input tokens consumed */
+    /** Total input tokens consumed, including cache-read and cache-write tokens */
     @JsonProperty("inputTokens") Long inputTokens,
     /** Total output tokens produced */
     @JsonProperty("outputTokens") Long outputTokens,
-    /** Total tokens read from prompt cache */
+    /** Total input tokens read from prompt cache; included in inputTokens */
     @JsonProperty("cacheReadTokens") Long cacheReadTokens,
-    /** Total tokens written to prompt cache */
+    /** Total input tokens written to prompt cache; included in inputTokens */
     @JsonProperty("cacheWriteTokens") Long cacheWriteTokens,
     /** Total output tokens used for reasoning */
     @JsonProperty("reasoningTokens") Long reasoningTokens

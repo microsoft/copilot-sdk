@@ -40,6 +40,12 @@ mod hooks;
 #[path = "e2e/hooks_extended.rs"]
 mod hooks_extended;
 #[cfg(feature = "in-process")]
+#[path = "e2e/host_callbacks.rs"]
+mod host_callbacks;
+#[cfg(feature = "in-process")]
+#[path = "e2e/host_transports.rs"]
+mod host_transports;
+#[cfg(feature = "in-process")]
 #[path = "e2e/inprocess.rs"]
 mod inprocess;
 #[path = "e2e/mcp_and_agents.rs"]

@@ -8,6 +8,29 @@ namespace Microsoft.Copilot.Test.Unit;
 
 public sealed partial class ClientSessionLifetimeTests
 {
+    [Fact]
+    public async Task SkillsDiscovery_Preserves_Null_Calls_And_Method_Groups()
+    {
+        await using var server = await FakeCopilotServer.StartAsync();
+        server.ResponseFactory = _ => new Dictionary<string, object?> { ["skills"] = Array.Empty<object>() };
+        await using var client = new CopilotClient(new CopilotClientOptions
+        {
+            Mode = CopilotClientMode.CodingAgent,
+            Runtime = RuntimeConnection.ForTcp(server.Host, server.Port)
+        });
+        await client.StartAsync();
+        Func<IList<string>?, IList<string>?, IList<string>?, bool?, CancellationToken, Task<ServerSkillList>> discover =
+            client.Rpc.Skills.DiscoverAsync;
+        await client.Rpc.Skills.DiscoverAsync(null);
+        await discover(null, null, null, null, CancellationToken.None);
+        await client.Rpc.Skills.DiscoverWithOptionsAsync(new SkillsDiscoverRequest { ConfigDir = "preview-config" });
+        var requests = server.Requests.Where(request => request.Method == "skills.discover").ToArray();
+        Assert.Equal(3, requests.Length);
+        Assert.False(requests[0].Params.TryGetProperty("configDir", out _));
+        Assert.False(requests[1].Params.TryGetProperty("configDir", out _));
+        Assert.Equal("preview-config", requests[2].Params.GetProperty("configDir").GetString());
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(1)]

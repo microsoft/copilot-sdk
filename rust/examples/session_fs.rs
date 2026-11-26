@@ -8,18 +8,23 @@
 //! ```sh
 //! cargo run -p copilot-sdk --example session_fs
 //! ```
+//! Add `-- --fork` for an in-process fork without a model request.
+//! Set `COPILOT_HOME` to a private directory and `COPILOT_CLI_PATH` to the same-checkout runtime.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use copilot_sdk::handler::ApproveAllHandler;
+use copilot_sdk::rpc::SessionsForkRequest;
 use copilot_sdk::session_fs::{
     DirEntry, DirEntryKind, FileInfo, FsError, FsErrorKind, SessionFsConfig, SessionFsConventions,
     SessionFsProvider,
 };
 use copilot_sdk::types::{CreateSessionOptions, MessageOptions};
-use copilot_sdk::{Client, ClientOptions};
+use copilot_sdk::{
+    Client, ClientOptions, InProcessRuntimeOptions, ResumeSessionOptions, RuntimeConnection,
+};
 use parking_lot::Mutex;
 
 #[cfg(test)]
@@ -271,6 +276,9 @@ impl SessionFsProvider for InMemoryProvider {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::args().any(|argument| argument == "--fork") {
+        return demonstrate_fork().await;
+    }
     let provider: Arc<dyn SessionFsProvider> = Arc::new(InMemoryProvider::new());
 
     let options = ClientOptions::new(copilot_sdk::ClientMode::CodingAgent).with_session_fs(
@@ -305,5 +313,100 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Assistant: {text}");
 
     session.disconnect().await?;
+    Ok(())
+}
+
+async fn demonstrate_fork() -> Result<(), Box<dyn std::error::Error>> {
+    let home = std::env::var_os("COPILOT_HOME")
+        .map(std::path::PathBuf::from)
+        .ok_or("Set COPILOT_HOME to a private directory")?;
+    let stores = Arc::new(Mutex::new(HashMap::<String, Arc<InMemoryProvider>>::new()));
+    let resolver_stores = stores.clone();
+    let client = Client::start(
+        ClientOptions::new(copilot_sdk::ClientMode::CodingAgent)
+            .with_runtime(RuntimeConnection::for_in_process(
+                InProcessRuntimeOptions::new().with_owned(|owned| owned.with_base_directory(home)),
+            ))
+            .with_github(|group| group.with_token("").with_use_logged_in_user(false))
+            .with_observability(|group| group.with_disable_client_telemetry(true))
+            .with_session_fs(SessionFsConfig::new(
+                "/workspace",
+                "/workspace/.copilot",
+                SessionFsConventions::Posix,
+            )),
+    )
+    .await?;
+    client.register_session_fs_provider_resolver(Arc::new(
+        move |id: &str| -> copilot_sdk::Result<Arc<dyn SessionFsProvider>> {
+            Ok(resolver_stores
+                .lock()
+                .entry(id.to_owned())
+                .or_insert_with(|| Arc::new(InMemoryProvider::new()))
+                .clone())
+        },
+    ))?;
+    let result = async {
+        let provider = Arc::new(InMemoryProvider::new());
+        let source = client
+            .create_session(
+                CreateSessionOptions::default()
+                    .with_enable_config_discovery(false)
+                    .with_github(|group| group.with_fetch_managed_settings(false))
+                    .with_permissions(|group| group.with_on_request(Arc::new(ApproveAllHandler)))
+                    .with_state(|group| group.with_session_fs_provider(provider.clone())),
+            )
+            .await?;
+        stores
+            .lock()
+            .insert(source.id().to_string(), provider.clone());
+        provider
+            .write_file(
+                "/workspace/.copilot/plan.md",
+                "The SDK host copied this plan through the filesystem provider.",
+                None,
+            )
+            .await?;
+        let fork = client
+            .rpc()
+            .sessions()
+            .fork(SessionsForkRequest {
+                session_id: source.id().clone(),
+                name: Some("Provider fork example".to_owned()),
+                to_event_id: None,
+            })
+            .await?;
+        let target = stores
+            .lock()
+            .get(fork.session_id.as_str())
+            .cloned()
+            .ok_or("The runtime did not request the fork's filesystem")?;
+        let plan = target.read_file("/workspace/.copilot/plan.md").await?;
+        if plan != "The SDK host copied this plan through the filesystem provider." {
+            return Err("The fork did not preserve the provider's plan".into());
+        }
+        let resumed = client
+            .resume_session(
+                ResumeSessionOptions::new(fork.session_id)
+                    .with_enable_config_discovery(false)
+                    .with_github(|group| group.with_fetch_managed_settings(false))
+                    .with_permissions(|group| group.with_on_request(Arc::new(ApproveAllHandler)))
+                    .with_state(|group| group.with_session_fs_provider(target)),
+            )
+            .await?;
+        println!("Forked provider plan: {plan}");
+        println!("The Rust SDK resumed the fork without a TypeScript session host.");
+        resumed.disconnect().await?;
+        source.disconnect().await?;
+        Ok::<(), Box<dyn std::error::Error>>(())
+    }
+    .await;
+    let stopped = client.stop().await;
+    if let Err(error) = result {
+        if let Err(shutdown) = stopped {
+            eprintln!("Runtime shutdown also failed: {shutdown}");
+        }
+        return Err(error);
+    }
+    stopped?;
     Ok(())
 }

@@ -26,7 +26,7 @@ pub use session_events::{
 use crate::generated::{lifecycle_diagnostics, session_events};
 use crate::types::{RequestId, SessionEvent, SessionId};
 
-/// One canonical signed-in account entry shared by account-list and account-switch surfaces.
+/// One known account, including saved identities and accounts that are not currently authenticated or selectable.
 ///
 /// <div class="warning">
 ///
@@ -36,8 +36,8 @@ use crate::types::{RequestId, SessionEvent, SessionId};
 /// </div>
 #[derive(Debug, Clone, Default)]
 pub struct Account {
-    /// Stable opaque account id used for forest lineage and account management.
-    pub account_id: Option<String>,
+    /// Stable opaque account id used for selection, logout, and forest lineage. Credential sources for the same identified account share one account entry.
+    pub account_id: String,
     /// Whether this is the active account.
     pub active: bool,
     /// Human-readable credential source used to authenticate this account, such as `gh` or `GITHUB_TOKEN`.
@@ -54,14 +54,14 @@ pub struct Account {
     pub label: Option<String>,
     /// Authenticated login/username.
     pub login: String,
-    /// Opaque selection id accepted by switchActive. Absent when switching is not currently valid.
-    pub selection_id: Option<String>,
     /// Human-readable availability or recovery reason.
     pub status_message: Option<String>,
+    /// Whether this is an inference account, independently of its current health or selectability. False for base sign-in identities.
+    pub supports_inference: bool,
     /// Whether the account is currently a valid switch target.
     pub switchable: Option<bool>,
 }
-crate::record_serde::wire_record!(Account { account_id: "accountId" if is_none, active: "active", auth_source: "authSource" if is_none, derived_from: "derivedFrom" if is_none, health: "health" if is_none, host: "host", kind: "kind", label: "label" if is_none, login: "login", selection_id: "selectionId" if is_none, status_message: "statusMessage" if is_none, switchable: "switchable" if is_none });
+crate::record_serde::wire_record!(Account { account_id: "accountId", active: "active", auth_source: "authSource" if is_none, derived_from: "derivedFrom" if is_none, health: "health" if is_none, host: "host", kind: "kind", label: "label" if is_none, login: "login", status_message: "statusMessage" if is_none, supports_inference: "supportsInference", switchable: "switchable" if is_none });
 
 /// Endpoint URLs from the raw Copilot `/copilot_internal/v2/token` user-response passthrough.
 ///
@@ -852,20 +852,20 @@ crate::record_serde::wire_record!(AuthIdentityMetadata {
 /// </div>
 #[derive(Debug, Clone, Default)]
 pub struct AuthLoginAccount {
+    /// Opaque identifier supplied to the next login step to select this account.
+    pub account_id: String,
     /// Host coordinate owned by the selected account's provider.
     pub host: String,
     /// Provider kind that owns this account choice.
     pub kind: AccountKind,
     /// Human-readable login for the account choice.
     pub login: String,
-    /// Opaque identifier supplied to the next login step to select this account.
-    pub selection_id: String,
 }
 crate::record_serde::wire_record!(AuthLoginAccount {
+    account_id: "accountId",
     host: "host",
     kind: "kind",
-    login: "login",
-    selection_id: "selectionId"
+    login: "login"
 });
 
 ///
@@ -1019,29 +1019,6 @@ crate::record_serde::wire_record!(AuthLoginStepDeviceCode {
     kind: "kind",
     user_code: "userCode",
     verification_uri: "verificationUri"
-});
-
-/// A cached base identity a provider can reuse for login without asking the user to choose an account again.
-///
-/// <div class="warning">
-///
-/// **Experimental.** This type is part of an experimental wire-protocol surface
-/// and may change or be removed in future SDK or CLI releases.
-///
-/// </div>
-#[derive(Debug, Clone, Default)]
-pub struct AuthLoginIdentity {
-    /// Opaque provider-owned identity id. Pass it back to accounts.login.begin; consumers must not parse it.
-    pub account_id: String,
-    /// Whether this base identity owns the session's active derived account.
-    pub active: bool,
-    /// Human-readable sign-in label owned by the runtime.
-    pub label: String,
-}
-crate::record_serde::wire_record!(AuthLoginIdentity {
-    account_id: "accountId",
-    active: "active",
-    label: "label"
 });
 
 /// An authentication provider offered for interactive login.
@@ -3737,6 +3714,49 @@ pub struct InstructionSource {
     pub r#type: InstructionSourceType,
 }
 crate::record_serde::wire_record!(InstructionSource { apply_to: "applyTo" if is_none, content: "content", default_disabled: "defaultDisabled" if is_none, description: "description" if is_none, id: "id", label: "label", location: "location", plugin_id: "pluginId" if is_none, project_path: "projectPath" if is_none, source_path: "sourcePath", r#type: "type" });
+
+/// Complete parsed definition for editor previews and inline skill expansion.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct LocalSkillDefinition {
+    /// Allowed tool specifications from frontmatter.
+    pub allowed_tools: Vec<String>,
+    /// Freeform argument hint for a command picker.
+    pub argument_hint: Option<String>,
+    /// Absolute directory that holds supporting files.
+    pub base_dir: String,
+    /// Complete skill file text, including YAML frontmatter.
+    pub content: String,
+    /// Description of the skill.
+    pub description: String,
+    /// Whether model invocation is disabled.
+    pub disable_model_invocation: bool,
+    /// Absolute definition file path.
+    pub file_path: String,
+    /// Collision-resolved invocation identity.
+    pub invocation_name: Option<String>,
+    /// Whether a command file supplied this definition.
+    pub is_command: bool,
+    /// Declared name before invocation collision resolution.
+    pub name: String,
+    /// Owning plugin's name.
+    pub plugin_name: Option<String>,
+    /// Owning plugin's version.
+    pub plugin_version: Option<String>,
+    /// Checkout boundary for fresh reads of repository definitions.
+    pub repository_boundary: Option<String>,
+    /// Source that owns this definition.
+    pub source: LocalSkillDefinitionSource,
+    /// Whether a user can invoke this definition.
+    pub user_invocable: bool,
+}
+crate::record_serde::wire_record!(LocalSkillDefinition { allowed_tools: "allowedTools", argument_hint: "argumentHint" if is_none, base_dir: "baseDir", content: "content", description: "description", disable_model_invocation: "disableModelInvocation", file_path: "filePath", invocation_name: "invocationName" if is_none, is_command: "isCommand", name: "name", plugin_name: "pluginName" if is_none, plugin_version: "pluginVersion" if is_none, repository_boundary: "repositoryBoundary" if is_none, source: "source", user_invocable: "userInvocable" });
 
 /// A project configuration that the tolerant loader could not use.
 ///
@@ -7142,7 +7162,7 @@ pub enum AccountHealth {
     /// The account is intentionally unavailable, for example because access is disabled or the platform is unsupported.
     #[serde(rename = "unavailable")]
     Unavailable,
-    /// Availability is unknown because a transient or retryable check failed.
+    /// Availability has not been checked, or a transient or retryable check failed.
     #[serde(rename = "warning")]
     Warning,
     /// Authentication or saved credentials require user action.
@@ -8021,7 +8041,7 @@ pub enum AuthLoginResultStatus {
     /// Persistence needs explicit consent to store the token in plaintext.
     #[serde(rename = "needs-plaintext-consent")]
     NeedsPlaintextConsent,
-    /// Credentials are saved; select an account using a returned selectionId as advance input to complete sign-in.
+    /// Credentials are saved; select an account using a returned accountId as advance input to complete sign-in.
     #[serde(rename = "needs-account-selection")]
     NeedsAccountSelection,
     /// The user declined plaintext persistence.
@@ -11247,6 +11267,72 @@ impl<'de> Deserialize<'de> for InstructionSourceType {
     }
 }
 
+/// Source tiers that can supply a local skill definition.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub enum LocalSkillDefinitionSource {
+    /// The current project.
+    #[serde(rename = "project")]
+    Project,
+    /// An enclosing project directory.
+    #[serde(rename = "inherited")]
+    Inherited,
+    /// Personal Copilot skills.
+    #[serde(rename = "personal-copilot")]
+    PersonalCopilot,
+    /// Personal agent skills.
+    #[serde(rename = "personal-agents")]
+    PersonalAgents,
+    /// An enabled plugin.
+    #[serde(rename = "plugin")]
+    Plugin,
+    /// An explicit custom directory.
+    #[serde(rename = "custom")]
+    Custom,
+    /// A skill shipped with the runtime.
+    #[serde(rename = "builtin")]
+    Builtin,
+    /// Unknown variant for forward compatibility.
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+impl<'de> Deserialize<'de> for LocalSkillDefinitionSource {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let index = crate::enum_serde::deserialize_variant(
+            deserializer,
+            "LocalSkillDefinitionSource",
+            &[
+                "project",
+                "inherited",
+                "personal-copilot",
+                "personal-agents",
+                "plugin",
+                "custom",
+                "builtin",
+                "Unknown",
+            ],
+            Some(7),
+        )?;
+        Ok(match index {
+            0 => Self::Project,
+            1 => Self::Inherited,
+            2 => Self::PersonalCopilot,
+            3 => Self::PersonalAgents,
+            4 => Self::Plugin,
+            5 => Self::Custom,
+            6 => Self::Builtin,
+            _ => Self::Unknown,
+        })
+    }
+}
+
 /// The result of the guarded retired marketplace migration.
 ///
 /// <div class="warning">
@@ -12827,6 +12913,43 @@ impl<'de> Deserialize<'de> for RepositoryDisabledKey {
         Ok(match index {
             0 => Self::DisabledMcpServers,
             1 => Self::DisabledSkills,
+            _ => Self::Unknown,
+        })
+    }
+}
+
+/// Hook lifetime for a local session.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub enum SessionLifecycleMode {
+    /// Run session end hooks at session shutdown.
+    #[serde(rename = "interactive")]
+    Interactive,
+    /// Run session end hooks after each completed turn.
+    #[serde(rename = "per-turn")]
+    PerTurn,
+    /// Unknown variant for forward compatibility.
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+impl<'de> Deserialize<'de> for SessionLifecycleMode {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let index = crate::enum_serde::deserialize_variant(
+            deserializer,
+            "SessionLifecycleMode",
+            &["interactive", "per-turn", "Unknown"],
+            Some(2),
+        )?;
+        Ok(match index {
+            0 => Self::Interactive,
+            1 => Self::PerTurn,
             _ => Self::Unknown,
         })
     }

@@ -146,7 +146,7 @@ impl Peer {
             operation_lock: Mutex::new(()),
             foreground_order: Arc::new(tokio::sync::Mutex::new(())),
             protocol_peers: Mutex::new(Some(Vec::new())),
-            cleanup_done: tokio::sync::watch::channel(false).0,
+            cleanup_done: tokio::sync::watch::channel(CleanupStatus::Pending).0,
             library_path: PathBuf::from("test-ingress-runtime"),
         });
         let sender = shared.clone();

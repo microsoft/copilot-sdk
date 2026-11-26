@@ -4853,15 +4853,15 @@ export interface UsageMetricsModelMetricTokenDetail {
  */
 export interface UsageMetricsModelMetricUsage {
   /**
-   * Total tokens read from prompt cache
+   * Total input tokens read from prompt cache; included in inputTokens
    */
   cacheReadTokens: number;
   /**
-   * Total tokens written to prompt cache
+   * Total input tokens written to prompt cache; included in inputTokens
    */
   cacheWriteTokens: number;
   /**
-   * Total input tokens consumed
+   * Total input tokens consumed, including cache-read and cache-write tokens
    */
   inputTokens: number;
   /**
@@ -6432,6 +6432,10 @@ export interface FusionAttribution {
    * Synthetic HydraFusion model selected for the session.
    */
   syntheticModel: string;
+  /**
+   * Agent loop turn within the phase that produced a provisional streamed event (`assistant.message_start`, `assistant.message_delta`, `assistant.reasoning_delta`, `assistant.tool_call_delta`), matching the `turnId` of its completed `assistant.message` or `assistant.reasoning`. Each phase runs its own loop, so turn IDs repeat across phases: scope it by `fusionId` and `phaseId`. Absent on other events, which carry their own `turnId`.
+   */
+  turnId?: string;
 }
 /**
  * How far the compaction's summarizer model calls had progressed when the compaction's outcome was decided. Stream statistics describe the latest model request; durationMs and attemptCount cover every request.
@@ -9756,7 +9760,7 @@ export interface AssistantUsageData {
    */
   cachePolicyTtlSeconds?: number;
   /**
-   * Number of tokens read from prompt cache
+   * Number of input tokens read from prompt cache; included in inputTokens
    */
   cacheReadTokens?: number;
   /**
@@ -9766,7 +9770,7 @@ export interface AssistantUsageData {
    */
   cacheTtlSeconds?: number;
   /**
-   * Number of tokens written to prompt cache
+   * Number of input tokens written to prompt cache; included in inputTokens
    */
   cacheWriteTokens?: number;
   /**
@@ -9818,7 +9822,7 @@ export interface AssistantUsageData {
    */
   initiator?: string;
   /**
-   * Number of input tokens consumed
+   * Total input tokens consumed, including cache-read and cache-write tokens
    */
   inputTokens?: number;
   /**

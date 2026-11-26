@@ -1,0 +1,84 @@
+load("@aspect_rules_js//js:defs.bzl", "js_library")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@npm_sdk_nodejs//:defs.bzl", "npm_link_all_packages")
+load("//bazel:node_build.bzl", "node_build_dir")
+
+# Links the registry-only subset in `pnpm-lock.bazel.yaml`. Regenerate it with
+# `node script/generate-sdk-nodejs-bazel-lock.ts --run` after changing `pnpm-lock.yaml`.
+npm_link_all_packages(name = "node_modules")
+
+# Every target here is `manual`: the runtime's `bazel build //...` and `bazel test //...`
+# jobs skip them. The Node.js SDK CI jobs build `:dist` by label.
+
+js_library(
+    name = "build_tool",
+    srcs = [
+        "esbuild-copilotsdk-nodejs.ts",
+        "package.json",
+    ],
+    tags = ["manual"],
+    deps = [
+        ":node_modules/esbuild",
+        ":node_modules/glob",
+        ":node_modules/typescript",
+    ],
+)
+
+SOURCES = glob(["src/**/*.ts"])
+
+js_library(
+    name = "sources",
+    srcs = SOURCES + [
+        "package.json",
+        "tsconfig.json",
+    ],
+    tags = ["manual"],
+    deps = [
+        ":node_modules/@types/node",
+        ":node_modules/koffi",
+        ":node_modules/lossless-json",
+        ":node_modules/vscode-jsonrpc",
+    ],
+)
+
+# Lists the declared sources explicitly. Windows runs the build unsandboxed, where a
+# glob over the shared bin tree would also find stale copies of deleted sources.
+write_file(
+    name = "tsconfig_bazel",
+    out = "tsconfig.bazel.json",
+    content = [json.encode({
+        "extends": "./tsconfig.json",
+        "files": ["./" + src for src in SOURCES],
+        "include": [],
+    })],
+    tags = ["manual"],
+)
+
+# The `dist/` tree `pnpm run build` writes: ESM, CJS, declarations and the extension
+# manifest schema. Unstamped, so it is shared through the cache across commits; release
+# versions are set by the packaging scripts, not here.
+node_build_dir(
+    name = "dist",
+    srcs = [":sources"],
+    out = "dist",
+    args = [
+        "--source-root",
+        "{package_bin_dir}",
+        "--outdir",
+        "{out}",
+        "--tsconfig",
+        "$(execpath :tsconfig_bazel)",
+        "--extension-manifest-schema",
+        "$(execpath //:generated/extension-manifest.schema.json)",
+        "--no-incremental",
+    ],
+    data = [
+        ":tsconfig_bazel",
+        "//:generated/extension-manifest.schema.json",
+    ],
+    entry_point = "esbuild-copilotsdk-nodejs.ts",
+    mnemonic = "SdkNodejsBuild",
+    tags = ["manual"],
+    tool = ":build_tool",
+    visibility = ["//visibility:public"],
+)

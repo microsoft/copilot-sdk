@@ -583,6 +583,24 @@ enum FrameSender {
     },
 }
 
+/// A response endpoint that does not retain `ClientInner`.
+pub(crate) struct ResponseWriter {
+    sender: FrameSender,
+}
+
+impl ResponseWriter {
+    pub(crate) async fn send_response(&self, response: &JsonRpcResponse) -> Result<(), Error> {
+        if response.nests_too_deep_for_peer() {
+            return JsonRpcClient::write_message(&self.sender, &response.nesting_error()).await;
+        }
+        JsonRpcClient::write_message(&self.sender, response).await
+    }
+
+    pub(crate) async fn send_frame(&self, frame: EncodedFrame) -> Result<(), Error> {
+        JsonRpcClient::send_frame(&self.sender, frame).await
+    }
+}
+
 /// Room reserved in front of a frame's body for its header: the header's name,
 /// the 20 digits of the longest `usize`, and the blank line.
 const FRAME_PREFIX: usize = CONTENT_LENGTH_HEADER.len() + 20 + 4;
@@ -657,6 +675,10 @@ impl CancellableRequests {
                 | rpc_methods::SKILLPROVIDER_READ
                 | rpc_methods::MEMORYSTORE_STORE
                 | rpc_methods::SESSIONMANAGEMENT_CREATE
+                | "runtimeHost.foregroundSessionChange"
+                | "runtimeHost.agentRegistryPrepareSpawn"
+                | "runtimeHost.agentRegistrySpawn"
+                | "sessionHandoff.confirm"
         )
     }
 
@@ -1765,18 +1787,18 @@ impl JsonRpcClient {
         Self::enqueue_message(&self.write_tx, response, None)
     }
 
+    pub(crate) fn response_writer(&self) -> ResponseWriter {
+        ResponseWriter {
+            sender: self.write_tx.clone(),
+        }
+    }
+
     async fn write_message<T: serde::Serialize>(
         write_tx: &FrameSender,
         message: &T,
     ) -> Result<(), Error> {
         let frame = encode_frame(message)?;
         Self::send_frame(write_tx, frame).await
-    }
-
-    /// Submit a frame already encoded with [`encode_frame`] and await transport
-    /// acknowledgement. The caller can release the original data before I/O.
-    pub(crate) async fn write_frame(&self, frame: EncodedFrame) -> Result<(), Error> {
-        Self::send_frame(&self.write_tx, frame).await
     }
 
     async fn send_frame(write_tx: &FrameSender, frame: EncodedFrame) -> Result<(), Error> {

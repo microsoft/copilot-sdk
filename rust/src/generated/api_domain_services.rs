@@ -4891,6 +4891,76 @@ pub(crate) struct CloudTasksGetSharingStatusParams {
 }
 crate::record_serde::wire_record!(CloudTasksGetSharingStatusParams { auth_context_id: "authContextId" if is_none, auth_info: "authInfo", base_url: "baseUrl" if is_none, integration_id: "integrationId", task_id: "taskId" });
 
+/// Lists Mission Control task metadata under an explicit account, preserving numbered pagination.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub(crate) struct CloudTasksListParams {
+    /// Fetch all numbered pages instead of only the first page.
+    pub all_pages: bool,
+    /// Retained credential context for the account, when supplied by the host.
+    pub auth_context_id: Option<String>,
+    /// Account whose remote tasks are listed.
+    pub auth_info: serde_json::Value,
+    /// GitHub repository-enrichment endpoint override.
+    pub debug_github_api_url: Option<String>,
+    /// Include archived tasks as well as active tasks.
+    pub include_archived: bool,
+    /// Embedding client attribution sent to Mission Control.
+    pub integration_id: String,
+    /// Maximum tasks requested per service page.
+    pub limit: f64,
+    /// Maximum raw records to read before filtering and deduplication.
+    pub max_records: Option<i64>,
+    /// Positive numbered page to fetch; cannot be combined with allPages.
+    pub page: Option<i64>,
+    /// Preserve all tasks instead of only resumable remote sessions.
+    pub task_catalog: bool,
+    /// Overall listing deadline in milliseconds.
+    pub timeout_ms: f64,
+}
+crate::record_serde::wire_record!(CloudTasksListParams { all_pages: "allPages", auth_context_id: "authContextId" if is_none, auth_info: "authInfo", debug_github_api_url: "debugGithubApiUrl" if is_none, include_archived: "includeArchived", integration_id: "integrationId", limit: "limit", max_records: "maxRecords" if is_none, page: "page" if is_none, task_catalog: "taskCatalog", timeout_ms: "timeoutMs" });
+
+/// Remote task metadata and pagination, including structured HTTP or partial-archive failures.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub(crate) struct CloudTasksListResult {
+    /// Archived-task failure accompanying a successful active listing.
+    pub archived_failure: Option<String>,
+    /// Service failure classification.
+    pub error_kind: Option<String>,
+    /// Explanation of a failed listing.
+    pub error_message: Option<String>,
+    /// Original service error payload serialized as JSON.
+    pub error_payload_json: Option<String>,
+    /// Whether raw task pages indicate more records may remain.
+    pub has_more: bool,
+    /// Whether the active task listing succeeded.
+    pub ok: bool,
+    /// Raw task records read before filtering and deduplication.
+    pub record_count: i64,
+    /// Server-requested cooldown in milliseconds.
+    pub retry_after_ms: Option<f64>,
+    /// JSON array of remote session metadata on success.
+    pub sessions_json: Option<String>,
+    /// HTTP status for a failed listing.
+    pub status_code: Option<i64>,
+    /// Whether the overall listing deadline expired.
+    pub timed_out: bool,
+}
+crate::record_serde::wire_record!(CloudTasksListResult { archived_failure: "archivedFailure" if is_none, error_kind: "errorKind" if is_none, error_message: "errorMessage" if is_none, error_payload_json: "errorPayloadJson" if is_none, has_more: "hasMore", ok: "ok", record_count: "recordCount", retry_after_ms: "retryAfterMs" if is_none, sessions_json: "sessionsJson" if is_none, status_code: "statusCode" if is_none, timed_out: "timedOut" });
+
 /// Identifies one cloud coding-agent task to resolve to an openable session, the credential to resolve it under, and the local candidates the caller has already rejected.
 ///
 /// <div class="warning">
@@ -5762,7 +5832,7 @@ pub(crate) struct ConnectRequest {
     /// GitHub.com OAuth application client ID for runtime-managed sign-in and Entra token exchange.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub github_client_id: Option<String>,
-    /// Matching OAuth application secret. Required whenever githubClientId is supplied. Omit both fields to use the built-in CLI registration.
+    /// Matching OAuth application secret for browser sign-in. Not required for Entra token exchange or device sign-in. Omit both fields to use the built-in CLI registration.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub github_client_secret: Option<String>,
     /// Task kinds this connection can decode when observing session tasks. Omit to retain agent and shell compatibility.
@@ -5817,12 +5887,15 @@ pub(crate) struct ConnectResult {
     pub ok: bool,
     /// Server protocol version number
     pub protocol_version: i64,
+    /// Reports support for typed SDK host configuration in the existing startup arguments.
+    /// SDKs that supply host configuration must reject an absent or false acknowledgement.
+    pub runtime_host_configuration: Option<bool>,
     /// Task kinds the server may return to this connection.
     pub task_kinds: Option<Vec<TaskKind>>,
     /// Server package version
     pub version: String,
 }
-crate::record_serde::wire_record!(ConnectResult { entra_token_provider: "entraTokenProvider" if is_none, ok: "ok", protocol_version: "protocolVersion", task_kinds: "taskKinds" if is_none, version: "version" });
+crate::record_serde::wire_record!(ConnectResult { entra_token_provider: "entraTokenProvider" if is_none, ok: "ok", protocol_version: "protocolVersion", runtime_host_configuration: "runtimeHostConfiguration" if is_none, task_kinds: "taskKinds" if is_none, version: "version" });
 
 /// Local file system absolute paths within the session working directory to check against its content-exclusion policy.
 ///
@@ -7917,6 +7990,23 @@ pub struct FolderTrustAddParams {
 }
 crate::record_serde::wire_record!(FolderTrustAddParams { path: "path" });
 
+/// Local folder and configuration root for persistent trust.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct FolderTrustAddTrustedParams {
+    /// Configuration directory override. When absent, use COPILOT_HOME or the OS home, not a session or server root.
+    pub config_dir: Option<String>,
+    /// Local folder to trust. The runtime applies its existing canonicalization and Git-root rules.
+    pub path: String,
+}
+crate::record_serde::wire_record!(FolderTrustAddTrustedParams { config_dir: "configDir" if is_none, path: "path" });
+
 /// Folder path to check for trust.
 ///
 /// <div class="warning">
@@ -8092,6 +8182,23 @@ pub struct ForgeProposalWorkspaceBeforeResult {
 crate::record_serde::wire_record!(ForgeProposalWorkspaceBeforeResult {
     contents: "contents"
 });
+
+/// Read-only state health for hosts that report recovery problems or first-launch status.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct GlobalStateDiagnosticsResult {
+    /// Whether the normalized state contains any keys, including keys excluded from SDK reads.
+    pub has_state: bool,
+    /// State file that JSONC recovery cannot read as an object; absent for missing or readable files.
+    pub unreadable_path: Option<String>,
+}
+crate::record_serde::wire_record!(GlobalStateDiagnosticsResult { has_state: "hasState", unreadable_path: "unreadablePath" if is_none });
 
 /// Selects the configuration directory whose machine-wide state to read.
 ///
@@ -8604,6 +8711,92 @@ crate::record_serde::wire_record!(HooksDiscoverResult {
     warnings: "warnings"
 });
 
+/// ACP host inputs. These values belong to the embedding application, not an incoming ACP client.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct HostAcpTransportOptions {
+    /// Agent version announced during ACP initialization.
+    pub agent_version: String,
+    /// Arguments advertised for interactive authentication.
+    pub login_args: Vec<String>,
+    /// Program advertised for interactive authentication.
+    pub login_command: String,
+    /// Host-resolved session defaults, with the same authority as ACP launcher options.
+    pub session_defaults: Option<HashMap<String, serde_json::Value>>,
+    /// Directory for materialized ACP prompt attachments.
+    pub temp_directory: String,
+}
+crate::record_serde::wire_record!(HostAcpTransportOptions { agent_version: "agentVersion", login_args: "loginArgs", login_command: "loginCommand", session_defaults: "sessionDefaults" if is_none, temp_directory: "tempDirectory" });
+
+/// Successful validation without a child launch or retained request resources.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct HostAgentRegistrySpawnPrepared {
+    /// Discriminator for successful pure validation, not launch authorization.
+    pub kind: HostAgentRegistrySpawnPreparedKind,
+}
+crate::record_serde::wire_record!(HostAgentRegistrySpawnPrepared { kind: "kind" });
+
+/// Runtime-derived identity of the connection that requested a host interaction.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct HostCallbackCaller {
+    /// Connection identifier assigned by this runtime, not supplied by the request.
+    pub connection_id: i64,
+    /// Whether this runtime admitted the caller as an extension.
+    pub is_extension: bool,
+}
+crate::record_serde::wire_record!(HostCallbackCaller {
+    connection_id: "connectionId",
+    is_extension: "isExtension"
+});
+
+/// A controller-local launch request shared unchanged by preparation and commit, not an SDK session creation callback.
+/// Preparation must not launch a child or retain request resources.
+/// The launch callback must not await validation or controller queries before launch. It may await registry readiness afterward.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct HostAgentRegistrySpawnRequest {
+    /// Runtime-derived identity of the requesting connection.
+    pub caller: HostCallbackCaller,
+    /// Controller session whose runtime permission policy governs launch admission after preparation.
+    pub controller_session_id: String,
+    /// Original launch inputs. Preparation validates them without launch effects or retained request resources.
+    pub request: AgentRegistrySpawnRequest,
+    /// Runtime-issued identity shared by preparation and the launch commit for these exact inputs.
+    pub request_id: RequestId,
+}
+crate::record_serde::wire_record!(HostAgentRegistrySpawnRequest {
+    caller: "caller",
+    controller_session_id: "controllerSessionId",
+    request: "request",
+    request_id: "requestId"
+});
+
 /// A decrypted credential presented by a supervised hosting participant.
 ///
 /// <div class="warning">
@@ -8663,6 +8856,25 @@ crate::record_serde::wire_record!(HostAuthenticationResult {
     expires_at: "expiresAt",
     identity: "identity"
 });
+
+/// Callbacks supplied by the original SDK-owned runtime controller.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct HostCallbacksRegisterRequest {
+    /// Enable controller-local preparation and launch callbacks. The host's SESSIONS_SIDEBAR_TAB flag must also be enabled.
+    pub agent_registry_spawn: Option<bool>,
+    /// Local session owned by this connection whose permission policy governs spawn. Required when spawn is enabled.
+    pub controller_session_id: Option<String>,
+    /// Ask this connection to select the session displayed by its user interface. Defaults to false.
+    pub foreground_session_change: Option<bool>,
+}
+crate::record_serde::wire_record!(HostCallbacksRegisterRequest { agent_registry_spawn: "agentRegistrySpawn" if is_none, controller_session_id: "controllerSessionId" if is_none, foreground_session_change: "foregroundSessionChange" if is_none });
 
 /// Cancels a pending validation on the supervised participant's connection.
 ///
@@ -8907,6 +9119,43 @@ pub struct HostExitedNotification {
     pub reason: HostExitReason,
 }
 crate::record_serde::wire_record!(HostExitedNotification { error: "error" if is_none, exit_code: "exitCode" if is_none, host_id: "hostId", reason: "reason" });
+
+/// A request to select a session in the controller's user interface.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct HostForegroundSessionRequest {
+    /// Runtime-derived identity of the requesting connection.
+    pub caller: HostCallbackCaller,
+    /// Requested session, or null to clear a rejected selection. Create or resume inactive sessions before accepting.
+    pub session_id: Option<SessionId>,
+}
+crate::record_serde::wire_record!(HostForegroundSessionRequest {
+    caller: "caller",
+    session_id: "sessionId"
+});
+
+/// The controller's decision on a foreground-session request.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct HostForegroundSessionResult {
+    /// Reason for a refused request, when available.
+    pub error: Option<String>,
+    /// Whether the controller selected the requested SDK session or cleared its selection.
+    pub success: bool,
+}
+crate::record_serde::wire_record!(HostForegroundSessionResult { error: "error" if is_none, success: "success" });
 
 /// Reads a running host's catalog or the runtime's saved default catalog.
 ///
@@ -9290,6 +9539,66 @@ pub struct HostStartResult {
     pub url: Option<String>,
 }
 crate::record_serde::wire_record!(HostStartResult { environment_id: "environmentId" if is_none, host_id: "hostId", pid: "pid" if is_none, token: "token" if is_none, url: "url" if is_none });
+
+/// Selects a transport owned by this SDK connection.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct HostTransportRequest {
+    /// Runtime-generated identity returned by host.transports.start.
+    pub transport_id: String,
+}
+crate::record_serde::wire_record!(HostTransportRequest {
+    transport_id: "transportId"
+});
+
+/// Starts a transport on the caller's existing runtime host. Requires private admission of the owning native SDK connection.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct HostTransportStartRequest {
+    /// Required ACP launcher inputs. Omit for JSON-RPC.
+    pub acp: Option<HostAcpTransportOptions>,
+    /// SDK JSON-RPC connection token. Required for non-loopback JSON-RPC listeners; unsupported for ACP.
+    pub connection_token: Option<String>,
+    /// TCP address. Omitted values bind the IPv4 loopback address.
+    /// ACP accepts only loopback addresses. Non-loopback JSON-RPC requires a connection token.
+    pub hostname: Option<String>,
+    /// TCP port. Zero or omission requests an available port.
+    pub port: Option<i32>,
+    /// Protocol to serve.
+    pub protocol: HostTransportProtocol,
+    /// TCP listener or process standard streams.
+    pub transport: HostTransportKind,
+}
+crate::record_serde::wire_record!(HostTransportStartRequest { acp: "acp" if is_none, connection_token: "connectionToken" if is_none, hostname: "hostname" if is_none, port: "port" if is_none, protocol: "protocol", transport: "transport" });
+
+/// A transport that is ready to accept requests on the existing runtime engine.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct HostTransportStartResult {
+    /// Actual TCP socket address. Absent for standard streams.
+    pub address: Option<String>,
+    /// Runtime-generated identity, scoped to the owning SDK connection.
+    pub transport_id: String,
+}
+crate::record_serde::wire_record!(HostTransportStartResult { address: "address" if is_none, transport_id: "transportId" });
 
 /// Withdraws an application publication without deleting its underlying local session.
 ///
@@ -10454,6 +10763,32 @@ pub struct LocalModelsWatchRequest {
 }
 crate::record_serde::wire_record!(LocalModelsWatchRequest {
     after_revision: "afterRevision"
+});
+
+/// Local definitions and diagnostics from an admitted runtime session.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct LocalSkillDefinitionList {
+    /// Working directory used for relative diagnostic paths.
+    pub display_cwd: String,
+    /// Diagnostics for definitions that could not load.
+    pub errors: Vec<String>,
+    /// Definitions in canonical precedence order, including disabled local skills.
+    pub skills: Vec<LocalSkillDefinition>,
+    /// Nonfatal diagnostics for loaded definitions.
+    pub warnings: Vec<String>,
+}
+crate::record_serde::wire_record!(LocalSkillDefinitionList {
+    display_cwd: "displayCwd",
+    errors: "errors",
+    skills: "skills",
+    warnings: "warnings"
 });
 
 /// Which stored location permissions were dropped because their directory is gone.
@@ -13359,6 +13694,97 @@ pub struct RuntimeCommandCatalogRequest {
 }
 crate::record_serde::wire_record!(RuntimeCommandCatalogRequest { forge_agent_enabled: "forgeAgentEnabled" if is_none, include_unavailable: "includeUnavailable" if is_none });
 
+/// Host experiment audience inputs. These values do not contain credentials.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct RuntimeHostExpAudience {
+    /// Time of the first launch, in milliseconds since the Unix epoch.
+    pub first_launch_at_millis: Option<f64>,
+    /// Whether the host enables experimental features.
+    pub is_experimental: bool,
+    /// Whether the host enables streamer mode.
+    pub streamer_mode: bool,
+}
+crate::record_serde::wire_record!(RuntimeHostExpAudience { first_launch_at_millis: "firstLaunchAtMillis" if is_none, is_experimental: "isExperimental", streamer_mode: "streamerMode" });
+
+/// Session defaults for an SDK-owned in-process runtime. Omitted values retain runtime defaults.
+/// Authentication remains with the live auth owner or the SDK's authentication configuration.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct RuntimeHostConfiguration {
+    /// Additional MCP server defaults. Explicit session entries take precedence.
+    pub additional_mcp_servers: Option<HashMap<String, serde_json::Value>>,
+    /// Additional host plugin descriptors.
+    pub additional_plugins: Option<Vec<serde_json::Value>>,
+    /// Whether sessions accept instructions from all configured MCP servers.
+    pub allow_all_mcp_server_instructions: Option<bool>,
+    /// Host-owned built-in plugin descriptors.
+    pub builtin_plugins: Option<Vec<serde_json::Value>>,
+    /// Directory that contains host-provided built-in skills.
+    pub builtin_skills_directory: Option<String>,
+    /// Claim existing local storage before reading a resumed session, including resident resumes.
+    pub claim_session_on_resume: Option<bool>,
+    /// State and configuration directory. Applied before authentication and settings initialization.
+    pub config_directory: Option<String>,
+    /// Host flag-resolution environment, separate from the live credential owner.
+    pub connector_flag_environment: Option<HashMap<String, String>>,
+    /// Host-owned connectors setting, when it replaces the stored user preference.
+    pub connectors_host_config_preference: Option<bool>,
+    /// Explicit host override for the CONNECTORS flag.
+    pub connectors_host_override: Option<bool>,
+    /// Explicit host preference for context-management tools.
+    pub context_management_tools_config_preference: Option<bool>,
+    /// Explicit host preference for subagent context-management tools.
+    pub context_management_tools_subagents_config_preference: Option<bool>,
+    /// Optional destination for session event logs.
+    pub events_log_directory: Option<String>,
+    /// Include subagent events in the configured event logs.
+    pub events_log_includes_subagents: Option<bool>,
+    /// Audience inputs used by the host's experiment assignment cache.
+    pub exp_audience: Option<RuntimeHostExpAudience>,
+    /// Resolved host experimental feature flags.
+    pub experimental_feature_flags: Option<serde_json::Value>,
+    /// Resolved host feature flags. Session construction retains caller-specific flags separately.
+    pub feature_flags: Option<serde_json::Value>,
+    /// Consumer integration identity for sessions created by the host.
+    pub integration_id: Option<String>,
+    /// Explicit host override for the managed MCP experiment.
+    pub managed_mcp_exp_override: Option<serde_json::Value>,
+    /// Resolved host value of the MANAGED_MCP_SERVERS flag.
+    pub managed_mcp_host_override: Option<bool>,
+    /// Whether the host supports MCP App requests.
+    pub mcp_apps_request_enabled: Option<bool>,
+    /// Default model family for new sessions.
+    pub model_family: Option<String>,
+    /// Resolved host non-experimental feature flags.
+    pub non_experimental_feature_flags: Option<serde_json::Value>,
+    /// Persist local sessions that have no user-supplied name.
+    pub persist_unnamed_sessions: Option<bool>,
+    /// Refuse cold resume when another live process owns the session. Claims before reading history.
+    pub reject_resume_of_session_in_use: Option<bool>,
+    /// Require managed settings even when a session request does not opt in.
+    pub require_managed_settings: Option<bool>,
+    /// Capabilities that the host provides to its sessions.
+    pub session_capabilities: Option<Vec<String>>,
+    /// Hook default for SDK creation and cold resume. Raw sessions.open retains its existing defaults.
+    pub session_lifecycle_mode: Option<SessionLifecycleMode>,
+    /// Working directory for host defaults and relative launcher paths; does not change process cwd.
+    pub working_directory: Option<String>,
+}
+crate::record_serde::wire_record!(RuntimeHostConfiguration { additional_mcp_servers: "additionalMcpServers" if is_none, additional_plugins: "additionalPlugins" if is_none, allow_all_mcp_server_instructions: "allowAllMcpServerInstructions" if is_none, builtin_plugins: "builtinPlugins" if is_none, builtin_skills_directory: "builtinSkillsDirectory" if is_none, claim_session_on_resume: "claimSessionOnResume" if is_none, config_directory: "configDirectory" if is_none, connector_flag_environment: "connectorFlagEnvironment" if is_none, connectors_host_config_preference: "connectorsHostConfigPreference" if is_none, connectors_host_override: "connectorsHostOverride" if is_none, context_management_tools_config_preference: "contextManagementToolsConfigPreference" if is_none, context_management_tools_subagents_config_preference: "contextManagementToolsSubagentsConfigPreference" if is_none, events_log_directory: "eventsLogDirectory" if is_none, events_log_includes_subagents: "eventsLogIncludesSubagents" if is_none, exp_audience: "expAudience" if is_none, experimental_feature_flags: "experimentalFeatureFlags" if is_none, feature_flags: "featureFlags" if is_none, integration_id: "integrationId" if is_none, managed_mcp_exp_override: "managedMcpExpOverride" if is_none, managed_mcp_host_override: "managedMcpHostOverride" if is_none, mcp_apps_request_enabled: "mcpAppsRequestEnabled" if is_none, model_family: "modelFamily" if is_none, non_experimental_feature_flags: "nonExperimentalFeatureFlags" if is_none, persist_unnamed_sessions: "persistUnnamedSessions" if is_none, reject_resume_of_session_in_use: "rejectResumeOfSessionInUse" if is_none, require_managed_settings: "requireManagedSettings" if is_none, session_capabilities: "sessionCapabilities" if is_none, session_lifecycle_mode: "sessionLifecycleMode" if is_none, working_directory: "workingDirectory" if is_none });
+
 /// An authorization URL for the host browser.
 ///
 /// <div class="warning">
@@ -15697,6 +16123,47 @@ crate::record_serde::wire_record!(HostCreateSessionResult {
 #[serde(rename_all = "camelCase")]
 pub struct HostReleaseSessionResult {}
 
+/// A transport that is ready to accept requests on the existing runtime engine.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct HostTransportsStartResult {
+    /// Actual TCP socket address. Absent for standard streams.
+    pub address: Option<String>,
+    /// Runtime-generated identity, scoped to the owning SDK connection.
+    pub transport_id: String,
+}
+crate::record_serde::wire_record!(HostTransportsStartResult { address: "address" if is_none, transport_id: "transportId" });
+
+/// Empty acknowledgement for a completed host lifecycle operation.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostTransportsStopResult {}
+
+/// Empty acknowledgement for a completed host lifecycle operation.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostTransportsWaitResult {}
+
 /// Empty acknowledgement for a completed host lifecycle operation.
 ///
 /// <div class="warning">
@@ -16475,6 +16942,23 @@ pub(crate) struct GlobalStateLoadForConfigDirResult {
     pub trusted_folders: Option<Vec<String>>,
 }
 crate::record_serde::wire_record!(GlobalStateLoadForConfigDirResult { app_tip_shown: "appTipShown" if is_none, asked_setup_terminals: "askedSetupTerminals" if is_none, auto_feedback_last_prompted_at: "autoFeedbackLastPromptedAt" if is_none, first_launch_at: "firstLaunchAt" if is_none, installed_plugins: "installedPlugins" if is_none, last_logged_in_user: "lastLoggedInUser" if is_none, logged_in_users: "loggedInUsers" if is_none, reasoning_summaries_cleanup_done: "reasoningSummariesCleanupDone" if is_none, recent_model_ids: "recentModelIds" if is_none, sandbox_credential_proxy_ca_declined: "sandboxCredentialProxyCaDeclined" if is_none, sandbox_onboarding_shown: "sandboxOnboardingShown" if is_none, staff: "staff" if is_none, staff_github: "staffGithub" if is_none, staff_log_level_migration_at: "staffLogLevelMigrationAt" if is_none, staff_microsoft: "staffMicrosoft" if is_none, staff_model_reset_at: "staffModelResetAt" if is_none, staff_update_channel_migration_at: "staffUpdateChannelMigrationAt" if is_none, suppress_init_folders: "suppressInitFolders" if is_none, trusted_folders: "trustedFolders" if is_none });
+
+/// Read-only state health for hosts that report recovery problems or first-launch status.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct GlobalStateGetDiagnosticsResult {
+    /// Whether the normalized state contains any keys, including keys excluded from SDK reads.
+    pub has_state: bool,
+    /// State file that JSONC recovery cannot read as an object; absent for missing or readable files.
+    pub unreadable_path: Option<String>,
+}
+crate::record_serde::wire_record!(GlobalStateGetDiagnosticsResult { has_state: "hasState", unreadable_path: "unreadablePath" if is_none });
 
 /// Slash commands available in the session, after applying any include/exclude filters.
 ///
@@ -22570,6 +23054,40 @@ impl<'de> Deserialize<'de> for HistoryRewindMode {
     }
 }
 
+/// Discriminator for successful pure validation, not launch authorization.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub enum HostAgentRegistrySpawnPreparedKind {
+    #[serde(rename = "prepared")]
+    #[default]
+    Prepared,
+}
+impl<'de> Deserialize<'de> for HostAgentRegistrySpawnPreparedKind {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        crate::enum_serde::deserialize_variant(
+            deserializer,
+            "HostAgentRegistrySpawnPreparedKind",
+            &["prepared"],
+            None,
+        )?;
+        Ok(Self::Prepared)
+    }
+}
+
+/// Pure preparation outcome before the runtime admits a launch commit.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum HostAgentRegistryPrepareSpawnResult {
+    Prepared(HostAgentRegistrySpawnPrepared),
+    ValidationError(AgentRegistrySpawnValidationError),
+}
+
 /// Private transition in an admitted host's credential lifecycle.
 ///
 /// <div class="warning">
@@ -22774,6 +23292,80 @@ impl<'de> Deserialize<'de> for HostPolicyPreCheckDecision {
         Ok(match index {
             0 => Self::Approve,
             1 => Self::Defer,
+            _ => Self::Unknown,
+        })
+    }
+}
+
+/// Byte transport for a runtime-owned protocol server.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub enum HostTransportKind {
+    /// Bind a TCP listener; zero or omitted port selects an available port.
+    #[serde(rename = "tcp")]
+    Tcp,
+    /// Own the runtime process's standard input and output. Incomplete output prevents reuse until the process restarts.
+    #[serde(rename = "stdio")]
+    Stdio,
+    /// Unknown variant for forward compatibility.
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+impl<'de> Deserialize<'de> for HostTransportKind {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let index = crate::enum_serde::deserialize_variant(
+            deserializer,
+            "HostTransportKind",
+            &["tcp", "stdio", "Unknown"],
+            Some(2),
+        )?;
+        Ok(match index {
+            0 => Self::Tcp,
+            1 => Self::Stdio,
+            _ => Self::Unknown,
+        })
+    }
+}
+
+/// Protocol served by a runtime-owned transport.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub enum HostTransportProtocol {
+    /// Serve the SDK JSON-RPC protocol on the existing runtime engine.
+    #[serde(rename = "json-rpc")]
+    JsonRpc,
+    /// Serve Agent Client Protocol on the existing runtime engine.
+    #[serde(rename = "acp")]
+    Acp,
+    /// Unknown variant for forward compatibility.
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+impl<'de> Deserialize<'de> for HostTransportProtocol {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let index = crate::enum_serde::deserialize_variant(
+            deserializer,
+            "HostTransportProtocol",
+            &["json-rpc", "acp", "Unknown"],
+            Some(2),
+        )?;
+        Ok(match index {
+            0 => Self::JsonRpc,
+            1 => Self::Acp,
             _ => Self::Unknown,
         })
     }

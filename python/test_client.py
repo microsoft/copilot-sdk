@@ -1682,10 +1682,34 @@ class TestClientShutdown:
         except ValueError as error:
             return str(error)
 
+    @pytest.mark.asyncio
+    async def test_stop_starts_independent_detaches_within_the_shared_deadline(self, monkeypatch):
+        admitted: list[str] = []
+        both_detaching = asyncio.Event()
+
+        async def detach(method, params):
+            assert method == "session.detach"
+            admitted.append(params["sessionId"])
+            if len(admitted) == 2:
+                both_detaching.set()
+            await both_detaching.wait()
+            return {"success": True}
+
+        monkeypatch.setattr(client_module, "_RUNTIME_SHUTDOWN_TIMEOUT_SECONDS", 0.2)
+        client, rpc = self._stopping_client(detach)
+        for session_id in ("first", "second"):
+            client._register_session(CopilotSession(session_id, rpc))
+
+        await asyncio.wait_for(client.stop(), timeout=5)
+
+        assert sorted(admitted) == ["first", "second"]
+        assert client._sessions == {}
+
     async def _observe_stop_with_two_sessions(self) -> dict[str, object]:
         """What the runtime's callbacks see while ``stop()`` detaches two open sessions."""
         observed: dict[str, object] = {}
         events: dict[str, list[str]] = {"first": [], "second": []}
+        first_detaching = asyncio.Event()
 
         async def detach(method, params):
             assert method == "session.detach"
@@ -1695,11 +1719,14 @@ class TestClientShutdown:
                 f"{session_id}: own sessionEnd hook during its detach"
             ] = await self._invoke_hook(client, session_id, "sessionEnd")
             if session_id == "first":
+                first_detaching.set()
                 # A hook type "second" does not handle answers None only if it is registered.
                 observed["first detaching: second is still registered"] = await self._invoke_hook(
                     client, "second", "agentStop"
                 )
             else:
+                await first_detaching.wait()
+                await sessions[0].disconnect()
                 observed["second detaching: first is unregistered"] = await self._invoke_hook(
                     client, "first", "agentStop"
                 )
@@ -1806,7 +1833,15 @@ class TestClientShutdown:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        "outcome", ["detached", "detach rejected", "detach raised", "detach timed out", "cancelled"]
+        "outcome",
+        [
+            "detached",
+            "detach rejected",
+            "detach raised",
+            "detach timed out",
+            "cancelled",
+            "cancelled before detach",
+        ],
     )
     async def test_stop_unregisters_every_session_whatever_its_detach_outcome(
         self, monkeypatch, outcome
@@ -1826,13 +1861,19 @@ class TestClientShutdown:
 
         monkeypatch.setattr(client_module, "_RUNTIME_SHUTDOWN_TIMEOUT_SECONDS", 0.2)
         client, rpc = self._stopping_client(detach)
-        session = CopilotSession("only", rpc)
+        disconnected = Mock()
+        session = CopilotSession("only", rpc, on_disconnect=disconnected)
         client._register_session(session)
 
         stopping = asyncio.create_task(client.stop())
-        await asyncio.wait_for(detaching.wait(), timeout=5)
-        if outcome == "cancelled":
-            stopping.cancel()
+        if outcome == "cancelled before detach":
+            # stop() runs first, but cancellation precedes its newly queued workers.
+            asyncio.get_running_loop().call_soon(stopping.cancel)
+        else:
+            await asyncio.wait_for(detaching.wait(), timeout=5)
+        if outcome in ("cancelled", "cancelled before detach"):
+            if outcome == "cancelled":
+                stopping.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await stopping
         elif outcome == "detached":
@@ -1843,6 +1884,11 @@ class TestClientShutdown:
 
         assert client._sessions == {}
         assert session._destroyed
+        disconnected.assert_called_once_with()
+        if outcome == "cancelled before detach":
+            rpc.request.assert_not_awaited()
+        with pytest.raises(RuntimeError, match="disconnected"):
+            session.on(lambda _: None)
         assert await self._invoke_hook(client, "only", "sessionEnd") == "unknown session only"
 
     @pytest.mark.asyncio

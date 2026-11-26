@@ -533,11 +533,11 @@ Delete a session and its data from disk.
 
 ##### `getForegroundSessionId(): Promise<string | undefined>`
 
-Get the ID of the session currently displayed in the TUI. Only available when connecting to a server running in TUI+server mode (`--ui-server`).
+Get the displayed session's ID. The server must have a foreground UI or an SDK host callback.
 
 ##### `setForegroundSessionId(sessionId: string): Promise<void>`
 
-Request the TUI to switch to displaying the specified session. Only available in TUI+server mode.
+Ask the host UI or SDK callback to display the specified session.
 
 ##### `onLifecycle(eventType: SessionLifecycleEventType, handler): () => void`
 
@@ -1327,7 +1327,7 @@ const lookupIssue = defineTool("lookup_issue", {
 
 #### Overriding Built-in Tools
 
-If you register a tool with the same name as a built-in CLI tool (e.g. `edit_file`, `read_file`), the SDK will throw an error unless you explicitly opt in by setting `overridesBuiltInTool: true`. This flag signals that you intend to replace the built-in tool with your custom implementation.
+A name collision requires an explicit override. Set `overridesBuiltInTool: true` to replace a built-in or add your tool if there's no match. Set `onlyOverridesBuiltInTool: true` to replace a built-in only when one is enabled for this session and the executing model (matched before available/excluded tool filters); otherwise the runtime ignores your tool. MCP tools such as `web_search` aren't built-ins and never match. For example, you can register both `apply_patch` and `edit` this way without offering either to a model that doesn't use it.
 
 <!-- docs-validate: strict -->
 <!-- docs-validate: hidden -->

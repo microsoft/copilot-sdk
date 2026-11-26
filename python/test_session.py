@@ -13,6 +13,7 @@ from uuid import uuid4
 
 import pytest
 
+import copilot.client as client_module
 from _session_test_helpers import get_next_event_of_type, wait_for_event
 from copilot import (
     AgentMessageSource,
@@ -1927,13 +1928,29 @@ async def test_elicitation_handler_raising_base_exception_sends_cancel(shape: st
 
 
 @pytest.mark.asyncio
-async def test_tool_can_force_stop_its_client_without_interrupting_cleanup(monkeypatch, tmp_path):
+@pytest.mark.parametrize("outcome", ["force", "detached", "rejected", "timed out"])
+async def test_tool_can_stop_its_client_without_interrupting_cleanup(
+    monkeypatch, tmp_path, outcome
+):
     monkeypatch.setattr(
         CopilotClient, "_resolve_inprocess_runtime", lambda self: str(tmp_path / "runtime.so")
     )
     client = CopilotClient(mode="coding-agent", runtime=RuntimeConnection.for_inprocess())
-    rpc_client = Mock(request=AsyncMock(), stop=AsyncMock())
+
+    async def detach(method, params):
+        assert method == "session.detach"
+        assert params == {"sessionId": "session-1"}
+        if outcome == "rejected":
+            return {"success": False, "error": "busy"}
+        if outcome == "timed out":
+            await asyncio.Event().wait()
+        return {"success": True}
+
+    monkeypatch.setattr(client_module, "_RUNTIME_SHUTDOWN_TIMEOUT_SECONDS", 0.2)
+    rpc_client = Mock(request=AsyncMock(side_effect=detach), stop=AsyncMock())
     client._client = rpc_client
+    shutdown_runtime = AsyncMock()
+    client._rpc = Mock(runtime=Mock(shutdown=shutdown_runtime))
     host = Mock()
     client._ffi_host = host
     session = CopilotSession("session-1", rpc_client)
@@ -1950,7 +1967,18 @@ async def test_tool_can_force_stop_its_client_without_interrupting_cleanup(monke
             unrelated_stopped.set()
 
     async def shutdown(_invocation):
-        await client.force_stop()
+        if outcome == "force":
+            await client.force_stop()
+        elif outcome == "detached":
+            await client.stop()
+        else:
+            with pytest.raises(ExceptionGroup) as raised:
+                await client.stop()
+            assert len(raised.value.exceptions) == 1
+            assert "Failed to disconnect session session-1" in str(raised.value.exceptions[0])
+            assert ("busy" if outcome == "rejected" else "0.2s shutdown timeout") in str(
+                raised.value.exceptions[0]
+            )
         handler_finished.set()
         return ToolResult(text_result_for_llm="stopped")
 
@@ -1970,7 +1998,14 @@ async def test_tool_can_force_stop_its_client_without_interrupting_cleanup(monke
         assert unrelated_stopped.is_set()
         host.dispose.assert_called_once()
         rpc_client.stop.assert_awaited_once()
-        rpc_client.request.assert_not_awaited()
+        if outcome == "force":
+            rpc_client.request.assert_not_awaited()
+            shutdown_runtime.assert_not_awaited()
+        else:
+            rpc_client.request.assert_awaited_once_with(
+                "session.detach", {"sessionId": "session-1"}
+            )
+            shutdown_runtime.assert_awaited_once_with(timeout=0.2)
         assert client._ffi_host is None
         assert client._client is None
         assert client._state == "disconnected"

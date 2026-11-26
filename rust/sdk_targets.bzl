@@ -232,11 +232,16 @@ def _sdk_profile(profile, features):
     for fixture, source in ([] if profile == "external-test" else [
         ("copilot-extension-test-fixture", "tests/fixtures/extension_fixture.rs"),
         ("copilot-host-crash-fixture", "tests/fixtures/host_crash_fixture.rs"),
-    ]) + ([("copilot-connectors-runtime-fixture", "tests/fixtures/connector-runtime/src/main.rs")] if "in-process" in features else []):
+    ]) + ([
+        ("copilot-connectors-runtime-fixture", "tests/fixtures/connector-runtime/src/main.rs"),
+        ("copilot-host-transports-fixture", "tests/fixtures/host_transports.rs"),
+    ] if "in-process" in features else []):
         target = name + "_" + fixture
         copilot_rust_binary_explicit(
             name = target,
-            srcs = native.glob(["tests/fixtures/**/*.rs"]),
+            srcs = native.glob(["tests/fixtures/**/*.rs"]) + (
+                ["examples/runtime_host_transports.rs"] if fixture == "copilot-host-transports-fixture" else []
+            ),
             crate_features = features,
             crate_root = source,
             edition = "2024",
@@ -245,7 +250,9 @@ def _sdk_profile(profile, features):
             deps = [":" + name] + all_crate_deps(normal = True, normal_dev = True),
         )
         fixtures.append(":" + target)
-        fixture_env["CARGO_BIN_EXE_" + fixture] = "$(execpath :" + target + ")"
+
+        # Host-local tests run after the compilation sandbox has gone.
+        fixture_env["CARGO_BIN_EXE_" + fixture] = "bazel-bin/$(rootpath :" + target + ")"
 
     tests = []
     for source in native.glob(["tests/*.rs"]):

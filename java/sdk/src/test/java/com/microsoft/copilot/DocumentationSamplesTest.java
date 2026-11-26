@@ -1,14 +1,20 @@
 package com.microsoft.copilot;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.lang.reflect.Method;
+import java.net.URL;
+import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -18,6 +24,11 @@ import javax.tools.ToolProvider;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+
+import com.microsoft.copilot.rpc.PermissionHandler;
+import com.microsoft.copilot.rpc.PermissionInvocation;
+import com.microsoft.copilot.rpc.PermissionRequest;
+import com.microsoft.copilot.rpc.PermissionRequestResult;
 
 class DocumentationSamplesTest {
 
@@ -29,8 +40,47 @@ class DocumentationSamplesTest {
         Path root = Path.of("").toAbsolutePath();
         compileMarkdownExample(root.resolve("../README.md"), "ConstructionExample");
         compileMarkdownExample(root.resolve("../README.md"), "ReasoningSummaryExample");
+        compileMarkdownExample(root.resolve("../README.md"), "UrlPermissionExample");
         compileMarkdownExample(root.resolve("../../docs/runtime-supervised-host.md"), "HostingExample");
         compileMarkdownExample(root.resolve("../../docs/features/usage-and-billing.md"), "ContextInfoExample");
+    }
+
+    @Test
+    void urlPermissionExampleLeavesManagedRequestsForAHuman() throws Exception {
+        compileMarkdownExample(Path.of("").toAbsolutePath().resolve("../README.md"), "UrlPermissionExample");
+        PermissionHandler handler;
+        try (var loader = new URLClassLoader(new URL[]{compilationDirectory.toUri().toURL()},
+                getClass().getClassLoader())) {
+            Method factory = loader.loadClass("UrlPermissionExample").getDeclaredMethod("handler");
+            factory.setAccessible(true);
+            handler = (PermissionHandler) factory.invoke(null);
+        }
+        var urlPrompt = Map.<String, Object>of("kind", "url", "url", "https://api.example.com/a", "parentDomainPattern",
+                "https://*.example.com");
+        var managedUrlPrompt = new HashMap<>(urlPrompt);
+        managedUrlPrompt.put("managedApprovalRequired", true);
+
+        assertEquals("no-result",
+                decide(handler, true, Map.of("kind", "read", "managedApprovalRequired", true)).getKind(),
+                "a managed non-URL request must reach a human");
+        assertEquals("no-result", decide(handler, true, managedUrlPrompt).getKind(),
+                "a URL prompt that still requires a human must not get the domain scope");
+        assertEquals("approve-once", decide(handler, false, Map.of("kind", "read")).getKind());
+        assertEquals("approve-once", decide(handler, true, Map.of("kind", "commands")).getKind(),
+                "Assisted approval cleared this commands prompt");
+        assertEquals("no-result", decide(handler, true, Map.of("kind", "mcp")).getKind(),
+                "an mcp prompt cannot clear the raw requirement");
+        var cleared = decide(handler, true, urlPrompt);
+        assertEquals("approve-for-session", cleared.getKind(), "Assisted approval cleared this URL prompt");
+        assertEquals("https://*.example.com", cleared.getDomain());
+    }
+
+    private static PermissionRequestResult decide(PermissionHandler handler, boolean managed,
+            Map<String, Object> prompt) {
+        var request = PermissionRequest
+                .fromJsonValue(Map.of("kind", prompt.get("kind"), "managedApprovalRequired", managed));
+        var invocation = new PermissionInvocation().setPromptRequest(PermissionRequest.fromJsonValue(prompt));
+        return handler.handle(request, invocation).join();
     }
 
     @Test

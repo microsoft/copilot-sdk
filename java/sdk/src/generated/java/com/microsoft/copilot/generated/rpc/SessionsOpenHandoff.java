@@ -40,11 +40,15 @@ public final class SessionsOpenHandoff extends SessionsOpenParams {
     @JsonProperty("taskType")
     private SessionsOpenHandoffTaskType taskType;
 
-    /** In-process progress callback `(update) => void` invoked for each handoff step. Marked internal because a function reference cannot cross the JSON-RPC boundary. The host-side `handoffSession` is already declared as `AsyncGenerator&lt;HandoffProgress, HandoffResult>`; the schema layer flattens it because it does not yet support streaming methods. The wire-clean replacement is to expose the AsyncGenerator directly (or use vscode-jsonrpc `$/progress` notifications) once the schema/transport layer supports it. */
+    /** Correlates optional progress and confirmation callbacks on the requesting SDK connection. */
+    @JsonProperty("callbackId")
+    private String callbackId;
+
+    /** Legacy in-process progress callback. SDK connections use callbackId and sessionHandoff.progress notifications instead; function references cannot cross JSON-RPC. */
     @JsonProperty("onProgress")
     private Object onProgress;
 
-    /** In-process confirmation callback `(request) => boolean | Promise&lt;boolean>` invoked when the handoff needs the caller to confirm a non-fatal blocker (e.g. a repository mismatch between the current working directory and the remote session). Returning `true` proceeds with the handoff; returning `false` (or omitting the callback) aborts it. Marked internal because a function reference cannot cross the JSON-RPC boundary, for the same reasons as `onProgress`. */
+    /** Legacy in-process confirmation callback. SDK connections use callbackId and sessionHandoff.confirm requests instead; missing or declined confirmation refuses a repository mismatch. */
     @JsonProperty("onConfirm")
     private Object onConfirm;
 
@@ -56,6 +60,9 @@ public final class SessionsOpenHandoff extends SessionsOpenParams {
 
     public SessionsOpenHandoffTaskType getTaskType() { return taskType; }
     public void setTaskType(SessionsOpenHandoffTaskType taskType) { this.taskType = taskType; }
+
+    public String getCallbackId() { return callbackId; }
+    public void setCallbackId(String callbackId) { this.callbackId = callbackId; }
 
     public Object getOnProgress() { return onProgress; }
     public void setOnProgress(Object onProgress) { this.onProgress = onProgress; }
@@ -80,6 +87,7 @@ public final class SessionsOpenHandoff extends SessionsOpenParams {
         private RemoteSessionMetadataValue metadata;
         private SessionOpenOptions options;
         private SessionsOpenHandoffTaskType taskType;
+        private String callbackId;
         private Object onProgress;
         private Object onConfirm;
 
@@ -117,6 +125,17 @@ public final class SessionsOpenHandoff extends SessionsOpenParams {
         }
 
         /**
+         * Sets the {@code callbackId} property.
+         * @param value the property value
+         * @return this builder
+         * @since 2.0.0
+         */
+        public Builder callbackId(String value) {
+            this.callbackId = value;
+            return this;
+        }
+
+        /**
          * Sets the {@code onProgress} property.
          * @param value the property value
          * @return this builder
@@ -150,6 +169,7 @@ public final class SessionsOpenHandoff extends SessionsOpenParams {
             instance.setMetadata(metadata);
             instance.setOptions(options);
             instance.setTaskType(taskType);
+            instance.setCallbackId(callbackId);
             instance.setOnProgress(onProgress);
             instance.setOnConfirm(onConfirm);
             return instance;

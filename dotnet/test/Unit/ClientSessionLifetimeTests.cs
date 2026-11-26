@@ -1525,6 +1525,40 @@ public sealed partial class ClientSessionLifetimeTests
     }
 
     [Fact]
+    public async Task StopAsync_Starts_Independent_Detaches_Within_Shared_Deadline()
+    {
+        await using var server = await FakeCopilotServer.StartAsync();
+        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
+        for (var i = 0; i < 2; i++)
+        {
+            _ = await client.CreateSessionAsync(new CreateSessionOptions
+            { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
+        }
+
+        var bothDetaching = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var admitted = 0;
+        server.BeforeResponseAsync = async (request, token) =>
+        {
+            if (request.Method != "session.detach") return;
+            if (Interlocked.Increment(ref admitted) == 2)
+            {
+                bothDetaching.TrySetResult();
+            }
+            await bothDetaching.Task.WaitAsync(token);
+        };
+        try
+        {
+            await client.StopAsync().WaitAsync(TimeSpan.FromSeconds(30));
+            Assert.Equal(2, Volatile.Read(ref admitted));
+            AssertSessionCount(client, sessions: 0);
+        }
+        finally
+        {
+            bothDetaching.TrySetResult();
+        }
+    }
+
+    [Fact]
     public async Task StopAsync_Shuts_Down_Runtime_When_Session_Detach_Never_Answers()
     {
         await using var server = await FakeCopilotServer.StartAsync();

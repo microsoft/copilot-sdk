@@ -58,13 +58,8 @@ fn make_client() -> (Client, FakeServer) {
 fn make_client_with_mode(mode: ClientMode) -> (Client, FakeServer) {
     let (client_write, server_read) = duplex(8192);
     let (server_write, client_read) = duplex(8192);
-    let client = Client::from_streams_with_mode_for_test(
-        client_read,
-        client_write,
-        std::env::temp_dir(),
-        mode,
-    )
-    .unwrap();
+    let client =
+        Client::from_streams(mode, client_read, client_write, std::env::temp_dir()).unwrap();
     (
         client,
         FakeServer {

@@ -5880,7 +5880,7 @@ public sealed partial class AssistantUsageData
     [JsonPropertyName("cachePolicyTtlSeconds")]
     internal long? CachePolicyTtlSeconds { get; set; }
 
-    /// <summary>Number of tokens read from prompt cache.</summary>
+    /// <summary>Number of input tokens read from prompt cache; included in inputTokens.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [JsonPropertyName("cacheReadTokens")]
     public long? CacheReadTokens { get; set; }
@@ -5891,7 +5891,7 @@ public sealed partial class AssistantUsageData
     [JsonPropertyName("cacheTtlSeconds")]
     internal long? CacheTtlSeconds { get; set; }
 
-    /// <summary>Number of tokens written to prompt cache.</summary>
+    /// <summary>Number of input tokens written to prompt cache; included in inputTokens.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [JsonPropertyName("cacheWriteTokens")]
     public long? CacheWriteTokens { get; set; }
@@ -5951,7 +5951,7 @@ public sealed partial class AssistantUsageData
     [JsonPropertyName("initiator")]
     public string? Initiator { get; set; }
 
-    /// <summary>Number of input tokens consumed.</summary>
+    /// <summary>Total input tokens consumed, including cache-read and cache-write tokens.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [JsonPropertyName("inputTokens")]
     public long? InputTokens { get; set; }
@@ -9529,15 +9529,15 @@ public sealed partial class UsageMetricsModelMetricTokenDetail
 /// <remarks>Nested data type for <c>UsageMetricsModelMetricUsage</c>.</remarks>
 public sealed partial class UsageMetricsModelMetricUsage
 {
-    /// <summary>Total tokens read from prompt cache.</summary>
+    /// <summary>Total input tokens read from prompt cache; included in inputTokens.</summary>
     [JsonPropertyName("cacheReadTokens")]
     public required long CacheReadTokens { get; set; }
 
-    /// <summary>Total tokens written to prompt cache.</summary>
+    /// <summary>Total input tokens written to prompt cache; included in inputTokens.</summary>
     [JsonPropertyName("cacheWriteTokens")]
     public required long CacheWriteTokens { get; set; }
 
-    /// <summary>Total input tokens consumed.</summary>
+    /// <summary>Total input tokens consumed, including cache-read and cache-write tokens.</summary>
     [JsonPropertyName("inputTokens")]
     public required long InputTokens { get; set; }
 
@@ -10507,6 +10507,11 @@ public sealed partial class FusionAttribution
     /// <summary>Synthetic HydraFusion model selected for the session.</summary>
     [JsonPropertyName("syntheticModel")]
     public required string SyntheticModel { get; set; }
+
+    /// <summary>Agent loop turn within the phase that produced a provisional streamed event (`assistant.message_start`, `assistant.message_delta`, `assistant.reasoning_delta`, `assistant.tool_call_delta`), matching the `turnId` of its completed `assistant.message` or `assistant.reasoning`. Each phase runs its own loop, so turn IDs repeat across phases: scope it by `fusionId` and `phaseId`. Absent on other events, which carry their own `turnId`.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [JsonPropertyName("turnId")]
+    public string? TurnId { get; set; }
 }
 
 /// <summary>How far the compaction's summarizer model calls had progressed when the compaction's outcome was decided. Stream statistics describe the latest model request; durationMs and attemptCount cover every request.</summary>

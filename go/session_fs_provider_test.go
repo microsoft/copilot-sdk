@@ -66,6 +66,30 @@ func TestSessionFSWriteFailureDoesNotMarkAppend(t *testing.T) {
 	}
 }
 
+type sqliteExistsProvider struct {
+	SessionFSProvider
+	SessionFSSqliteProvider
+	err error
+}
+
+func (p sqliteExistsProvider) SqliteExists() (bool, error) { return false, p.err }
+
+func TestSessionFSSqliteExistsDistinguishesFailureFromAbsence(t *testing.T) {
+	request := &rpc.SessionFSSqliteExistsRequest{}
+	unavailable := errors.New("database unavailable")
+	adapter := newSessionFSAdapter(sqliteExistsProvider{err: unavailable})
+	if result, err := adapter.SqliteExists(request); result != nil || !errors.Is(err, unavailable) {
+		t.Errorf("SqliteExists = %v, %v; want no result and %v", result, err, unavailable)
+	}
+
+	for _, provider := range []SessionFSProvider{sqliteExistsProvider{}, failingWriteProvider{}} {
+		result, err := newSessionFSAdapter(provider).SqliteExists(request)
+		if err != nil || result == nil || result.Exists {
+			t.Errorf("SqliteExists with %T = %v, %v; want absent without error", provider, result, err)
+		}
+	}
+}
+
 type readdirProvider struct {
 	SessionFSProvider
 	names   []string

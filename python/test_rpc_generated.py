@@ -73,12 +73,17 @@ from copilot.rpc import (
     SandboxConfig,
     SandboxConfigSource,
     ServerRpc,
+    SessionImportRequest,
+    SessionLifecycleMode,
     SessionList,
     SessionModelList,
+    SessionOpenOptions,
     SessionRpc,
     SessionSandboxResetSessionChoicesRequest,
+    SessionsOpenHandoff,
     ShellBuildInteractiveEnvironmentRequest,
     ShellBuildInteractiveEnvironmentResult,
+    SkillsDiscoverRequest,
     SlashCommandInfo,
     SlashCommandKind,
     SlashCommandTextResult,
@@ -86,6 +91,112 @@ from copilot.rpc import (
     UIElicitationSchemaType,
     UpdateSubagentSettingsRequest,
 )
+
+
+def test_skill_discovery_preserves_positional_arguments_with_preview_options():
+    request = SkillsDiscoverRequest(
+        True,
+        ["/ignored"],
+        ["/project"],
+        ["/custom"],
+        config_dir="/config",
+        home_directory="/home",
+    )
+
+    assert request.to_dict() == {
+        "excludeHostSkills": True,
+        "ignoredSkillsLocations": ["/ignored"],
+        "projectPaths": ["/project"],
+        "skillDirectories": ["/custom"],
+        "configDir": "/config",
+        "homeDirectory": "/home",
+    }
+
+
+def test_skill_discovery_paths_new_fields_are_keyword_only():
+    from copilot._generated.rpc import SkillsGetDiscoveryPathsRequest
+
+    request = SkillsGetDiscoveryPathsRequest(
+        True, ["/ignored"], ["/project"], ["/custom"], config_dir="/config"
+    )
+
+    assert request.to_dict() == {
+        "configDir": "/config",
+        "excludeHostSkills": True,
+        "ignoredSkillsLocations": ["/ignored"],
+        "projectPaths": ["/project"],
+        "skillDirectories": ["/custom"],
+    }
+    with pytest.raises(TypeError):
+        SkillsGetDiscoveryPathsRequest(True, ["/ignored"], ["/project"], ["/custom"], "/config")
+
+
+def test_existing_requests_keep_every_positional_field_despite_legacy_metadata():
+    from copilot._generated.rpc import SandboxConfigUserPolicySeatbelt
+
+    discover = MCPDiscoverRequest(True, False, None, ["/plugins"], "/work")
+    assert discover.include_configuration is True
+    assert discover.include_effective_source is False
+    assert discover.plugin_directories == ["/plugins"]
+    assert discover.working_directory == "/work"
+
+    seatbelt = SandboxConfigUserPolicySeatbelt(["com.apple.example"], True)
+    assert seatbelt.extra_mach_lookups == ["com.apple.example"]
+    assert seatbelt.keychain_access is True
+
+
+def test_session_import_preserves_positional_arguments():
+    request = SessionImportRequest(
+        "/workspace", "/source.jsonl", "{}", True, "Imported", "/project"
+    )
+    assert request.to_dict() == {
+        "defaultWorkingDirectory": "/workspace",
+        "inputPath": "/source.jsonl",
+        "jsonl": "{}",
+        "dryRun": True,
+        "name": "Imported",
+        "workingDirectory": "/project",
+    }
+
+
+def test_session_open_options_preserve_positional_working_directory():
+    options = SessionOpenOptions(*([None] * 34), "/workspace")
+    assert options.to_dict() == {"workingDirectory": "/workspace"}
+
+
+def test_session_handoff_preserves_positional_options():
+    metadata = RemoteSessionMetadataValue.from_dict(
+        {
+            "sessionId": "remote",
+            "startTime": "2026-07-26T11:00:00.000Z",
+            "modifiedTime": "2026-07-26T11:05:00.000Z",
+            "isRemote": True,
+            "remoteSessionIds": ["remote"],
+            "repository": {"owner": "github", "name": "copilot-sdk", "branch": "main"},
+        }
+    )
+    handoff = SessionsOpenHandoff(
+        metadata, None, None, SessionOpenOptions(working_directory="/workspace")
+    )
+    wire = handoff.to_dict()
+    assert wire["options"] == {"workingDirectory": "/workspace"}
+    assert "onProgress" not in wire
+    wire["callbackId"] = "handoff-callback"
+    assert SessionsOpenHandoff.from_dict(wire).to_dict() == wire
+
+
+def test_new_session_rpc_fields_preserve_wire_names():
+    import_payload = {
+        "defaultWorkingDirectory": "/workspace",
+        "inputPath": "/source.jsonl",
+        "jsonl": "{}",
+        "clientKind": "cli",
+        "clientName": "Copilot CLI",
+    }
+    assert SessionImportRequest.from_dict(import_payload).to_dict() == import_payload
+
+    options = SessionOpenOptions(session_lifecycle_mode=SessionLifecycleMode.PER_TURN)
+    assert options.to_dict() == {"sessionLifecycleMode": "per-turn"}
 
 
 @pytest.mark.asyncio
@@ -889,12 +1000,10 @@ def test_active_account_result_preserves_null_and_identity_metadata():
     payload = {
         "account": None,
         "authInfo": {"type": "user", "host": "https://github.com", "login": "octocat"},
-        "authSelectionId": "active-credential",
     }
     result = AccountsGetActiveResult.from_dict(payload)
     assert result.auth_info is not None
     assert result.auth_info.login == "octocat"
-    assert result.auth_selection_id == "active-credential"
     assert result.account is None
     assert result.to_dict() == payload
     assert AccountsGetActiveResult().to_dict() == {"account": None}

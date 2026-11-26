@@ -34,7 +34,7 @@ public final class McpConfigRemoveRequest {
     @JsonProperty("authClientIdMetadataUrl")
     private String authClientIdMetadataUrl;
 
-    /** Configuration root for the user MCP document and credentials. Omission retains the connection's root; overrides require a trusted host or direct SDK caller. */
+    /** Configuration root override. Omitted uses the current host's configuration root. Credential cleanup uses the same selected root without changing the authentication owner. */
     @JsonProperty("configDir")
     private String configDir;
 
@@ -68,7 +68,7 @@ public final class McpConfigRemoveRequest {
     /**
      * Returns the {@code configDir} property.
      *
-     * @return Configuration root for the user MCP document and credentials. Omission retains the connection's root; overrides require a trusted host or direct SDK caller.
+     * @return Configuration root override. Omitted uses the current host's configuration root. Credential cleanup uses the same selected root without changing the authentication owner.
      */
     public String getConfigDir() {
         return configDir;
@@ -88,7 +88,7 @@ public final class McpConfigRemoveRequest {
     /**
      * Sets the {@code configDir} property.
      *
-     * @param value Configuration root for the user MCP document and credentials. Omission retains the connection's root; overrides require a trusted host or direct SDK caller.
+     * @param value Configuration root override. Omitted uses the current host's configuration root. Credential cleanup uses the same selected root without changing the authentication owner.
      * @return this request
      */
     public McpConfigRemoveRequest setConfigDir(String value) {

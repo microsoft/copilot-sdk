@@ -2059,12 +2059,12 @@ type AssistantUsageData struct {
 	// Request-scoped prompt-cache policy lifetime in seconds; the shortest lifetime for mixed known policies. Does not establish or refresh cache state. Omitted when the policy is unknown.
 	// Internal: CachePolicyTtlSeconds is part of the SDK's internal API surface and is not intended for external use.
 	CachePolicyTtlSeconds *int64 `json:"cachePolicyTtlSeconds,omitempty"`
-	// Number of tokens read from prompt cache
+	// Number of input tokens read from prompt cache; included in inputTokens
 	CacheReadTokens *int64 `json:"cacheReadTokens,omitempty"`
 	// Effective prompt-cache lifetime in seconds for this call
 	// Internal: CacheTtlSeconds is part of the SDK's internal API surface and is not intended for external use.
 	CacheTtlSeconds *int64 `json:"cacheTtlSeconds,omitempty"`
-	// Number of tokens written to prompt cache
+	// Number of input tokens written to prompt cache; included in inputTokens
 	CacheWriteTokens *int64 `json:"cacheWriteTokens,omitempty"`
 	// Whether the model response was blocked or truncated by content filtering (finish_reason === 'content_filter'). For Anthropic models this corresponds to a 'refusal' stop reason.
 	ContentFilterTriggered *bool `json:"contentFilterTriggered,omitempty"`
@@ -2090,7 +2090,7 @@ type AssistantUsageData struct {
 	InferenceGateway *bool `json:"inferenceGateway,omitempty"`
 	// What initiated this API call: "user" for a request that carries a user prompt, "agent" for an agent-driven request such as the follow-up after a tool result, or the delegating caller (e.g., "sub-agent", "mcp-sampling")
 	Initiator *string `json:"initiator,omitempty"`
-	// Number of input tokens consumed
+	// Total input tokens consumed, including cache-read and cache-write tokens
 	InputTokens *int64 `json:"inputTokens,omitempty"`
 	// No longer emitted. Older events may still contain this internal correlation identifier for the qualifying instruction-update delivery consumed by this model request.
 	// Internal: InstructionUpdateDeliveryID is part of the SDK's internal API surface and is not intended for external use.
@@ -4746,6 +4746,8 @@ type FusionAttribution struct {
 	SourcePhaseID *string `json:"sourcePhaseId,omitempty"`
 	// Synthetic HydraFusion model selected for the session.
 	SyntheticModel string `json:"syntheticModel"`
+	// Agent loop turn within the phase that produced a provisional streamed event (`assistant.message_start`, `assistant.message_delta`, `assistant.reasoning_delta`, `assistant.tool_call_delta`), matching the `turnId` of its completed `assistant.message` or `assistant.reasoning`. Each phase runs its own loop, so turn IDs repeat across phases: scope it by `fusionId` and `phaseId`. Absent on other events, which carry their own `turnId`.
+	TurnID *string `json:"turnId,omitempty"`
 }
 
 // Experimental: FusionCritic is part of an experimental API and may change or be removed.

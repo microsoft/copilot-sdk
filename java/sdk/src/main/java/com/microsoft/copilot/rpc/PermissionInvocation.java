@@ -147,7 +147,9 @@ public final class PermissionInvocation {
      * clear that human requirement after Assisted approval. For missing or other
      * prompt kinds, keep the raw marker authoritative. Prompt-only fields such as
      * {@code assistedApproval} are available through
-     * {@link PermissionRequest#getExtensionData()}.
+     * {@link PermissionRequest#getExtensionData()}; use
+     * {@link UrlPermissionPrompt#from(PermissionRequest)} to read {@code url}
+     * prompt fields with their types.
      *
      * @return the derived prompt, or {@code null} when unavailable
      */

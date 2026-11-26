@@ -135,6 +135,31 @@ class GeneratedRpcRecordsCoverageTest {
     }
 
     @Test
+    @AllowCopilotExperimental
+    void skills_discovery_preserves_released_constructor_and_wire_fields() throws Exception {
+        var constructor = SkillsDiscoverParams.class.getConstructor(List.class, List.class, List.class, Boolean.class);
+        var params = constructor.newInstance(List.of("/project"), List.of("/skills"), List.of("/ignored"), true);
+        var mapper = new ObjectMapper();
+        assertEquals(mapper.readTree("""
+                {"projectPaths":["/project"],"skillDirectories":["/skills"],
+                 "ignoredSkillsLocations":["/ignored"],"excludeHostSkills":true}
+                """), mapper.valueToTree(params));
+    }
+
+    @Test
+    @AllowCopilotExperimental
+    void skills_discovery_paths_preserves_released_constructor_and_wire_fields() throws Exception {
+        var constructor = SkillsGetDiscoveryPathsParams.class.getConstructor(List.class, List.class, List.class,
+                Boolean.class);
+        var params = constructor.newInstance(List.of("/skills"), List.of("/project"), List.of("/ignored"), true);
+        var mapper = new ObjectMapper();
+        assertEquals(mapper.readTree("""
+                {"skillDirectories":["/skills"],"projectPaths":["/project"],
+                 "ignoredSkillsLocations":["/ignored"],"excludeHostSkills":true}
+                """), mapper.valueToTree(params));
+    }
+
+    @Test
     void localModelMachineRow_preserves_typed_state_and_resource_requirements() throws Exception {
         var mapper = new ObjectMapper();
         var expected = mapper.readTree("""

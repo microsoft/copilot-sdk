@@ -11,6 +11,16 @@ import (
 	"github.com/microsoft/copilot-sdk/go/v2/rpc"
 )
 
+// SessionLifecycleMode controls when local session end hooks run.
+type SessionLifecycleMode = rpc.SessionLifecycleMode
+
+const (
+	// SessionLifecycleModeInteractive defers session end hooks until shutdown.
+	SessionLifecycleModeInteractive = rpc.SessionLifecycleModeInteractive
+	// SessionLifecycleModePerTurn runs session end hooks after each completed turn.
+	SessionLifecycleModePerTurn = rpc.SessionLifecycleModePerTurn
+)
+
 // ExtensionSources selects discovery sources, not activation or trust.
 // Requires a supporting runtime.
 type ExtensionSources = rpc.ExtensionSources
@@ -2032,6 +2042,10 @@ type sessionOptions struct {
 	// .github/hooks/ and trusted repository-configured roots. It does not control
 	// explicit HookDirectories or Hooks callbacks.
 	EnableFileHooks *bool
+	// SessionLifecycleMode controls local session end hooks.
+	// Empty inherits the host default, which is interactive for SDK-owned hosts.
+	// Ignored for cloud sessions. Not persisted; supply it again on cold resume.
+	SessionLifecycleMode SessionLifecycleMode
 	// EnableHostGitOperations, when non-nil, controls git operations on the host
 	// filesystem (branch detection, file status, commit history). When false, no
 	// git context is surfaced in the system prompt.
@@ -2524,7 +2538,9 @@ type Tool struct {
 	Description          string         `json:"description,omitempty"`
 	Parameters           map[string]any `json:"parameters,omitzero"`
 	OverridesBuiltInTool bool           `json:"overridesBuiltInTool,omitempty"`
-	SkipPermission       bool           `json:"skipPermission,omitempty"`
+	// OnlyOverridesBuiltInTool replaces a same-named built-in for the executing model and otherwise omits this tool.
+	OnlyOverridesBuiltInTool bool `json:"onlyOverridesBuiltInTool,omitempty"`
+	SkipPermission           bool `json:"skipPermission,omitempty"`
 	// IsTerminal reports that a successful call to this tool ends the agent
 	// turn: the runtime halts instead of feeding the result back to the model
 	// for another round. A failed call leaves the loop running so the model can
@@ -3027,6 +3043,10 @@ type resumeOptions struct {
 	// .github/hooks/ and trusted repository-configured roots. It does not control
 	// explicit HookDirectories or Hooks callbacks.
 	EnableFileHooks *bool
+	// SessionLifecycleMode controls local session end hooks on cold resume.
+	// Empty inherits the host default, which is interactive for SDK-owned hosts.
+	// Ignored for resident and cloud sessions. Not persisted.
+	SessionLifecycleMode SessionLifecycleMode
 	// EnableHostGitOperations, when non-nil, controls git operations on the host
 	// filesystem.
 	EnableHostGitOperations *bool
@@ -3813,6 +3833,7 @@ type createSessionRequest struct {
 	OrganizationCustomInstructions     *string                        `json:"organizationCustomInstructions,omitempty"`
 	EnableOnDemandInstructionDiscovery *bool                          `json:"enableOnDemandInstructionDiscovery,omitempty"`
 	EnableFileHooks                    *bool                          `json:"enableFileHooks,omitempty"`
+	SessionLifecycleMode               SessionLifecycleMode           `json:"sessionLifecycleMode,omitempty"`
 	EnableHostGitOperations            *bool                          `json:"enableHostGitOperations,omitempty"`
 	EnableSessionStore                 *bool                          `json:"enableSessionStore,omitempty"`
 	EnableSkills                       *bool                          `json:"enableSkills,omitempty"`
@@ -3921,6 +3942,7 @@ type resumeSessionRequest struct {
 	OrganizationCustomInstructions     *string                        `json:"organizationCustomInstructions,omitempty"`
 	EnableOnDemandInstructionDiscovery *bool                          `json:"enableOnDemandInstructionDiscovery,omitempty"`
 	EnableFileHooks                    *bool                          `json:"enableFileHooks,omitempty"`
+	SessionLifecycleMode               SessionLifecycleMode           `json:"sessionLifecycleMode,omitempty"`
 	EnableHostGitOperations            *bool                          `json:"enableHostGitOperations,omitempty"`
 	EnableSessionStore                 *bool                          `json:"enableSessionStore,omitempty"`
 	EnableSkills                       *bool                          `json:"enableSkills,omitempty"`

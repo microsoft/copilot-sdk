@@ -5,6 +5,7 @@
 package com.microsoft.copilot.rpc;
 
 import java.util.List;
+import java.util.Objects;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude;
@@ -45,6 +46,9 @@ public final class PermissionRequestResult {
     @JsonProperty("directories")
     private List<String> directories;
 
+    @JsonProperty("domain")
+    private String domain;
+
     /**
      * Optional provenance describing how and where this decision was made. Never
      * serialized inside the result — the SDK forwards it as a sibling of
@@ -76,6 +80,47 @@ public final class PermissionRequestResult {
     public static PermissionRequestResult approveReadOnlyForSession(List<String> directories) {
         return new PermissionRequestResult().setKind(PermissionRequestResultKind.APPROVE_READ_ONLY_FOR_SESSION)
                 .setDirectories(directories);
+    }
+
+    /**
+     * Creates a result that approves a URL prompt and remembers the approval for
+     * the rest of the session.
+     * <p>
+     * Pass the prompt's exact origin, such as {@code https://api.example.com}, to
+     * approve that origin only, or the prompt's
+     * {@link UrlPermissionPrompt#getParentDomainPattern() parentDomainPattern} to
+     * approve its registrable domain and subdomains. The parent-domain scope does
+     * not cover subdomains the Public Suffix List lists as separate owners, such as
+     * buckets under {@code s3.amazonaws.com}; those still prompt. The runtime
+     * requires a domain for a URL session approval.
+     *
+     * @param domain
+     *            the URL pattern to approve for the session
+     * @return a new session-scoped URL approval
+     * @throws NullPointerException
+     *             if {@code domain} is {@code null}
+     */
+    public static PermissionRequestResult approveUrlForSession(String domain) {
+        return new PermissionRequestResult().setKind(PermissionRequestResultKind.APPROVE_FOR_SESSION)
+                .setDomain(Objects.requireNonNull(domain, "domain"));
+    }
+
+    /**
+     * Creates a result that approves a URL domain permanently, across sessions.
+     * <p>
+     * Do not pass the prompt's {@link UrlPermissionPrompt#getParentDomainPattern()
+     * parentDomainPattern}: the parent-domain scope is session-only, so the runtime
+     * keeps it for the session and writes nothing to settings.
+     *
+     * @param domain
+     *            the URL pattern to approve permanently
+     * @return a new permanent URL approval
+     * @throws NullPointerException
+     *             if {@code domain} is {@code null}
+     */
+    public static PermissionRequestResult approveUrlPermanently(String domain) {
+        return new PermissionRequestResult().setKind(PermissionRequestResultKind.APPROVE_PERMANENTLY)
+                .setDomain(Objects.requireNonNull(domain, "domain"));
     }
 
     /**
@@ -214,6 +259,29 @@ public final class PermissionRequestResult {
      */
     public PermissionRequestResult setDirectories(List<String> directories) {
         this.directories = directories;
+        return this;
+    }
+
+    /**
+     * Gets the URL domain approved by an {@code approve-for-session} or
+     * {@code approve-permanently} URL decision.
+     *
+     * @return the approved URL pattern, or {@code null}
+     */
+    public String getDomain() {
+        return domain;
+    }
+
+    /**
+     * Sets the URL domain approved by an {@code approve-for-session} or
+     * {@code approve-permanently} URL decision.
+     *
+     * @param domain
+     *            the URL pattern to approve
+     * @return this result for method chaining
+     */
+    public PermissionRequestResult setDomain(String domain) {
+        this.domain = domain;
         return this;
     }
 

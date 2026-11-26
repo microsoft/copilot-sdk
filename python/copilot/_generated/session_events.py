@@ -1325,6 +1325,7 @@ class FusionAttribution:
     role: str | None = None
     source_model: str | None = None
     source_phase_id: str | None = None
+    turn_id: str | None = None
 
     @staticmethod
     def from_dict(obj: Any) -> "FusionAttribution":
@@ -1342,6 +1343,7 @@ class FusionAttribution:
         role = from_union([from_none, from_str], obj.get("role"))
         source_model = from_union([from_none, from_str], obj.get("sourceModel"))
         source_phase_id = from_union([from_none, from_str], obj.get("sourcePhaseId"))
+        turn_id = from_union([from_none, from_str], obj.get("turnId"))
         return FusionAttribution(
             fusion_id=fusion_id,
             pattern=pattern,
@@ -1356,6 +1358,7 @@ class FusionAttribution:
             role=role,
             source_model=source_model,
             source_phase_id=source_phase_id,
+            turn_id=turn_id,
         )
 
     def to_dict(self) -> dict:
@@ -1382,6 +1385,8 @@ class FusionAttribution:
             result["sourceModel"] = from_union([from_none, from_str], self.source_model)
         if self.source_phase_id is not None:
             result["sourcePhaseId"] = from_union([from_none, from_str], self.source_phase_id)
+        if self.turn_id is not None:
+            result["turnId"] = from_union([from_none, from_str], self.turn_id)
         return result
 
 

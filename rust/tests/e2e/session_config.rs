@@ -18,7 +18,7 @@ use parking_lot::Mutex;
 use serde_json::{Value, json};
 
 use super::support::{
-    DEFAULT_TEST_TOKEN, E2eContext, capi_meta_body, with_e2e_context_no_snapshot,
+    DEFAULT_TEST_TOKEN, E2eContext, capi_meta_body, is_inference_url, with_e2e_context_no_snapshot,
 };
 
 static E2E: super::support::SharedE2eGroup =
@@ -345,14 +345,6 @@ impl CopilotRequestHandler for RecordingHandler {
         }
         Ok(synth_non_inference_response(&request.url))
     }
-}
-
-fn is_inference_url(url: &str) -> bool {
-    let url = url.to_lowercase();
-    url.ends_with("/chat/completions")
-        || url.ends_with("/responses")
-        || url.ends_with("/v1/messages")
-        || url.ends_with("/messages")
 }
 
 fn json_headers() -> HeaderMap {

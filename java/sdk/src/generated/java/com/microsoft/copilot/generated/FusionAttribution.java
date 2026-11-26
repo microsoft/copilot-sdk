@@ -47,6 +47,8 @@ public record FusionAttribution(
     @JsonProperty("sourceModel") String sourceModel,
     /** Conversation scope in which the concrete phase executed. */
     @JsonProperty("conversationScope") String conversationScope,
+    /** Agent loop turn within the phase that produced a provisional streamed event (`assistant.message_start`, `assistant.message_delta`, `assistant.reasoning_delta`, `assistant.tool_call_delta`), matching the `turnId` of its completed `assistant.message` or `assistant.reasoning`. Each phase runs its own loop, so turn IDs repeat across phases: scope it by `fusionId` and `phaseId`. Absent on other events, which carry their own `turnId`. */
+    @JsonProperty("turnId") String turnId,
     /** Phase whose output supplied the authoritative content, when different from the executing phase. */
     @JsonProperty("sourcePhaseId") String sourcePhaseId,
     /** ISO 8601 time the event happened, when HydraFusion held it back and published it later. The envelope `timestamp` is when it was published. */
@@ -85,6 +87,7 @@ public record FusionAttribution(
         private String role;
         private String sourceModel;
         private String conversationScope;
+        private String turnId;
         private String sourcePhaseId;
         private String occurredAt;
 
@@ -221,6 +224,18 @@ public record FusionAttribution(
         }
 
         /**
+         * Sets the {@code turnId} property.
+         * @param value the property value
+         * @return this builder
+         * @since 2.0.0
+         */
+        @com.microsoft.copilot.CopilotExperimental
+        public Builder turnId(String value) {
+            this.turnId = value;
+            return this;
+        }
+
+        /**
          * Sets the {@code sourcePhaseId} property.
          * @param value the property value
          * @return this builder
@@ -255,7 +270,7 @@ public record FusionAttribution(
             if (syntheticModel == null) throw new IllegalStateException("Missing required property: syntheticModel");
             if (policy == null) throw new IllegalStateException("Missing required property: policy");
             if (pattern == null) throw new IllegalStateException("Missing required property: pattern");
-            return new FusionAttribution(hasUserSteering, fusionId, commitId, syntheticModel, policy, pattern, phaseId, phaseKind, role, sourceModel, conversationScope, sourcePhaseId, occurredAt);
+            return new FusionAttribution(hasUserSteering, fusionId, commitId, syntheticModel, policy, pattern, phaseId, phaseKind, role, sourceModel, conversationScope, turnId, sourcePhaseId, occurredAt);
         }
     }
 }

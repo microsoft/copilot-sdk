@@ -112,6 +112,8 @@ pub mod rpc_methods {
     pub const SESSION_SANDBOX_INVOKEOWNED: &str = "session.sandbox.invokeOwned";
     /// `session.canvasSource.close`
     pub const SESSION_CANVASSOURCE_CLOSE: &str = "session.canvasSource.close";
+    /// `session.skillsSource.getDiagnostics`
+    pub const SESSION_SKILLSSOURCE_GETDIAGNOSTICS: &str = "session.skillsSource.getDiagnostics";
     /// `session.cafeMetrics.attach`
     pub const SESSION_CAFEMETRICS_ATTACH: &str = "session.cafeMetrics.attach";
     /// `session.cafeMetrics.detach`
@@ -1648,6 +1650,26 @@ crate::record_serde::wire_record!(SessionEventPublishResult {
     event_id: "eventId"
 });
 
+/// Diagnostics from reloading skill definitions, with warnings and errors as separate lists.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct SkillsLoadDiagnostics {
+    /// Errors emitted while loading skills (e.g. skills that failed to load entirely)
+    pub errors: Vec<String>,
+    /// Warnings emitted while loading skills (e.g. skills that loaded but had issues)
+    pub warnings: Vec<String>,
+}
+crate::record_serde::wire_record!(SkillsLoadDiagnostics {
+    errors: "errors",
+    warnings: "warnings"
+});
+
 /// Explicit host approval for account-authenticated MCP endpoints.
 ///
 /// <div class="warning">
@@ -2497,6 +2519,46 @@ pub struct CanvasSourceCloseRequest {
     pub attach_id: Option<i64>,
 }
 crate::record_serde::wire_record!(CanvasSourceCloseRequest { session_id: "sessionId", instance_id: "instanceId", attach_id: "attachId" if is_none });
+
+/// Reads skill diagnostics through the original authenticated local attachment.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct SessionSkillsSourceGetDiagnosticsParams {
+    /// Target session identifier
+    pub session_id: SessionId,
+    /// Identity of the active local attachment to the owning session.
+    pub attach_id: i64,
+}
+crate::record_serde::wire_record!(SessionSkillsSourceGetDiagnosticsParams {
+    session_id: "sessionId",
+    attach_id: "attachId"
+});
+
+/// Diagnostics from reloading skill definitions, with warnings and errors as separate lists.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct SessionSkillsSourceGetDiagnosticsResult {
+    /// Errors emitted while loading skills (e.g. skills that failed to load entirely)
+    pub errors: Vec<String>,
+    /// Warnings emitted while loading skills (e.g. skills that loaded but had issues)
+    pub warnings: Vec<String>,
+}
+crate::record_serde::wire_record!(SessionSkillsSourceGetDiagnosticsResult {
+    errors: "errors",
+    warnings: "warnings"
+});
 
 /// Identifies the target session.
 ///

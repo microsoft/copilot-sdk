@@ -46,6 +46,12 @@ public @interface CopilotTool {
     /** Whether this tool overrides a built-in tool. */
     boolean overridesBuiltInTool() default false;
 
+    /**
+     * Whether to replace a same-named built-in only when it exists for the
+     * executing model.
+     */
+    boolean onlyOverridesBuiltInTool() default false;
+
     /** Whether to skip permission checks. */
     boolean skipPermission() default false;
 

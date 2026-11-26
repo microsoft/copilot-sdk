@@ -22,13 +22,15 @@ use async_trait::async_trait;
 use copilot_sdk::Client;
 use copilot_sdk::session::Session;
 use copilot_sdk::session_fs::{
-    DirEntry, DirEntryKind, FileInfo, FsError, FsErrorKind, SessionFsProvider,
-    SessionFsSqliteProvider, SessionFsSqliteQueryResult, SessionFsSqliteQueryType,
+    DirEntry, DirEntryKind, FileInfo, FsError, FsErrorKind, SessionFsConfig, SessionFsConventions,
+    SessionFsProvider, SessionFsSqliteProvider, SessionFsSqliteQueryResult,
+    SessionFsSqliteQueryType,
 };
 use copilot_sdk::types::CreateSessionOptions;
 use serde_json::{Value, json};
 use serial_test::{parallel, serial};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream, duplex};
+use tokio::sync::oneshot;
 use tokio::time::timeout;
 
 /// A backstop against a hang, never a measurement.
@@ -110,12 +112,14 @@ static ALLOCATOR: LargeAllocationRecorder = LargeAllocationRecorder;
 /// nothing; every other answer is fixed.
 struct FixedProvider {
     files: Mutex<HashMap<String, String>>,
+    sqlite_exists_error: bool,
 }
 
 impl FixedProvider {
     fn with_file(path: &str, content: String) -> Arc<Self> {
         Arc::new(Self {
             files: Mutex::new(HashMap::from([(path.to_string(), content)])),
+            sqlite_exists_error: false,
         })
     }
 }
@@ -200,6 +204,9 @@ impl SessionFsSqliteProvider for FixedProvider {
     }
 
     async fn sqlite_exists(&self) -> Result<bool, FsError> {
+        if self.sqlite_exists_error {
+            return Err(FsError::new(FsErrorKind::Other, "SQLITE_PROBE_UNAVAILABLE"));
+        }
         Ok(true)
     }
 }
@@ -335,6 +342,159 @@ async fn reply_to(server: &mut Server, id: u64, method: &str, params: Value) -> 
 /// The reply to a `sessionFs.readFile` of `path`, checked as [`reply_to`] does.
 async fn read_file(server: &mut Server, id: u64, path: &str) -> Value {
     reply_to(server, id, "sessionFs.readFile", json!({ "path": path })).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[parallel]
+async fn sqlite_existence_errors_do_not_report_an_absent_database() {
+    let (_session, mut server) = start(Arc::new(FixedProvider {
+        files: Mutex::new(HashMap::new()),
+        sqlite_exists_error: true,
+    }))
+    .await;
+    server.request(1, "sessionFs.sqliteExists", json!({})).await;
+    let body = timeout(DEADLINE, server.read_frame())
+        .await
+        .expect("SQLite probe error response");
+    let reply: Value = serde_json::from_slice(&body).expect("a JSON reply");
+    assert_eq!(
+        reply["error"]["message"], "SQLITE_PROBE_UNAVAILABLE",
+        "provider failure must not become database absence: {reply}"
+    );
+    assert!(reply.get("result").is_none(), "{reply}");
+}
+
+struct PendingStatProvider {
+    entered: Mutex<Option<oneshot::Sender<()>>>,
+    dropped: Mutex<Option<oneshot::Sender<()>>>,
+}
+
+struct StatDropReceipt(Option<oneshot::Sender<()>>);
+
+impl Drop for StatDropReceipt {
+    fn drop(&mut self) {
+        if let Some(sender) = self.0.take() {
+            let _ = sender.send(());
+        }
+    }
+}
+
+#[async_trait]
+impl SessionFsProvider for PendingStatProvider {
+    async fn stat(&self, _path: &str) -> Result<FileInfo, FsError> {
+        let _receipt = StatDropReceipt(self.dropped.lock().expect("receipt lock").take());
+        if let Some(entered) = self.entered.lock().expect("entry lock").take() {
+            let _ = entered.send(());
+        }
+        std::future::pending().await
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[parallel]
+async fn unopened_provider_requests_report_resolver_errors_and_release_on_disconnect() {
+    let (client_write, server_read) = duplex(64 * 1024);
+    let (server_write, client_read) = duplex(64 * 1024);
+    let client = Client::from_streams_with_session_fs_config(
+        client_read,
+        client_write,
+        std::env::temp_dir(),
+        SessionFsConfig::new("/", "/state", SessionFsConventions::Posix),
+    )
+    .expect("client with filesystem configuration");
+    let (entered_tx, entered) = oneshot::channel();
+    let (dropped_tx, dropped) = oneshot::channel();
+    let provider = Arc::new(PendingStatProvider {
+        entered: Mutex::new(Some(entered_tx)),
+        dropped: Mutex::new(Some(dropped_tx)),
+    });
+    client
+        .register_session_fs_provider_resolver(Arc::new(
+            move |id: &str| -> copilot_sdk::Result<Arc<dyn SessionFsProvider>> {
+                if id == "denied" {
+                    return Err(copilot_sdk::Error::with_message(
+                        copilot_sdk::ErrorKind::InvalidConfig,
+                        "RESOLVER_DECLINED",
+                    ));
+                }
+                Ok(provider.clone())
+            },
+        ))
+        .expect("register resolver");
+    let mut server = Server {
+        read: server_read,
+        write: server_write,
+        session_id: "denied".to_owned(),
+    };
+    server
+        .request(1, "sessionFs.stat", json!({ "path": "/state" }))
+        .await;
+    let body = timeout(DEADLINE, server.read_frame())
+        .await
+        .expect("resolver error response");
+    let error: Value = serde_json::from_slice(&body).expect("error response");
+    assert_eq!(error["id"], 1);
+    assert_eq!(error["error"]["message"], "RESOLVER_DECLINED");
+
+    server.session_id = "unopened".to_owned();
+    server
+        .request(2, "sessionFs.stat", json!({ "path": "/state" }))
+        .await;
+    timeout(DEADLINE, entered)
+        .await
+        .expect("provider callback starts")
+        .expect("provider entry receipt");
+    drop(server);
+    timeout(DEADLINE, dropped)
+        .await
+        .expect("connection closure drops the pending provider callback")
+        .expect("provider cleanup receipt");
+    drop(client);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[parallel]
+async fn dropping_the_client_releases_an_unopened_provider_callback() {
+    let (client_write, server_read) = duplex(64 * 1024);
+    let (server_write, client_read) = duplex(64 * 1024);
+    let client = Client::from_streams_with_session_fs_config(
+        client_read,
+        client_write,
+        std::env::temp_dir(),
+        SessionFsConfig::new("/", "/state", SessionFsConventions::Posix),
+    )
+    .expect("client with filesystem configuration");
+    let (entered_tx, entered) = oneshot::channel();
+    let (dropped_tx, dropped) = oneshot::channel();
+    let provider = Arc::new(PendingStatProvider {
+        entered: Mutex::new(Some(entered_tx)),
+        dropped: Mutex::new(Some(dropped_tx)),
+    });
+    client
+        .register_session_fs_provider_resolver(Arc::new(
+            move |_id: &str| -> copilot_sdk::Result<Arc<dyn SessionFsProvider>> {
+                Ok(provider.clone())
+            },
+        ))
+        .expect("register resolver");
+    let mut server = Server {
+        read: server_read,
+        write: server_write,
+        session_id: "unopened".to_owned(),
+    };
+    server
+        .request(1, "sessionFs.stat", json!({ "path": "/state" }))
+        .await;
+    timeout(DEADLINE, entered)
+        .await
+        .expect("provider callback starts")
+        .expect("provider entry receipt");
+    drop(client);
+    timeout(DEADLINE, dropped)
+        .await
+        .expect("the application client drop releases the pending provider callback")
+        .expect("provider cleanup receipt");
+    drop(server);
 }
 
 #[tokio::test(flavor = "multi_thread")]

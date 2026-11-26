@@ -22,7 +22,7 @@ use serde::Serialize;
 use crate::canvas::CanvasDeclaration;
 use crate::generated::api_types::{
     AutopilotOptions, ModelCapabilitiesOverride, OpenCanvasInstance, RemoteSessionMode,
-    SandboxConfig,
+    SandboxConfig, SessionLifecycleMode,
 };
 use crate::generated::session_events::{PermissionMode, ReasoningSummary};
 use crate::types::{
@@ -49,6 +49,8 @@ pub(crate) struct CommandWireDefinition {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SessionCreateWire {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_lifecycle_mode: Option<SessionLifecycleMode>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<SessionId>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -104,6 +106,8 @@ pub(crate) struct SessionCreateWire {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SessionResumeWire {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_lifecycle_mode: Option<SessionLifecycleMode>,
     pub session_id: SessionId,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,

@@ -1039,6 +1039,13 @@ impl<'a> ClientRpcSession<'a> {
             client: self.client,
         }
     }
+
+    /// `session.skillsSource.*` sub-namespace.
+    pub fn skills_source(&self) -> ClientRpcSessionSkillsSource<'a> {
+        ClientRpcSessionSkillsSource {
+            client: self.client,
+        }
+    }
 }
 
 /// `session.cafeMetrics.*` RPCs.
@@ -1734,6 +1741,46 @@ impl<'a> ClientRpcSessionSandbox<'a> {
         let wire_params = serde_json::to_value(params)?;
         self.client
             .call_typed(rpc_methods::SESSION_SANDBOX_INVOKEOWNED, Some(wire_params))
+            .await
+    }
+}
+
+/// `session.skillsSource.*` RPCs.
+#[derive(Clone, Copy)]
+pub struct ClientRpcSessionSkillsSource<'a> {
+    pub(crate) client: &'a Client,
+}
+
+impl<'a> ClientRpcSessionSkillsSource<'a> {
+    /// Reads skill diagnostics from the original authenticated local attachment without reloading definitions.
+    ///
+    /// Wire method: `session.skillsSource.getDiagnostics`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - Reads skill diagnostics through the original authenticated local attachment.
+    ///
+    /// # Returns
+    ///
+    /// Diagnostics from reloading skill definitions, with warnings and errors as separate lists.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub async fn get_diagnostics(
+        &self,
+        params: SessionSkillsSourceGetDiagnosticsParams,
+    ) -> Result<SkillsLoadDiagnostics, Error> {
+        let wire_params = serde_json::to_value(params)?;
+        self.client
+            .call_typed(
+                rpc_methods::SESSION_SKILLSSOURCE_GETDIAGNOSTICS,
+                Some(wire_params),
+            )
             .await
     }
 }

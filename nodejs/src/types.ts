@@ -56,6 +56,7 @@ import type {
     SandboxConfig,
     SessionManagementCreateHostRequest,
     SessionManagementCreateResult,
+    SessionLifecycleMode,
     UIUserInputResponse,
 } from "./generated/rpc.js";
 import type { ToolSet } from "./toolSet.js";
@@ -69,6 +70,7 @@ export type {
 export type { RemoteSessionMode } from "./generated/rpc.js";
 export type { ExtensionSources } from "./generated/rpc.js";
 export type { AutopilotOptions } from "./generated/rpc.js";
+export type { SessionLifecycleMode } from "./generated/rpc.js";
 export type {
     UserInputImageAttachment,
     UserInputImageAttachmentConstraints,
@@ -580,6 +582,18 @@ export interface CopilotClientOptions {
      */
     sessionFs?: SessionFsConfig;
     /**
+     * Resolves storage for filesystem requests without an active SDK session handle.
+     * Requires {@link sessionFs}. Providers on existing session handles take precedence.
+     * The SDK calls this resolver per request. Return the same backing storage for each session ID.
+     */
+    resolveSessionFsProvider?: (sessionId: string) => SessionFsProvider;
+    /**
+     * Progress and repository confirmation for remote handoff.
+     * Supply callbackId in sessions.open to correlate these callbacks.
+     * @experimental
+     */
+    sessionHandoff?: import("./generated/rpc.js").ClientGlobalApiHandlers["sessionHandoff"];
+    /**
      * Identity of the integrating application, forwarded to the runtime on the
      * `server.connect` handshake. Declaring it lets the telemetry the runtime
      * emits on this connection be attributed to a single, consistent surface
@@ -909,10 +923,17 @@ export interface Tool<TArgs = unknown> {
     handler?: ToolHandler<TArgs>;
     /**
      * When true, explicitly indicates this tool is intended to override a built-in tool
-     * of the same name. If not set and the name clashes with a built-in tool, the runtime
-     * will return an error.
+     * of the same name, or to act as an ordinary external tool if there is no match.
+     * If neither this nor `onlyOverridesBuiltInTool` is set and the name clashes with a
+     * built-in tool, the runtime will return an error.
      */
     overridesBuiltInTool?: boolean;
+    /**
+     * Replace a same-named built-in enabled for this session and executing model (before
+     * allow/exclude filters); otherwise ignore this tool.
+     * Takes precedence over `overridesBuiltInTool` and does not require it.
+     */
+    onlyOverridesBuiltInTool?: boolean;
     /**
      * When true, the tool can execute without a permission prompt.
      */
@@ -1000,6 +1021,7 @@ export function defineTool<T = unknown>(
         parameters?: ZodSchema<T> | Record<string, unknown>;
         handler?: ToolHandler<T>;
         overridesBuiltInTool?: boolean;
+        onlyOverridesBuiltInTool?: boolean;
         skipPermission?: boolean;
         defer?: "auto" | "never";
         exposure?: ToolExposure;
@@ -2969,6 +2991,14 @@ export interface SkillProviderCallOptions {
  * an existing one).
  */
 export interface SessionOptionsBase {
+    /**
+     * Controls local session end hooks. `"interactive"` defers them to shutdown;
+     * `"per-turn"` runs them after each completed turn.
+     * Omission inherits the host default, which is `"interactive"` for SDK-owned hosts.
+     * Applied at creation and cold resume; ignored for resident and cloud sessions.
+     * Not persisted; supply it again on cold resume.
+     */
+    sessionLifecycleMode?: SessionLifecycleMode;
     inference?: SessionInferenceOptions;
     policy?: SessionPolicyOptions;
     /**
@@ -3802,9 +3832,9 @@ export interface ClientObservabilityOptions {
 
 /** Owned-runtime GitHub authentication and first-party telemetry forwarding; not per-session identity. */
 export interface ClientGitHubOptions {
-    /** GitHub.com OAuth app client ID for runtime-managed sign-in and Entra/EMU exchange. Supply with `clientSecret`, or omit both to use the built-in app. */
+    /** GitHub.com OAuth app client ID for runtime-managed sign-in and Entra/EMU exchange. Omit both OAuth options to use the built-in app. */
     clientId?: string;
-    /** Secret matching `clientId`. Not used for enterprise-host sign-in or for an already-issued GitHub token. */
+    /** Secret matching `clientId` for browser sign-in. Not required for Entra/EMU exchange or device sign-in. */
     clientSecret?: string;
     /**
      * GitHub token to use for authentication.

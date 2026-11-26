@@ -1,19 +1,129 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 
+use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use base64::Engine;
+use copilot_sdk::rpc::SessionsForkRequest;
 use copilot_sdk::session_fs::{FsError, SessionFsBinaryProvider};
 use copilot_sdk::{
-    Client, DirEntry, DirEntryKind, FileInfo, SessionFsCapabilities, SessionFsConfig,
-    SessionFsConventions, SessionFsProvider,
+    Client, DirEntry, DirEntryKind, FileInfo, ResumeSessionOptions, SessionFsCapabilities,
+    SessionFsConfig, SessionFsConventions, SessionFsProvider,
 };
+use futures_util::FutureExt;
 
 struct BinaryFileProvider {
     root: PathBuf,
     read_paths: Mutex<Vec<String>>,
+}
+
+#[tokio::test]
+async fn provider_resolver_supports_a_runtime_generated_fork_id() {
+    super::support::with_dedicated_e2e_context_no_snapshot(|ctx| {
+        Box::pin(async move {
+            let root = ctx.work_dir().join("resolved-provider");
+            let requests = Arc::new(Mutex::new(Vec::new()));
+            let requested = requests.clone();
+            let resolve_root = root.clone();
+            let client = Client::start(
+                ctx.client_options().with_session_fs(
+                    SessionFsConfig::new("/", "/state", SessionFsConventions::Posix)
+                        .with_capabilities(SessionFsCapabilities::new().with_binary(true)),
+                ),
+            )
+            .await
+            .expect("start provider host");
+            client
+                .register_session_fs_provider_resolver(Arc::new(
+                    move |id: &str| -> copilot_sdk::Result<Arc<dyn SessionFsProvider>> {
+                        requested.lock().unwrap().push(id.to_owned());
+                        Ok(Arc::new(BinaryFileProvider {
+                            root: resolve_root.join(id),
+                            read_paths: Mutex::new(Vec::new()),
+                        }))
+                    },
+                ))
+                .expect("register provider resolver");
+            let outcome = AssertUnwindSafe(async {
+                let source_provider = Arc::new(BinaryFileProvider {
+                    root: ctx.work_dir().join("explicit-provider"),
+                    read_paths: Mutex::new(Vec::new()),
+                });
+                let source = client
+                    .create_session(
+                        ctx.approve_all_session_config()
+                            .with_working_directory("/")
+                            .with_enable_config_discovery(false)
+                            .with_github(|group| group.with_fetch_managed_settings(false))
+                            .with_state(|group| {
+                                group.with_session_fs_provider(source_provider.clone())
+                            }),
+                    )
+                    .await
+                    .expect("create source with an explicit provider");
+                source_provider
+                    .write_file("/state/plan.md", "RUST_PROVIDER_FORK_PLAN", None)
+                    .await
+                    .unwrap();
+                let fork = client
+                    .rpc()
+                    .sessions()
+                    .fork(SessionsForkRequest {
+                        session_id: source.id().clone(),
+                        ..Default::default()
+                    })
+                    .await
+                    .expect("fork through the runtime-selected provider ID");
+                let target = Arc::new(BinaryFileProvider {
+                    root: root.join(fork.session_id.as_str()),
+                    read_paths: Mutex::new(Vec::new()),
+                });
+                assert_eq!(
+                    target.read_file("/state/plan.md").await.unwrap(),
+                    "RUST_PROVIDER_FORK_PLAN",
+                );
+                let seen = requests.lock().unwrap().clone();
+                assert!(
+                    !seen.is_empty(),
+                    "the runtime did not resolve the fork's provider"
+                );
+                assert!(
+                    seen.iter().all(|id| id == fork.session_id.as_str()),
+                    "the resolver replaced the source's explicit provider: {seen:?}",
+                );
+                let resumed = client
+                    .resume_session(
+                        ResumeSessionOptions::new(fork.session_id)
+                            .with_working_directory("/")
+                            .with_enable_config_discovery(false)
+                            .with_github(|group| group.with_fetch_managed_settings(false))
+                            .with_state(|group| group.with_session_fs_provider(target))
+                            .with_permissions(|group| {
+                                group.with_on_request(Arc::new(
+                                    copilot_sdk::handler::ApproveAllHandler,
+                                ))
+                            }),
+                    )
+                    .await
+                    .expect("resume the provider-backed fork");
+                resumed.disconnect().await.unwrap();
+                source.disconnect().await.unwrap();
+            })
+            .catch_unwind()
+            .await;
+            let stopped = client.stop().await;
+            if let Err(panic) = outcome {
+                if let Err(error) = stopped {
+                    eprintln!("Provider host cleanup also failed: {error}");
+                }
+                std::panic::resume_unwind(panic);
+            }
+            stopped.expect("stop provider host");
+        })
+    })
+    .await;
 }
 
 impl BinaryFileProvider {

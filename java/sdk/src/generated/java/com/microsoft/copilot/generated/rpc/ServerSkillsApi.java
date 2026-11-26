@@ -81,6 +81,39 @@ public final class ServerSkillsApi {
     }
 
     /**
+     * Loads complete local skill definitions for editor previews and inline expansion. The runtime resolves configured sources, plugin activation, trust, and cache invalidation. Explicit source inputs support clients with their own discovery scope.
+     *
+     * @apiNote This method is experimental and may change in a future version.
+     * @since 1.0.0
+     */
+    @CopilotExperimental
+    public CompletableFuture<SkillsLoadResult> load(SkillsLoadParams params) {
+        return caller.invoke("skills.load", params, SkillsLoadResult.class);
+    }
+
+    /**
+     * Invalidates the runtime's parsed skill cache and returns its new generation. The next load reads source definitions again.
+     *
+     * @apiNote This method is experimental and may change in a future version.
+     * @since 1.0.0
+     */
+    @CopilotExperimental
+    public CompletableFuture<SkillsInvalidateResult> invalidate() {
+        return caller.invoke("skills.invalidate", java.util.Map.of(), SkillsInvalidateResult.class);
+    }
+
+    /**
+     * Reads the runtime's skill cache generation without scanning source directories.
+     *
+     * @apiNote This method is experimental and may change in a future version.
+     * @since 1.0.0
+     */
+    @CopilotExperimental
+    public CompletableFuture<SkillsGetCacheGenerationResult> getCacheGeneration() {
+        return caller.invoke("skills.getCacheGeneration", java.util.Map.of(), SkillsGetCacheGenerationResult.class);
+    }
+
+    /**
      * Discovers skills across global and project sources.
      *
      * @apiNote This method is experimental and may change in a future version.

@@ -106,7 +106,7 @@ pub fn convert_mcp_call_tool_result(value: &serde_json::Value) -> Option<ToolRes
         match block.get("type").and_then(serde_json::Value::as_str) {
             Some("text") => {
                 if let Some(text) = block.get("text").and_then(serde_json::Value::as_str) {
-                    text_parts.push(text.to_string());
+                    text_parts.push(text);
                 }
             }
             Some("image") => {
@@ -137,7 +137,7 @@ pub fn convert_mcp_call_tool_result(value: &serde_json::Value) -> Option<ToolRes
                     .and_then(serde_json::Value::as_str)
                     .filter(|s| !s.is_empty())
                 {
-                    text_parts.push(text.to_string());
+                    text_parts.push(text);
                 }
                 if let Some(blob) = resource
                     .get("blob")

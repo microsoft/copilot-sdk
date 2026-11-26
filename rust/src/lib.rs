@@ -90,6 +90,8 @@ pub mod session;
 /// Custom session filesystem provider (virtualizable filesystem layer).
 pub mod session_fs;
 mod session_fs_dispatch;
+/// Remote-to-local handoff callbacks.
+pub mod session_handoff;
 mod shell_authentication;
 /// Session-scoped skill provider callbacks.
 pub mod skill_provider;
@@ -123,6 +125,12 @@ struct SessionDetachResponse {
 #[derive(serde::Deserialize)]
 struct SessionDeleteResponse {
     success: Option<bool>,
+    error: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct SessionSetForegroundResponse {
+    success: bool,
     error: Option<String>,
 }
 
@@ -166,15 +174,8 @@ pub use skill_provider::{SkillProvider, SkillProviderDescriptor};
 pub mod session_management;
 pub use session_management::SessionCreationHandler;
 
-/// Re-exported JSON-RPC internals for integration tests (requires `test-support` feature).
-#[cfg(feature = "test-support")]
-pub mod test_support {
-    pub use crate::jsonrpc::{
-        JsonRpcClient, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse,
-        error_codes,
-    };
-}
 pub use generated::api_types::EntraAuthConfig;
+pub use generated::api_types::RuntimeHostConfiguration;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "runtime")]
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
@@ -731,6 +732,8 @@ struct StartupOptions {
     /// native binder. The SDK retains it until its host closes. This cannot
     /// be combined with an attached server, a borrowed session, or [`Self::github_token`].
     pub in_process_auth_owner: Option<Arc<dyn InProcessAuthOwner>>,
+    /// Session defaults applied before an SDK-owned in-process host accepts connections.
+    pub in_process_host_configuration: Option<RuntimeHostConfiguration>,
     /// Process facts and memory samples for an original owned in-process host.
     ///
     /// The provider replaces native-only process telemetry before initialization.
@@ -770,7 +773,7 @@ struct StartupOptions {
     ///
     /// **Experimental.** May change or be removed in future releases.
     pub entra: Option<types::EntraAuthOptions>,
-    github_oauth: Option<(String, String)>,
+    github_oauth: Option<(String, Option<String>)>,
 }
 
 /// Identity of the integrating application, declared on the `server.connect`
@@ -1234,6 +1237,7 @@ impl Default for StartupOptions {
             in_process_session_binding: None,
             in_process_runtime_library_path: None,
             in_process_auth_owner: None,
+            in_process_host_configuration: None,
             in_process_host_telemetry: None,
             bundled_cli_extract_directory: None,
             mode: ClientMode::CodingAgent,
@@ -1433,6 +1437,8 @@ fn telemetry_environment(options: &StartupOptions) -> Vec<(&'static str, OsStrin
 pub struct Client {
     // Session-internal clients share the connection, not its AHP retention root.
     ahp_host_sessions: Option<Arc<dyn ahp_host::HostSessionOwner>>,
+    // Unrelated handles on the same connection must not inherit callback causality.
+    foreground_callback: Option<std::sync::Weak<()>>,
     inner: Arc<ClientInner>,
 }
 
@@ -1485,6 +1491,7 @@ struct ClientInner {
     /// Closing it tears down the native runtime connection.
     ffi_host: parking_lot::Mutex<Option<Arc<crate::ffi::FfiShared>>>,
     rpc: JsonRpcClient,
+    runtime_handle: tokio::runtime::Handle,
     cwd: PathBuf,
     request_rx: parking_lot::Mutex<Option<mpsc::UnboundedReceiver<JsonRpcRequest>>>,
     router: router::SessionRouter,
@@ -1498,6 +1505,8 @@ struct ClientInner {
     session_fs_sqlite_declared: bool,
     session_fs_binary_declared: bool,
     session_fs_read_file_range_declared: bool,
+    session_fs_provider_resolver: OnceLock<Arc<dyn SessionFsProviderResolver>>,
+    handoff_progress: Arc<OnceLock<mpsc::UnboundedSender<serde_json::Value>>>,
     /// Inbound `llmInference.*` dispatcher, installed when
     /// [`StartupOptions::request_handler`] is set.
     llm_inference: OnceLock<Arc<copilot_request_handler::CopilotRequestDispatcher>>,
@@ -1524,7 +1533,7 @@ struct ClientInner {
     /// telemetry attribution.
     client_info: Option<ClientInfo>,
     entra: Option<types::EntraAuthOptions>,
-    github_oauth: OnceLock<(String, String)>,
+    github_oauth: OnceLock<(String, Option<String>)>,
     /// SDK [`ClientMode`] captured at start time. Drives empty-mode safe
     /// defaults inside `create_session` / `resume_session`.
     pub(crate) mode: ClientMode,
@@ -1925,9 +1934,31 @@ impl Client {
     #[cfg(feature = "runtime")]
     pub async fn start(options: ClientOptions) -> Result<Self> {
         let options = options.into_startup()?;
+        Self::start_with_options(options).await
+    }
+
+    /// Start an SDK-owned in-process host with session defaults applied before admission.
+    ///
+    /// Select [`RuntimeConnection::InProcess`] in `options`. External, spawned, and
+    /// attached connections cannot change host startup configuration and return
+    /// [`ErrorKind::InvalidConfig`]. Authentication retains the options' live auth owner
+    /// or ordinary SDK credentials.
+    #[cfg(feature = "runtime")]
+    pub async fn start_with_host_configuration(
+        options: ClientOptions,
+        configuration: RuntimeHostConfiguration,
+    ) -> Result<Self> {
+        let mut options = options.into_startup()?;
+        options.in_process_host_configuration = Some(configuration);
+        Self::start_with_options(options).await
+    }
+
+    #[cfg(feature = "runtime")]
+    async fn start_with_options(options: StartupOptions) -> Result<Self> {
         let start_time = Instant::now();
         let mut timings = StartupTimings::default();
         let mut options = options;
+        let requires_host_configuration = options.in_process_host_configuration.is_some();
         if options.in_process_auth_owner.is_some()
             && (!matches!(options.transport, Transport::InProcess)
                 || options.in_process_server_id.is_some()
@@ -1942,6 +1973,16 @@ impl Client {
             return Err(Error::with_message(
                 ErrorKind::InvalidConfig,
                 "a live auth owner cannot be combined with github_token",
+            ));
+        }
+        if options.in_process_host_configuration.is_some()
+            && (!matches!(options.transport, Transport::InProcess)
+                || options.in_process_server_id.is_some()
+                || options.in_process_session_binding.is_some())
+        {
+            return Err(Error::with_message(
+                ErrorKind::InvalidConfig,
+                "host configuration requires SDK-owned in-process startup",
             ));
         }
         if options.in_process_host_telemetry.is_some()
@@ -2326,6 +2367,7 @@ impl Client {
                             library_path: options.in_process_runtime_library_path.as_deref(),
                             session_binding: options.in_process_session_binding,
                             auth_owner: options.in_process_auth_owner,
+                            configuration: options.in_process_host_configuration,
                             file_logging_path: options.in_process_file_logging_path.as_deref(),
                         },
                     )?;
@@ -2406,7 +2448,9 @@ impl Client {
             "Client::start transport setup complete"
         );
         let handshake_start = Instant::now();
-        client.verify_protocol_version().await?;
+        client
+            .verify_protocol_version_with_host_configuration(requires_host_configuration)
+            .await?;
         timings.handshake_ms = StartupTimings::millis(handshake_start.elapsed());
         debug!(
             elapsed_ms = start_time.elapsed().as_millis(),
@@ -2512,6 +2556,34 @@ impl Client {
         ))
     }
 
+    /// Register a filesystem resolver for a client with session filesystem configuration.
+    ///
+    /// Register once, before an operation needs storage for an unopened session.
+    /// Existing session providers take precedence. Configure `session_fs` in the client's startup options first.
+    /// The resolver must return the same storage namespace for each session ID.
+    pub fn register_session_fs_provider_resolver(
+        &self,
+        resolver: Arc<dyn SessionFsProviderResolver>,
+    ) -> Result<()> {
+        if !self.inner.session_fs_configured {
+            return Err(Error::with_message(
+                ErrorKind::InvalidConfig,
+                "session_fs_provider_resolver requires session_fs",
+            ));
+        }
+        self.inner
+            .session_fs_provider_resolver
+            .set(resolver)
+            .map_err(|_| {
+                Error::with_message(
+                    ErrorKind::InvalidConfig,
+                    "session filesystem resolver is already registered",
+                )
+            })?;
+        self.inner.router.ensure_started(&self.inner);
+        Ok(())
+    }
+
     /// Register an inbound connection-level SDK JSON-RPC operation.
     ///
     /// The handler runs independently of the reader, so it may await ordinary
@@ -2520,6 +2592,9 @@ impl Client {
     /// Notifications use the same handler without writing a response.
     /// Use the supplied request-scoped client for SDK calls instead of capturing
     /// a client clone, which would create an ownership cycle in the registry.
+    /// A foreground callback cannot select another foreground session through
+    /// its scoped client until the callback returns. Independent clients still
+    /// submit selections normally.
     ///
     /// This low-level integration hook is used by runtime-supervised hosts.
     #[doc(hidden)]
@@ -2530,6 +2605,7 @@ impl Client {
     {
         let client = WeakClientInner::downgrade(&self.inner);
         let handler = Arc::new(handler);
+        let foreground = method == "runtimeHost.foregroundSessionChange";
         self.inner.rpc.register_request_handler(
             method,
             Arc::new(move |params| {
@@ -2542,7 +2618,12 @@ impl Client {
                             "Request handler connection is closed",
                         )
                     })?;
-                    handler(params, Client::from_inner(inner)).await
+                    let callback = foreground.then(|| Arc::new(()));
+                    let mut client = Client::from_inner(inner);
+                    client.foreground_callback = callback.as_ref().map(Arc::downgrade);
+                    let result = handler(params, client).await;
+                    drop(callback);
+                    result
                 })
             }),
         )
@@ -2654,261 +2735,6 @@ impl Client {
         Ok(client)
     }
 
-    /// Construct a client with declared session filesystem capabilities for
-    /// framed transport tests, without starting a CLI process.
-    #[doc(hidden)]
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn from_streams_with_session_fs_config(
-        reader: impl AsyncRead + Unpin + Send + 'static,
-        writer: impl AsyncWrite + Unpin + Send + 'static,
-        cwd: PathBuf,
-        config: SessionFsConfig,
-    ) -> Result<Self> {
-        let sqlite = config.capabilities.as_ref().is_some_and(|c| c.sqlite);
-        let binary = config.capabilities.as_ref().is_some_and(|c| c.binary);
-        let read_file_range = config
-            .capabilities
-            .as_ref()
-            .is_some_and(|c| c.read_file_range);
-        Self::from_transport(
-            reader,
-            jsonrpc::MessageWriter::stream(writer),
-            None,
-            cwd,
-            None,
-            None,
-            true,
-            sqlite,
-            binary,
-            read_file_range,
-            None,
-            None,
-            None,
-            ClientMode::CodingAgent,
-            None,
-            None,
-            false,
-        )
-    }
-
-    /// Construct a [`Client`] from raw streams with a preset extension launch
-    /// provider, for integration testing connection-global reverse requests.
-    #[doc(hidden)]
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn from_streams_with_extension_launch_provider(
-        reader: impl AsyncRead + Unpin + Send + 'static,
-        writer: impl AsyncWrite + Unpin + Send + 'static,
-        cwd: PathBuf,
-        provider: Arc<dyn crate::extension_launch_provider::ExtensionLaunchProvider>,
-    ) -> Result<Self> {
-        Self::from_transport(
-            reader,
-            jsonrpc::MessageWriter::stream(writer),
-            None,
-            cwd,
-            None,
-            Some(provider),
-            false,
-            false,
-            false,
-            false,
-            None,
-            None,
-            None,
-            ClientMode::CodingAgent,
-            None,
-            None,
-            false,
-        )
-    }
-
-    /// Construct a client with a confirmation handler for framed transport tests.
-    #[doc(hidden)]
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn from_streams_with_installation_confirmation_handler(
-        reader: impl AsyncRead + Unpin + Send + 'static,
-        writer: impl AsyncWrite + Unpin + Send + 'static,
-        cwd: PathBuf,
-        handler: Arc<dyn crate::installation_confirmation::InstallationConfirmationHandler>,
-    ) -> Result<Self> {
-        let client = Self::from_streams(ClientMode::CodingAgent, reader, writer, cwd)?;
-        client
-            .inner
-            .installation_confirmation
-            .set_handler(Some(handler));
-        Ok(client)
-    }
-
-    /// Construct a [`Client`] from raw streams with a
-    /// [`TraceContextProvider`] preset, for integration testing.
-    ///
-    /// Mirrors [`from_streams`](Self::from_streams) but exposes the
-    /// `on_get_trace_context` plumbing so tests can verify outbound
-    /// `traceparent` / `tracestate` injection on `session.create`,
-    /// `session.resume`, and `session.send`.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn from_streams_with_trace_provider(
-        reader: impl AsyncRead + Unpin + Send + 'static,
-        writer: impl AsyncWrite + Unpin + Send + 'static,
-        cwd: PathBuf,
-        provider: Arc<dyn TraceContextProvider>,
-    ) -> Result<Self> {
-        Self::from_transport(
-            reader,
-            jsonrpc::MessageWriter::stream(writer),
-            None,
-            cwd,
-            None,
-            None,
-            false,
-            false,
-            false,
-            false,
-            Some(provider),
-            None,
-            None,
-            ClientMode::CodingAgent,
-            None,
-            None,
-            false,
-        )
-    }
-
-    /// Construct a [`Client`] from raw streams with a preset
-    /// `effective_connection_token`, for integration testing the
-    /// `connect` handshake's token-forwarding path.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn from_streams_with_connection_token(
-        reader: impl AsyncRead + Unpin + Send + 'static,
-        writer: impl AsyncWrite + Unpin + Send + 'static,
-        cwd: PathBuf,
-        token: Option<String>,
-    ) -> Result<Self> {
-        Self::from_transport(
-            reader,
-            jsonrpc::MessageWriter::stream(writer),
-            None,
-            cwd,
-            None,
-            None,
-            false,
-            false,
-            false,
-            false,
-            None,
-            None,
-            token,
-            ClientMode::CodingAgent,
-            None,
-            None,
-            false,
-        )
-    }
-
-    /// Construct a [`Client`] from raw streams with a preset GitHub telemetry
-    /// callback, for integration testing telemetry forwarding.
-    #[doc(hidden)]
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn from_streams_with_github_telemetry(
-        reader: impl AsyncRead + Unpin + Send + 'static,
-        writer: impl AsyncWrite + Unpin + Send + 'static,
-        cwd: PathBuf,
-        on_github_telemetry: crate::github_telemetry::GitHubTelemetryCallback,
-    ) -> Result<Self> {
-        Self::from_transport(
-            reader,
-            jsonrpc::MessageWriter::stream(writer),
-            None,
-            cwd,
-            None,
-            None,
-            false,
-            false,
-            false,
-            false,
-            None,
-            Some(on_github_telemetry),
-            None,
-            ClientMode::CodingAgent,
-            None,
-            None,
-            false,
-        )
-    }
-
-    /// Public test-only wrapper around the random connection-token
-    /// generator used by [`Client::start`] when the SDK spawns a TCP
-    /// server without an explicit token. Lets integration tests
-    /// validate the token shape (32-char lowercase hex, 128 bits of
-    /// entropy) without re-implementing the helper.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn generate_connection_token_for_test() -> String {
-        generate_connection_token()
-    }
-
-    /// Construct a [`Client`] from raw streams with a preset
-    /// [`ClientInfo`], for integration testing the `connect` handshake's
-    /// application-identity forwarding path.
-    #[doc(hidden)]
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn from_streams_with_client_info(
-        reader: impl AsyncRead + Unpin + Send + 'static,
-        writer: impl AsyncWrite + Unpin + Send + 'static,
-        cwd: PathBuf,
-        client_info: Option<ClientInfo>,
-    ) -> Result<Self> {
-        Self::from_transport(
-            reader,
-            jsonrpc::MessageWriter::stream(writer),
-            None,
-            cwd,
-            None,
-            None,
-            false,
-            false,
-            false,
-            false,
-            None,
-            None,
-            None,
-            ClientMode::CodingAgent,
-            client_info,
-            None,
-            false,
-        )
-    }
-
-    /// Construct a client from raw streams with a preset mode, for integration
-    /// tests that need mode-specific session defaults without spawning a CLI.
-    #[doc(hidden)]
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn from_streams_with_mode_for_test(
-        reader: impl AsyncRead + Unpin + Send + 'static,
-        writer: impl AsyncWrite + Unpin + Send + 'static,
-        cwd: PathBuf,
-        mode: ClientMode,
-    ) -> Result<Self> {
-        Self::from_transport(
-            reader,
-            jsonrpc::MessageWriter::stream(writer),
-            None,
-            cwd,
-            None,
-            None,
-            false,
-            false,
-            false,
-            false,
-            None,
-            None,
-            None,
-            mode,
-            None,
-            None,
-            false,
-        )
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn from_transport(
         reader: impl AsyncRead + Unpin + Send + 'static,
@@ -2967,6 +2793,7 @@ impl Client {
         let weak_host_sessions = Arc::downgrade(&ahp_host_sessions);
         let client = Self {
             ahp_host_sessions: Some(ahp_host_sessions.clone()),
+            foreground_callback: None,
             inner: Arc::new(ClientInner {
                 ahp_host_callbacks: Arc::new(ahp_host::ExitCallbacks::default()),
                 ahp_host_sessions: weak_host_sessions,
@@ -2977,6 +2804,7 @@ impl Client {
                 #[cfg(feature = "in-process")]
                 ffi_host: parking_lot::Mutex::new(None),
                 rpc,
+                runtime_handle: tokio::runtime::Handle::current(),
                 cwd,
                 request_rx: parking_lot::Mutex::new(Some(request_rx)),
                 router,
@@ -2990,6 +2818,8 @@ impl Client {
                 session_fs_sqlite_declared,
                 session_fs_binary_declared,
                 session_fs_read_file_range_declared,
+                session_fs_provider_resolver: OnceLock::new(),
+                handoff_progress: Arc::new(OnceLock::new()),
                 llm_inference: OnceLock::new(),
                 extension_launch_provider: extension_launch_provider.clone(),
                 installation_confirmation: installation_confirmation.clone(),
@@ -3125,6 +2955,7 @@ impl Client {
     ) {
         let sessions = self.inner.router.event_sink();
         let lifecycle_tx = self.inner.lifecycle_tx.clone();
+        let handoff_progress = self.inner.handoff_progress.clone();
         let telemetry = self
             .inner
             .on_github_telemetry
@@ -3163,6 +2994,11 @@ impl Client {
                     "gitHubTelemetry.event" => {
                         if let Some(telemetry) = &telemetry {
                             let _ = telemetry.send(params);
+                        }
+                    }
+                    "sessionHandoff.progress" => {
+                        if let Some(progress) = handoff_progress.get() {
+                            let _ = progress.send(params);
                         }
                     }
                     _ => {}
@@ -3531,6 +3367,7 @@ impl Client {
         method: &str,
         params: Option<serde_json::Value>,
     ) -> Result<T> {
+        self.check_foreground_callback(method)?;
         let is_repo_settings_write =
             matches!(method, "repo.settings.writeKey" | "repo.settings.writeAll");
         let session_id = params
@@ -3565,6 +3402,7 @@ impl Client {
         params: Option<serde_json::Value>,
     ) -> Result<impl std::future::Future<Output = Result<serde_json::Value>> + Send + 'static + use<>>
     {
+        self.check_foreground_callback(method)?;
         let is_repo_settings_write =
             matches!(method, "repo.settings.writeKey" | "repo.settings.writeAll");
         let session_id = params
@@ -3644,6 +3482,7 @@ impl Client {
         params: Option<serde_json::Value>,
         inline_callback: Option<crate::jsonrpc::InlineResponseCallback>,
     ) -> impl std::future::Future<Output = Result<serde_json::Value>> + Send + 'static + use<> {
+        let admission = self.check_foreground_callback(method);
         let is_repo_settings_write =
             matches!(method, "repo.settings.writeKey" | "repo.settings.writeAll");
         let session_id: Option<SessionId> = params
@@ -3656,9 +3495,26 @@ impl Client {
                 .rpc
                 .send_request_with_inline_callback(method, params, inline_callback);
         async move {
+            admission?;
             let response = request.await?;
             Self::call_result(response, session_id, is_repo_settings_write)
         }
+    }
+
+    fn check_foreground_callback(&self, method: &str) -> Result<()> {
+        if method == "session.setForeground"
+            && self
+                .foreground_callback
+                .as_ref()
+                .and_then(std::sync::Weak::upgrade)
+                .is_some()
+        {
+            return Err(Error::with_message(
+                ErrorKind::Session(SessionErrorKind::SetForegroundFailed),
+                "Cannot select a foreground session from a pending foreground callback",
+            ));
+        }
+        Ok(())
     }
 
     fn call_result(
@@ -3707,16 +3563,21 @@ impl Client {
         self.inner.rpc.write(response).await
     }
 
-    /// Send a frame already encoded with `jsonrpc::encode_frame`.
-    pub(crate) async fn send_frame(&self, frame: jsonrpc::EncodedFrame) -> Result<()> {
-        self.inner.rpc.write_frame(frame).await
-    }
-
     /// Reconstruct a [`Client`] handle from a shared inner pointer.
     pub(crate) fn from_inner(inner: Arc<ClientInner>) -> Self {
         Self {
             inner,
             ahp_host_sessions: None,
+            foreground_callback: None,
+        }
+    }
+
+    /// Preserve request context without retaining the AHP session owner.
+    fn clone_for_session(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+            ahp_host_sessions: None,
+            foreground_callback: self.foreground_callback.clone(),
         }
     }
 
@@ -3853,14 +3714,28 @@ impl Client {
     /// `MIN_PROTOCOL_VERSION`..=[`SDK_PROTOCOL_VERSION`]. If the server
     /// doesn't report a version, logs a warning and succeeds.
     pub async fn verify_protocol_version(&self) -> Result<()> {
+        self.verify_protocol_version_with_host_configuration(false)
+            .await
+    }
+
+    async fn verify_protocol_version_with_host_configuration(
+        &self,
+        requires_host_configuration: bool,
+    ) -> Result<()> {
         let handshake_start = Instant::now();
         let mut used_fallback_ping = false;
         // Try the new `connect` handshake first (sends the connection
         // token, if any). Fall back to `ping` for legacy CLI servers
         // that don't expose `connect` (-32601 MethodNotFound).
-        let server_version = match self.connect_handshake().await {
+        let server_version = match self.connect_handshake(requires_host_configuration).await {
             Ok(v) => v,
             Err(ref e) if e.rpc_code() == Some(error_codes::METHOD_NOT_FOUND) => {
+                if requires_host_configuration {
+                    return Err(Error::with_message(
+                        ErrorKind::InvalidConfig,
+                        "This runtime does not support SDK host configuration",
+                    ));
+                }
                 if self.inner.github_oauth.get().is_some() {
                     return Err(Error::with_message(
                         ErrorKind::InvalidConfig,
@@ -3921,11 +3796,11 @@ impl Client {
     /// auto-generated token for SDK-spawned TCP servers) as the `token`
     /// param. Server-side, the token is required when the server was
     /// started with `COPILOT_CONNECTION_TOKEN`.
-    async fn connect_handshake(&self) -> Result<Option<u32>> {
+    async fn connect_handshake(&self, requires_host_configuration: bool) -> Result<Option<u32>> {
         let github_oauth = self.inner.github_oauth.get();
         let params = crate::generated::api_types::ConnectRequest {
             github_client_id: github_oauth.map(|(id, _)| id.clone()),
-            github_client_secret: github_oauth.map(|(_, secret)| secret.clone()),
+            github_client_secret: github_oauth.and_then(|(_, secret)| secret.clone()),
             entra: self
                 .inner
                 .entra
@@ -3964,6 +3839,12 @@ impl Client {
                 Some(serde_json::to_value(params)?),
             )
             .await?;
+        if requires_host_configuration && result.runtime_host_configuration != Some(true) {
+            return Err(Error::with_message(
+                ErrorKind::InvalidConfig,
+                "This runtime does not support SDK host configuration",
+            ));
+        }
         if self
             .inner
             .entra
@@ -4088,69 +3969,6 @@ impl Client {
         .await
     }
 
-    /// Start this client's notification and request router on the current runtime.
-    /// This is test-harness plumbing, not part of the supported SDK API.
-    #[cfg(feature = "test-support")]
-    #[doc(hidden)]
-    pub fn start_router_for_test(&self) {
-        self.inner.router.ensure_started(&self.inner);
-    }
-
-    #[cfg(feature = "test-support")]
-    #[doc(hidden)]
-    /// Snapshot the session IDs currently registered on this client's
-    /// notification router. This is test-harness plumbing, not part of the
-    /// supported SDK API.
-    pub fn registered_session_ids_for_test(&self) -> Vec<SessionId> {
-        self.inner.router.session_ids()
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    #[doc(hidden)]
-    /// Count the sessions currently registered on this client's notification
-    /// router. Deliberately never materialises the session IDs themselves so
-    /// they cannot leak into test diagnostics.
-    pub fn registered_session_count_for_test(&self) -> usize {
-        self.inner.router.session_count()
-    }
-
-    #[cfg(feature = "test-support")]
-    #[doc(hidden)]
-    /// Disconnect and delete every session owned by this test client's isolated
-    /// runtime. This is test-harness plumbing, not part of the supported SDK API.
-    pub async fn cleanup_sessions_for_test(&self) -> Result<()> {
-        let mut first_error = None;
-
-        for session_id in self.inner.router.session_ids() {
-            if let Err(error) = self.detach_session(&session_id, None).await
-                && first_error.is_none()
-            {
-                first_error = Some(error);
-            }
-            self.inner.router.unregister(&session_id);
-        }
-        self.inner.github_token_registry.clear();
-
-        match self.list_sessions(None).await {
-            Ok(sessions) => {
-                for session in sessions {
-                    if let Err(error) = self.delete_session(&session.session_id).await
-                        && first_error.is_none()
-                    {
-                        first_error = Some(error);
-                    }
-                }
-            }
-            Err(error) if first_error.is_none() => first_error = Some(error),
-            Err(_) => {}
-        }
-
-        match first_error {
-            Some(error) => Err(error),
-            None => Ok(()),
-        }
-    }
-
     /// Return the ID of the most recently updated session, if any.
     ///
     /// Useful for resuming the last conversation when the session ID was
@@ -4175,8 +3993,7 @@ impl Client {
 
     /// Return the ID of the session currently displayed in the TUI, if any.
     ///
-    /// Only meaningful when connected to a server running in TUI+server mode
-    /// (`--ui-server`). Returns `Ok(None)` if no foreground session is set.
+    /// Requires a foreground UI or SDK host callback; returns `Ok(None)` when no session is selected.
     pub async fn get_foreground_session_id(&self) -> Result<Option<SessionId>> {
         let response: GetForegroundSessionResponse = self
             .call_typed("session.getForeground", Some(serde_json::json!({})))
@@ -4186,15 +4003,23 @@ impl Client {
 
     /// Request that the TUI switch to displaying the specified session.
     ///
-    /// Only meaningful when connected to a server running in TUI+server mode
-    /// (`--ui-server`).
+    /// Requires a foreground UI or SDK host callback.
     pub async fn set_foreground_session_id(&self, session_id: &SessionId) -> Result<()> {
-        self.call(
-            "session.setForeground",
-            Some(serde_json::json!({ "sessionId": session_id })),
-        )
-        .await?;
-        Ok(())
+        let response: SessionSetForegroundResponse = self
+            .call_typed(
+                "session.setForeground",
+                Some(serde_json::json!({ "sessionId": session_id })),
+            )
+            .await?;
+        if response.success {
+            return Ok(());
+        }
+        Err(Error::with_message(
+            ErrorKind::Session(SessionErrorKind::SetForegroundFailed),
+            response
+                .error
+                .unwrap_or_else(|| "session.setForeground reported failure".to_string()),
+        ))
     }
 
     /// Get the CLI server status.
@@ -4315,10 +4140,10 @@ impl Client {
     ///
     /// # Cancel safety
     ///
-    /// **Cancel-unsafe but recoverable.** The body sequentially destroys
+    /// **Cancel-unsafe but recoverable.** The body concurrently detaches
     /// every registered session (each via [`Client::call`](Self::call),
     /// individually cancel-safe) before killing the child. Cancelling
-    /// `stop()` mid-loop leaves some sessions still in the router map
+    /// `stop()` during detachment leaves some sessions still in the router map
     /// and the child still running. Recovery: call [`force_stop`](Self::force_stop)
     /// (sync, kills the child unconditionally and clears router state)
     /// or call `stop()` again with a fresh future. The documented
@@ -4339,9 +4164,13 @@ impl Client {
         // session.detach, so every detach shares one deadline; past it, stop()
         // moves on to runtime shutdown and termination.
         let detach_deadline = tokio::time::Instant::now() + RUNTIME_SHUTDOWN_TIMEOUT;
-        for session_id in self.inner.router.session_ids() {
-            let detached =
-                tokio::time::timeout_at(detach_deadline, self.detach_session(&session_id, None))
+        let session_errors =
+            futures_util::future::join_all(self.inner.router.session_ids().into_iter().map(
+                |session_id| async move {
+                    let detached = tokio::time::timeout_at(
+                        detach_deadline,
+                        self.detach_session(&session_id, None),
+                    )
                     .await
                     .unwrap_or_else(|_| {
                         Err(std::io::Error::new(
@@ -4350,19 +4179,22 @@ impl Client {
                         )
                         .into())
                     });
-            match detached {
-                Ok(_) => {}
-                Err(e) => {
-                    warn!(
-                        session_id = %session_id,
-                        error = %e,
-                        "session.detach failed during Client::stop",
-                    );
-                    errors.push(e);
-                }
-            }
-            self.inner.router.unregister(&session_id);
-        }
+                    self.inner.router.unregister(&session_id);
+                    match detached {
+                        Ok(_) => None,
+                        Err(e) => {
+                            warn!(
+                                session_id = %session_id,
+                                error = %e,
+                                "session.detach failed during Client::stop",
+                            );
+                            Some(e)
+                        }
+                    }
+                },
+            ))
+            .await;
+        errors.extend(session_errors.into_iter().flatten());
         self.inner.github_token_registry.clear();
 
         let should_shutdown_runtime =
@@ -4499,8 +4331,8 @@ impl Client {
                 if let Err(error) = host.close_protocol_peers().await {
                     errors.push(error);
                 }
-                if let Err(error) = tokio::task::spawn_blocking(move || host.close()).await {
-                    errors.push(Error::new(ErrorKind::Io, error));
+                if let Err(error) = host.close_and_wait().await {
+                    errors.push(error);
                 }
             }
         }
@@ -4674,6 +4506,10 @@ impl Drop for ClientInner {
 
 #[cfg(all(test, feature = "runtime"))]
 mod tests;
+
+/// Test-only transport access and fixtures.
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 
 #[cfg(all(test, feature = "local-runtime"))]
 mod auth_owner_transport_tests;

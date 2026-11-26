@@ -14,7 +14,9 @@ use copilot_sdk::{
 use parking_lot::Mutex;
 use tokio::sync::watch;
 
-use super::support::{assistant_message_content, wait_for_event, with_e2e_context};
+use super::support::{
+    assistant_message_content, is_inference_url, wait_for_event, with_e2e_context,
+};
 
 const CHILD_CONTEXT: &str = "Subagent start hook verified: read the requested file.";
 const STOP_RESPONSE_PREFIX: &str = "Subagent stop hook verified: ";
@@ -278,14 +280,6 @@ impl CopilotRequestHandler for RecordingRequestHandler {
         });
         forward_http(request).await
     }
-}
-
-fn is_inference_url(url: &str) -> bool {
-    let url = url.to_lowercase();
-    url.ends_with("/chat/completions")
-        || url.ends_with("/responses")
-        || url.ends_with("/v1/messages")
-        || url.ends_with("/messages")
 }
 
 fn assert_subagent_request_metadata(records: &[RequestEntry]) {

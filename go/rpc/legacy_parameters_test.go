@@ -76,6 +76,170 @@ func TestLoginBeginKeepsPositionalLiterals(t *testing.T) {
 	}
 }
 
+// Explicit type arguments preserve signature checks without redundant variable types.
+func requireMethodSignature[T any](method T) T {
+	return method
+}
+
+func TestMCPConfigRequestsPreserveWireFields(t *testing.T) {
+	requireMethodSignature[func(*ServerMCPConfigAPI, context.Context, *MCPConfigAddRequest) (*MCPConfigAddResult, error)]((*ServerMCPConfigAPI).Add)
+	requireMethodSignature[func(*ServerMCPConfigAPI, context.Context, *MCPConfigRemoveRequest) (*MCPConfigRemoveResult, error)]((*ServerMCPConfigAPI).Remove)
+	config := RawMCPSerializableServerConfigData{Raw: json.RawMessage(`{"command":"echo"}`)}
+	root := "selected-root"
+	for _, entry := range []struct {
+		request any
+		want    map[string]any
+	}{
+		{MCPConfigAddRequest{config, nil, "legacy"}, map[string]any{"config": map[string]any{"command": "echo"}, "name": "legacy"}},
+		{MCPConfigRemoveRequest{nil, nil, "legacy"}, map[string]any{"name": "legacy"}},
+		{MCPConfigAddRequest{Config: config, ConfigDir: &root, Name: "legacy"}, map[string]any{"config": map[string]any{"command": "echo"}, "configDir": root, "name": "legacy"}},
+		{MCPConfigRemoveRequest{ConfigDir: &root, Name: "legacy"}, map[string]any{"configDir": root, "name": "legacy"}},
+	} {
+		if wire := encodeRequest(t, entry.request); !reflect.DeepEqual(wire, entry.want) {
+			t.Fatalf("legacy MCP request %T = %v, want %v", entry.request, wire, entry.want)
+		}
+	}
+}
+
+func TestMCPConfigOptionsUseSelectedRoot(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+	client := jsonrpc2.NewClient(clientConn, clientConn)
+	server := jsonrpc2.NewClient(serverConn, serverConn)
+	requests := make(chan json.RawMessage, 10)
+	handler := func(params json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
+		requests <- params
+		return json.RawMessage(`null`), nil
+	}
+	server.SetRequestHandler("mcp.config.add", handler)
+	server.SetRequestHandler("mcp.config.remove", handler)
+	client.Start()
+	server.Start()
+	defer client.Stop()
+	defer server.Stop()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	api := NewServerRPC(client).MCP.Config()
+	root := "selected-root"
+	emptyRoot := ""
+	var nullAdd MCPConfigAddOptions
+	var nullRemove MCPConfigRemoveOptions
+	if err := json.Unmarshal([]byte(`{"config":{"command":"echo"},"configDir":null,"name":"legacy"}`), &nullAdd); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(`{"configDir":null,"name":"legacy"}`), &nullRemove); err != nil {
+		t.Fatal(err)
+	}
+	if nullAdd.ConfigDir != nil || nullRemove.ConfigDir != nil {
+		t.Fatal("null configDir must select the default root")
+	}
+	metadataURL := "https://example.com/client.json"
+	config := RawMCPSerializableServerConfigData{Raw: json.RawMessage(`{"command":"echo"}`)}
+	add := requireMethodSignature[func(context.Context, *MCPConfigAddRequest) (*MCPConfigAddResult, error)](api.Add)
+	remove := requireMethodSignature[func(context.Context, *MCPConfigRemoveRequest) (*MCPConfigRemoveResult, error)](api.Remove)
+	if _, err := add(ctx, &MCPConfigAddRequest{config, &root, "legacy"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := remove(ctx, &MCPConfigRemoveRequest{&metadataURL, &root, "legacy"}); err != nil {
+		t.Fatal(err)
+	}
+	wantRequests := []map[string]any{
+		{"config": map[string]any{"command": "echo"}, "configDir": root, "name": "legacy"},
+		{"authClientIdMetadataUrl": metadataURL, "configDir": root, "name": "legacy"},
+	}
+	for _, directory := range []*string{nil, nullAdd.ConfigDir, &emptyRoot, &root} {
+		addOptions := MCPConfigAddOptions{Config: config, ConfigDir: directory, Name: "legacy"}
+		removeOptions := MCPConfigRemoveOptions{AuthClientIDMetadataURL: &metadataURL, ConfigDir: directory, Name: "legacy"}
+		beforeAdd, beforeRemove := encodeRequest(t, addOptions), encodeRequest(t, removeOptions)
+		if _, err := api.AddWithOptions(ctx, &addOptions); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := api.RemoveWithOptions(ctx, &removeOptions); err != nil {
+			t.Fatal(err)
+		}
+		if after := encodeRequest(t, addOptions); !reflect.DeepEqual(after, beforeAdd) {
+			t.Fatalf("AddWithOptions changed caller input: got %v, want %v", after, beforeAdd)
+		}
+		if after := encodeRequest(t, removeOptions); !reflect.DeepEqual(after, beforeRemove) {
+			t.Fatalf("RemoveWithOptions changed caller input: got %v, want %v", after, beforeRemove)
+		}
+		wantAdd := map[string]any{"config": map[string]any{"command": "echo"}, "name": "legacy"}
+		wantRemove := map[string]any{"authClientIdMetadataUrl": metadataURL, "name": "legacy"}
+		if directory != nil {
+			wantAdd["configDir"], wantRemove["configDir"] = *directory, *directory
+		}
+		wantRequests = append(wantRequests, wantAdd, wantRemove)
+	}
+	for _, want := range wantRequests {
+		select {
+		case raw := <-requests:
+			var actual map[string]any
+			if err := json.Unmarshal(raw, &actual); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(actual, want) {
+				t.Fatalf("MCP options = %v, want %v", actual, want)
+			}
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+	}
+}
+
+func TestMCPConfigOptionalRequestsUseObjectParams(t *testing.T) {
+	root := "selected-root"
+	for _, test := range []struct {
+		name   string
+		method string
+		call   func(context.Context, *InternalServerMCPConfigAPI) error
+		want   string
+	}{
+		{"files nil", "mcp.config.files", func(ctx context.Context, api *InternalServerMCPConfigAPI) error {
+			_, err := api.Files(ctx, nil)
+			return err
+		}, `{}`},
+		{"files selected", "mcp.config.files", func(ctx context.Context, api *InternalServerMCPConfigAPI) error {
+			_, err := api.Files(ctx, &MCPConfigFilesRequest{ConfigDir: &root})
+			return err
+		}, `{"configDir":"selected-root"}`},
+		{"read nil", "mcp.config.read", func(ctx context.Context, api *InternalServerMCPConfigAPI) error {
+			_, err := api.Read(ctx, nil)
+			return err
+		}, `{}`},
+		{"read selected", "mcp.config.read", func(ctx context.Context, api *InternalServerMCPConfigAPI) error {
+			_, err := api.Read(ctx, &MCPConfigReadRequest{ConfigDir: &root})
+			return err
+		}, `{"configDir":"selected-root"}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			clientConn, serverConn := net.Pipe()
+			defer clientConn.Close()
+			defer serverConn.Close()
+			client := jsonrpc2.NewClient(clientConn, clientConn)
+			server := jsonrpc2.NewClient(serverConn, serverConn)
+			requests := make(chan json.RawMessage, 1)
+			server.SetRequestHandler(test.method, func(params json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
+				requests <- params
+				if test.method == "mcp.config.files" {
+					return json.RawMessage(`{"files":[]}`), nil
+				}
+				return json.RawMessage(`{}`), nil
+			})
+			client.Start()
+			server.Start()
+			defer client.Stop()
+			defer server.Stop()
+			if err := test.call(t.Context(), NewInternalServerRPC(client).MCP.Config()); err != nil {
+				t.Fatal(err)
+			}
+			if got := <-requests; string(got) != test.want {
+				t.Fatalf("wire params = %s, want %s", got, test.want)
+			}
+		})
+	}
+}
+
 func TestPermissionRequiredKeepsPositionalLiterals(t *testing.T) {
 	request := PermissionsSetRequiredRequest{Required: true}
 	wire := encodeRequest(t, request)

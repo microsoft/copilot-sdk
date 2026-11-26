@@ -448,7 +448,7 @@ func (a *sessionFSAdapter) SqliteExists(request *rpc.SessionFSSqliteExistsReques
 	}
 	exists, err := sp.SqliteExists()
 	if err != nil {
-		return &rpc.SessionFSSqliteExistsResult{Exists: false}, nil
+		return nil, err
 	}
 	return &rpc.SessionFSSqliteExistsResult{Exists: exists}, nil
 }

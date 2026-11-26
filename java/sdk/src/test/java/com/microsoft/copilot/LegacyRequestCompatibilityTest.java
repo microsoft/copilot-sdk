@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Function;
 
 import org.junit.jupiter.api.Test;
 
@@ -31,6 +32,8 @@ import com.microsoft.copilot.generated.rpc.McpPlanInstallParams;
 import com.microsoft.copilot.generated.rpc.McpPlanScope;
 import com.microsoft.copilot.generated.rpc.RpcCaller;
 import com.microsoft.copilot.generated.rpc.ServerRpc;
+import com.microsoft.copilot.generated.rpc.SkillsDiscoverParams;
+import com.microsoft.copilot.generated.rpc.SkillsDiscoverResult;
 import com.microsoft.copilot.generated.rpc.FeatureFlagServiceSnapshot;
 import com.microsoft.copilot.generated.rpc.Extension;
 import com.microsoft.copilot.generated.rpc.ExtensionSource;
@@ -59,6 +62,29 @@ import com.microsoft.copilot.generated.rpc.IndexedSearchState;
 class LegacyRequestCompatibilityTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    @Test
+    void sessionImportPreservesThePublishedConstructorAndArgumentPositions() throws Exception {
+        var constructor = com.microsoft.copilot.generated.rpc.SessionsImportParams.class.getConstructor(String.class,
+                String.class, String.class, String.class, String.class, Boolean.class, Set.class);
+        var request = constructor.newInstance("{}", "/source.jsonl", "/workspace", null, "imported", true,
+                Set.of("workingDirectory"));
+        assertEquals(MAPPER.readTree("""
+                {"jsonl":"{}","inputPath":"/source.jsonl","defaultWorkingDirectory":"/workspace",
+                 "workingDirectory":null,"name":"imported","dryRun":true}
+                """), MAPPER.valueToTree(request));
+    }
+
+    @Test
+    void sessionImportExtensibleRequestPreservesClientIdentityAndExplicitNulls() throws Exception {
+        var request = new com.microsoft.copilot.generated.rpc.SessionImportRequest("{}", "/source.jsonl", "/workspace")
+                .setWorkingDirectory(null).setName("imported").setClientName("sdk-test").setClientKind("sdk")
+                .setDryRun(true);
+        assertEquals(MAPPER.readTree("""
+                {"jsonl":"{}","inputPath":"/source.jsonl","defaultWorkingDirectory":"/workspace",
+                 "workingDirectory":null,"name":"imported","clientName":"sdk-test","clientKind":"sdk","dryRun":true}
+                """), MAPPER.valueToTree(request));
+    }
 
     @Test
     void objectiveConstructorPreservesPublishedDescriptorAndCreditArguments() throws Exception {
@@ -211,6 +237,34 @@ class LegacyRequestCompatibilityTest {
         }
     }
 
+    @Test
+    void skillDiscoveryPreservesNullCallsAndForwardsTheRichRequest() {
+        var caller = new RecordingCaller();
+        var skills = new ServerRpc(caller).skills;
+        skills.discover(null).join();
+        Function<SkillsDiscoverParams, CompletableFuture<SkillsDiscoverResult>> legacy = skills::discover;
+        legacy.apply(
+                SkillsDiscoverParams.builder().projectPaths(List.of("project")).skillDirectories(List.of("explicit"))
+                        .ignoredSkillsLocations(List.of("ignored")).excludeHostSkills(false).build())
+                .join();
+        skills.discover(SkillsDiscoverParams.builder().projectPaths(List.of("project")).configDir("scoped")
+                .excludeHostSkills(false).blockUserAndWorkspaceSkills(true).build()).join();
+
+        assertEquals(3, caller.calls.size());
+        for (var call : caller.calls) {
+            assertEquals("skills.discover", call.method());
+        }
+        assertTrue(caller.calls.get(0).params().isNull());
+        assertEquals(
+                MAPPER.valueToTree(Map.of("projectPaths", List.of("project"), "skillDirectories", List.of("explicit"),
+                        "ignoredSkillsLocations", List.of("ignored"), "excludeHostSkills", false)),
+                caller.calls.get(1).params());
+        assertEquals(
+                MAPPER.valueToTree(Map.of("projectPaths", List.of("project"), "configDir", "scoped",
+                        "excludeHostSkills", false, "blockUserAndWorkspaceSkills", true)),
+                caller.calls.get(2).params());
+    }
+
     private static CatalogClientContract contract() {
         return CatalogClientContract.builder().protocolVersion(3L).requiredCapabilities(List.of("mcp-install-planning"))
                 .build();
@@ -218,6 +272,21 @@ class LegacyRequestCompatibilityTest {
 
     private static Map<String, String> candidate() {
         return Map.of("kind", "candidate", "candidateHandle", "candidate", "searchId", "search");
+    }
+
+    @Test
+    void sessionOptionsLegacyConstructorPreservesWireFields() {
+        var positional = new SessionOpenOptions("legacy", "legacy-name", "model", "client", "sdk", "lsp", "integration",
+                "/workspace", true, false, true, "parent", "engagement", List.of(), null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, null, null, null, "/config", false);
+        var named = SessionOpenOptions.builder().sessionId("legacy").name("legacy-name").model("model")
+                .clientName("client").clientKind("sdk").lspClientName("lsp").integrationId("integration")
+                .workingDirectory("/workspace").remoteSteerable(true).remoteExporting(false).remoteDefaultedOn(true)
+                .detachedFromSpawningParentSessionId("parent").detachedFromSpawningParentEngagementId("engagement")
+                .sessionCapabilities(List.of()).configDirectory("/config").enableConfigDiscovery(false).build();
+
+        assertEquals(MAPPER.valueToTree(named), MAPPER.valueToTree(positional));
+        assertFalse(MAPPER.valueToTree(positional).has("sessionLifecycleMode"));
     }
 
     @Test
@@ -295,17 +364,16 @@ class LegacyRequestCompatibilityTest {
 
     @Test
     void accountLogoutRequestsPreserveConcreteWireValues() throws Exception {
-        var constructor = SessionAccountsLogoutParams.class.getConstructor(String.class, String.class, String.class);
+        var constructor = SessionAccountsLogoutParams.class.getConstructor(String.class, String.class);
         var wire = Map.of("sessionId", "session", "accountId", "account");
         for (Object value : List.<Object>of(wire, MAPPER.valueToTree(wire))) {
             var params = MAPPER.convertValue(value, SessionAccountsLogoutParams.class);
             assertEquals("account", params.accountId());
             assertEquals(MAPPER.valueToTree(wire), MAPPER.valueToTree(params));
-            assertEquals(MAPPER.valueToTree(params),
-                    MAPPER.valueToTree(constructor.newInstance("session", "account", null)));
+            assertEquals(MAPPER.valueToTree(params), MAPPER.valueToTree(constructor.newInstance("session", "account")));
         }
-        var selected = SessionAccountsLogoutParams.builder().sessionId("session").selectionId("selected").build();
-        assertEquals(MAPPER.valueToTree(Map.of("sessionId", "session", "selectionId", "selected")),
+        var selected = SessionAccountsLogoutParams.builder().sessionId("session").accountId("selected").build();
+        assertEquals(MAPPER.valueToTree(Map.of("sessionId", "session", "accountId", "selected")),
                 MAPPER.valueToTree(selected));
         assertNull(MAPPER.readValue("{\"sessionId\":\"session\",\"accountId\":null}", SessionAccountsLogoutParams.class)
                 .accountId());

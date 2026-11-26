@@ -142,9 +142,8 @@ pub(crate) fn main() {
     if std::env::var_os("CARGO_FEATURE_BUNDLED_CLI").is_some() {
         let cli_asset_name = platform.cli_asset_name();
         let cli_expected_hash = resolve_cli_hash(&release, &cli_asset_name);
-        let runtime_expected_hash = local_expected_hash
-            .clone()
-            .unwrap_or_else(|| fetch_release_hash(&release, &archive_name));
+        let runtime_expected_hash =
+            local_expected_hash.unwrap_or_else(|| fetch_release_hash(&release, &archive_name));
         let runtime_package = cached_download(
             &download_url,
             &cache_key,

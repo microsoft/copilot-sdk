@@ -19,6 +19,10 @@ import com.fasterxml.jackson.annotation.JsonValue;
  * <ul>
  * <li>{@link #APPROVED} — the permission was approved for this one
  * instance.</li>
+ * <li>{@link #APPROVE_FOR_SESSION} — the permission was approved for the rest
+ * of the session.</li>
+ * <li>{@link #APPROVE_PERMANENTLY} — a URL domain was approved across
+ * sessions.</li>
  * <li>{@link #REJECTED} — the permission was denied interactively by the
  * user.</li>
  * <li>{@link #USER_NOT_AVAILABLE} — the permission was denied because user
@@ -37,6 +41,22 @@ public final class PermissionRequestResultKind {
     /** Read access to selected directories was approved for the session. */
     public static final PermissionRequestResultKind APPROVE_READ_ONLY_FOR_SESSION = new PermissionRequestResultKind(
             "approve-read-only-for-session");
+
+    /**
+     * The permission was approved and remembered for the rest of the session. For a
+     * URL prompt the result must carry a {@code domain}; see
+     * {@link PermissionRequestResult#approveUrlForSession(String)}.
+     */
+    public static final PermissionRequestResultKind APPROVE_FOR_SESSION = new PermissionRequestResultKind(
+            "approve-for-session");
+
+    /**
+     * A URL domain was approved permanently, across sessions. The result must carry
+     * a {@code domain}; see
+     * {@link PermissionRequestResult#approveUrlPermanently(String)}.
+     */
+    public static final PermissionRequestResultKind APPROVE_PERMANENTLY = new PermissionRequestResultKind(
+            "approve-permanently");
 
     /** The permission was denied interactively by the user. */
     public static final PermissionRequestResultKind REJECTED = new PermissionRequestResultKind("reject");

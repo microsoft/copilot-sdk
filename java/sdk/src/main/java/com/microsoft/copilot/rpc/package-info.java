@@ -75,6 +75,8 @@
  * request from the assistant.</li>
  * <li>{@link com.microsoft.copilot.rpc.PermissionRequestResult} - Result of a
  * permission request decision.</li>
+ * <li>{@link com.microsoft.copilot.rpc.UrlPermissionPrompt} - Typed view of a
+ * URL permission prompt.</li>
  * </ul>
  *
  * <h2>Usage Example</h2>

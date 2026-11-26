@@ -179,7 +179,8 @@ where
         )
         .into());
     }
-    let client = Client::start(options).await.map_err(E::from)?;
+    // Keep SDK startup out of the native host's nested initialization frames.
+    let client = Box::pin(Client::start(options)).await.map_err(E::from)?;
     finish_start(client, validate_image)
 }
 

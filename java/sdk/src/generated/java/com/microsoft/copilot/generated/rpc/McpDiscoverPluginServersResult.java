@@ -11,86 +11,83 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.microsoft.copilot.CopilotExperimental;
+import java.util.List;
+import java.util.Map;
 import javax.annotation.processing.Generated;
 
 /**
- * A cached base identity a provider can reuse for login without asking the user to choose an account again.
+ * MCP server configurations keyed by server name.
  *
- * @apiNote This type is experimental and may change in a future version.
- *
+ * @apiNote This method is experimental and may change in a future version.
  * @since 1.0.0
  */
 @CopilotExperimental
 @javax.annotation.processing.Generated("copilot-sdk-codegen")
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @JsonIgnoreProperties(ignoreUnknown = true)
-public record AuthLoginIdentity(
-    /** Opaque provider-owned identity id. Pass it back to accounts.login.begin; consumers must not parse it. */
-    @JsonProperty("accountId") String accountId,
-    /** Human-readable sign-in label owned by the runtime. */
-    @JsonProperty("label") String label,
-    /** Whether this base identity owns the session's active derived account. */
-    @JsonProperty("active") Boolean active
+public record McpDiscoverPluginServersResult(
+    /** MCP server configurations indexed by server name. */
+    @JsonInclude(value = JsonInclude.Include.NON_NULL, content = JsonInclude.Include.ALWAYS)
+    @JsonProperty("mcpServers") Map<String, Object> mcpServers,
+    /** Server names explicitly disabled by configuration. */
+    @JsonProperty("disabledServers") List<String> disabledServers,
+    /** Server names explicitly enabled by configuration. */
+    @JsonProperty("enabledServers") List<String> enabledServers
 ) {
 
     /**
      * Creates a record positionally.
      * Use {@link #builder()} for named construction.
      */
-    public AuthLoginIdentity {}
+    public McpDiscoverPluginServersResult {}
 
     /**
      * Returns a named builder.
      * @return a new builder
      * @since 2.0.0
      */
-    @com.microsoft.copilot.CopilotExperimental
     public static Builder builder() { return new Builder(); }
 
     /**
      * Named construction for this record.
      * @since 2.0.0
      */
-    @com.microsoft.copilot.CopilotExperimental
     public static final class Builder {
         private Builder() {}
-        private String accountId;
-        private String label;
-        private Boolean active;
+        private Map<String, Object> mcpServers;
+        private List<String> disabledServers;
+        private List<String> enabledServers;
 
         /**
-         * Sets the {@code accountId} property.
+         * Sets the {@code mcpServers} property.
          * @param value the property value
          * @return this builder
          * @since 2.0.0
          */
-        @com.microsoft.copilot.CopilotExperimental
-        public Builder accountId(String value) {
-            this.accountId = value;
+        public Builder mcpServers(Map<String, Object> value) {
+            this.mcpServers = value;
             return this;
         }
 
         /**
-         * Sets the {@code label} property.
+         * Sets the {@code disabledServers} property.
          * @param value the property value
          * @return this builder
          * @since 2.0.0
          */
-        @com.microsoft.copilot.CopilotExperimental
-        public Builder label(String value) {
-            this.label = value;
+        public Builder disabledServers(List<String> value) {
+            this.disabledServers = value;
             return this;
         }
 
         /**
-         * Sets the {@code active} property.
+         * Sets the {@code enabledServers} property.
          * @param value the property value
          * @return this builder
          * @since 2.0.0
          */
-        @com.microsoft.copilot.CopilotExperimental
-        public Builder active(Boolean value) {
-            this.active = value;
+        public Builder enabledServers(List<String> value) {
+            this.enabledServers = value;
             return this;
         }
 
@@ -100,11 +97,9 @@ public record AuthLoginIdentity(
          * @throws IllegalStateException if a required property is missing
          * @since 2.0.0
          */
-        public AuthLoginIdentity build() {
-            if (accountId == null) throw new IllegalStateException("Missing required property: accountId");
-            if (label == null) throw new IllegalStateException("Missing required property: label");
-            if (active == null) throw new IllegalStateException("Missing required property: active");
-            return new AuthLoginIdentity(accountId, label, active);
+        public McpDiscoverPluginServersResult build() {
+            if (mcpServers == null) throw new IllegalStateException("Missing required property: mcpServers");
+            return new McpDiscoverPluginServersResult(mcpServers, disabledServers, enabledServers);
         }
     }
 }

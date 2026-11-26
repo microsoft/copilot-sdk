@@ -148,22 +148,54 @@ asyncio.run(main())
 
 ### Go
 
+Run `go run ./examples/mcp-config -root /path/to/private-directory` from `src/sdk/go`.
+Set `COPILOT_CLI_PATH` to your runtime.
+Ordinary requests select only their configured root.
+
 ```go
 package main
 
 import (
 	"context"
 	copilot "github.com/microsoft/copilot-sdk/go/v2"
+	"github.com/microsoft/copilot-sdk/go/v2/rpc"
 	"log"
+	"path/filepath"
 )
 
 func main() {
 	ctx := context.Background()
-	client := copilot.NewClient(&copilot.ClientOptions{Mode: copilot.ModeCodingAgent})
+	configDir, err := filepath.Abs("./mcp-example-config")
+	if err != nil {
+		log.Fatal(err)
+	}
+	client := copilot.NewClient(&copilot.ClientOptions{
+		Mode:    copilot.ModeCodingAgent,
+		Runtime: copilot.InProcessConnection{BaseDirectory: configDir},
+	})
 	if err := client.Start(ctx); err != nil {
 		log.Fatal(err)
 	}
 	defer client.Stop()
+
+	configAPI := client.RPC.MCP.Config()
+	if _, err := configAPI.AddWithOptions(ctx, &rpc.MCPConfigAddOptions{
+		Name:      "saved-server",
+		ConfigDir: &configDir,
+		Config: &rpc.MCPServerConfigStdio{
+			Command: "node",
+			Args:    []string{"./mcp-server.js"},
+			Tools:   []string{"*"},
+		},
+	}); err != nil {
+		log.Fatal(err)
+	}
+	if _, err := configAPI.RemoveWithOptions(ctx, &rpc.MCPConfigRemoveOptions{
+		Name:      "saved-server",
+		ConfigDir: &configDir,
+	}); err != nil {
+		log.Fatal(err)
+	}
 
 	session, err := client.CreateSession(ctx, &copilot.CreateSessionOptions{
 		Model: "gpt-5",

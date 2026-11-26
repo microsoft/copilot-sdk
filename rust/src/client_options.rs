@@ -389,9 +389,10 @@ impl ClientInstallationOptions {
 #[derive(Default)]
 pub struct ClientGitHubOptions {
     /// GitHub.com OAuth client ID for runtime sign-in and Entra/EMU exchange.
-    /// Supply with [`Self::client_secret`] or omit both to use the built-in app.
+    /// Omit both OAuth options to use the built-in app.
     pub client_id: Option<String>,
-    /// Secret matching [`Self::client_id`]. Not used for enterprise-host sign-in.
+    /// Secret matching [`Self::client_id`] for browser sign-in. Not required for
+    /// Entra/EMU exchange or device sign-in.
     pub client_secret: Option<String>,
     /// GitHub token for authentication. When set, the SDK passes the token
     /// to the CLI via `--auth-token-env COPILOT_SDK_AUTH_TOKEN` and exports
@@ -438,17 +439,20 @@ impl ClientGitHubOptions {
         self
     }
 
-    pub(crate) fn oauth_config(&self) -> Result<Option<(String, String)>> {
+    pub(crate) fn oauth_config(&self) -> Result<Option<(String, Option<String>)>> {
         match (&self.client_id, &self.client_secret) {
             (None, None) => Ok(None),
-            (Some(client_id), Some(client_secret))
-                if !client_id.trim().is_empty() && !client_secret.trim().is_empty() =>
+            (Some(client_id), client_secret)
+                if !client_id.trim().is_empty()
+                    && client_secret
+                        .as_ref()
+                        .is_none_or(|secret| !secret.trim().is_empty()) =>
             {
                 Ok(Some((client_id.clone(), client_secret.clone())))
             }
             _ => Err(crate::Error::with_message(
                 crate::ErrorKind::InvalidConfig,
-                "github.client_id and github.client_secret must both be non-empty",
+                "GitHub OAuth requires a non-blank client ID and, if supplied, a non-blank client secret",
             )),
         }
     }

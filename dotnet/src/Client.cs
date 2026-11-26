@@ -212,9 +212,9 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
         _options = options;
         _githubClientId = options.GitHub.ClientId;
         _githubClientSecret = options.GitHub.ClientSecret;
-        if ((_githubClientId is not null || _githubClientSecret is not null) &&
-            (string.IsNullOrWhiteSpace(_githubClientId) || string.IsNullOrWhiteSpace(_githubClientSecret)))
-            throw new ArgumentException("GitHub.ClientId and GitHub.ClientSecret must both be non-empty.", nameof(options));
+        if (((_githubClientId is not null || _githubClientSecret is not null) && string.IsNullOrWhiteSpace(_githubClientId)) ||
+            (_githubClientSecret is not null && string.IsNullOrWhiteSpace(_githubClientSecret)))
+            throw new ArgumentException("GitHub OAuth requires a non-blank client ID and, if supplied, a non-blank client secret.", nameof(options));
         _connection = _options.Runtime ?? RuntimeConnection.ForDefault();
         _builtinPluginDirectories = _options.Plugins.BuiltinDirectories?.ToArray() ?? [];
         foreach (var path in _builtinPluginDirectories.Where(path => !IsFullyQualifiedPath(path)))
@@ -583,20 +583,21 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
         // A hung runtime never answers session.detach, so every detach shares one
         // deadline; past it, StopAsync moves on to runtime shutdown and termination.
         using var detachTimeout = new CancellationTokenSource(s_runtimeShutdownTimeout);
-        foreach (var session in sessions)
+        var sessionErrors = await Task.WhenAll(sessions.Select(async session =>
         {
             try
             {
                 await session.DisposeAsync().AsTask().WaitAsync(Timeout.InfiniteTimeSpan, detachTimeout.Token);
+                return (Exception?)null;
             }
             catch (OperationCanceledException) when (detachTimeout.IsCancellationRequested)
             {
-                errors.Add(new IOException(
-                    $"Failed to dispose session {session.SessionId}: session.detach did not complete within the {s_runtimeShutdownTimeout.TotalSeconds}s shutdown timeout"));
+                return new IOException(
+                    $"Failed to dispose session {session.SessionId}: session.detach did not complete within the {s_runtimeShutdownTimeout.TotalSeconds}s shutdown timeout");
             }
             catch (Exception ex)
             {
-                errors.Add(new IOException($"Failed to dispose session {session.SessionId}: {ex.Message}", ex));
+                return new IOException($"Failed to dispose session {session.SessionId}: {ex.Message}", ex);
             }
             finally
             {
@@ -604,7 +605,8 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
                 session.Retire();
                 session.RemoveFromClient();
             }
-        }
+        }));
+        errors.AddRange(sessionErrors.OfType<Exception>());
 
         ClearGitHubTokenProviders();
 
@@ -1440,6 +1442,7 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
                 },
                 ConfigDirectory = config.ConfigDirectory,
                 EnableConfigDiscovery = config.EnableConfigDiscovery,
+                SessionLifecycleMode = config.SessionLifecycleMode,
                 ExtensionSources = config.ExtensionSources,
                 ExtensionPaths = config.ExtensionPaths,
                 State = new SessionStateRequest
@@ -1807,6 +1810,7 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
                 },
                 ConfigDirectory = config.ConfigDirectory,
                 EnableConfigDiscovery = config.EnableConfigDiscovery,
+                SessionLifecycleMode = config.SessionLifecycleMode,
                 ExtensionSources = config.ExtensionSources,
                 ExtensionPaths = config.ExtensionPaths,
                 State = new SessionStateRequest
@@ -4158,6 +4162,7 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
         [JsonPropertyName("mcp")] public SessionMcpRequest? Mcp { get; init; }
         [JsonPropertyName("configDirectory")] public string? ConfigDirectory { get; init; }
         [JsonPropertyName("enableConfigDiscovery")] public bool? EnableConfigDiscovery { get; init; }
+        [JsonPropertyName("sessionLifecycleMode")] public SessionLifecycleMode? SessionLifecycleMode { get; init; }
         [JsonPropertyName("extensionSources")] public ExtensionSources? ExtensionSources { get; init; }
         [JsonPropertyName("extensionPaths")] public List<string>? ExtensionPaths { get; init; }
         [JsonPropertyName("state")] public SessionStateRequest? State { get; init; }
@@ -4184,11 +4189,13 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
         IDictionary<string, JsonNode?>? Metadata = null,
         bool? IsTerminal = null,
         ProtocolExternalToolNamespace? Namespace = null,
-        bool? Idempotent = null)
+        bool? Idempotent = null,
+        bool? OnlyOverridesBuiltInTool = null)
     {
         public static ToolDefinition FromAIFunction(AIFunctionDeclaration function)
         {
             var overrides = function.AdditionalProperties.TryGetValue(CopilotTool.OverridesBuiltInToolKey, out var val) && val is true;
+            var onlyOverrides = function.AdditionalProperties.TryGetValue(CopilotTool.OnlyOverridesBuiltInToolKey, out var onlyVal) && onlyVal is true;
             var skipPerm = function.AdditionalProperties.TryGetValue(CopilotTool.SkipPermissionKey, out var skipVal) && skipVal is true;
             var defer = function.AdditionalProperties.TryGetValue(CopilotTool.DeferKey, out var deferVal) && deferVal is CopilotToolDefer d ? d : (CopilotToolDefer?)null;
             var exposure = function.AdditionalProperties.TryGetValue(CopilotTool.ExposureKey, out var exposureVal) && exposureVal is CopilotToolExposure e ? e : (CopilotToolExposure?)null;
@@ -4207,7 +4214,8 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
                 metadata,
                 isTerminal ? true : null,
                 toolNamespace,
-                idempotent ? true : null);
+                idempotent ? true : null,
+                onlyOverrides ? true : null);
         }
     }
 
@@ -4244,6 +4252,7 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
         [JsonPropertyName("hooks")] public SessionHookRequest? Hooks { get; init; }
         [JsonPropertyName("configDirectory")] public string? ConfigDirectory { get; init; }
         [JsonPropertyName("enableConfigDiscovery")] public bool? EnableConfigDiscovery { get; init; }
+        [JsonPropertyName("sessionLifecycleMode")] public SessionLifecycleMode? SessionLifecycleMode { get; init; }
         [JsonPropertyName("extensionSources")] public ExtensionSources? ExtensionSources { get; init; }
         [JsonPropertyName("extensionPaths")] public List<string>? ExtensionPaths { get; init; }
         [JsonPropertyName("state")] public SessionStateRequest? State { get; init; }

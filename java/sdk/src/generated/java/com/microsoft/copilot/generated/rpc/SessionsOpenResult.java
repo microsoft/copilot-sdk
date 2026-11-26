@@ -34,7 +34,7 @@ public record SessionsOpenResult(
     @JsonProperty("sessionId") String sessionId,
     /** In-process SessionClientApi handle for the opened session, returned to CLI callers as a transitional shortcut. Marked internal so the public SDK surface does not expose it; SDK consumers should construct per-session clients from `sessionId` instead. */
     @JsonProperty("sessionApi") Object sessionApi,
-    /** Startup prompts queued by user-level hook configs at session creation. Only populated when status is `created`; resumed sessions return an empty array. */
+    /** Startup prompts from local hook configs after creation or handoff. Resumed sessions return an empty array. */
     @JsonProperty("startupPrompts") List<String> startupPrompts,
     /** Remote session ID, present when status is `connected`. */
     @JsonProperty("remoteSessionId") String remoteSessionId,

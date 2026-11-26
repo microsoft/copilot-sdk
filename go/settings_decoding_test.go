@@ -57,8 +57,9 @@ func TestSettingsLoadForEditUsesDefaultAndScopedConfigDirectories(t *testing.T) 
 
 func TestSettingsReadValuesSupportExactConditionalUpdate(t *testing.T) {
 	t.Parallel()
+	// These cases include settings operations that require an in-process host, not an external stdio peer.
 	client := NewClient(&ClientOptions{
-		Mode: ModeCodingAgent, Runtime: SpawnedStdioConnection{Path: findCLIPathForTest(t), BaseDirectory: t.TempDir()},
+		Mode: ModeCodingAgent, Runtime: InProcessConnection{BaseDirectory: t.TempDir()},
 	})
 	t.Cleanup(func() { client.ForceStop() })
 	if err := client.Start(t.Context()); err != nil {

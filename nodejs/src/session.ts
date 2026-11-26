@@ -162,6 +162,7 @@ function toToolDefinition(tool: Tool): ProtocolExternalToolDefinition {
         description: tool.description ?? "",
         parameters: toJsonSchema(tool.parameters) as ProtocolExternalToolDefinition["parameters"],
         overridesBuiltInTool: tool.overridesBuiltInTool,
+        onlyOverridesBuiltInTool: tool.onlyOverridesBuiltInTool,
         skipPermission: tool.skipPermission,
         hasHandler: !!tool.handler,
         defer: tool.defer,
@@ -2263,7 +2264,7 @@ export class CopilotSession {
                 const handler = tool.handler;
                 if (
                     tool.name === "apply_patch" &&
-                    tool.overridesBuiltInTool &&
+                    (tool.overridesBuiltInTool || tool.onlyOverridesBuiltInTool) &&
                     toJsonSchema(tool.parameters)?.type === "string"
                 ) {
                     this.toolHandlers.set(tool.name, (args, invocation) => {

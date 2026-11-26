@@ -186,4 +186,15 @@ public final class ServerPluginsApi {
         return caller.invoke("plugins.activate", params, PluginsActivateResult.class);
     }
 
+    /**
+     * Inspects explicit plugin directories without installation or activation. Configuration editors can preview recognized mounts and manifest diagnostics in caller precedence order.
+     *
+     * @apiNote This method is experimental and may change in a future version.
+     * @since 1.0.0
+     */
+    @CopilotExperimental
+    public CompletableFuture<PluginsScanDirectoriesResult> scanDirectories(PluginsScanDirectoriesParams params) {
+        return caller.invoke("plugins.scanDirectories", params, PluginsScanDirectoriesResult.class);
+    }
+
 }

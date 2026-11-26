@@ -93,6 +93,8 @@ public final class SessionRpc {
     public final SessionTasksApi tasks;
     /** API methods for the {@code skills} namespace. */
     public final SessionSkillsApi skills;
+    /** API methods for the {@code skillsSource} namespace. */
+    final SessionSkillsSourceApi skillsSource;
     /** API methods for the {@code diagnostics} namespace. */
     public final SessionDiagnosticsApi diagnostics;
     /** API methods for the {@code connectors} namespace. */
@@ -191,6 +193,7 @@ public final class SessionRpc {
         this.agent = new SessionAgentApi(caller, sessionId);
         this.tasks = new SessionTasksApi(caller, sessionId);
         this.skills = new SessionSkillsApi(caller, sessionId);
+        this.skillsSource = new SessionSkillsSourceApi(caller, sessionId);
         this.diagnostics = new SessionDiagnosticsApi(caller, sessionId);
         this.connectors = new SessionConnectorsApi(caller, sessionId);
         this.managedSettings = new SessionManagedSettingsApi(caller, sessionId);

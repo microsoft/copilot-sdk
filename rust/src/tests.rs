@@ -10,6 +10,153 @@ use crate::entra::{EntraTokenProviderArgs, EntraTokenProviderContext, EntraToken
 #[cfg(unix)]
 mod process_lifecycle;
 
+#[tokio::test]
+async fn foreground_callback_context_rejects_only_its_own_nested_selection() {
+    let directory = tempfile::tempdir().unwrap();
+    let (client_stream, server_stream) = tokio::io::duplex(8192);
+    let (client_read, client_write) = tokio::io::split(client_stream);
+    let (server_read, server_write) = tokio::io::split(server_stream);
+    let client = Client::from_streams(
+        crate::ClientMode::CodingAgent,
+        client_read,
+        client_write,
+        directory.path().to_owned(),
+    )
+    .unwrap();
+    let (notifications, _) = mpsc::unbounded_channel();
+    let (requests, mut unhandled) = mpsc::unbounded_channel();
+    let server = Arc::new(jsonrpc::JsonRpcClient::new(
+        server_write,
+        server_read,
+        notifications,
+        requests,
+    ));
+    server
+        .register_request_handler(
+            "session.setForeground",
+            Arc::new(|_| Box::pin(async { Ok(serde_json::json!({ "success": true })) })),
+        )
+        .unwrap();
+    for method in ["session.create", "session.resume"] {
+        server
+            .register_request_handler(
+                method,
+                Arc::new(|params| {
+                    Box::pin(
+                        async move { Ok(serde_json::json!({ "sessionId": params["sessionId"] })) },
+                    )
+                }),
+            )
+            .unwrap();
+    }
+    for method in ["session.detach", "session.skills.reload"] {
+        server
+            .register_request_handler(
+                method,
+                Arc::new(|_| Box::pin(async { Ok(serde_json::json!({ "success": true })) })),
+            )
+            .unwrap();
+    }
+    let release = Arc::new(tokio::sync::Semaphore::new(0));
+    let gate = Arc::clone(&release);
+    let (entered, mut scoped_clients) = mpsc::unbounded_channel();
+    client
+        .register_request_handler("runtimeHost.foregroundSessionChange", move |_, client| {
+            let entered = entered.clone();
+            let gate = Arc::clone(&gate);
+            async move {
+                let id = SessionId::from("nested");
+                let typed = client.set_foreground_session_id(&id).await.unwrap_err();
+                let raw = client
+                    .call(
+                        "session.setForeground",
+                        Some(serde_json::json!({ "sessionId": id })),
+                    )
+                    .await
+                    .unwrap_err();
+                let immediate = client
+                    .begin_call(
+                        "session.setForeground",
+                        Some(serde_json::json!({ "sessionId": id })),
+                    )
+                    .err()
+                    .expect("immediate submission must reject nested selection");
+                let task_client = client.clone();
+                let spawned =
+                    tokio::spawn(async move { task_client.set_foreground_session_id(&id).await })
+                        .await
+                        .unwrap()
+                        .unwrap_err();
+                for error in [typed, raw, immediate, spawned] {
+                    assert!(
+                        error.to_string().contains("pending foreground callback"),
+                        "{error}"
+                    );
+                }
+                let created = client
+                    .create_session(CreateSessionOptions::default().with_session_id("created"))
+                    .await?;
+                let resumed = client
+                    .resume_session(ResumeSessionOptions::new("resumed".into()))
+                    .await?;
+                for session in [&created, &resumed] {
+                    let error = session
+                        .client()
+                        .begin_call(
+                            "session.setForeground",
+                            Some(serde_json::json!({ "sessionId": session.id() })),
+                        )
+                        .err()
+                        .expect("session-derived clients must reject nested selection");
+                    assert!(
+                        error.to_string().contains("pending foreground callback"),
+                        "{error}"
+                    );
+                }
+                entered.send((client, [created, resumed])).unwrap();
+                gate.acquire_owned().await.unwrap().forget();
+                Ok(serde_json::json!({ "success": true }))
+            }
+        })
+        .unwrap();
+    let callback_server = Arc::clone(&server);
+    let mut callback = tokio::spawn(async move {
+        callback_server
+            .send_request("runtimeHost.foregroundSessionChange", None)
+            .await
+    });
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
+        let (scoped, sessions) = tokio::select! {
+            scoped = scoped_clients.recv() => scoped.unwrap(),
+            result = &mut callback => panic!("callback ended before its admission checks: {result:?}"),
+            request = unhandled.recv() => panic!("unhandled fixture request: {request:?}"),
+        };
+        client
+            .set_foreground_session_id(&SessionId::from("independent"))
+            .await
+            .unwrap();
+        release.add_permits(1);
+        assert!(callback.await.unwrap().unwrap().error.is_none());
+        scoped
+            .set_foreground_session_id(&SessionId::from("after-callback"))
+            .await
+            .unwrap();
+        for session in sessions {
+            session
+                .client()
+                .set_foreground_session_id(session.id())
+                .await
+                .unwrap();
+            session.disconnect().await.unwrap();
+        }
+    })
+    .await;
+    release.add_permits(1);
+    client.force_stop();
+    server.force_close();
+    result.expect("callback context must not block independent SDK work");
+}
+
 #[test]
 fn session_not_found_rpc_errors_preserve_the_requested_id() {
     let session_id = SessionId::new("missing-session");
@@ -193,6 +340,45 @@ fn entra_identity_request() -> serde_json::Value {
 }
 
 #[tokio::test]
+async fn configured_host_requires_an_explicit_startup_acknowledgement() {
+    for acknowledgement in [None, Some(false), Some(true)] {
+        let (_temp, client, server) = entra_transport(types::EntraAuthOptions::new("host-client"));
+        server
+            .register_request_handler(
+                "connect",
+                Arc::new(move |_| {
+                    Box::pin(async move {
+                        let mut response = serde_json::json!({
+                            "ok": true, "protocolVersion": 4, "version": "test",
+                        });
+                        if let Some(value) = acknowledgement {
+                            response["runtimeHostConfiguration"] = value.into();
+                        }
+                        Ok(response)
+                    })
+                }),
+            )
+            .unwrap();
+        let result = client
+            .verify_protocol_version_with_host_configuration(true)
+            .await;
+        client.force_stop();
+        server.force_close();
+        if acknowledgement == Some(true) {
+            result.unwrap();
+        } else {
+            let error = result.unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("does not support SDK host configuration"),
+                "{error}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn custom_streams_route_entra_callbacks_without_a_session() {
     let (_temp, client, server) = entra_transport(
         types::EntraAuthOptions::new("host-client").with_token_provider(
@@ -344,7 +530,7 @@ async fn custom_streams_forward_optional_oauth_configuration() {
                 mats_app_name: None,
                 one_auth_application_id: None,
             }),
-            Some(("fixture-app", "fixture-oauth-secret")),
+            Some(("fixture-app", Some("fixture-oauth-secret"))),
         ),
         (
             Some(EntraAuthConfig {
@@ -352,7 +538,7 @@ async fn custom_streams_forward_optional_oauth_configuration() {
                 mats_app_name: Some("Host App".into()),
                 one_auth_application_id: Some("host-native-descriptor".into()),
             }),
-            None,
+            Some(("fixture-app", None)),
         ),
     ] {
         let temp = tempfile::tempdir().unwrap();
@@ -367,7 +553,11 @@ async fn custom_streams_forward_optional_oauth_configuration() {
                 client_write,
                 temp.path().to_owned(),
                 entra_options,
-                &ClientGitHubOptions::default().with_oauth_app(id, secret),
+                &ClientGitHubOptions {
+                    client_id: Some(id.into()),
+                    client_secret: secret.map(Into::into),
+                    ..Default::default()
+                },
             ),
             None => Client::from_streams_with_entra_options(
                 ClientMode::CodingAgent,
@@ -408,7 +598,9 @@ async fn custom_streams_forward_optional_oauth_configuration() {
         );
         assert_eq!(
             params.get("githubClientSecret"),
-            github.map(|(_, secret)| secret.into()).as_ref()
+            github
+                .and_then(|(_, secret)| secret.map(Into::into))
+                .as_ref()
         );
         assert_eq!(
             params.get("entra"),
@@ -1989,6 +2181,7 @@ async fn assert_test_child_killed(mut stdout: tokio::process::ChildStdout) {
 fn client_with_list_models_handler(handler: Arc<dyn ListModelsHandler>) -> Client {
     Client {
         ahp_host_sessions: None,
+        foreground_callback: None,
         inner: Arc::new(ClientInner {
             ahp_host_callbacks: Arc::new(ahp_host::ExitCallbacks::default()),
             ahp_host_sessions: std::sync::Weak::<ahp_host::HostSessions>::new(),
@@ -2005,6 +2198,7 @@ fn client_with_list_models_handler(handler: Arc<dyn ListModelsHandler>) -> Clien
                 let (_unused_read, write_pipe) = tokio::io::duplex(64);
                 JsonRpcClient::new(write_pipe, read_pipe, notif_tx, req_tx)
             },
+            runtime_handle: tokio::runtime::Handle::current(),
             cwd: PathBuf::from("."),
             request_rx: parking_lot::Mutex::new(None),
             router: router::SessionRouter::new(),
@@ -2018,6 +2212,8 @@ fn client_with_list_models_handler(handler: Arc<dyn ListModelsHandler>) -> Clien
             session_fs_sqlite_declared: false,
             session_fs_binary_declared: false,
             session_fs_read_file_range_declared: false,
+            session_fs_provider_resolver: OnceLock::new(),
+            handoff_progress: Arc::new(OnceLock::new()),
             llm_inference: OnceLock::new(),
             extension_launch_provider: Arc::new(
                 extension_launch_provider::ExtensionLaunchProviderDispatcher::new(None),

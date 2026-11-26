@@ -14,7 +14,7 @@ import com.microsoft.copilot.CopilotExperimental;
 import javax.annotation.processing.Generated;
 
 /**
- * One canonical signed-in account entry shared by account-list and account-switch surfaces.
+ * One known account, including saved identities and accounts that are not currently authenticated or selectable.
  *
  * @apiNote This type is experimental and may change in a future version.
  *
@@ -25,7 +25,7 @@ import javax.annotation.processing.Generated;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record Account(
-    /** Stable opaque account id used for forest lineage and account management. */
+    /** Stable opaque account id used for selection, logout, and forest lineage. Credential sources for the same identified account share one account entry. */
     @JsonProperty("accountId") String accountId,
     /** Authentication host URL. */
     @JsonProperty("host") String host,
@@ -35,14 +35,14 @@ public record Account(
     @JsonProperty("label") String label,
     /** The provider kind of this account. */
     @JsonProperty("kind") AccountKind kind,
+    /** Whether this is an inference account, independently of its current health or selectability. False for base sign-in identities. */
+    @JsonProperty("supportsInference") Boolean supportsInference,
     /** Human-readable credential source used to authenticate this account, such as `gh` or `GITHUB_TOKEN`. */
     @JsonProperty("authSource") String authSource,
     /** Opaque accountId of the account this one was derived from; absent for a root account. */
     @JsonProperty("derivedFrom") String derivedFrom,
     /** Whether this is the active account. */
     @JsonProperty("active") Boolean active,
-    /** Opaque selection id accepted by switchActive. Absent when switching is not currently valid. */
-    @JsonProperty("selectionId") String selectionId,
     /** Whether the account is currently a valid switch target. */
     @JsonProperty("switchable") Boolean switchable,
     /** Canonical availability treatment for this account. */
@@ -77,10 +77,10 @@ public record Account(
         private String login;
         private String label;
         private AccountKind kind;
+        private Boolean supportsInference;
         private String authSource;
         private String derivedFrom;
         private Boolean active;
-        private String selectionId;
         private Boolean switchable;
         private AccountHealth health;
         private String statusMessage;
@@ -146,6 +146,18 @@ public record Account(
         }
 
         /**
+         * Sets the {@code supportsInference} property.
+         * @param value the property value
+         * @return this builder
+         * @since 2.0.0
+         */
+        @com.microsoft.copilot.CopilotExperimental
+        public Builder supportsInference(Boolean value) {
+            this.supportsInference = value;
+            return this;
+        }
+
+        /**
          * Sets the {@code authSource} property.
          * @param value the property value
          * @return this builder
@@ -178,18 +190,6 @@ public record Account(
         @com.microsoft.copilot.CopilotExperimental
         public Builder active(Boolean value) {
             this.active = value;
-            return this;
-        }
-
-        /**
-         * Sets the {@code selectionId} property.
-         * @param value the property value
-         * @return this builder
-         * @since 2.0.0
-         */
-        @com.microsoft.copilot.CopilotExperimental
-        public Builder selectionId(String value) {
-            this.selectionId = value;
             return this;
         }
 
@@ -236,11 +236,13 @@ public record Account(
          * @since 2.0.0
          */
         public Account build() {
+            if (accountId == null) throw new IllegalStateException("Missing required property: accountId");
             if (host == null) throw new IllegalStateException("Missing required property: host");
             if (login == null) throw new IllegalStateException("Missing required property: login");
             if (kind == null) throw new IllegalStateException("Missing required property: kind");
+            if (supportsInference == null) throw new IllegalStateException("Missing required property: supportsInference");
             if (active == null) throw new IllegalStateException("Missing required property: active");
-            return new Account(accountId, host, login, label, kind, authSource, derivedFrom, active, selectionId, switchable, health, statusMessage);
+            return new Account(accountId, host, login, label, kind, supportsInference, authSource, derivedFrom, active, switchable, health, statusMessage);
         }
     }
 }

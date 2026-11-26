@@ -15,6 +15,7 @@ import com.microsoft.copilot.rpc.PermissionRequestResult;
 import com.microsoft.copilot.rpc.PermissionHandler;
 import com.microsoft.copilot.rpc.PermissionInvocation;
 import com.microsoft.copilot.rpc.PermissionRequest;
+import com.microsoft.copilot.rpc.UrlPermissionPrompt;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.annotation.JsonInclude;
@@ -191,5 +192,84 @@ public class PermissionRequestResultTest {
         var result = PermissionHandler.APPROVE_ALL.handle(request, new PermissionInvocation()).join();
 
         assertEquals("no-result", result.getKind());
+    }
+
+    @Test
+    void testApproveUrlForSessionSerializesDomain() throws Exception {
+        var result = PermissionRequestResult.approveUrlForSession("https://*.example.com");
+        var json = MAPPER.readTree(MAPPER.writeValueAsString(result));
+
+        assertEquals("approve-for-session", json.get("kind").asText());
+        assertEquals("https://*.example.com", json.get("domain").asText());
+        assertEquals(2, json.size(), json::toString);
+    }
+
+    @Test
+    void testApproveUrlPermanentlySerializesDomain() throws Exception {
+        var result = PermissionRequestResult.approveUrlPermanently("https://api.example.com");
+        var json = MAPPER.readTree(MAPPER.writeValueAsString(result));
+
+        assertEquals("approve-permanently", json.get("kind").asText());
+        assertEquals("https://api.example.com", json.get("domain").asText());
+        assertEquals(2, json.size(), json::toString);
+    }
+
+    @Test
+    void testUrlApprovalsRequireDomain() {
+        assertThrows(NullPointerException.class, () -> PermissionRequestResult.approveUrlForSession(null));
+        assertThrows(NullPointerException.class, () -> PermissionRequestResult.approveUrlPermanently(null));
+    }
+
+    @Test
+    void testUrlPromptExposesTypedFields() {
+        var prompt = PermissionRequest.fromJsonValue(java.util.Map.of("kind", "url", "toolCallId", "call-1", "url",
+                "https://api.example.com/a", "intention", "Fetch docs", "redirectedFrom", "https://example.com/start",
+                "parentDomainPattern", "https://*.example.com", "requestSandboxBypass", true,
+                "requestSandboxBypassReason", "Blocked by policy"));
+
+        var url = UrlPermissionPrompt.from(prompt);
+
+        assertNotNull(url);
+        assertEquals("https://api.example.com/a", url.getUrl());
+        assertEquals("Fetch docs", url.getIntention());
+        assertEquals("https://example.com/start", url.getRedirectedFrom());
+        assertEquals("https://*.example.com", url.getParentDomainPattern());
+        assertEquals(Boolean.TRUE, url.getRequestSandboxBypass());
+        assertEquals("Blocked by policy", url.getRequestSandboxBypassReason());
+        // Existing readers of the untyped map keep working.
+        assertEquals("https://api.example.com/a", prompt.getExtensionData().get("url"));
+    }
+
+    @Test
+    void testUrlPromptOptionalFieldsAreNullWhenAbsent() {
+        var url = UrlPermissionPrompt
+                .from(PermissionRequest.fromJsonValue(java.util.Map.of("kind", "url", "url", "http://10.0.0.1/")));
+
+        assertNotNull(url);
+        assertEquals("http://10.0.0.1/", url.getUrl());
+        assertNull(url.getIntention());
+        assertNull(url.getRedirectedFrom());
+        assertNull(url.getParentDomainPattern());
+        assertNull(url.getRequestSandboxBypass());
+        assertNull(url.getRequestSandboxBypassReason());
+    }
+
+    @Test
+    void testUrlPromptWrongTypesReadAsNull() {
+        var url = UrlPermissionPrompt.from(PermissionRequest.fromJsonValue(java.util.Map.of("kind", "url", "url", 42,
+                "parentDomainPattern", java.util.List.of("https://*.example.com"), "requestSandboxBypass", "true")));
+
+        assertNotNull(url);
+        assertNull(url.getUrl());
+        assertNull(url.getParentDomainPattern());
+        assertNull(url.getRequestSandboxBypass());
+    }
+
+    @Test
+    void testUrlPromptIsNullForOtherKinds() {
+        assertNull(UrlPermissionPrompt.from(null));
+        assertNull(UrlPermissionPrompt.from(
+                PermissionRequest.fromJsonValue(java.util.Map.of("kind", "read", "url", "https://api.example.com/a"))));
+        assertNull(UrlPermissionPrompt.from(new PermissionRequest()));
     }
 }

@@ -2098,11 +2098,11 @@ crate::record_serde::wire_record!(UsageMetricsModelMetricTokenDetail {
 /// Token usage metrics for this model
 #[derive(Debug, Clone, Default)]
 pub struct UsageMetricsModelMetricUsage {
-    /// Total tokens read from prompt cache
+    /// Total input tokens read from prompt cache; included in inputTokens
     pub cache_read_tokens: i64,
-    /// Total tokens written to prompt cache
+    /// Total input tokens written to prompt cache; included in inputTokens
     pub cache_write_tokens: i64,
-    /// Total input tokens consumed
+    /// Total input tokens consumed, including cache-read and cache-write tokens
     pub input_tokens: i64,
     /// Total output tokens produced
     pub output_tokens: i64,
@@ -2964,8 +2964,10 @@ pub struct FusionAttribution {
     pub source_phase_id: Option<String>,
     /// Synthetic HydraFusion model selected for the session.
     pub synthetic_model: String,
+    /// Agent loop turn within the phase that produced a provisional streamed event (`assistant.message_start`, `assistant.message_delta`, `assistant.reasoning_delta`, `assistant.tool_call_delta`), matching the `turnId` of its completed `assistant.message` or `assistant.reasoning`. Each phase runs its own loop, so turn IDs repeat across phases: scope it by `fusionId` and `phaseId`. Absent on other events, which carry their own `turnId`.
+    pub turn_id: Option<String>,
 }
-crate::record_serde::wire_record!(FusionAttribution { commit_id: "commitId" if is_none, conversation_scope: "conversationScope" if is_none, fusion_id: "fusionId", has_user_steering: "hasUserSteering" if is_none, occurred_at: "occurredAt" if is_none, pattern: "pattern", phase_id: "phaseId" if is_none, phase_kind: "phaseKind" if is_none, policy: "policy", role: "role" if is_none, source_model: "sourceModel" if is_none, source_phase_id: "sourcePhaseId" if is_none, synthetic_model: "syntheticModel" });
+crate::record_serde::wire_record!(FusionAttribution { commit_id: "commitId" if is_none, conversation_scope: "conversationScope" if is_none, fusion_id: "fusionId", has_user_steering: "hasUserSteering" if is_none, occurred_at: "occurredAt" if is_none, pattern: "pattern", phase_id: "phaseId" if is_none, phase_kind: "phaseKind" if is_none, policy: "policy", role: "role" if is_none, source_model: "sourceModel" if is_none, source_phase_id: "sourcePhaseId" if is_none, synthetic_model: "syntheticModel", turn_id: "turnId" if is_none });
 
 /// How far the compaction's summarizer model calls had progressed when the compaction's outcome was decided. Stream statistics describe the latest model request; durationMs and attemptCount cover every request.
 #[derive(Debug, Clone, Default)]
@@ -4634,14 +4636,14 @@ pub struct AssistantUsageData {
     #[doc(hidden)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) cache_policy_ttl_seconds: Option<i64>,
-    /// Number of tokens read from prompt cache
+    /// Number of input tokens read from prompt cache; included in inputTokens
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cache_read_tokens: Option<i64>,
     /// Effective prompt-cache lifetime in seconds for this call
     #[doc(hidden)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) cache_ttl_seconds: Option<i64>,
-    /// Number of tokens written to prompt cache
+    /// Number of input tokens written to prompt cache; included in inputTokens
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cache_write_tokens: Option<i64>,
     /// Whether the model response was blocked or truncated by content filtering (finish_reason === 'content_filter'). For Anthropic models this corresponds to a 'refusal' stop reason.
@@ -4690,7 +4692,7 @@ pub struct AssistantUsageData {
     /// What initiated this API call: "user" for a request that carries a user prompt, "agent" for an agent-driven request such as the follow-up after a tool result, or the delegating caller (e.g., "sub-agent", "mcp-sampling")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub initiator: Option<String>,
-    /// Number of input tokens consumed
+    /// Total input tokens consumed, including cache-read and cache-write tokens
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_tokens: Option<i64>,
     /// No longer emitted. Older events may still contain this internal correlation identifier for the qualifying instruction-update delivery consumed by this model request.

@@ -44,7 +44,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::tungstenite::Message;
 
-use super::support::{capi_meta_body, collect_until_idle, with_e2e_context_no_snapshot};
+use super::support::{
+    capi_meta_body, collect_until_idle, is_inference_url, with_e2e_context_no_snapshot,
+};
 
 const SYNTHETIC_TEXT: &str = "OK from the synthetic stream.";
 const HANDLER_HTTP_TEXT: &str = "OK from synthetic HTTP upstream.";
@@ -80,14 +82,6 @@ fn assistant_text(event: &Option<SessionEvent>) -> String {
         .and_then(|e| e.typed_data::<AssistantMessageData>())
         .map(|data| data.content)
         .unwrap_or_default()
-}
-
-fn is_inference_url(url: &str) -> bool {
-    let url = url.to_lowercase();
-    url.ends_with("/chat/completions")
-        || url.ends_with("/responses")
-        || url.ends_with("/v1/messages")
-        || url.ends_with("/messages")
 }
 
 /// Detect `"stream": true` in a request body without depending on exact JSON

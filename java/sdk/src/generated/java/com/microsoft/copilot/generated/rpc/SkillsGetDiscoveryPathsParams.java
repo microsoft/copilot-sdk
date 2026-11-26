@@ -25,6 +25,10 @@ import javax.annotation.processing.Generated;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record SkillsGetDiscoveryPathsParams(
+    /** Configuration directory override. Omission uses the server context. */
+    @JsonProperty("configDir") String configDir,
+    /** Host home directory for personal discovery roots. */
+    @JsonProperty("homeDirectory") String homeDirectory,
     /** Explicit discovery-only skill roots to enumerate, including configured missing directories. Relative paths resolve against the request's effective working directory when supplied. These are not filesystem grants or preferred creation targets. Null and omission are equivalent. */
     @JsonProperty("skillDirectories") List<String> skillDirectories,
     /** Optional list of project directory paths. When omitted or empty, only personal and custom directories are returned. */
@@ -42,6 +46,17 @@ public record SkillsGetDiscoveryPathsParams(
     public SkillsGetDiscoveryPathsParams {}
 
     /**
+     * Creates a record without optional runtime metadata.
+     * @param skillDirectories the {@code skillDirectories} property
+     * @param projectPaths the {@code projectPaths} property
+     * @param ignoredSkillsLocations the {@code ignoredSkillsLocations} property
+     * @param excludeHostSkills the {@code excludeHostSkills} property
+     */
+    public SkillsGetDiscoveryPathsParams(List<String> skillDirectories, List<String> projectPaths, List<String> ignoredSkillsLocations, Boolean excludeHostSkills) {
+        this(null, null, skillDirectories, projectPaths, ignoredSkillsLocations, excludeHostSkills);
+    }
+
+    /**
      * Returns a named builder.
      * @return a new builder
      * @since 2.0.0
@@ -54,10 +69,34 @@ public record SkillsGetDiscoveryPathsParams(
      */
     public static final class Builder {
         private Builder() {}
+        private String configDir;
+        private String homeDirectory;
         private List<String> skillDirectories;
         private List<String> projectPaths;
         private List<String> ignoredSkillsLocations;
         private Boolean excludeHostSkills;
+
+        /**
+         * Sets the {@code configDir} property.
+         * @param value the property value
+         * @return this builder
+         * @since 2.0.0
+         */
+        public Builder configDir(String value) {
+            this.configDir = value;
+            return this;
+        }
+
+        /**
+         * Sets the {@code homeDirectory} property.
+         * @param value the property value
+         * @return this builder
+         * @since 2.0.0
+         */
+        public Builder homeDirectory(String value) {
+            this.homeDirectory = value;
+            return this;
+        }
 
         /**
          * Sets the {@code skillDirectories} property.
@@ -110,7 +149,7 @@ public record SkillsGetDiscoveryPathsParams(
          * @since 2.0.0
          */
         public SkillsGetDiscoveryPathsParams build() {
-            return new SkillsGetDiscoveryPathsParams(skillDirectories, projectPaths, ignoredSkillsLocations, excludeHostSkills);
+            return new SkillsGetDiscoveryPathsParams(configDir, homeDirectory, skillDirectories, projectPaths, ignoredSkillsLocations, excludeHostSkills);
         }
     }
 }

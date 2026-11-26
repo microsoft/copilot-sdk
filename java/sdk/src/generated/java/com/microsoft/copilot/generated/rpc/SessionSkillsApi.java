@@ -46,6 +46,17 @@ public final class SessionSkillsApi {
     }
 
     /**
+     * Returns complete local skill definitions and load diagnostics from the session's canonical inventory. Ensures the inventory is loaded without a separate discovery or managed-policy ingestion. Provider-backed skills are not local definitions.
+     *
+     * @apiNote This method is experimental and may change in a future version.
+     * @since 1.0.0
+     */
+    @CopilotExperimental
+    public CompletableFuture<SessionSkillsGetDefinitionsResult> getDefinitions() {
+        return caller.invoke("session.skills.getDefinitions", java.util.Map.of("sessionId", this.sessionId), SessionSkillsGetDefinitionsResult.class);
+    }
+
+    /**
      * Returns the skills that have been invoked during this session.
      *
      * @apiNote This method is experimental and may change in a future version.
@@ -97,6 +108,17 @@ public final class SessionSkillsApi {
     @CopilotExperimental
     public CompletableFuture<SessionSkillsReloadResult> reload() {
         return caller.invoke("session.skills.reload", java.util.Map.of("sessionId", this.sessionId), SessionSkillsReloadResult.class);
+    }
+
+    /**
+     * Returns diagnostics from the session's most recent skill load without reloading definitions or waiting for MCP discovery.
+     *
+     * @apiNote This method is experimental and may change in a future version.
+     * @since 1.0.0
+     */
+    @CopilotExperimental
+    public CompletableFuture<SessionSkillsGetDiagnosticsResult> getDiagnostics() {
+        return caller.invoke("session.skills.getDiagnostics", java.util.Map.of("sessionId", this.sessionId), SessionSkillsGetDiagnosticsResult.class);
     }
 
     /**

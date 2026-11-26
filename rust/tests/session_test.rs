@@ -9823,17 +9823,23 @@ async fn client_stop_sends_session_destroy_for_each_active_session() {
     let _session_b = create_default_session(&client, &mut server, "/tmp/ws-b").await;
     let session_id_b = _session_b.id().to_string();
 
-    // Drive Client::stop and respond to each detach in turn.
+    // Both independent detaches must arrive before either response is available.
     let stop_handle = tokio::spawn({
         let client = client.clone();
         async move { client.stop().await }
     });
 
     let mut detached = Vec::new();
+    let mut requests = Vec::new();
     for _ in 0..2 {
-        let req = server.read_request().await;
+        let req = timeout(TIMEOUT, server.read_request())
+            .await
+            .expect("stop did not admit both independent detaches");
         assert_eq!(req["method"], "session.detach");
         detached.push(req["params"]["sessionId"].as_str().unwrap().to_string());
+        requests.push(req);
+    }
+    for req in requests {
         server
             .respond(&req, serde_json::json!({ "success": true }))
             .await;
@@ -11028,7 +11034,7 @@ async fn session_fs_dispatches_sqlite_query_to_provider() {
 }
 
 #[tokio::test]
-async fn session_fs_maps_sqlite_errors_to_results() {
+async fn session_fs_reports_sqlite_provider_errors() {
     struct AlwaysFails;
     #[async_trait]
     impl SessionFsProvider for AlwaysFails {
@@ -11101,7 +11107,12 @@ async fn session_fs_maps_sqlite_errors_to_results() {
         .await;
     let response = timeout(TIMEOUT, server.read_response()).await.unwrap();
     assert_eq!(response["id"], 15);
-    assert_eq!(response["result"]["exists"], false);
+    assert_eq!(response["error"]["code"], -32603, "{response}");
+    assert_eq!(
+        response["error"]["message"], "sqlite unavailable",
+        "{response}"
+    );
+    assert!(response.get("result").is_none(), "{response}");
 }
 
 #[tokio::test]

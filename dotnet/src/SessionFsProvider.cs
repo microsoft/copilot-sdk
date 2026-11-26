@@ -694,15 +694,8 @@ public abstract class SessionFsProvider : ISessionFsReadFileRangeHandler
             return new SessionFsSqliteExistsResult { Exists = false };
         }
 
-        try
-        {
-            var exists = await sqliteProvider.ExistsAsync(cancellationToken).ConfigureAwait(false);
-            return new SessionFsSqliteExistsResult { Exists = exists };
-        }
-        catch
-        {
-            return new SessionFsSqliteExistsResult { Exists = false };
-        }
+        var exists = await sqliteProvider.ExistsAsync(cancellationToken).ConfigureAwait(false);
+        return new SessionFsSqliteExistsResult { Exists = exists };
     }
 
 

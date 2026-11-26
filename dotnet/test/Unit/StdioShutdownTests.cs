@@ -7,6 +7,7 @@ using System.Diagnostics;
 using System.Collections.Concurrent;
 using System.Text;
 using Microsoft.Copilot.Test.Harness;
+using Microsoft.Extensions.Logging;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -52,7 +53,7 @@ public sealed class StdioShutdownTests(ITestOutputHelper output)
         var delivered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var restartDelivered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         ConcurrentQueue<string> lifecycleEvents = new();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(unexpectedExit ? 20 : 10));
+        var logger = new ShutdownLogger();
         using var shutdownCancellation = new CancellationTokenSource();
         Process? process = null, inner = null, relay = null;
         Exception? bodyFailure = null;
@@ -70,7 +71,8 @@ public sealed class StdioShutdownTests(ITestOutputHelper output)
                 Mode = CopilotClientMode.CodingAgent,
                 Runtime = RuntimeConnection.ForSpawnedStdio(path: "node", args:
                     [forwarder, "runtime", script, marker, mode, pidPath]),
-                GitHub = new ClientGitHubOptions { UseLoggedInUser = false }
+                GitHub = new ClientGitHubOptions { UseLoggedInUser = false },
+                Observability = new ClientObservabilityOptions { Logger = logger }
             });
             using var subscription = client.OnLifecycle<SessionUpdatedEvent>(evt =>
             {
@@ -94,18 +96,19 @@ public sealed class StdioShutdownTests(ITestOutputHelper output)
             });
             try
             {
-                await client.StartAsync(timeout.Token);
+                // The runner's hang watchdog bounds the scenario, not an elapsed startup budget.
+                await client.StartAsync();
                 process = await ObserveProcessAsync(pidPath);
                 inner = await ObserveProcessAsync($"{pidPath}.inner");
                 relay = await ObserveProcessAsync($"{pidPath}.relay");
                 Assert.False(process.HasExited, "The fixture exited before the shutdown request.");
-                var exited = process.WaitForExitAsync(timeout.Token);
-                var innerExited = inner.WaitForExitAsync(timeout.Token);
+                var exited = process.WaitForExitAsync();
+                var innerExited = inner.WaitForExitAsync();
                 Task shutdown = unexpectedExit
                     ? client.PingAsync("exit-without-reply")
                     : client.Rpc.Runtime.ShutdownAsync(shutdownCancellation.Token);
 
-                await entered.Task.WaitAsync(timeout.Token);
+                await entered.Task;
                 await innerExited.WaitAsync(TimeSpan.FromSeconds(5));
                 await exited.WaitAsync(TimeSpan.FromSeconds(5));
                 Assert.True(process.HasExited);
@@ -113,14 +116,14 @@ public sealed class StdioShutdownTests(ITestOutputHelper output)
                 Assert.False(relay.HasExited, "The forwarder must hold stdout open after the runtime exits.");
                 output.WriteLine($"Observed child exit: pid={process.Id}; outcome={outcome}; callback held={!returned.Task.IsCompleted}");
                 Assert.False(returned.Task.IsCompleted, "The consumer callback returned before the child exit.");
-                var held = await File.ReadAllTextAsync($"{marker}.held", timeout.Token);
+                var held = await File.ReadAllTextAsync($"{marker}.held");
                 if (outcome == "EOF" || unexpectedExit) Assert.Empty(held);
                 else Assert.Contains("\"id\":", held);
                 Assert.False(shutdown.IsCompleted, "Shutdown settled before the final bytes or EOF were released.");
 
                 if (unexpectedExit)
                 {
-                    var error = await Assert.ThrowsAnyAsync<IOException>(() => shutdown.WaitAsync(timeout.Token));
+                    var error = await Assert.ThrowsAnyAsync<IOException>(() => shutdown);
                     Assert.Equal("Communication error with Copilot CLI: The JSON-RPC connection was lost.", error.Message);
                     Assert.Equal("ConnectionLostException", error.InnerException?.GetType().Name);
                     Assert.False(relay.HasExited, "The connection must fail before the descendant closes stdout.");
@@ -129,27 +132,29 @@ public sealed class StdioShutdownTests(ITestOutputHelper output)
                 {
                     shutdownCancellation.Cancel();
                     var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(
-                        () => shutdown.WaitAsync(timeout.Token));
+                        () => shutdown);
                     Assert.Equal(shutdownCancellation.Token, error.CancellationToken);
                 }
                 else
                 {
-                    await File.WriteAllTextAsync($"{marker}.release", "", timeout.Token);
+                    await File.WriteAllTextAsync($"{marker}.release", "");
                     switch (outcome)
                     {
                         case "response":
                         case "stop":
                         case "force-stop":
                         case "restart":
-                            await shutdown.WaitAsync(timeout.Token);
+                            await shutdown;
                             break;
                         case "RPC error":
-                            var error = await Assert.ThrowsAnyAsync<Exception>(() => shutdown.WaitAsync(timeout.Token));
+                            var error = await Assert.ThrowsAnyAsync<Exception>(() => shutdown);
                             Assert.Contains("Intentional shutdown failure", error.Message);
                             break;
                         default:
-                            var connectionError = await Assert.ThrowsAsync<IOException>(() => shutdown.WaitAsync(timeout.Token));
+                            var connectionError = await Assert.ThrowsAsync<IOException>(() => shutdown);
                             Assert.Contains("Communication error with Copilot CLI", connectionError.Message);
+                            // EOF and the drain-timeout fallback fail the RPC with the same exception.
+                            Assert.DoesNotContain("Copilot CLI stdout remained open after the shutdown timeout", logger.Messages);
                             break;
                     }
                 }
@@ -164,14 +169,14 @@ public sealed class StdioShutdownTests(ITestOutputHelper output)
                         await client.ForceStopAsync().WaitAsync(TimeSpan.FromSeconds(5));
                         break;
                     case "restart":
-                        await client.StartAsync(timeout.Token);
-                        var ping = await client.PingAsync("restarted", timeout.Token);
+                        await client.StartAsync();
+                        var ping = await client.PingAsync("restarted");
                         Assert.Equal("restarted", ping.Message);
                         Assert.Empty(lifecycleEvents);
                         break;
                     default:
                         releaseCallback.Set();
-                        await delivered.Task.WaitAsync(timeout.Token);
+                        await delivered.Task;
                         Assert.Equal(["shutdown-drain", "shutdown-drain-next"], lifecycleEvents.ToArray());
                         break;
                 }
@@ -179,10 +184,10 @@ public sealed class StdioShutdownTests(ITestOutputHelper output)
                 {
                     Assert.False(returned.Task.IsCompleted, "Connection retirement waited for the consumer callback.");
                     releaseCallback.Set();
-                    await delivered.Task.WaitAsync(timeout.Token);
+                    await delivered.Task;
                     if (outcome == "restart")
                     {
-                        await restartDelivered.Task.WaitAsync(timeout.Token);
+                        await restartDelivered.Task;
                         Assert.Equal(["shutdown-drain", "shutdown-drain-next", "restart-drain"], lifecycleEvents.ToArray());
                     }
                     else
@@ -243,6 +248,15 @@ public sealed class StdioShutdownTests(ITestOutputHelper output)
         {
             throw new AggregateException("Shutdown fixture cleanup failed.", cleanupFailures);
         }
+    }
+
+    private sealed class ShutdownLogger : ILogger
+    {
+        public ConcurrentQueue<string> Messages { get; } = new();
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter) => Messages.Enqueue(formatter(state, exception));
     }
 
     private static async Task<Process> ObserveProcessAsync(string pidPath)
