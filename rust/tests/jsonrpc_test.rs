@@ -675,10 +675,82 @@ async fn unrepairable_frame_remains_fatal() {
     server_task.await.unwrap();
 }
 
-/// The CLI answers a request it could not read, for example one its parser
-/// refused for its nesting depth, with an error whose `id` is null (#24583).
-/// That request's caller gets the CLI's rejection instead of waiting forever,
-/// and the connection keeps serving the next request.
+/// A frame nested deeper than serde_json reads fails only its own operation when
+/// its envelope names a request or response. The connection keeps serving what
+/// follows.
+#[tokio::test]
+async fn deeply_nested_messages_fail_only_their_own_operation() {
+    let (client_write, mut server_read) = duplex(4096);
+    let (mut server_write, client_read) = duplex(4096);
+    let (notification_tx, mut notification_rx) = mpsc::unbounded_channel();
+    let (request_tx, mut request_rx) = mpsc::unbounded_channel();
+    let client = JsonRpcClient::new(client_write, client_read, notification_tx, request_tx);
+    let deep = format!("{}{}", "[".repeat(200), "]".repeat(200));
+
+    let peer = async {
+        let first: JsonRpcRequest =
+            serde_json::from_slice(&read_framed(&mut server_read).await).unwrap();
+        for body in [
+            format!(r#"{{"jsonrpc":"2.0","id":5,"method":"hooks.invoke","params":{deep}}}"#),
+            format!(r#"{{"jsonrpc":"2.0","id":{},"result":{deep}}}"#, first.id),
+            r#"{"jsonrpc":"2.0","method":"session.event","params":{"after":true}}"#.to_string(),
+        ] {
+            write_framed(&mut server_write, body.as_bytes()).await;
+        }
+        // The parse error and the next request can reach the wire in either
+        // order.
+        let (mut parse_error, mut next) = (None, None);
+        for _ in 0..2 {
+            let frame: serde_json::Value =
+                serde_json::from_slice(&read_framed(&mut server_read).await).unwrap();
+            if frame.get("method").is_some() {
+                next = Some(frame);
+            } else {
+                parse_error = Some(frame);
+            }
+        }
+        let parse_error = parse_error.expect("the deep request is answered");
+        assert_eq!(parse_error["id"], 5);
+        assert_eq!(parse_error["error"]["code"], -32700);
+        let message = parse_error["error"]["message"].as_str().unwrap();
+        assert!(message.contains("recursion limit"), "{message}");
+        let next = next.expect("the next request is sent");
+        let response = format!(
+            r#"{{"jsonrpc":"2.0","id":{},"result":{{"still":"connected"}}}}"#,
+            next["id"]
+        );
+        write_framed(&mut server_write, response.as_bytes()).await;
+    };
+    let caller = async {
+        let error = client
+            .send_request("models.list", None)
+            .await
+            .expect_err("a response nested too deep fails its request");
+        assert!(matches!(error.kind(), ErrorKind::Json), "{error:?}");
+        let notification = notification_rx.recv().await.unwrap();
+        assert_eq!(
+            notification.params,
+            Some(serde_json::json!({"after": true})),
+            "a readable notification after the rejected frames still arrives"
+        );
+        let next = client.send_request("models.list", None).await.unwrap();
+        assert_eq!(next.result, Some(serde_json::json!({"still": "connected"})));
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        tokio::join!(peer, caller);
+    })
+    .await
+    .expect("the connection kept serving after the deep frames");
+    assert!(
+        request_rx.try_recv().is_err(),
+        "the deep request reaches no handler"
+    );
+}
+
+/// The CLI answers a frame it could not identify with an error whose `id` is
+/// null, as an older CLI did for a request its parser refused for its nesting
+/// depth (#24583). That request's caller gets the CLI's rejection instead of
+/// waiting forever, and the connection keeps serving the next request.
 #[tokio::test]
 async fn null_id_error_fails_the_pending_request_and_keeps_the_connection() {
     let (client_write, mut server_read) = duplex(4096);

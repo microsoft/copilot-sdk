@@ -69,6 +69,8 @@ public final class ServerRpc {
     public final ServerManagedSettingsApi managedSettings;
     /** API methods for the {@code environments} namespace. */
     public final ServerEnvironmentsApi environments;
+    /** API methods for the {@code telemetry} namespace. */
+    final ServerTelemetryApi telemetry;
     /** API methods for the {@code hooks} namespace. */
     public final ServerHooksApi hooks;
     /** API methods for the {@code models} namespace. */
@@ -167,6 +169,7 @@ public final class ServerRpc {
         this.featureFlags = new ServerFeatureFlagsApi(caller);
         this.managedSettings = new ServerManagedSettingsApi(caller);
         this.environments = new ServerEnvironmentsApi(caller);
+        this.telemetry = new ServerTelemetryApi(caller);
         this.hooks = new ServerHooksApi(caller);
         this.models = new ServerModelsApi(caller);
         this.azureMl = new ServerAzureMlApi(caller);

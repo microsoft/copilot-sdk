@@ -24,6 +24,8 @@ import javax.annotation.processing.Generated;
 record PluginSourcesResolveResult(
     /** Active records, including trusted live marketplaces and explicit directories. */
     @JsonProperty("plugins") List<Object> plugins,
+    /** Registered builtins with activation from this configuration root and managed policy. */
+    @JsonProperty("builtinPlugins") List<Object> builtinPlugins,
     /** Persisted ambient records, including disabled or shadowed installations. */
     @JsonProperty("persistedPlugins") List<Object> persistedPlugins,
     /** Live directory records, including inactive records that still own their names. */
@@ -54,6 +56,7 @@ record PluginSourcesResolveResult(
     public static final class Builder {
         private Builder() {}
         private List<Object> plugins;
+        private List<Object> builtinPlugins;
         private List<Object> persistedPlugins;
         private List<Object> livePlugins;
         private Boolean liveTierKnown;
@@ -67,6 +70,17 @@ record PluginSourcesResolveResult(
          */
         public Builder plugins(List<Object> value) {
             this.plugins = value;
+            return this;
+        }
+
+        /**
+         * Sets the {@code builtinPlugins} property.
+         * @param value the property value
+         * @return this builder
+         * @since 2.0.0
+         */
+        public Builder builtinPlugins(List<Object> value) {
+            this.builtinPlugins = value;
             return this;
         }
 
@@ -124,7 +138,7 @@ record PluginSourcesResolveResult(
             if (plugins == null) throw new IllegalStateException("Missing required property: plugins");
             if (persistedPlugins == null) throw new IllegalStateException("Missing required property: persistedPlugins");
             if (warnings == null) throw new IllegalStateException("Missing required property: warnings");
-            return new PluginSourcesResolveResult(plugins, persistedPlugins, livePlugins, liveTierKnown, warnings);
+            return new PluginSourcesResolveResult(plugins, builtinPlugins, persistedPlugins, livePlugins, liveTierKnown, warnings);
         }
     }
 }

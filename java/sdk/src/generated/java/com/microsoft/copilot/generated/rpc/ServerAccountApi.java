@@ -111,6 +111,17 @@ public final class ServerAccountApi {
     }
 
     /**
+     * Signs out the original connection's active Copilot-managed GitHub identity and clears its active authentication publication. Returns false when no identity exists. Refuses credentials owned by an environment variable, GitHub CLI, or an external host before changing authentication. Unlike account.logout, this does not immediately select a different saved account.
+     *
+     * @apiNote This method is experimental and may change in a future version.
+     * @since 1.0.0
+     */
+    @CopilotExperimental
+    public CompletableFuture<Boolean> logoutCurrent() {
+        return caller.invoke("account.logoutCurrent", java.util.Map.of(), Boolean.class);
+    }
+
+    /**
      * Resolves relay endpoints through the original account owner before any session exists. Requires a usable GitHub credential and preserves the owner's captured environment.
      *
      * @apiNote This method is experimental and may change in a future version.

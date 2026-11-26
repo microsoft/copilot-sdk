@@ -48,4 +48,15 @@ public final class ServerRuntimeApi {
         return caller.invoke("runtime.openBrowser", params, Void.class);
     }
 
+    /**
+     * Opens an authorization URL with the platform browser or COPILOT_DEBUG_BROWSER. Requires a trusted in-process CLI host.
+     *
+     * @apiNote This method is experimental and may change in a future version.
+     * @since 1.0.0
+     */
+    @CopilotExperimental
+    CompletableFuture<Void> openPlatformBrowser(RuntimeOpenPlatformBrowserParams params) {
+        return caller.invoke("runtime.openPlatformBrowser", params, Void.class);
+    }
+
 }

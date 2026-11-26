@@ -195,6 +195,8 @@ pub mod rpc_methods {
     pub const ACCOUNT_LOGIN: &str = "account.login";
     /// `account.logout`
     pub const ACCOUNT_LOGOUT: &str = "account.logout";
+    /// `account.logoutCurrent`
+    pub const ACCOUNT_LOGOUTCURRENT: &str = "account.logoutCurrent";
     /// `account.getRelayBootstrapConfig`
     pub(crate) const ACCOUNT_GETRELAYBOOTSTRAPCONFIG: &str = "account.getRelayBootstrapConfig";
     /// `account.getGitHubApiUrlIfAuthenticated`
@@ -251,6 +253,10 @@ pub mod rpc_methods {
     pub const SESSIONS_FINDBYTASKID: &str = "sessions.findByTaskId";
     /// `sessions.findByPrefix`
     pub const SESSIONS_FINDBYPREFIX: &str = "sessions.findByPrefix";
+    /// `sessions.resolvePersistedPrefix`
+    pub(crate) const SESSIONS_RESOLVEPERSISTEDPREFIX: &str = "sessions.resolvePersistedPrefix";
+    /// `sessions.prepareProcessExit`
+    pub(crate) const SESSIONS_PREPAREPROCESSEXIT: &str = "sessions.prepareProcessExit";
     /// `sessions.findByName`
     pub const SESSIONS_FINDBYNAME: &str = "sessions.findByName";
     /// `sessions.getLastForContext`
@@ -706,6 +712,9 @@ pub mod rpc_methods {
     pub const ENVIRONMENTS_DELETE: &str = "environments.delete";
     /// `ping`
     pub const PING: &str = "ping";
+    /// `telemetry.setHostEditorAttribution`
+    pub(crate) const TELEMETRY_SETHOSTEDITORATTRIBUTION: &str =
+        "telemetry.setHostEditorAttribution";
     /// `connect`
     pub(crate) const CONNECT: &str = "connect";
     /// `hooks.discover`
@@ -921,6 +930,8 @@ pub mod rpc_methods {
     pub const RUNTIME_SHUTDOWN: &str = "runtime.shutdown";
     /// `runtime.openBrowser`
     pub(crate) const RUNTIME_OPENBROWSER: &str = "runtime.openBrowser";
+    /// `runtime.openPlatformBrowser`
+    pub(crate) const RUNTIME_OPENPLATFORMBROWSER: &str = "runtime.openPlatformBrowser";
     /// `sessionFs.setProvider`
     pub const SESSIONFS_SETPROVIDER: &str = "sessionFs.setProvider";
     /// `llmInference.setProvider`
@@ -1019,6 +1030,8 @@ pub mod rpc_methods {
     pub(crate) const ACP_SERVE: &str = "acp.serve";
     /// `acp.shutdown`
     pub(crate) const ACP_SHUTDOWN: &str = "acp.shutdown";
+    /// `acp.requestShutdown`
+    pub(crate) const ACP_REQUESTSHUTDOWN: &str = "acp.requestShutdown";
     /// `mcpSource.prepareGitHubAuth`
     pub(crate) const MCPSOURCE_PREPAREGITHUBAUTH: &str = "mcpSource.prepareGitHubAuth";
     /// `session.persistence.flush`
@@ -1117,6 +1130,8 @@ pub mod rpc_methods {
     pub const SESSION_MODEL_SETALLOWEDMODELS: &str = "session.model.setAllowedModels";
     /// `session.model.setReasoningEffort`
     pub const SESSION_MODEL_SETREASONINGEFFORT: &str = "session.model.setReasoningEffort";
+    /// `session.model.getSelectionPolicy`
+    pub const SESSION_MODEL_GETSELECTIONPOLICY: &str = "session.model.getSelectionPolicy";
     /// `session.model.getReasoningSummaries`
     pub const SESSION_MODEL_GETREASONINGSUMMARIES: &str = "session.model.getReasoningSummaries";
     /// `session.model.describeClientCatalog`
@@ -1795,6 +1810,9 @@ pub mod rpc_methods {
         "session.permissions.clearResumeEscalation";
     /// `session.permissions.notifyPromptShown`
     pub const SESSION_PERMISSIONS_NOTIFYPROMPTSHOWN: &str = "session.permissions.notifyPromptShown";
+    /// `session.permissions.notifyPendingPromptShown`
+    pub const SESSION_PERMISSIONS_NOTIFYPENDINGPROMPTSHOWN: &str =
+        "session.permissions.notifyPendingPromptShown";
     /// `session.permissions.additionalDirectories.list`
     pub const SESSION_PERMISSIONS_ADDITIONALDIRECTORIES_LIST: &str =
         "session.permissions.additionalDirectories.list";
@@ -2220,7 +2238,8 @@ pub use sdk_api_session::{
     ManagedPluginRetryStatus, ManagedSessionInfo, MemoryConfiguration, MemoryMode,
     MetadataSnapshotCurrentMode, MetadataSnapshotRemoteMetadata,
     MetadataSnapshotRemoteMetadataRepository, MetadataSnapshotRemoteMetadataTaskType,
-    ModelProviderDescriptor, OptionsUpdateAdditionalContentExclusionPolicy,
+    ModelContextTierOption, ModelProviderDescriptor, ModelSelectionPolicy,
+    ModelSelectionPolicyEntry, OptionsUpdateAdditionalContentExclusionPolicy,
     OptionsUpdateAdditionalContentExclusionPolicyRule,
     OptionsUpdateAdditionalContentExclusionPolicyRuleSource,
     OptionsUpdateAdditionalContentExclusionPolicyScope, OptionsUpdateContextTier,
@@ -2294,10 +2313,10 @@ pub use sdk_api_session::{
     PermissionPathsAddParams, PermissionPathsAllowedCheckParams, PermissionPathsAllowedCheckResult,
     PermissionPathsConfig, PermissionPathsList, PermissionPathsUpdatePrimaryParams,
     PermissionPathsWorkspaceCheckParams, PermissionPathsWorkspaceCheckResult,
-    PermissionPromptShownNotification, PermissionRequestResult, PermissionRulesSet,
-    PermissionUrlsConfig, PermissionUrlsSetUnrestrictedModeParams,
-    PermissionsAdditionalDirectoriesListResult, PermissionsAllowAllBaseline,
-    PermissionsCapabilities, PermissionsClearResumeEscalationRequest,
+    PermissionPendingPromptShownNotification, PermissionPromptShownNotification,
+    PermissionRequestResult, PermissionRulesSet, PermissionUrlsConfig,
+    PermissionUrlsSetUnrestrictedModeParams, PermissionsAdditionalDirectoriesListResult,
+    PermissionsAllowAllBaseline, PermissionsCapabilities, PermissionsClearResumeEscalationRequest,
     PermissionsClearResumeEscalationResult, PermissionsConfigureAdditionalContentExclusionPolicy,
     PermissionsConfigureAdditionalContentExclusionPolicyRule,
     PermissionsConfigureAdditionalContentExclusionPolicyRuleSource,
@@ -2491,7 +2510,8 @@ pub use sdk_api_session::{
     SessionModelDescribeClientCatalogParams, SessionModelDescribeClientCatalogResult,
     SessionModelDescribeLoadErrorParams, SessionModelDescribeLoadErrorResult,
     SessionModelGetCurrentParams, SessionModelGetCurrentResult,
-    SessionModelGetReasoningSummariesResult, SessionModelList, SessionModelListResult,
+    SessionModelGetReasoningSummariesResult, SessionModelGetSelectionPolicyParams,
+    SessionModelGetSelectionPolicyResult, SessionModelList, SessionModelListResult,
     SessionModelPriceCategory, SessionModelSetAllowedModelsResult,
     SessionModelSetReasoningEffortResult, SessionModelStartupAdmissionResult,
     SessionModelSwitchAutoTierResult, SessionModelSwitchFusionTierResult,
@@ -2519,8 +2539,9 @@ pub use sdk_api_session::{
     SessionPermissionsLocationsAddToolApprovalResult, SessionPermissionsLocationsApplyResult,
     SessionPermissionsLocationsResolveResult, SessionPermissionsManagedReviewRequiredParams,
     SessionPermissionsManagedReviewRequiredResult, SessionPermissionsModifyRulesResult,
-    SessionPermissionsNotifyPromptShownResult, SessionPermissionsPathsAddResult,
-    SessionPermissionsPathsIsPathWithinAllowedDirectoriesResult,
+    SessionPermissionsNotifyPendingPromptShownParams,
+    SessionPermissionsNotifyPendingPromptShownResult, SessionPermissionsNotifyPromptShownResult,
+    SessionPermissionsPathsAddResult, SessionPermissionsPathsIsPathWithinAllowedDirectoriesResult,
     SessionPermissionsPathsIsPathWithinWorkspaceResult, SessionPermissionsPathsListResult,
     SessionPermissionsPathsUpdatePrimaryResult, SessionPermissionsPendingRequestsResult,
     SessionPermissionsRepositoryDisabledNamesResult, SessionPermissionsResetSessionApprovalsResult,
@@ -2678,18 +2699,19 @@ pub use sdk_api_session::{
     SessionsOpenStatus, SessionsPruneOldRequest, SessionsPruneOldResult,
     SessionsReadPersistedEventsRequest, SessionsReadPersistedEventsResult,
     SessionsReleaseLockRequest, SessionsReleaseLockResult, SessionsReloadPluginHooksOptions,
-    SessionsReloadPluginHooksRequest, SessionsReloadPluginHooksResult, SessionsSaveOptions,
-    SessionsSaveRequest, SessionsSaveResult, SessionsSetAdditionalPluginsRequest,
-    SessionsSetAdditionalPluginsResult, SessionsSetRemoteControlSteeringRequest,
-    SessionsSetRemoteControlSteeringResult, SessionsStartRemoteControlRequest,
-    SessionsStartRemoteControlResult, SessionsStopRemoteControlRequest,
-    SessionsStopRemoteControlResult, SessionsTransferRemoteControlRequest,
-    SessionsTransferRemoteControlResult, SessionsUpdateWorkspaceFieldsRequest,
-    SessionsUpdateWorkspaceFieldsResult, SessionsValidateNameRequest, SessionsValidateNameResult,
-    SettableAuthInfo, SettableTokenAuthInfo, SettableTokenAuthInfoType, TaskAgentInfo,
-    TaskAgentInfoType, TaskAgentProgress, TaskAgentProgressType,
-    TaskAnalyticsClassifyTrajectoryRequest, TaskAnalyticsClassifyTrajectoryResult,
-    TaskAnalyticsJudge, TaskAnalyticsTrajectoryClassification, TaskAnalyticsTrajectoryValidation,
+    SessionsReloadPluginHooksRequest, SessionsReloadPluginHooksResult,
+    SessionsResolvePersistedPrefixResult, SessionsSaveOptions, SessionsSaveRequest,
+    SessionsSaveResult, SessionsSetAdditionalPluginsRequest, SessionsSetAdditionalPluginsResult,
+    SessionsSetRemoteControlSteeringRequest, SessionsSetRemoteControlSteeringResult,
+    SessionsStartRemoteControlRequest, SessionsStartRemoteControlResult,
+    SessionsStopRemoteControlRequest, SessionsStopRemoteControlResult,
+    SessionsTransferRemoteControlRequest, SessionsTransferRemoteControlResult,
+    SessionsUpdateWorkspaceFieldsRequest, SessionsUpdateWorkspaceFieldsResult,
+    SessionsValidateNameRequest, SessionsValidateNameResult, SettableAuthInfo,
+    SettableTokenAuthInfo, SettableTokenAuthInfoType, TaskAgentInfo, TaskAgentInfoType,
+    TaskAgentProgress, TaskAgentProgressType, TaskAnalyticsClassifyTrajectoryRequest,
+    TaskAnalyticsClassifyTrajectoryResult, TaskAnalyticsJudge,
+    TaskAnalyticsTrajectoryClassification, TaskAnalyticsTrajectoryValidation,
     TaskClientActiveStatus, TaskClientExecutionMode, TaskClientInfo, TaskClientOwner,
     TaskClientOwnerKind, TaskClientOwnerPresence, TaskClientProgress, TaskClientStatus,
     TaskClientType, TaskClientUpdate, TaskClientUpdateCancelled, TaskClientUpdateCancelledKind,
@@ -3091,15 +3113,15 @@ pub use sdk_api_host::{
     AccountDeviceCodeLoginBeginResult, AccountDeviceCodeLoginRequest, AccountGetAllUsersResult,
     AccountGetCurrentAuthResult, AccountGetGitHubApiUrlIfAuthenticatedResult,
     AccountGetQuotaRequest, AccountGetQuotaResult, AccountGetRelayBootstrapConfigResult,
-    AccountLoginRequest, AccountLoginResult, AccountLogoutRequest, AccountLogoutResult,
-    AccountQuotaSnapshot, AccountRelayBootstrapConfig, AccountsGetActiveResult, AccountsList,
-    AccountsListRequest, AccountsLogoutRequest, AccountsSetCredentialsRequest,
-    AccountsSwitchActiveRequest, AuthLoginAdvanceRequest, AuthLoginBeginRequest, AuthLoginBegun,
-    AuthLoginCancelRequest, AuthLoginMethod, AuthLoginMode, AuthProvidersList,
-    AuthValidationErrors, ClientMetadata, ClientTaskCancelReason, ClientTaskCancelRequest,
-    ClientTaskCancelResult, DiagnosticEntry, DiagnosticEntrySource, DiagnosticSource,
-    DiagnosticsConfiguration, DiagnosticsConfigureRequest, DiagnosticsReadRequest,
-    DiagnosticsReadResult, DiagnosticsReadResultEntriesItem,
+    AccountLoginRequest, AccountLoginResult, AccountLogoutCurrentResult, AccountLogoutRequest,
+    AccountLogoutResult, AccountQuotaSnapshot, AccountRelayBootstrapConfig,
+    AccountsGetActiveResult, AccountsList, AccountsListRequest, AccountsLogoutRequest,
+    AccountsSetCredentialsRequest, AccountsSwitchActiveRequest, AuthLoginAdvanceRequest,
+    AuthLoginBeginRequest, AuthLoginBegun, AuthLoginCancelRequest, AuthLoginMethod, AuthLoginMode,
+    AuthProvidersList, AuthValidationErrors, ClientMetadata, ClientTaskCancelReason,
+    ClientTaskCancelRequest, ClientTaskCancelResult, DiagnosticEntry, DiagnosticEntrySource,
+    DiagnosticSource, DiagnosticsConfiguration, DiagnosticsConfigureRequest,
+    DiagnosticsReadRequest, DiagnosticsReadResult, DiagnosticsReadResultEntriesItem,
     DiagnosticsReadResultEntriesItemSource, FileLogLevel, FileLogOpenRequest, FileLogOperation,
     FileLogResource, FileLogWriteRequest, GitBooleanResult, GitBranchExistsResult,
     GitBranchNameResult, GitBranchRequest, GitChangeCountsResult, GitCommitAllRequest,
@@ -3691,13 +3713,14 @@ pub(crate) use sdk_api_services::{
     FeedbackUploadStartResult, FeedbackUploadStatus, FolderTrustIsTrustedParams,
     GlobalStateLoadForConfigDirRequest, GlobalStateLoadForConfigDirResult, GlobalStateLoadResult,
     GlobalStateWriteKeyRequest, HookInvokeRequest, HookInvokeResponse,
-    InstructionsDiscoverRepoSourcesRequest, InstructionsGetInitPromptResult,
-    InstructionsInitPromptResult, LifecycleDiagnosticsReadRequest, LifecycleDiagnosticsReadResult,
-    LocationPermissionsCleanupResult, LoggedInUser, NameGenerateRequest, PersistenceBarrierParams,
-    PersistenceBarrierResult, RepoSettingsEditRequest, RepoSettingsEditResult,
-    RepoSettingsEditScope, RepoSettingsReadRawRequest, RepoSettingsReadRawResult,
-    RepoSettingsWriteAllRequest, RepoSettingsWriteKeyRequest, RepositoryDisabledNamesRequest,
-    SettingsEditResult, SettingsRedactValueForDisplayRequest, SettingsRedactValueForDisplayResult,
+    HostEditorAttributionRequest, InstructionsDiscoverRepoSourcesRequest,
+    InstructionsGetInitPromptResult, InstructionsInitPromptResult, LifecycleDiagnosticsReadRequest,
+    LifecycleDiagnosticsReadResult, LocationPermissionsCleanupResult, LoggedInUser,
+    NameGenerateRequest, PersistenceBarrierParams, PersistenceBarrierResult,
+    RepoSettingsEditRequest, RepoSettingsEditResult, RepoSettingsEditScope,
+    RepoSettingsReadRawRequest, RepoSettingsReadRawResult, RepoSettingsWriteAllRequest,
+    RepoSettingsWriteKeyRequest, RepositoryDisabledNamesRequest, SettingsEditResult,
+    SettingsRedactValueForDisplayRequest, SettingsRedactValueForDisplayResult,
     SettingsRemoveRawKeyRequest, SettingsRemoveRawKeyResult, UsageSetCodeChangesRequest,
     UtilityPromptResult,
 };

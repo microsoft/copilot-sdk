@@ -73,6 +73,8 @@ pub mod rpc_methods {
     pub const ACP_SERVE: &str = "acp.serve";
     /// `acp.shutdown`
     pub const ACP_SHUTDOWN: &str = "acp.shutdown";
+    /// `acp.requestShutdown`
+    pub const ACP_REQUESTSHUTDOWN: &str = "acp.requestShutdown";
     /// `mcpSource.prepareGitHubAuth`
     pub const MCPSOURCE_PREPAREGITHUBAUTH: &str = "mcpSource.prepareGitHubAuth";
     /// `session.mcp.externalClient.exchange`

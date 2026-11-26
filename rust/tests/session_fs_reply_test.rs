@@ -563,7 +563,7 @@ async fn a_sqlite_reply_writes_its_row_keys_sorted() {
 /// nest deeper than the CLI reads: 127 levels of arrays and objects, counting
 /// the response object. The response, `result`, `rows` and the row take 4, so
 /// a cell of 123 levels goes out as published, and a cell of 124 is answered
-/// with an error for its request: the CLI would refuse that frame with a
+/// with an error for its request: an older CLI would refuse that frame with a
 /// null-id error, which fails every request pending on the connection.
 #[tokio::test(flavor = "multi_thread")]
 #[parallel]

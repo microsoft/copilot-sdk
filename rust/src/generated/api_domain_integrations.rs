@@ -1964,10 +1964,13 @@ pub(crate) struct McpConfigMergeSourcesRequest {
     pub installed_plugins: Option<Vec<serde_json::Value>>,
     /// Repository boundary for upward workspace discovery.
     pub repo_root: Option<String>,
+    /// Folder-trust decision already resolved by an admitted in-process CLI host.
+    /// Other clients must omit this field and use runtime folder-trust discovery.
+    pub resolved_workspace_trust: Option<bool>,
     /// Working directory for workspace discovery and relative source references.
     pub working_directory: String,
 }
-crate::record_serde::wire_record!(McpConfigMergeSourcesRequest { additional_config: "additionalConfig" if is_none, builtin_plugins: "builtinPlugins" if is_none, config_dir: "configDir", include_workspace_sources: "includeWorkspaceSources" if is_none, installed_plugins: "installedPlugins" if is_none, repo_root: "repoRoot" if is_none, working_directory: "workingDirectory" });
+crate::record_serde::wire_record!(McpConfigMergeSourcesRequest { additional_config: "additionalConfig" if is_none, builtin_plugins: "builtinPlugins" if is_none, config_dir: "configDir", include_workspace_sources: "includeWorkspaceSources" if is_none, installed_plugins: "installedPlugins" if is_none, repo_root: "repoRoot" if is_none, resolved_workspace_trust: "resolvedWorkspaceTrust" if is_none, working_directory: "workingDirectory" });
 
 /// The composed MCP configuration and all omitted-source diagnostics.
 ///
@@ -6258,6 +6261,8 @@ crate::record_serde::wire_record!(PluginSourcesResolveRequest { config_dir: "con
 /// </div>
 #[derive(Debug, Clone, Default)]
 pub(crate) struct PluginSourcesResolveResult {
+    /// Registered builtins with activation from this configuration root and managed policy.
+    pub builtin_plugins: Option<Vec<serde_json::Value>>,
     /// Live directory records, including inactive records that still own their names.
     pub live_plugins: Option<Vec<serde_json::Value>>,
     /// Whether this pass confirmed the live tier instead of using persisted fallback.
@@ -6269,7 +6274,7 @@ pub(crate) struct PluginSourcesResolveResult {
     /// Scanner and live-marketplace warnings for this exact source pass.
     pub warnings: Vec<String>,
 }
-crate::record_serde::wire_record!(PluginSourcesResolveResult { live_plugins: "livePlugins" if is_none, live_tier_known: "liveTierKnown" if is_none, persisted_plugins: "persistedPlugins", plugins: "plugins", warnings: "warnings" });
+crate::record_serde::wire_record!(PluginSourcesResolveResult { builtin_plugins: "builtinPlugins" if is_none, live_plugins: "livePlugins" if is_none, live_tier_known: "liveTierKnown" if is_none, persisted_plugins: "persistedPlugins", plugins: "plugins", warnings: "warnings" });
 
 /// Optional flags controlling which side effects the reload performs.
 ///
@@ -8283,6 +8288,8 @@ crate::record_serde::wire_record!(PluginsMarketplacesRefreshResult { results: "r
 /// </div>
 #[derive(Debug, Clone, Default)]
 pub(crate) struct PluginsSourcesResolveResult {
+    /// Registered builtins with activation from this configuration root and managed policy.
+    pub builtin_plugins: Option<Vec<serde_json::Value>>,
     /// Live directory records, including inactive records that still own their names.
     pub live_plugins: Option<Vec<serde_json::Value>>,
     /// Whether this pass confirmed the live tier instead of using persisted fallback.
@@ -8294,7 +8301,7 @@ pub(crate) struct PluginsSourcesResolveResult {
     /// Scanner and live-marketplace warnings for this exact source pass.
     pub warnings: Vec<String>,
 }
-crate::record_serde::wire_record!(PluginsSourcesResolveResult { live_plugins: "livePlugins" if is_none, live_tier_known: "liveTierKnown" if is_none, persisted_plugins: "persistedPlugins", plugins: "plugins", warnings: "warnings" });
+crate::record_serde::wire_record!(PluginsSourcesResolveResult { builtin_plugins: "builtinPlugins" if is_none, live_plugins: "livePlugins" if is_none, live_tier_known: "liveTierKnown" if is_none, persisted_plugins: "persistedPlugins", plugins: "plugins", warnings: "warnings" });
 
 /// Full local skill inventory and report-and-ignore source diagnostics.
 ///

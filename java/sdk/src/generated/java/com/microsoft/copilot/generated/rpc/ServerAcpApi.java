@@ -48,4 +48,15 @@ final class ServerAcpApi {
         return caller.invoke("acp.shutdown", java.util.Map.of(), Void.class);
     }
 
+    /**
+     * Stops the original trusted SDK host's ACP listener and sessions without waiting for its telemetry callbacks. Allows a telemetry callback to request shutdown without waiting for itself. The acp.serve request still drains all callbacks.
+     *
+     * @apiNote This method is experimental and may change in a future version.
+     * @since 1.0.0
+     */
+    @CopilotExperimental
+    CompletableFuture<Void> requestShutdown() {
+        return caller.invoke("acp.requestShutdown", java.util.Map.of(), Void.class);
+    }
+
 }

@@ -4409,6 +4409,11 @@ public sealed class PluginsMarketplacesRefreshRequest
 [Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
 internal sealed class PluginSourcesResolveResult
 {
+    /// <summary>Registered builtins with activation from this configuration root and managed policy.</summary>
+    [JsonPropertyName("builtinPlugins")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IList<JsonElement>? BuiltinPlugins { get; set; }
+
     /// <summary>Live directory records, including inactive records that still own their names.</summary>
     [JsonPropertyName("livePlugins")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -17527,6 +17532,21 @@ internal sealed class EnvironmentsDeleteRequest
     public string EnvironmentId { get; set; } = string.Empty;
 }
 
+/// <summary>Editor identity for the trusted host's process-wide usage attribution.</summary>
+[Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+internal sealed class TelemetrySetHostEditorAttributionRequest
+{
+    /// <summary>Editor name from negotiated protocol metadata. Omission clears attribution.</summary>
+    [JsonPropertyName("editorName")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? EditorName { get; set; }
+
+    /// <summary>Editor version from negotiated protocol metadata.</summary>
+    [JsonPropertyName("editorVersion")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? EditorVersion { get; set; }
+}
+
 /// <summary>One server-discovered hook action from user, repository, plugin, or managed-policy configuration.</summary>
 [Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
 public sealed class DiscoveredHook
@@ -21794,6 +21814,14 @@ internal sealed class McpConfigMergeSourcesRequest
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? RepoRoot { get; set; }
 
+    /// <summary>
+    /// Folder-trust decision already resolved by an admitted in-process CLI host.
+    /// Other clients must omit this field and use runtime folder-trust discovery.
+    /// </summary>
+    [JsonPropertyName("resolvedWorkspaceTrust")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? ResolvedWorkspaceTrust { get; set; }
+
     /// <summary>Working directory for workspace discovery and relative source references.</summary>
     [JsonPropertyName("workingDirectory")]
     public string WorkingDirectory { get; set; } = string.Empty;
@@ -25820,6 +25848,15 @@ internal sealed class GitHubOwnersCancelRequest
 /// <summary>An authorization URL for the host browser.</summary>
 [Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
 internal sealed class RuntimeOpenBrowserRequest
+{
+    /// <summary>The URL to open.</summary>
+    [JsonPropertyName("url")]
+    public string Url { get; set; } = string.Empty;
+}
+
+/// <summary>An authorization URL for the host browser.</summary>
+[Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+internal sealed class RuntimeOpenPlatformBrowserRequest
 {
     /// <summary>The URL to open.</summary>
     [JsonPropertyName("url")]
@@ -31786,6 +31823,92 @@ internal sealed class ModelSetReasoningEffortRequest
     [JsonPropertyName("reasoningEffort")]
     public string ReasoningEffort { get; set; } = string.Empty;
 
+    /// <summary>Target session identifier.</summary>
+    [JsonPropertyName("sessionId")]
+    public string SessionId { get; set; } = string.Empty;
+}
+
+/// <summary>A context-window choice with its runtime-resolved display label.</summary>
+[Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+public sealed class ModelContextTierOption
+{
+    /// <summary>Display label using only provider-published window sizes.</summary>
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>Context-tier identifier accepted by model selection.</summary>
+    [JsonPropertyName("value")]
+    public string Value { get; set; } = string.Empty;
+}
+
+/// <summary>Runtime model policy for a host's model, reasoning, and context selectors.</summary>
+[Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+public sealed class ModelSelectionPolicyEntry
+{
+    /// <summary>Selectable context tiers, omitted when the model has no tier control.</summary>
+    [JsonPropertyName("contextTiers")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IList<ModelContextTierOption>? ContextTiers { get; set; }
+
+    /// <summary>Registry-preferred context tier, or the default tier when none is preferred.</summary>
+    [JsonPropertyName("defaultContextTier")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? DefaultContextTier { get; set; }
+
+    /// <summary>Runtime default reasoning effort, when available.</summary>
+    [JsonPropertyName("defaultReasoningEffort")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? DefaultReasoningEffort { get; set; }
+
+    /// <summary>Catalog model identifier.</summary>
+    [JsonPropertyName("modelId")]
+    public string ModelId { get; set; } = string.Empty;
+
+    /// <summary>Premium-request multiplier resolved against the complete catalog.</summary>
+    [JsonPropertyName("multiplier")]
+    public double Multiplier { get; set; }
+
+    /// <summary>Whether this model requires user enablement.</summary>
+    [JsonPropertyName("needsEnablement")]
+    public bool NeedsEnablement { get; set; }
+
+    /// <summary>Runtime model category, when the catalog supplies one.</summary>
+    [JsonPropertyName("pickerCategory")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? PickerCategory { get; set; }
+
+    /// <summary>Runtime price category, when the catalog supplies one.</summary>
+    [JsonPropertyName("priceCategory")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? PriceCategory { get; set; }
+
+    /// <summary>Provider identity for provider-qualified model selections.</summary>
+    [JsonPropertyName("providerId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ProviderId { get; set; }
+
+    /// <summary>Reasoning efforts the model currently permits.</summary>
+    [JsonPropertyName("reasoningEfforts")]
+    public IList<string> ReasoningEfforts { get => field ??= []; set; }
+}
+
+/// <summary>Policy from cached and registered models without a network request.</summary>
+[Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+public sealed class SessionModelGetSelectionPolicyResult
+{
+    /// <summary>Policy entries in cached catalog order, followed by additional registered models.</summary>
+    [JsonPropertyName("models")]
+    public IList<ModelSelectionPolicyEntry> Models { get => field ??= []; set; }
+
+    /// <summary>Whether this session has a loaded cache or registered catalog models.</summary>
+    [JsonPropertyName("ready")]
+    public bool Ready { get; set; }
+}
+
+/// <summary>Identifies the target session.</summary>
+[Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+internal sealed class SessionModelGetSelectionPolicyRequest
+{
     /// <summary>Target session identifier.</summary>
     [JsonPropertyName("sessionId")]
     public string SessionId { get; set; } = string.Empty;
@@ -47879,6 +48002,19 @@ internal sealed class PermissionPromptShownNotification
     /// <summary>Human-readable description of the prompt the user is being asked to approve. Used by the runtime to fire the registered `permission_prompt` notification hook (e.g. terminal bell, desktop notification).</summary>
     [JsonPropertyName("message")]
     public string Message { get; set; } = string.Empty;
+
+    /// <summary>Target session identifier.</summary>
+    [JsonPropertyName("sessionId")]
+    public string SessionId { get; set; } = string.Empty;
+}
+
+/// <summary>A rendered prompt for one runtime-owned permission request.</summary>
+[Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+internal sealed class SessionPermissionsNotifyPendingPromptShownRequest
+{
+    /// <summary>The pending permission request. The runtime uses its captured message and original notification owner.</summary>
+    [JsonPropertyName("requestId")]
+    public string RequestId { get; set; } = string.Empty;
 
     /// <summary>Target session identifier.</summary>
     [JsonPropertyName("sessionId")]
@@ -77266,6 +77402,12 @@ public sealed class ServerRpc
         Interlocked.CompareExchange(ref field, new(_rpc), null) ??
         field;
 
+    /// <summary>Telemetry APIs.</summary>
+    public ServerTelemetryApi Telemetry =>
+        field ??
+        Interlocked.CompareExchange(ref field, new(_rpc), null) ??
+        field;
+
     /// <summary>Hooks APIs.</summary>
     public ServerHooksApi Hooks =>
         field ??
@@ -78888,6 +79030,14 @@ public sealed class ServerAccountApi
         return await CopilotClient.InvokeRpcAsync<AccountLogoutResult>(_rpc, "account.logout", [request], cancellationToken);
     }
 
+    /// <summary>Signs out the original connection's active Copilot-managed GitHub identity and clears its active authentication publication. Returns false when no identity exists. Refuses credentials owned by an environment variable, GitHub CLI, or an external host before changing authentication. Unlike account.logout, this does not immediately select a different saved account.</summary>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>Whether an active Copilot-managed identity was signed out.</returns>
+    public async Task<bool> LogoutCurrentAsync(CancellationToken cancellationToken = default)
+    {
+        return await CopilotClient.InvokeRpcAsync<bool>(_rpc, "account.logoutCurrent", [], cancellationToken);
+    }
+
     /// <summary>Resolves relay endpoints through the original account owner before any session exists. Requires a usable GitHub credential and preserves the owner's captured environment.</summary>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>Relay endpoints from the original account owner and its captured credential environment.</returns>
@@ -79278,6 +79428,26 @@ public sealed class ServerSessionsApi
 
         var request = new SessionsFindByPrefixRequest { Prefix = prefix, ConfigDir = configDir };
         return await CopilotClient.InvokeRpcAsync<SessionsFindByPrefixResult>(_rpc, "sessions.findByPrefix", [request], cancellationToken);
+    }
+
+    /// <summary>Resolves a UUID prefix across persisted sessions, including incomplete and detached sessions. Requires a trusted in-process CLI host.</summary>
+    /// <param name="prefix">UUID prefix (&gt;=7 hex chars, &lt;36 chars). Returns the unique session ID, or undefined when there is no match or the prefix matches multiple sessions.</param>
+    /// <param name="configDir">Configuration directory containing the session state. Omitted to use the server's configured home.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>Session ID matching the prefix, omitted when no unique match exists.</returns>
+    internal async Task<SessionsFindByPrefixResult> ResolvePersistedPrefixAsync(string prefix, string? configDir = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(prefix);
+
+        var request = new SessionsFindByPrefixRequest { Prefix = prefix, ConfigDir = configDir };
+        return await CopilotClient.InvokeRpcAsync<SessionsFindByPrefixResult>(_rpc, "sessions.resolvePersistedPrefix", [request], cancellationToken);
+    }
+
+    /// <summary>Applies process-exit flush limits to every current session before a trusted in-process host closes its protocol connections. This changes neither admission nor session lifetime; the host still owns its shutdown order.</summary>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    internal async Task PrepareProcessExitAsync(CancellationToken cancellationToken = default)
+    {
+        await CopilotClient.InvokeRpcAsync(_rpc, "sessions.prepareProcessExit", [], cancellationToken);
     }
 
     /// <summary>Finds all exact friendly-name candidates in the configured or explicitly selected local session profile without opening sessions or reading history. Matches persisted workspace names, not deprecated summaries. Unreadable or malformed candidate metadata is skipped. A missing store returns no matches; other store enumeration errors fail the request.</summary>
@@ -82578,6 +82748,28 @@ public sealed class ServerEnvironmentsApi
     }
 }
 
+/// <summary>Provides server-scoped Telemetry APIs.</summary>
+[Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+public sealed class ServerTelemetryApi
+{
+    private readonly JsonRpc _rpc;
+
+    internal ServerTelemetryApi(JsonRpc rpc)
+    {
+        _rpc = rpc;
+    }
+
+    /// <summary>Updates the trusted in-process CLI host's process-wide editor attribution after protocol negotiation. The runtime validates bounded editor names and versions before telemetry export. An omitted or unrecognized editor clears attribution. This method requires private CLI host admission; request metadata never establishes authority.</summary>
+    /// <param name="editorName">Editor name from negotiated protocol metadata. Omission clears attribution.</param>
+    /// <param name="editorVersion">Editor version from negotiated protocol metadata.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    internal async Task SetHostEditorAttributionAsync(string? editorName = null, string? editorVersion = null, CancellationToken cancellationToken = default)
+    {
+        var request = new TelemetrySetHostEditorAttributionRequest { EditorName = editorName, EditorVersion = editorVersion };
+        await CopilotClient.InvokeRpcAsync(_rpc, "telemetry.setHostEditorAttribution", [request], cancellationToken);
+    }
+}
+
 /// <summary>Provides server-scoped Hooks APIs.</summary>
 [Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
 public sealed class ServerHooksApi
@@ -83392,14 +83584,18 @@ public sealed class ServerMcpConfigApi
     /// <param name="builtinPlugins">Host-bundled plugin records, below user and workspace configuration.</param>
     /// <param name="additionalConfig">Additional MCP configuration, merged after the other sources.</param>
     /// <param name="includeWorkspaceSources">Include workspace files only where the runtime confirms folder trust.</param>
+    /// <param name="resolvedWorkspaceTrust">
+    /// Folder-trust decision already resolved by an admitted in-process CLI host.
+    /// Other clients must omit this field and use runtime folder-trust discovery.
+    /// </param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>The composed MCP configuration and all omitted-source diagnostics.</returns>
-    internal async Task<McpConfigMergeSourcesResult> MergeSourcesAsync(string workingDirectory, string configDir, string? repoRoot = null, IEnumerable<object?>? installedPlugins = null, IEnumerable<object?>? builtinPlugins = null, object? additionalConfig = null, bool? includeWorkspaceSources = null, CancellationToken cancellationToken = default)
+    internal async Task<McpConfigMergeSourcesResult> MergeSourcesAsync(string workingDirectory, string configDir, string? repoRoot = null, IEnumerable<object?>? installedPlugins = null, IEnumerable<object?>? builtinPlugins = null, object? additionalConfig = null, bool? includeWorkspaceSources = null, bool? resolvedWorkspaceTrust = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(workingDirectory);
         ArgumentNullException.ThrowIfNull(configDir);
 
-        var request = new McpConfigMergeSourcesRequest { WorkingDirectory = workingDirectory, ConfigDir = configDir, RepoRoot = repoRoot, InstalledPlugins = installedPlugins?.Select(static v => CopilotClient.ToJsonElementForWire(v) ?? JsonElement.Parse("null")).ToList(), BuiltinPlugins = builtinPlugins?.Select(static v => CopilotClient.ToJsonElementForWire(v) ?? JsonElement.Parse("null")).ToList(), AdditionalConfig = CopilotClient.ToJsonElementForWire(additionalConfig), IncludeWorkspaceSources = includeWorkspaceSources };
+        var request = new McpConfigMergeSourcesRequest { WorkingDirectory = workingDirectory, ConfigDir = configDir, RepoRoot = repoRoot, InstalledPlugins = installedPlugins?.Select(static v => CopilotClient.ToJsonElementForWire(v) ?? JsonElement.Parse("null")).ToList(), BuiltinPlugins = builtinPlugins?.Select(static v => CopilotClient.ToJsonElementForWire(v) ?? JsonElement.Parse("null")).ToList(), AdditionalConfig = CopilotClient.ToJsonElementForWire(additionalConfig), IncludeWorkspaceSources = includeWorkspaceSources, ResolvedWorkspaceTrust = resolvedWorkspaceTrust };
         return await CopilotClient.InvokeRpcAsync<McpConfigMergeSourcesResult>(_rpc, "mcp.config.mergeSources", [request], cancellationToken);
     }
 }
@@ -84375,6 +84571,17 @@ public sealed class ServerRuntimeApi
         var request = new RuntimeOpenBrowserRequest { Url = url };
         await CopilotClient.InvokeRpcAsync(_rpc, "runtime.openBrowser", [request], cancellationToken);
     }
+
+    /// <summary>Opens an authorization URL with the platform browser or COPILOT_DEBUG_BROWSER. Requires a trusted in-process CLI host.</summary>
+    /// <param name="url">The URL to open.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    internal async Task OpenPlatformBrowserAsync(string url, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(url);
+
+        var request = new RuntimeOpenPlatformBrowserRequest { Url = url };
+        await CopilotClient.InvokeRpcAsync(_rpc, "runtime.openPlatformBrowser", [request], cancellationToken);
+    }
 }
 
 /// <summary>Provides server-scoped SessionFs APIs.</summary>
@@ -85284,6 +85491,13 @@ public sealed class ServerAcpApi
     internal async Task ShutdownAsync(CancellationToken cancellationToken = default)
     {
         await CopilotClient.InvokeRpcAsync(_rpc, "acp.shutdown", [], cancellationToken);
+    }
+
+    /// <summary>Stops the original trusted SDK host's ACP listener and sessions without waiting for its telemetry callbacks. Allows a telemetry callback to request shutdown without waiting for itself. The acp.serve request still drains all callbacks.</summary>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    internal async Task RequestShutdownAsync(CancellationToken cancellationToken = default)
+    {
+        await CopilotClient.InvokeRpcAsync(_rpc, "acp.requestShutdown", [], cancellationToken);
     }
 }
 
@@ -86624,6 +86838,17 @@ public sealed class ModelApi
 
         var request = new ModelSetReasoningEffortRequest { SessionId = _session.SessionId, ReasoningEffort = reasoningEffort };
         return await CopilotClient.InvokeRpcAsync<ModelSetReasoningEffortResult>(_session.Rpc, "session.model.setReasoningEffort", [request], cancellationToken);
+    }
+
+    /// <summary>Reads pricing, enablement, entitled reasoning policy, and selectable context tiers from the session's cached and registered model catalog. IDE and protocol hosts use this to render model selectors without duplicating runtime policy. This read never resolves credentials or fetches a catalog. Call session.model.list first; ready remains false until a cached or registered model catalog is available.</summary>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>Policy from cached and registered models without a network request.</returns>
+    public async Task<SessionModelGetSelectionPolicyResult> GetSelectionPolicyAsync(CancellationToken cancellationToken = default)
+    {
+        _session.ThrowIfDisposed();
+
+        var request = new SessionModelGetSelectionPolicyRequest { SessionId = _session.SessionId };
+        return await CopilotClient.InvokeRpcAsync<SessionModelGetSelectionPolicyResult>(_session.Rpc, "session.model.getSelectionPolicy", [request], cancellationToken);
     }
 
     /// <summary>Computes whether the session's current model shows reasoning summaries and how a host should present them: the default Ctrl+T visibility, reasoning headers, the hidden-summaries hint, and whether a persisted `showReasoning` setting is redundant. The runtime folds in the session's model catalog, selection and reasoning-summaries experiment assignment; the host supplies only its own persisted setting and current visibility. This method reads the session's resolved model catalog rather than resolving it, so call `session.model.list` first on a session that has not listed models or run a turn; until then the result is `ready: false`. A session that resolves models without a Copilot catalog, that is a BYOK registry or an alternate provider, never caches one and stays `ready: false`.</summary>
@@ -91436,6 +91661,19 @@ public sealed class PermissionsApi
         return await CopilotClient.InvokeRpcAsync<PermissionsNotifyPromptShownResult>(_session.Rpc, "session.permissions.notifyPromptShown", [request], cancellationToken);
     }
 
+    /// <summary>Reports that a client rendered a pending permission prompt. Fires the notification hook with the runtime-captured message and original owner. Returns false if the request no longer exists.</summary>
+    /// <param name="requestId">The pending permission request. The runtime uses its captured message and original notification owner.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>Indicates whether the operation succeeded.</returns>
+    public async Task<PermissionsNotifyPromptShownResult> NotifyPendingPromptShownAsync(string requestId, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(requestId);
+        _session.ThrowIfDisposed();
+
+        var request = new SessionPermissionsNotifyPendingPromptShownRequest { SessionId = _session.SessionId, RequestId = requestId };
+        return await CopilotClient.InvokeRpcAsync<PermissionsNotifyPromptShownResult>(_session.Rpc, "session.permissions.notifyPendingPromptShown", [request], cancellationToken);
+    }
+
     /// <summary>Reads advisory repository-owned resource disables using the bound session's configuration and matching workspace trust.</summary>
     /// <param name="workingDirectory">Directory whose repository settings to inspect.</param>
     /// <param name="key">Resource disable list to inspect.</param>
@@ -94957,6 +95195,7 @@ internal static class ClientGlobalApiRegistration
 [JsonSerializable(typeof(ModelCapabilitiesOverrideLimitsVision))]
 [JsonSerializable(typeof(ModelCapabilitiesOverrideSupports))]
 [JsonSerializable(typeof(ModelCapabilitiesSupports))]
+[JsonSerializable(typeof(ModelContextTierOption))]
 [JsonSerializable(typeof(ModelGetReasoningSummariesRequest))]
 [JsonSerializable(typeof(ModelGetReasoningSummariesResult))]
 [JsonSerializable(typeof(ModelList))]
@@ -94984,6 +95223,7 @@ internal static class ClientGlobalApiRegistration
 [JsonSerializable(typeof(ModelProviderSaveConfigurationRequest))]
 [JsonSerializable(typeof(ModelProviderStatus))]
 [JsonSerializable(typeof(ModelProviderWarning))]
+[JsonSerializable(typeof(ModelSelectionPolicyEntry))]
 [JsonSerializable(typeof(ModelSetAllowedModelsRequest))]
 [JsonSerializable(typeof(ModelSetAllowedModelsResult))]
 [JsonSerializable(typeof(ModelSetReasoningEffortRequest))]
@@ -95308,6 +95548,7 @@ internal static class ClientGlobalApiRegistration
 [JsonSerializable(typeof(RuntimeHostForegroundSessionChangeRequest))]
 [JsonSerializable(typeof(RuntimeHostForegroundSessionChangeResult))]
 [JsonSerializable(typeof(RuntimeOpenBrowserRequest))]
+[JsonSerializable(typeof(RuntimeOpenPlatformBrowserRequest))]
 [JsonSerializable(typeof(SandboxApplyDefaultsRequest))]
 [JsonSerializable(typeof(SandboxConfig))]
 [JsonSerializable(typeof(SandboxConfigAuth))]
@@ -95604,6 +95845,8 @@ internal static class ClientGlobalApiRegistration
 [JsonSerializable(typeof(SessionModelGenerateBranchSlugRequest))]
 [JsonSerializable(typeof(SessionModelGenerateBranchSlugResult))]
 [JsonSerializable(typeof(SessionModelGetCurrentRequest))]
+[JsonSerializable(typeof(SessionModelGetSelectionPolicyRequest))]
+[JsonSerializable(typeof(SessionModelGetSelectionPolicyResult))]
 [JsonSerializable(typeof(SessionModelList))]
 [JsonSerializable(typeof(SessionModelListRequest))]
 [JsonSerializable(typeof(SessionModelListRequestWithSession))]
@@ -95642,6 +95885,7 @@ internal static class ClientGlobalApiRegistration
 [JsonSerializable(typeof(SessionPermissionsGetCapabilitiesRequest))]
 [JsonSerializable(typeof(SessionPermissionsGetRequiredRequest))]
 [JsonSerializable(typeof(SessionPermissionsManagedReviewRequiredRequest))]
+[JsonSerializable(typeof(SessionPermissionsNotifyPendingPromptShownRequest))]
 [JsonSerializable(typeof(SessionPersistenceFlushRequest))]
 [JsonSerializable(typeof(SessionPlanDeleteRequest))]
 [JsonSerializable(typeof(SessionPlanReadRequest))]
@@ -95985,6 +96229,7 @@ internal static class ClientGlobalApiRegistration
 [JsonSerializable(typeof(TeamPluginMarketplace))]
 [JsonSerializable(typeof(TeamPluginMarketplaceSource))]
 [JsonSerializable(typeof(TelemetrySetFeatureOverridesRequest))]
+[JsonSerializable(typeof(TelemetrySetHostEditorAttributionRequest))]
 [JsonSerializable(typeof(Tool))]
 [JsonSerializable(typeof(ToolList))]
 [JsonSerializable(typeof(ToolResultExpanded))]

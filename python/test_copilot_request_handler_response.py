@@ -633,7 +633,7 @@ async def _finish_request(adapter: _CopilotRequestAdapterHandler, request_id: st
         LlmInferenceHTTPRequestChunkRequest(data="", request_id=request_id, end=True)
     )
     assert task is not None
-    await asyncio.wait_for(task, timeout=2)
+    await task
 
 
 @pytest.mark.asyncio

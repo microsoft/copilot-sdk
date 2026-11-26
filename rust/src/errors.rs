@@ -95,10 +95,10 @@ pub enum ProtocolErrorKind {
     },
 
     /// The request's parameters nest arrays and objects deeper than the CLI
-    /// reads, so the SDK did not send it. The CLI could not have identified
-    /// such a frame, and its rejection would fail every request pending on the
-    /// connection. Nothing was written: the connection and its other requests
-    /// are unaffected.
+    /// reads, so the SDK did not send it. The CLI would answer it with a parse
+    /// error, but an older CLI could not have identified such a frame, and its
+    /// rejection would fail every request pending on the connection. Nothing
+    /// was written: the connection and its other requests are unaffected.
     RequestTooDeep {
         /// The request's JSON-RPC method.
         method: String,

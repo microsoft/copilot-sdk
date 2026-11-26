@@ -20,7 +20,7 @@ use crate::types::{SessionEventNotification, SessionId};
 /// token, so a stale owner (an aborted startup future or a superseded
 /// [`Session`](crate::session::Session)) can never unregister the live
 /// registration that replaced it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct RegistrationToken(u64);
 
 /// Per-session channels plus the identity of the registration that owns
@@ -147,6 +147,11 @@ struct SessionSenders {
     state: Arc<RegistrationState>,
 }
 
+struct RawObserver {
+    sender: mpsc::Sender<Value>,
+    ready: bool,
+}
+
 /// A registration displaced by [`SessionRouter::replace`].
 ///
 /// Holding it keeps the displaced session's channels open, so a failed
@@ -247,6 +252,7 @@ const MAX_RETIRED_SESSIONS: usize = 4096;
 struct RouterState {
     closed: bool,
     sessions: HashMap<SessionId, SessionSenders>,
+    observers: HashMap<SessionId, HashMap<RegistrationToken, RawObserver>>,
     /// Events for IDs not registered yet, in arrival order, keyed in the
     /// order the IDs were first seen. Registering the ID delivers them ahead
     /// of any later event.
@@ -330,6 +336,14 @@ impl RouterState {
     /// Deliver the events held for `session_id` to its registration, if
     /// `token` still identifies it. A later registration's own claim follows.
     fn claim(&mut self, session_id: &SessionId, token: RegistrationToken) {
+        if let Some(observer) = self
+            .observers
+            .get_mut(session_id.as_str())
+            .and_then(|observers| observers.get_mut(&token))
+        {
+            observer.ready = true;
+            return;
+        }
         let Some(senders) = self
             .sessions
             .get(session_id.as_str())
@@ -361,6 +375,16 @@ impl RouterState {
                 settled,
             }) {
                 log_dropped(&error.0.notification, "session event loop has stopped");
+            }
+        }
+    }
+
+    fn retire_observers(&mut self, session_id: &str) {
+        if let Some(observers) = self.observers.get_mut(session_id) {
+            // Claims queued after this terminal event belong to a successor.
+            observers.retain(|_, observer| !observer.ready);
+            if observers.is_empty() {
+                self.observers.remove(session_id);
             }
         }
     }
@@ -414,6 +438,14 @@ impl RouterState {
     ) {
         if mark.deletion_observed() {
             return;
+        }
+        if mark.lifecycle_seen.is_some()
+            && let Some(observers) = self.observers.get_mut(session_id.as_str())
+        {
+            observers.retain(|token, _| token.0 >= mark.boundary);
+            if observers.is_empty() {
+                self.observers.remove(session_id.as_str());
+            }
         }
         if let Some(events) = self.unclaimed.shift_remove(session_id.as_str()) {
             self.unclaimed_events -= events.events.len();
@@ -582,6 +614,7 @@ impl SessionEventSink {
         if state.closed {
             return;
         }
+        state.retire_observers(session_id.as_str());
         if let Some(pending) = state.pending_deletions.get(session_id.as_str()) {
             for seen in pending {
                 seen.store(true, Ordering::Relaxed);
@@ -614,6 +647,40 @@ impl SessionEventSink {
     /// Never waits: per-session channels are unbounded, so one slow session
     /// cannot hold up the others or the dispatcher.
     pub(crate) fn route(&self, mut params: Value) {
+        {
+            let mut state = self.0.lock();
+            if state.closed {
+                return;
+            }
+            if let Some(session_id) = params.get("sessionId").and_then(Value::as_str)
+                && let Some(event) = params.get("event")
+            {
+                let observed = state.observers.contains_key(session_id);
+                if let Some(observers) = state.observers.get_mut(session_id) {
+                    observers.retain(|_, observer| {
+                        if !observer.ready {
+                            return true;
+                        }
+                        match observer.sender.try_send(event.clone()) {
+                            Ok(()) => true,
+                            Err(mpsc::error::TrySendError::Full(_)) => {
+                                warn!("session observer overflowed; ending its stream");
+                                false
+                            }
+                            Err(mpsc::error::TrySendError::Closed(_)) => false,
+                        }
+                    });
+                }
+                if event.get("type").and_then(Value::as_str) == Some("session.shutdown")
+                    && event.get("agentId").is_none_or(Value::is_null)
+                {
+                    state.retire_observers(session_id);
+                }
+                if observed && !state.sessions.contains_key(session_id) {
+                    return;
+                }
+            }
+        }
         // Leave null in the existing slot so serde still rejects missing
         // data, without rebuilding the owned payload.
         let data = params
@@ -718,6 +785,50 @@ impl SessionRouter {
     /// fresh [`RegistrationToken`] identifying this registration.
     pub(crate) fn register(&self, session_id: &SessionId) -> SessionRegistration {
         self.replace(session_id).0
+    }
+
+    #[cfg(any(copilot_cli_host, test))]
+    pub(crate) fn observe(
+        &self,
+        session_id: &SessionId,
+        capacity: usize,
+    ) -> (RegistrationToken, mpsc::Receiver<Value>) {
+        let (sender, receiver) = mpsc::channel(capacity);
+        let dispatcher = self.dispatcher();
+        let mut state = self.state.lock();
+        let token = RegistrationToken(self.next_token.fetch_add(1, Ordering::Relaxed));
+        if !state.closed {
+            state
+                .observers
+                .entry(session_id.clone())
+                .or_default()
+                .insert(
+                    token,
+                    RawObserver {
+                        sender,
+                        ready: false,
+                    },
+                );
+            let claimed = dispatcher.is_some_and(|tx| {
+                tx.send(DispatcherInput::Claim(session_id.clone(), token))
+                    .is_ok()
+            });
+            if !claimed {
+                state.claim(session_id, token);
+            }
+        }
+        (token, receiver)
+    }
+
+    #[cfg(copilot_cli_host)]
+    pub(crate) fn unobserve(&self, session_id: &SessionId, token: RegistrationToken) {
+        let mut state = self.state.lock();
+        if let Some(observers) = state.observers.get_mut(session_id) {
+            observers.remove(&token);
+            if observers.is_empty() {
+                state.observers.remove(session_id);
+            }
+        }
     }
 
     /// Like [`register`](Self::register), but also returns the registration

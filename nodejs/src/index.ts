@@ -24,6 +24,13 @@ export type {
     SettingsResponse,
     SettingsResponseOptions,
 } from "./settingsJson.js";
+export type {
+    ModelContextTierOption,
+    ModelSelectionPolicyEntry,
+    PermissionsNotifyPromptShownResult,
+    SessionModelGetSelectionPolicyResult,
+    SessionPermissionsNotifyPendingPromptShownRequest,
+} from "./generated/rpc.js";
 export { toSavedProviderConfiguration } from "./providerConfiguration.js";
 export {
     CopilotDecisions,

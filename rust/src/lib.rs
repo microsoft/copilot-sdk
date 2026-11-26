@@ -540,7 +540,7 @@ pub struct InternalTestOptions {
     pub ca_certificate_path: Option<String>,
 }
 
-#[cfg(feature = "runtime")]
+#[cfg(any(feature = "runtime", test))]
 impl InternalTestOptions {
     fn environment(&self) -> impl Iterator<Item = (&'static str, &str)> {
         [
@@ -1440,6 +1440,11 @@ pub struct Client {
     // Unrelated handles on the same connection must not inherit callback causality.
     foreground_callback: Option<std::sync::Weak<()>>,
     inner: Arc<ClientInner>,
+    request_handler: Option<std::sync::Weak<RequestHandlerScope>>,
+}
+
+struct RequestHandlerScope {
+    method: Arc<str>,
 }
 
 impl std::fmt::Debug for Client {
@@ -1933,8 +1938,17 @@ impl Client {
     /// backend.
     #[cfg(feature = "runtime")]
     pub async fn start(options: ClientOptions) -> Result<Self> {
+        Self::start_internal(options, None, None).await
+    }
+
+    #[cfg(feature = "runtime")]
+    async fn start_internal(
+        options: ClientOptions,
+        host_integration_id: Option<String>,
+        host_client_type: Option<&str>,
+    ) -> Result<Self> {
         let options = options.into_startup()?;
-        Self::start_with_options(options).await
+        Self::start_with_options(options, host_integration_id, host_client_type).await
     }
 
     /// Start an SDK-owned in-process host with session defaults applied before admission.
@@ -1950,11 +1964,17 @@ impl Client {
     ) -> Result<Self> {
         let mut options = options.into_startup()?;
         options.in_process_host_configuration = Some(configuration);
-        Self::start_with_options(options).await
+        Self::start_with_options(options, None, None).await
     }
 
     #[cfg(feature = "runtime")]
-    async fn start_with_options(options: StartupOptions) -> Result<Self> {
+    async fn start_with_options(
+        options: StartupOptions,
+        host_integration_id: Option<String>,
+        host_client_type: Option<&str>,
+    ) -> Result<Self> {
+        #[cfg(not(feature = "in-process"))]
+        let _ = (host_integration_id, host_client_type);
         let start_time = Instant::now();
         let mut timings = StartupTimings::default();
         let mut options = options;
@@ -2325,6 +2345,9 @@ impl Client {
                     }
                     let environment = inprocess_environment(&options)?;
                     let mut args = Vec::new();
+                    if let Some(client_type) = host_client_type {
+                        args.extend(["--telemetry-client-type".to_owned(), client_type.to_owned()]);
+                    }
                     args.extend(
                         Self::log_level_args(&options)
                             .into_iter()
@@ -2346,10 +2369,12 @@ impl Client {
                     if !use_logged_in_user {
                         args.push("--no-auto-login".to_string());
                     }
-                    let integration_id = std::env::var("GITHUB_COPILOT_INTEGRATION_ID")
-                        .ok()
-                        .map(|value| value.trim().to_owned())
-                        .filter(|value| !value.is_empty());
+                    let integration_id = host_integration_id.or_else(|| {
+                        std::env::var("GITHUB_COPILOT_INTEGRATION_ID")
+                            .ok()
+                            .map(|value| value.trim().to_owned())
+                            .filter(|value| !value.is_empty())
+                    });
                     let explicit_cli = std::env::var_os("COPILOT_CLI_PATH")
                         .map(PathBuf::from)
                         .filter(|path| path.is_file());
@@ -2592,6 +2617,10 @@ impl Client {
     /// Notifications use the same handler without writing a response.
     /// Use the supplied request-scoped client for SDK calls instead of capturing
     /// a client clone, which would create an ownership cycle in the registry.
+    /// Inside `acp.telemetry`, this client waits for ACP listener and session
+    /// retirement on `acp.shutdown`, but not for its own callback completion.
+    /// It rejects `runtime.shutdown`; return from the callback before runtime shutdown.
+    /// The original `acp.serve` call still waits for every callback.
     /// A foreground callback cannot select another foreground session through
     /// its scoped client until the callback returns. Independent clients still
     /// submit selections normally.
@@ -2605,12 +2634,14 @@ impl Client {
     {
         let client = WeakClientInner::downgrade(&self.inner);
         let handler = Arc::new(handler);
+        let method_name: Arc<str> = Arc::from(method);
         let foreground = method == "runtimeHost.foregroundSessionChange";
         self.inner.rpc.register_request_handler(
             method,
             Arc::new(move |params| {
                 let client = client.clone();
                 let handler = handler.clone();
+                let method = Arc::clone(&method_name);
                 Box::pin(async move {
                     let inner = client.upgrade().ok_or_else(|| {
                         Error::with_message(
@@ -2618,10 +2649,13 @@ impl Client {
                             "Request handler connection is closed",
                         )
                     })?;
+                    let scope = Arc::new(RequestHandlerScope { method });
                     let callback = foreground.then(|| Arc::new(()));
                     let mut client = Client::from_inner(inner);
+                    client.request_handler = Some(Arc::downgrade(&scope));
                     client.foreground_callback = callback.as_ref().map(Arc::downgrade);
                     let result = handler(params, client).await;
+                    drop(scope);
                     drop(callback);
                     result
                 })
@@ -2793,6 +2827,7 @@ impl Client {
         let weak_host_sessions = Arc::downgrade(&ahp_host_sessions);
         let client = Self {
             ahp_host_sessions: Some(ahp_host_sessions.clone()),
+            request_handler: None,
             foreground_callback: None,
             inner: Arc::new(ClientInner {
                 ahp_host_callbacks: Arc::new(ahp_host::ExitCallbacks::default()),
@@ -3367,7 +3402,7 @@ impl Client {
         method: &str,
         params: Option<serde_json::Value>,
     ) -> Result<T> {
-        self.check_foreground_callback(method)?;
+        let method = self.request_method(method)?;
         let is_repo_settings_write =
             matches!(method, "repo.settings.writeKey" | "repo.settings.writeAll");
         let session_id = params
@@ -3402,7 +3437,7 @@ impl Client {
         params: Option<serde_json::Value>,
     ) -> Result<impl std::future::Future<Output = Result<serde_json::Value>> + Send + 'static + use<>>
     {
-        self.check_foreground_callback(method)?;
+        let method = self.request_method(method)?;
         let is_repo_settings_write =
             matches!(method, "repo.settings.writeKey" | "repo.settings.writeAll");
         let session_id = params
@@ -3482,23 +3517,47 @@ impl Client {
         params: Option<serde_json::Value>,
         inline_callback: Option<crate::jsonrpc::InlineResponseCallback>,
     ) -> impl std::future::Future<Output = Result<serde_json::Value>> + Send + 'static + use<> {
-        let admission = self.check_foreground_callback(method);
-        let is_repo_settings_write =
-            matches!(method, "repo.settings.writeKey" | "repo.settings.writeAll");
         let session_id: Option<SessionId> = params
             .as_ref()
             .and_then(|p| p.get("sessionId"))
             .and_then(|v| v.as_str())
             .map(SessionId::from);
-        let request =
-            self.inner
-                .rpc
-                .send_request_with_inline_callback(method, params, inline_callback);
+        let request = self.request_method(method).map(|method| {
+            let is_repo_settings_write =
+                matches!(method, "repo.settings.writeKey" | "repo.settings.writeAll");
+            let request =
+                self.inner
+                    .rpc
+                    .send_request_with_inline_callback(method, params, inline_callback);
+            (request, is_repo_settings_write)
+        });
         async move {
-            admission?;
+            let (request, is_repo_settings_write) = request?;
             let response = request.await?;
             Self::call_result(response, session_id, is_repo_settings_write)
         }
+    }
+
+    fn request_method<'a>(&self, method: &'a str) -> Result<&'a str> {
+        self.check_foreground_callback(method)?;
+        if self
+            .request_handler
+            .as_ref()
+            .and_then(std::sync::Weak::upgrade)
+            .is_some_and(|scope| scope.method.as_ref() == "acp.telemetry")
+        {
+            match method {
+                "runtime.shutdown" => {
+                    return Err(Error::with_message(
+                        ErrorKind::InvalidConfig,
+                        "Return from the ACP telemetry callback before shutting down the runtime",
+                    ));
+                }
+                "acp.shutdown" => return Ok("acp.requestShutdown"),
+                _ => {}
+            }
+        }
+        Ok(method)
     }
 
     fn check_foreground_callback(&self, method: &str) -> Result<()> {
@@ -3554,8 +3613,9 @@ impl Client {
     /// Send a JSON-RPC response back to the CLI (e.g. for permission or tool call requests).
     ///
     /// A response that nests deeper than the CLI reads goes out as an error
-    /// response for the same request instead: the CLI could not tell which of
-    /// its requests the refused frame answered.
+    /// response for the same request instead, which says why: the CLI would
+    /// fail its request with a bare parse error, and an older CLI could not
+    /// tell which of its requests the refused frame answered.
     pub(crate) async fn send_response(&self, response: &JsonRpcResponse) -> Result<()> {
         if response.nests_too_deep_for_peer() {
             return self.inner.rpc.write(&response.nesting_error()).await;
@@ -3568,6 +3628,7 @@ impl Client {
         Self {
             inner,
             ahp_host_sessions: None,
+            request_handler: None,
             foreground_callback: None,
         }
     }
@@ -3577,6 +3638,7 @@ impl Client {
         Self {
             inner: Arc::clone(&self.inner),
             ahp_host_sessions: None,
+            request_handler: self.request_handler.clone(),
             foreground_callback: self.foreground_callback.clone(),
         }
     }
@@ -4503,6 +4565,9 @@ impl Drop for ClientInner {
         }
     }
 }
+
+#[cfg(test)]
+mod request_handler_tests;
 
 #[cfg(all(test, feature = "runtime"))]
 mod tests;

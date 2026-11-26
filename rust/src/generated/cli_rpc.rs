@@ -125,6 +125,26 @@ impl<'a> ClientRpcAcp<'a> {
             .await?;
         Ok(())
     }
+
+    /// Stops the original trusted SDK host's ACP listener and sessions without waiting for its telemetry callbacks. Allows a telemetry callback to request shutdown without waiting for itself. The acp.serve request still drains all callbacks.
+    ///
+    /// Wire method: `acp.requestShutdown`.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub async fn request_shutdown(&self) -> Result<(), Error> {
+        let wire_params = serde_json::json!({});
+        let _: serde::de::IgnoredAny = self
+            .client
+            .call_typed(rpc_methods::ACP_REQUESTSHUTDOWN, Some(wire_params))
+            .await?;
+        Ok(())
+    }
 }
 
 /// `agents.*` RPCs.

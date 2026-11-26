@@ -6,7 +6,11 @@ use copilot_sdk::rpc::{
     CatalogClientContract, CatalogSearchRequest, ClientRpcCatalog, ClientRpcMcp, ClientRpcSessions,
     McpPlanInstallRequest, McpPlanInstallSource, McpPlanInstallSourceCandidate,
     McpPlanInstallSourceCandidateKind, McpSecretSaveRequest, McpSecretSaveResult,
-    McpSecretsSaveResult, PermissionsSetRequiredRequest, SessionRpcPermissions,
+    McpSecretsSaveResult, ModelSelectionPolicy, PermissionPendingPromptShownNotification,
+    PermissionPromptShownNotification, PermissionsNotifyPromptShownResult,
+    PermissionsSetRequiredRequest, RuntimeOpenBrowserRequest, SessionModelGetSelectionPolicyResult,
+    SessionPermissionsNotifyPendingPromptShownParams,
+    SessionPermissionsNotifyPendingPromptShownResult, SessionRpcModel, SessionRpcPermissions,
     SessionUpdateInferenceOptions, SessionUpdateOptionsParams, SessionsCloseRequest,
 };
 use serde_json::json;
@@ -137,6 +141,17 @@ fn session_close_preserves_absent_and_explicit_detach_values() {
     }
 }
 
+#[test]
+fn runtime_browser_retains_the_url_only_source_and_wire_contract() {
+    let request = RuntimeOpenBrowserRequest {
+        url: "https://github.com/login/device".into(),
+    };
+    assert_eq!(
+        serde_json::to_value(request).unwrap(),
+        json!({"url": "https://github.com/login/device"})
+    );
+}
+
 fn contract() -> CatalogClientContract {
     CatalogClientContract {
         protocol_version: 3,
@@ -183,7 +198,31 @@ async fn request_entry_points_compile(
     sessions: ClientRpcSessions<'_>,
     mcp: ClientRpcMcp<'_>,
     catalog: ClientRpcCatalog<'_>,
+    model: SessionRpcModel<'_>,
 ) -> Result<(), Error> {
+    let policy: SessionModelGetSelectionPolicyResult = model.get_selection_policy().await?;
+    let policy: ModelSelectionPolicy = policy;
+    let _: SessionModelGetSelectionPolicyResult = ModelSelectionPolicy {
+        ready: policy.ready,
+        models: policy.models,
+    };
+    let shown: SessionPermissionsNotifyPendingPromptShownResult = permissions
+        .notify_pending_prompt_shown(PermissionPendingPromptShownNotification {
+            request_id: "request".into(),
+        })
+        .await?;
+    let _: SessionPermissionsNotifyPendingPromptShownParams =
+        PermissionPendingPromptShownNotification {
+            request_id: "request".into(),
+        };
+    let _: PermissionsNotifyPromptShownResult = shown;
+    let _: SessionPermissionsNotifyPendingPromptShownResult = permissions
+        .notify_prompt_shown(PermissionPromptShownNotification {
+            message: "Approve this request".into(),
+        })
+        .await?;
+    let _: SessionPermissionsNotifyPendingPromptShownResult =
+        PermissionsNotifyPromptShownResult { success: true };
     permissions
         .set_required(PermissionsSetRequiredRequest {
             required: false,

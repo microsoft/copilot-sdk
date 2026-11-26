@@ -151,7 +151,7 @@ async fn cli_selection_respects_transport_and_environment() {
             };
             let (client, _server) =
                 tokio::time::timeout(std::time::Duration::from_secs(10), async {
-                    tokio::join!(start, server)
+                    tokio::join!(Box::pin(start), server)
                 })
                 .await
                 .expect("external handshake must complete");

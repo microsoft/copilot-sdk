@@ -469,6 +469,26 @@ pub struct MetadataSnapshotRemoteMetadata {
 }
 crate::record_serde::wire_record!(MetadataSnapshotRemoteMetadata { pull_request_number: "pullRequestNumber" if is_none, repository: "repository", resource_id: "resourceId" if is_none, task_type: "taskType" if is_none });
 
+/// A context-window choice with its runtime-resolved display label.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct ModelContextTierOption {
+    /// Display label using only provider-published window sizes.
+    pub name: String,
+    /// Context-tier identifier accepted by model selection.
+    pub value: String,
+}
+crate::record_serde::wire_record!(ModelContextTierOption {
+    name: "name",
+    value: "value"
+});
+
 /// One model provider available to the session. Opaque id/label/kind plus a stable ordering; central code never branches on kind.
 ///
 /// <div class="warning">
@@ -493,6 +513,59 @@ crate::record_serde::wire_record!(ModelProviderDescriptor {
     kind: "kind",
     label: "label",
     ordering: "ordering"
+});
+
+/// Runtime model policy for a host's model, reasoning, and context selectors.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct ModelSelectionPolicyEntry {
+    /// Selectable context tiers, omitted when the model has no tier control.
+    pub context_tiers: Option<Vec<ModelContextTierOption>>,
+    /// Registry-preferred context tier, or the default tier when none is preferred.
+    pub default_context_tier: Option<String>,
+    /// Runtime default reasoning effort, when available.
+    pub default_reasoning_effort: Option<String>,
+    /// Catalog model identifier.
+    pub model_id: String,
+    /// Premium-request multiplier resolved against the complete catalog.
+    pub multiplier: f64,
+    /// Whether this model requires user enablement.
+    pub needs_enablement: bool,
+    /// Runtime model category, when the catalog supplies one.
+    pub picker_category: Option<String>,
+    /// Runtime price category, when the catalog supplies one.
+    pub price_category: Option<String>,
+    /// Provider identity for provider-qualified model selections.
+    pub provider_id: Option<String>,
+    /// Reasoning efforts the model currently permits.
+    pub reasoning_efforts: Vec<String>,
+}
+crate::record_serde::wire_record!(ModelSelectionPolicyEntry { context_tiers: "contextTiers" if is_none, default_context_tier: "defaultContextTier" if is_none, default_reasoning_effort: "defaultReasoningEffort" if is_none, model_id: "modelId", multiplier: "multiplier", needs_enablement: "needsEnablement", picker_category: "pickerCategory" if is_none, price_category: "priceCategory" if is_none, provider_id: "providerId" if is_none, reasoning_efforts: "reasoningEfforts" });
+
+/// Policy from cached and registered models without a network request.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct ModelSelectionPolicy {
+    /// Policy entries in cached catalog order, followed by additional registered models.
+    pub models: Vec<ModelSelectionPolicyEntry>,
+    /// Whether this session has a loaded cache or registered catalog models.
+    pub ready: bool,
+}
+crate::record_serde::wire_record!(ModelSelectionPolicy {
+    models: "models",
+    ready: "ready"
 });
 
 /// Source descriptor for a `session.options.update` content-exclusion rule, with source name and type.
@@ -1779,6 +1852,23 @@ pub struct PermissionPathsWorkspaceCheckResult {
     pub allowed: bool,
 }
 crate::record_serde::wire_record!(PermissionPathsWorkspaceCheckResult { allowed: "allowed" });
+
+/// A rendered prompt for one runtime-owned permission request.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct PermissionPendingPromptShownNotification {
+    /// The pending permission request. The runtime uses its captured message and original notification owner.
+    pub request_id: RequestId,
+}
+crate::record_serde::wire_record!(PermissionPendingPromptShownNotification {
+    request_id: "requestId"
+});
 
 /// Notification payload describing the permission prompt that the client just rendered.
 ///
@@ -9994,6 +10084,21 @@ pub struct SessionsFindByTaskIdResult {
 }
 crate::record_serde::wire_record!(SessionsFindByTaskIdResult { session_id: "sessionId" if is_none });
 
+/// Session ID matching the prefix, omitted when no unique match exists.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct SessionsResolvePersistedPrefixResult {
+    /// Omitted when no unique session matches the prefix (no match or ambiguous)
+    pub session_id: Option<SessionId>,
+}
+crate::record_serde::wire_record!(SessionsResolvePersistedPrefixResult { session_id: "sessionId" if is_none });
+
 /// Map of sessionId -> on-disk size in bytes for each session's workspace directory.
 ///
 /// <div class="warning">
@@ -11260,6 +11365,23 @@ pub struct SessionModelSetReasoningEffortResult {
 }
 crate::record_serde::wire_record!(SessionModelSetReasoningEffortResult {
     reasoning_effort: "reasoningEffort"
+});
+
+/// Identifies the target session.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct SessionModelGetSelectionPolicyParams {
+    /// Target session identifier
+    pub session_id: SessionId,
+}
+crate::record_serde::wire_record!(SessionModelGetSelectionPolicyParams {
+    session_id: "sessionId"
 });
 
 /// Reasoning-summaries presentation policy for the session's current model.
@@ -20141,6 +20263,16 @@ pub type SessionsGetClientMetadataResult = Vec<serde_json::Value>;
 /// </div>
 pub type SessionExtensionsSetManagementToolsEnabledResult = bool;
 
+/// Policy from cached and registered models without a network request.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+pub type SessionModelGetSelectionPolicyResult = ModelSelectionPolicy;
+
 /// A standard MCP tool result, or null when the IDE is disconnected.
 ///
 /// <div class="warning">
@@ -20350,6 +20482,27 @@ pub type SessionPermissionsManagedReviewRequiredResult = bool;
 ///
 /// </div>
 pub type SessionPermissionsGetRequiredResult = bool;
+
+/// A rendered prompt for one runtime-owned permission request.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+pub type SessionPermissionsNotifyPendingPromptShownParams =
+    PermissionPendingPromptShownNotification;
+
+/// Indicates whether the operation succeeded.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+pub type SessionPermissionsNotifyPendingPromptShownResult = PermissionsNotifyPromptShownResult;
 
 /// Client-owned, case-sensitive string metadata persisted with a local session. Clients should namespace keys by owner. Keys must be non-empty and at most 256 UTF-8 bytes; keys under `copilot/` and `github/` are reserved. Values may contain at most 16 KiB of UTF-8 data. A bag may contain at most 128 entries and its serialized sidecar may contain at most 64 KiB. The runtime stores but never interprets these values.
 ///

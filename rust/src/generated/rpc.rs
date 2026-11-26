@@ -131,6 +131,10 @@ pub const SESSION_METHOD_PATHS: &[(&str, &[&str])] = &[
         &["model", "setReasoningEffort"],
     ),
     (
+        "session.model.getSelectionPolicy",
+        &["model", "getSelectionPolicy"],
+    ),
+    (
         "session.model.getReasoningSummaries",
         &["model", "getReasoningSummaries"],
     ),
@@ -919,6 +923,10 @@ pub const SESSION_METHOD_PATHS: &[(&str, &[&str])] = &[
         &["permissions", "notifyPromptShown"],
     ),
     (
+        "session.permissions.notifyPendingPromptShown",
+        &["permissions", "notifyPendingPromptShown"],
+    ),
+    (
         "session.permissions.additionalDirectories.list",
         &["permissions", "additionalDirectories", "list"],
     ),
@@ -1530,6 +1538,13 @@ impl<'a> ClientRpc<'a> {
         }
     }
 
+    /// `telemetry.*` sub-namespace.
+    pub(crate) fn telemetry(&self) -> ClientRpcTelemetry<'a> {
+        ClientRpcTelemetry {
+            client: self.client,
+        }
+    }
+
     /// `tools.*` sub-namespace.
     pub fn tools(&self) -> ClientRpcTools<'a> {
         ClientRpcTools {
@@ -1807,6 +1822,28 @@ impl<'a> ClientRpcAccount<'a> {
         let wire_params = serde_json::to_value(params)?;
         self.client
             .call_typed(rpc_methods::ACCOUNT_LOGOUT, Some(wire_params))
+            .await
+    }
+
+    /// Signs out the original connection's active Copilot-managed GitHub identity and clears its active authentication publication. Returns false when no identity exists. Refuses credentials owned by an environment variable, GitHub CLI, or an external host before changing authentication. Unlike account.logout, this does not immediately select a different saved account.
+    ///
+    /// Wire method: `account.logoutCurrent`.
+    ///
+    /// # Returns
+    ///
+    /// Whether an active Copilot-managed identity was signed out.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub async fn logout_current(&self) -> Result<AccountLogoutCurrentResult, Error> {
+        let wire_params = serde_json::json!({});
+        self.client
+            .call_typed(rpc_methods::ACCOUNT_LOGOUTCURRENT, Some(wire_params))
             .await
     }
 
@@ -2208,6 +2245,26 @@ impl<'a> ClientRpcAcp<'a> {
         let _: serde::de::IgnoredAny = self
             .client
             .call_typed(rpc_methods::ACP_SHUTDOWN, Some(wire_params))
+            .await?;
+        Ok(())
+    }
+
+    /// Stops the original trusted SDK host's ACP listener and sessions without waiting for its telemetry callbacks. Allows a telemetry callback to request shutdown without waiting for itself. The acp.serve request still drains all callbacks.
+    ///
+    /// Wire method: `acp.requestShutdown`.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub(crate) async fn request_shutdown(&self) -> Result<(), Error> {
+        let wire_params = serde_json::json!({});
+        let _: serde::de::IgnoredAny = self
+            .client
+            .call_typed(rpc_methods::ACP_REQUESTSHUTDOWN, Some(wire_params))
             .await?;
         Ok(())
     }
@@ -11887,6 +11944,33 @@ impl<'a> ClientRpcRuntime<'a> {
             .await?;
         Ok(())
     }
+
+    /// Opens an authorization URL with the platform browser or COPILOT_DEBUG_BROWSER. Requires a trusted in-process CLI host.
+    ///
+    /// Wire method: `runtime.openPlatformBrowser`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - An authorization URL for the host browser.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub(crate) async fn open_platform_browser(
+        &self,
+        params: RuntimeOpenBrowserRequest,
+    ) -> Result<(), Error> {
+        let wire_params = serde_json::to_value(params)?;
+        let _: serde::de::IgnoredAny = self
+            .client
+            .call_typed(rpc_methods::RUNTIME_OPENPLATFORMBROWSER, Some(wire_params))
+            .await?;
+        Ok(())
+    }
 }
 
 /// `sandbox.*` RPCs.
@@ -13870,6 +13954,58 @@ impl<'a> ClientRpcSessions<'a> {
             .await
     }
 
+    /// Resolves a UUID prefix across persisted sessions, including incomplete and detached sessions. Requires a trusted in-process CLI host.
+    ///
+    /// Wire method: `sessions.resolvePersistedPrefix`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - UUID prefix to resolve to a unique session ID.
+    ///
+    /// # Returns
+    ///
+    /// Session ID matching the prefix, omitted when no unique match exists.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub(crate) async fn resolve_persisted_prefix(
+        &self,
+        params: SessionsFindByPrefixRequest,
+    ) -> Result<SessionsFindByPrefixResult, Error> {
+        let wire_params = serde_json::to_value(params)?;
+        self.client
+            .call_typed(
+                rpc_methods::SESSIONS_RESOLVEPERSISTEDPREFIX,
+                Some(wire_params),
+            )
+            .await
+    }
+
+    /// Applies process-exit flush limits to every current session before a trusted in-process host closes its protocol connections. This changes neither admission nor session lifetime; the host still owns its shutdown order.
+    ///
+    /// Wire method: `sessions.prepareProcessExit`.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub(crate) async fn prepare_process_exit(&self) -> Result<(), Error> {
+        let wire_params = serde_json::json!({});
+        let _: serde::de::IgnoredAny = self
+            .client
+            .call_typed(rpc_methods::SESSIONS_PREPAREPROCESSEXIT, Some(wire_params))
+            .await?;
+        Ok(())
+    }
+
     /// Finds all exact friendly-name candidates in the configured or explicitly selected local session profile without opening sessions or reading history. Matches persisted workspace names, not deprecated summaries. Unreadable or malformed candidate metadata is skipped. A missing store returns no matches; other store enumeration errors fail the request.
     ///
     /// Wire method: `sessions.findByName`.
@@ -15753,6 +15889,44 @@ impl<'a> ClientRpcTaskAnalytics<'a> {
                 Some(wire_params),
             )
             .await
+    }
+}
+
+/// `telemetry.*` RPCs.
+#[derive(Clone, Copy)]
+pub(crate) struct ClientRpcTelemetry<'a> {
+    pub(crate) client: &'a Client,
+}
+
+impl<'a> ClientRpcTelemetry<'a> {
+    /// Updates the trusted in-process CLI host's process-wide editor attribution after protocol negotiation. The runtime validates bounded editor names and versions before telemetry export. An omitted or unrecognized editor clears attribution. This method requires private CLI host admission; request metadata never establishes authority.
+    ///
+    /// Wire method: `telemetry.setHostEditorAttribution`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - Editor identity for the trusted host's process-wide usage attribution.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub(crate) async fn set_host_editor_attribution(
+        &self,
+        params: HostEditorAttributionRequest,
+    ) -> Result<(), Error> {
+        let wire_params = serde_json::to_value(params)?;
+        let _: serde::de::IgnoredAny = self
+            .client
+            .call_typed(
+                rpc_methods::TELEMETRY_SETHOSTEDITORATTRIBUTION,
+                Some(wire_params),
+            )
+            .await?;
+        Ok(())
     }
 }
 
@@ -24439,6 +24613,32 @@ impl<'a> SessionRpcModel<'a> {
             .await
     }
 
+    /// Reads pricing, enablement, entitled reasoning policy, and selectable context tiers from the session's cached and registered model catalog. IDE and protocol hosts use this to render model selectors without duplicating runtime policy. This read never resolves credentials or fetches a catalog. Call session.model.list first; ready remains false until a cached or registered model catalog is available.
+    ///
+    /// Wire method: `session.model.getSelectionPolicy`.
+    ///
+    /// # Returns
+    ///
+    /// Policy from cached and registered models without a network request.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub async fn get_selection_policy(&self) -> Result<ModelSelectionPolicy, Error> {
+        let wire_params = serde_json::json!({ "sessionId": self.session.id() });
+        self.session
+            .client()
+            .call_typed(
+                rpc_methods::SESSION_MODEL_GETSELECTIONPOLICY,
+                Some(wire_params),
+            )
+            .await
+    }
+
     /// Computes whether the session's current model shows reasoning summaries and how a host should present them: the default Ctrl+T visibility, reasoning headers, the hidden-summaries hint, and whether a persisted `showReasoning` setting is redundant. The runtime folds in the session's model catalog, selection and reasoning-summaries experiment assignment; the host supplies only its own persisted setting and current visibility. This method reads the session's resolved model catalog rather than resolving it, so call `session.model.list` first on a session that has not listed models or run a turn; until then the result is `ready: false`. A session that resolves models without a Copilot catalog, that is a BYOK registry or an alternate provider, never caches one and stays `ready: false`.
     ///
     /// Wire method: `session.model.getReasoningSummaries`.
@@ -25213,6 +25413,40 @@ impl<'a> SessionRpcPermissions<'a> {
             .client()
             .call_typed(
                 rpc_methods::SESSION_PERMISSIONS_NOTIFYPROMPTSHOWN,
+                Some(wire_params),
+            )
+            .await
+    }
+
+    /// Reports that a client rendered a pending permission prompt. Fires the notification hook with the runtime-captured message and original owner. Returns false if the request no longer exists.
+    ///
+    /// Wire method: `session.permissions.notifyPendingPromptShown`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - A rendered prompt for one runtime-owned permission request.
+    ///
+    /// # Returns
+    ///
+    /// Indicates whether the operation succeeded.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub async fn notify_pending_prompt_shown(
+        &self,
+        params: SessionPermissionsNotifyPendingPromptShownParams,
+    ) -> Result<PermissionsNotifyPromptShownResult, Error> {
+        let mut wire_params = serde_json::to_value(params)?;
+        wire_params["sessionId"] = serde_json::Value::String(self.session.id().to_string());
+        self.session
+            .client()
+            .call_typed(
+                rpc_methods::SESSION_PERMISSIONS_NOTIFYPENDINGPROMPTSHOWN,
                 Some(wire_params),
             )
             .await

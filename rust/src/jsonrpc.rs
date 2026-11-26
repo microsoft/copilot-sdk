@@ -132,6 +132,8 @@ pub struct JsonRpcError {
 
 /// Standard JSON-RPC 2.0 error codes.
 pub mod error_codes {
+    /// The message could not be parsed (-32700).
+    pub const PARSE_ERROR: i32 = -32700;
     /// Method not found (-32601).
     pub const METHOD_NOT_FOUND: i32 = -32601;
     /// Invalid method parameters (-32602).
@@ -180,6 +182,47 @@ enum IncomingMessage {
     Message(JsonRpcMessage),
     RawResponse(Response),
     InvalidResponse { id: u64, error: serde_json::Error },
+    InvalidRequest { id: u64, error: serde_json::Error },
+}
+
+impl IncomingMessage {
+    /// Names the request or response in a frame that did not decode, so the read loop
+    /// fails only that operation instead of the connection. The envelope is read
+    /// without its payloads, which serde_json skips without a depth limit, so a
+    /// payload nested past [`PEER_MAX_NESTING`] does not hide the message it
+    /// belongs to. Returns `error` otherwise: skipping an unreadable notification
+    /// could silently lose a session event without notifying its subscribers.
+    fn invalid(body: &[u8], error: serde_json::Error) -> Result<Self, serde_json::Error> {
+        // A struct also deserializes from an array, which is no envelope.
+        if body
+            .iter()
+            .copied()
+            .find(|byte| !byte.is_ascii_whitespace())
+            != Some(b'{')
+        {
+            return Err(error);
+        }
+        let Ok(UnreadableEnvelope { id, method, .. }) = serde_json::from_slice(body) else {
+            return Err(error);
+        };
+        // Classified as `MessageEnvelope::into_message` classifies.
+        match (id.as_ref().map(Value::as_u64), method) {
+            (Some(Some(id)), Some(Value::String(_))) => Ok(Self::InvalidRequest { id, error }),
+            (Some(Some(id)), None) => Ok(Self::InvalidResponse { id, error }),
+            _ => Err(error),
+        }
+    }
+}
+
+/// The fields of a [`MessageEnvelope`] that name its message.
+#[derive(Deserialize)]
+struct UnreadableEnvelope {
+    #[serde(rename = "jsonrpc")]
+    _jsonrpc: String,
+    #[serde(default, deserialize_with = "present_json_field")]
+    id: Option<Value>,
+    #[serde(default, deserialize_with = "present_json_field")]
+    method: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -341,8 +384,9 @@ impl JsonRpcRequest {
 
     /// Whether this request nests arrays and objects deeper than the CLI
     /// reads: a frame deeper than [`PEER_MAX_NESTING`], counting the request
-    /// object itself. The CLI could not identify such a frame, so it would
-    /// answer with an error whose `id` is `null`.
+    /// object itself. The CLI answers such a request with a parse error, and
+    /// an older CLI, which could not identify the frame, with an error whose
+    /// `id` is `null`.
     pub(crate) fn nests_too_deep_for_peer(&self) -> bool {
         self.params
             .as_ref()
@@ -359,8 +403,9 @@ impl JsonRpcResponse {
 
     /// Whether this response nests arrays and objects deeper than the CLI
     /// reads: a frame deeper than [`PEER_MAX_NESTING`], counting the response
-    /// object itself, which the CLI would refuse with an error whose `id` is
-    /// `null`, leaving its own request unanswered.
+    /// object itself. The CLI would fail its request with a parse error that
+    /// does not say why, and an older CLI would refuse the frame with an error
+    /// whose `id` is `null`, leaving its own request unanswered.
     pub(crate) fn nests_too_deep_for_peer(&self) -> bool {
         self.result
             .as_ref()
@@ -1244,6 +1289,25 @@ impl JsonRpcClient {
                         let _ = sender.send(Err(error.into()));
                     }
                 }
+                Ok(Some(IncomingMessage::InvalidRequest { id, error })) => {
+                    warn!(request_id = id, %error, "answering an unreadable request with a parse error");
+                    let response = JsonRpcResponse {
+                        jsonrpc: "2.0".into(),
+                        id,
+                        result: None,
+                        error: Some(JsonRpcError {
+                            code: error_codes::PARSE_ERROR.into(),
+                            message: error.to_string(),
+                            data: None,
+                        }),
+                    };
+                    let write_tx = write_tx.clone();
+                    tokio::spawn(async move {
+                        if let Err(error) = Self::write_message(&write_tx, &response).await {
+                            warn!(%error, "failed to answer an unreadable request");
+                        }
+                    });
+                }
                 Ok(None) => {
                     break;
                 }
@@ -1382,18 +1446,12 @@ impl JsonRpcClient {
                     );
                     return Ok(Some(IncomingMessage::Message(message)));
                 }
-                // A readable response envelope still identifies the
-                // caller even when its typed error payload is invalid.
-                if let Ok(Value::Object(mut envelope)) = serde_json::from_slice::<Value>(&body)
-                    && !envelope.contains_key("method")
-                    && envelope.get("jsonrpc").is_some_and(Value::is_string)
-                    && let Some(id) = envelope.get("id").and_then(Value::as_u64)
-                    && let Some(raw_error) = envelope.remove("error")
-                    && serde_json::from_value::<JsonRpcError>(raw_error).is_err()
-                {
-                    return Ok(Some(IncomingMessage::InvalidResponse { id, error }));
-                }
-                Err(error.into())
+                // A readable envelope still identifies the message, for
+                // example when a payload nests too deep or a response's typed
+                // error is invalid.
+                IncomingMessage::invalid(&body, error)
+                    .map(Some)
+                    .map_err(Error::from)
             }
         }
     }
@@ -1579,8 +1637,9 @@ impl JsonRpcClient {
         let request_start = Instant::now();
         let id = request.id;
         let method = request.method.as_str();
-        // A frame the CLI cannot read draws a null-id rejection, which fails
-        // every pending request on the connection, so fail only this one.
+        // An older CLI refuses a frame it cannot read with a null-id error,
+        // which fails every pending request on the connection, so fail only
+        // this one, without writing it.
         if request.nests_too_deep_for_peer() {
             let error = ErrorKind::Protocol(ProtocolErrorKind::RequestTooDeep {
                 method: method.to_string(),

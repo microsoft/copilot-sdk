@@ -10,6 +10,82 @@ pub use crate::jsonrpc::{
     error_codes,
 };
 
+/// Build the inputs to [`CopilotRequestHandler::send_request`] without starting a runtime.
+/// Enable `test-support` on your `copilot-sdk` dev-dependency, keeping
+/// `default-features = false` if your normal dependency disables defaults.
+///
+/// The request and context start with identical URLs and headers and share a fresh
+/// cancellation token. Optional context fields start as `None`; set them before
+/// calling the handler to model a particular session or agent invocation.
+/// For example, to test a handler that echoes request headers:
+///
+/// ```
+/// use copilot_sdk::{CopilotRequestHandler, test_support::http_handler_inputs};
+/// # use copilot_sdk::{CopilotHttpRequest, CopilotHttpResponse, CopilotRequestContext,
+/// #     CopilotRequestError, CopilotRequestTransport,
+/// #     CopilotWebSocketHandler, CopilotWebSocketResponse};
+/// # struct Handler;
+/// # #[async_trait::async_trait]
+/// # impl CopilotRequestHandler for Handler {
+/// #     async fn send_request(&self, req: CopilotHttpRequest, ctx: &CopilotRequestContext)
+/// #         -> Result<CopilotHttpResponse, CopilotRequestError> {
+/// #         assert_eq!(ctx.transport, CopilotRequestTransport::Http);
+/// #         assert_eq!(ctx.agent_invocation_id.as_deref(), Some("turn-1"));
+/// #         assert_eq!(req.body, b"{}");
+/// #         assert_eq!(req.url, ctx.url);
+/// #         assert_eq!(req.headers, ctx.headers);
+/// #         Ok(CopilotHttpResponse::new(200, None, req.headers, Box::pin(futures_util::stream::empty())))
+/// #     }
+/// #     async fn open_websocket(&self, _: &CopilotRequestContext, _: CopilotWebSocketResponse)
+/// #         -> Result<Box<dyn CopilotWebSocketHandler>, CopilotRequestError> { unreachable!() }
+/// # }
+/// # #[tokio::main(flavor = "current_thread")]
+/// # async fn main() -> Result<(), CopilotRequestError> {
+/// # let handler = Handler;
+/// let mut headers = http::HeaderMap::new();
+/// headers.insert("x-route", http::HeaderValue::from_static("chat"));
+/// let (request, mut ctx) = http_handler_inputs(
+///     "req-1", "POST", "https://example.test/chat", headers, b"{}",
+/// );
+/// ctx.agent_invocation_id = Some("turn-1".into());
+/// let response = handler.send_request(request, &ctx).await?;
+/// assert_eq!(response.headers["x-route"], "chat");
+/// # let (next_request, next_ctx) = http_handler_inputs("req-2", "GET", "https://example.test", http::HeaderMap::new(), []);
+/// # next_ctx.cancel.cancel();
+/// # assert!(next_request.cancel.is_cancelled());
+/// # assert!(!ctx.cancel.is_cancelled());
+/// # Ok(())
+/// # }
+/// ```
+pub fn http_handler_inputs(
+    request_id: impl Into<String>,
+    method: impl Into<String>,
+    url: impl Into<String>,
+    headers: http::HeaderMap,
+    body: impl Into<Vec<u8>>,
+) -> (CopilotHttpRequest, CopilotRequestContext) {
+    let request = CopilotHttpRequest {
+        method: method.into(),
+        url: url.into(),
+        headers,
+        body: body.into(),
+        cancel: tokio_util::sync::CancellationToken::new(),
+    };
+    let context = CopilotRequestContext {
+        request_id: request_id.into(),
+        session_id: None,
+        agent_id: None,
+        agent_invocation_id: None,
+        parent_agent_id: None,
+        interaction_type: None,
+        transport: CopilotRequestTransport::Http,
+        url: request.url.clone(),
+        headers: request.headers.clone(),
+        cancel: request.cancel.clone(),
+    };
+    (request, context)
+}
+
 impl Client {
     /// Construct a client with declared session filesystem capabilities for
     /// framed transport tests, without starting a CLI process.

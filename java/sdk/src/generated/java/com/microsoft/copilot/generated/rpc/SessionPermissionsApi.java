@@ -257,6 +257,22 @@ public final class SessionPermissionsApi {
     }
 
     /**
+     * Reports that a client rendered a pending permission prompt. Fires the notification hook with the runtime-captured message and original owner. Returns false if the request no longer exists.
+     * <p>
+     * Note: the {@code sessionId} field in the params record is overridden
+     * by the session-scoped wrapper; any value provided is ignored.
+     *
+     * @apiNote This method is experimental and may change in a future version.
+     * @since 1.0.0
+     */
+    @CopilotExperimental
+    public CompletableFuture<SessionPermissionsNotifyPromptShownResult> notifyPendingPromptShown(SessionPermissionsNotifyPendingPromptShownParams params) {
+        com.fasterxml.jackson.databind.node.ObjectNode _p = MAPPER.valueToTree(params);
+        _p.put("sessionId", this.sessionId);
+        return caller.invoke("session.permissions.notifyPendingPromptShown", _p, SessionPermissionsNotifyPromptShownResult.class);
+    }
+
+    /**
      * Reads advisory repository-owned resource disables using the bound session's configuration and matching workspace trust.
      * <p>
      * Note: the {@code sessionId} field in the params record is overridden

@@ -524,6 +524,11 @@ type AccountLoginResult struct {
 	StoredInVault bool `json:"storedInVault"`
 }
 
+// Whether an active Copilot-managed identity was signed out.
+// Experimental: AccountLogoutCurrentResult is part of an experimental API and may change or
+// be removed.
+type AccountLogoutCurrentResult bool
+
 // User to log out
 // Experimental: AccountLogoutRequest is part of an experimental API and may change or be
 // removed.
@@ -660,6 +665,11 @@ type AccountSubscribeCopilotFreeResult struct {
 	// GitHub's enrollment status when `kind` is `subscribed`, for example `subscribed` or
 	// `already_subscribed`. Absent otherwise.
 	Status *string `json:"status,omitempty"`
+}
+
+// Experimental: AcpRequestShutdownResult is part of an experimental API and may change or
+// be removed.
+type AcpRequestShutdownResult struct {
 }
 
 // ACP transport configuration for an existing in-process SDK engine.
@@ -12222,6 +12232,18 @@ type HostDisposeRequest struct {
 type HostDisposeResult struct {
 }
 
+// Editor identity for the trusted host's process-wide usage attribution.
+// Experimental: HostEditorAttributionRequest is part of an experimental API and may change
+// or be removed.
+// Internal: HostEditorAttributionRequest is an internal SDK API and is not part of the
+// public surface.
+type HostEditorAttributionRequest struct {
+	// Editor name from negotiated protocol metadata. Omission clears attribution.
+	EditorName *string `json:"editorName,omitempty"`
+	// Editor version from negotiated protocol metadata.
+	EditorVersion *string `json:"editorVersion,omitempty"`
+}
+
 // Empty acknowledgement for a completed host lifecycle operation.
 // Experimental: HostEmptyResult is part of an experimental API and may change or be removed.
 type HostEmptyResult struct {
@@ -16211,6 +16233,9 @@ type MCPConfigMergeSourcesRequest struct {
 	InstalledPlugins []any `json:"installedPlugins,omitzero"`
 	// Repository boundary for upward workspace discovery.
 	RepoRoot *string `json:"repoRoot,omitempty"`
+	// Folder-trust decision already resolved by an admitted in-process CLI host.
+	// Other clients must omit this field and use runtime folder-trust discovery.
+	ResolvedWorkspaceTrust *bool `json:"resolvedWorkspaceTrust,omitempty"`
 	// Working directory for workspace discovery and relative source references.
 	WorkingDirectory string `json:"workingDirectory"`
 }
@@ -21185,6 +21210,16 @@ type ModelClearStartupSeedResult struct {
 	Cleared bool `json:"cleared"`
 }
 
+// A context-window choice with its runtime-resolved display label.
+// Experimental: ModelContextTierOption is part of an experimental API and may change or be
+// removed.
+type ModelContextTierOption struct {
+	// Display label using only provider-published window sizes.
+	Name string `json:"name"`
+	// Context-tier identifier accepted by model selection.
+	Value string `json:"value"`
+}
+
 // Options for the client's session-authenticated description catalog.
 // Experimental: ModelDescribeClientCatalogRequest is part of an experimental API and may
 // change or be removed.
@@ -21699,6 +21734,42 @@ type ModelProviderWarning struct {
 	Code string `json:"code"`
 	// Human-readable warning message.
 	Message string `json:"message"`
+}
+
+// Policy from cached and registered models without a network request.
+// Experimental: ModelSelectionPolicy is part of an experimental API and may change or be
+// removed.
+type ModelSelectionPolicy struct {
+	// Policy entries in cached catalog order, followed by additional registered models.
+	Models []ModelSelectionPolicyEntry `json:"models"`
+	// Whether this session has a loaded cache or registered catalog models.
+	Ready bool `json:"ready"`
+}
+
+// Runtime model policy for a host's model, reasoning, and context selectors.
+// Experimental: ModelSelectionPolicyEntry is part of an experimental API and may change or
+// be removed.
+type ModelSelectionPolicyEntry struct {
+	// Selectable context tiers, omitted when the model has no tier control.
+	ContextTiers []ModelContextTierOption `json:"contextTiers,omitzero"`
+	// Registry-preferred context tier, or the default tier when none is preferred.
+	DefaultContextTier *string `json:"defaultContextTier,omitempty"`
+	// Runtime default reasoning effort, when available.
+	DefaultReasoningEffort *string `json:"defaultReasoningEffort,omitempty"`
+	// Catalog model identifier.
+	ModelID string `json:"modelId"`
+	// Premium-request multiplier resolved against the complete catalog.
+	Multiplier float64 `json:"multiplier"`
+	// Whether this model requires user enablement.
+	NeedsEnablement bool `json:"needsEnablement"`
+	// Runtime model category, when the catalog supplies one.
+	PickerCategory *string `json:"pickerCategory,omitempty"`
+	// Runtime price category, when the catalog supplies one.
+	PriceCategory *string `json:"priceCategory,omitempty"`
+	// Provider identity for provider-qualified model selections.
+	ProviderID *string `json:"providerId,omitempty"`
+	// Reasoning efforts the model currently permits.
+	ReasoningEfforts []string `json:"reasoningEfforts"`
 }
 
 // Host-supplied exact model selection IDs to allow for this running session. CAPI IDs are
@@ -23236,6 +23307,15 @@ type PermissionPathsWorkspaceCheckParams struct {
 type PermissionPathsWorkspaceCheckResult struct {
 	// Whether the path is within the session workspace directory
 	Allowed bool `json:"allowed"`
+}
+
+// A rendered prompt for one runtime-owned permission request.
+// Experimental: PermissionPendingPromptShownNotification is part of an experimental API and
+// may change or be removed.
+type PermissionPendingPromptShownNotification struct {
+	// The pending permission request. The runtime uses its captured message and original
+	// notification owner.
+	RequestID string `json:"requestId"`
 }
 
 // Notification payload describing the permission prompt that the client just rendered.
@@ -25133,6 +25213,8 @@ type PluginSourcesResolveRequest struct {
 // Internal: PluginSourcesResolveResult is an internal SDK API and is not part of the public
 // surface.
 type PluginSourcesResolveResult struct {
+	// Registered builtins with activation from this configuration root and managed policy.
+	BuiltinPlugins []any `json:"builtinPlugins,omitzero"`
 	// Live directory records, including inactive records that still own their names.
 	LivePlugins []any `json:"livePlugins,omitzero"`
 	// Whether this pass confirmed the live tier instead of using persisted fallback.
@@ -28186,6 +28268,11 @@ type RuntimeOpenBrowserRequest struct {
 // Experimental: RuntimeOpenBrowserResult is part of an experimental API and may change or
 // be removed.
 type RuntimeOpenBrowserResult struct {
+}
+
+// Experimental: RuntimeOpenPlatformBrowserResult is part of an experimental API and may
+// change or be removed.
+type RuntimeOpenPlatformBrowserResult struct {
 }
 
 // Experimental: RuntimeShutdownResult is part of an experimental API and may change or be
@@ -32589,6 +32676,11 @@ type SessionModelGenerateBranchSlugResult struct {
 	Slug string `json:"slug"`
 }
 
+// SessionModelGetSelectionPolicyResult is an alias for ModelSelectionPolicy.
+// Experimental: SessionModelGetSelectionPolicyResult is part of an experimental API and may
+// change or be removed.
+type SessionModelGetSelectionPolicyResult = ModelSelectionPolicy
+
 // The list of models available to this session.
 // Experimental: SessionModelList is part of an experimental API and may change or be
 // removed.
@@ -33374,6 +33466,12 @@ type SessionPermissionsManagedReviewRequiredRequest struct {
 // Experimental: SessionPermissionsManagedReviewRequiredResult is part of an experimental
 // API and may change or be removed.
 type SessionPermissionsManagedReviewRequiredResult bool
+
+// SessionPermissionsNotifyPendingPromptShownRequest is an alias for
+// PermissionPendingPromptShownNotification.
+// Experimental: SessionPermissionsNotifyPendingPromptShownRequest is part of an
+// experimental API and may change or be removed.
+type SessionPermissionsNotifyPendingPromptShownRequest = PermissionPendingPromptShownNotification
 
 // A typed request to the original host's retained persistence resources.
 // Experimental: SessionPersistenceBarrierRequest is part of an experimental API and may
@@ -35012,6 +35110,11 @@ type SessionsOpenProgress struct {
 	Status SessionsOpenProgressStatus `json:"status"`
 	// Handoff step.
 	Step SessionsOpenProgressStep `json:"step"`
+}
+
+// Experimental: SessionsPrepareProcessExitResult is part of an experimental API and may
+// change or be removed.
+type SessionsPrepareProcessExitResult struct {
 }
 
 // Age threshold and optional flags controlling which old sessions are pruned (or simulated
@@ -38600,6 +38703,11 @@ type TelemetrySetFeatureOverridesRequest struct {
 	// Override key/value pairs to attach to subsequent telemetry events from this session.
 	// Replaces any previously-set overrides.
 	Features map[string]string `json:"features"`
+}
+
+// Experimental: TelemetrySetHostEditorAttributionResult is part of an experimental API and
+// may change or be removed.
+type TelemetrySetHostEditorAttributionResult struct {
 }
 
 // Built-in tool metadata with identifier, optional namespaced name, description,
@@ -50161,6 +50269,27 @@ func (a *ServerAccountAPI) Logout(ctx context.Context, params *AccountLogoutRequ
 	return &result, nil
 }
 
+// LogoutCurrent signs out the original connection's active Copilot-managed GitHub identity
+// and clears its active authentication publication. Returns false when no identity exists.
+// Refuses credentials owned by an environment variable, GitHub CLI, or an external host
+// before changing authentication. Unlike account.logout, this does not immediately select a
+// different saved account.
+//
+// RPC method: account.logoutCurrent.
+//
+// Returns: Whether an active Copilot-managed identity was signed out.
+func (a *ServerAccountAPI) LogoutCurrent(ctx context.Context) (*AccountLogoutCurrentResult, error) {
+	raw, err := a.client.Request(ctx, "account.logoutCurrent", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result AccountLogoutCurrentResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // Experimental: ServerAgentRegistryAPI contains experimental APIs that may change or be
 // removed.
 type ServerAgentRegistryAPI serverAPI
@@ -56119,6 +56248,25 @@ func (s *InternalServerAccountAPI) DeviceCodeLogin() *InternalServerAccountDevic
 // removed.
 type InternalServerAcpAPI internalServerAPI
 
+// RequestShutdown stops the original trusted SDK host's ACP listener and sessions without
+// waiting for its telemetry callbacks. Allows a telemetry callback to request shutdown
+// without waiting for itself. The acp.serve request still drains all callbacks.
+//
+// RPC method: acp.requestShutdown.
+// Internal: RequestShutdown is part of the SDK's internal handshake/plumbing; external
+// callers should not use it.
+func (a *InternalServerAcpAPI) RequestShutdown(ctx context.Context) (*AcpRequestShutdownResult, error) {
+	raw, err := a.client.Request(ctx, "acp.requestShutdown", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result AcpRequestShutdownResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // Serves ACP through the original trusted SDK host's engine until its transport ends.
 // Closes ACP sessions before completion. Refuses other peers and unrelated engines.
 //
@@ -60573,6 +60721,26 @@ func (a *InternalServerRuntimeAPI) OpenBrowser(ctx context.Context, params *Runt
 	return &result, nil
 }
 
+// OpenPlatformBrowser opens an authorization URL with the platform browser or
+// COPILOT_DEBUG_BROWSER. Requires a trusted in-process CLI host.
+//
+// RPC method: runtime.openPlatformBrowser.
+//
+// Parameters: An authorization URL for the host browser.
+// Internal: OpenPlatformBrowser is part of the SDK's internal handshake/plumbing; external
+// callers should not use it.
+func (a *InternalServerRuntimeAPI) OpenPlatformBrowser(ctx context.Context, params *RuntimeOpenBrowserRequest) (*RuntimeOpenPlatformBrowserResult, error) {
+	raw, err := a.client.Request(ctx, "runtime.openPlatformBrowser", params)
+	if err != nil {
+		return nil, err
+	}
+	var result RuntimeOpenPlatformBrowserResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // Experimental: InternalServerSandboxAPI contains experimental APIs that may change or be
 // removed.
 type InternalServerSandboxAPI internalServerAPI
@@ -61637,6 +61805,47 @@ func (a *InternalServerSessionsAPI) LoadWorkspace(ctx context.Context, params *S
 	return &result, nil
 }
 
+// PrepareProcessExit applies process-exit flush limits to every current session before a
+// trusted in-process host closes its protocol connections. This changes neither admission
+// nor session lifetime; the host still owns its shutdown order.
+//
+// RPC method: sessions.prepareProcessExit.
+// Internal: PrepareProcessExit is part of the SDK's internal handshake/plumbing; external
+// callers should not use it.
+func (a *InternalServerSessionsAPI) PrepareProcessExit(ctx context.Context) (*SessionsPrepareProcessExitResult, error) {
+	raw, err := a.client.Request(ctx, "sessions.prepareProcessExit", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result SessionsPrepareProcessExitResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ResolvePersistedPrefix resolves a UUID prefix across persisted sessions, including
+// incomplete and detached sessions. Requires a trusted in-process CLI host.
+//
+// RPC method: sessions.resolvePersistedPrefix.
+//
+// Parameters: UUID prefix to resolve to a unique session ID.
+//
+// Returns: Session ID matching the prefix, omitted when no unique match exists.
+// Internal: ResolvePersistedPrefix is part of the SDK's internal handshake/plumbing;
+// external callers should not use it.
+func (a *InternalServerSessionsAPI) ResolvePersistedPrefix(ctx context.Context, params *SessionsFindByPrefixRequest) (*SessionsFindByPrefixResult, error) {
+	raw, err := a.client.Request(ctx, "sessions.resolvePersistedPrefix", params)
+	if err != nil {
+		return nil, err
+	}
+	var result SessionsFindByPrefixResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // UpdateWorkspaceFields merges fields into a session's workspace record on disk, creating
 // the record when it is absent. The counterpart to `sessions.loadWorkspace`, for the same
 // before-the-session-exists case. It preserves stored workspace-schema fields the request
@@ -61919,6 +62128,37 @@ func (a *InternalServerSkillsResourcesAPI) SetEnabled(ctx context.Context, param
 // Experimental: Resources returns experimental APIs that may change or be removed.
 func (s *InternalServerSkillsAPI) Resources() *InternalServerSkillsResourcesAPI {
 	return (*InternalServerSkillsResourcesAPI)(s)
+}
+
+// Experimental: InternalServerTelemetryAPI contains experimental APIs that may change or be
+// removed.
+type InternalServerTelemetryAPI internalServerAPI
+
+// SetHostEditorAttribution updates the trusted in-process CLI host's process-wide editor
+// attribution after protocol negotiation. The runtime validates bounded editor names and
+// versions before telemetry export. An omitted or unrecognized editor clears attribution.
+// This method requires private CLI host admission; request metadata never establishes
+// authority.
+//
+// RPC method: telemetry.setHostEditorAttribution.
+//
+// Parameters: Editor identity for the trusted host's process-wide usage attribution.
+// Pass nil for params to use the default request options.
+// Internal: SetHostEditorAttribution is part of the SDK's internal handshake/plumbing;
+// external callers should not use it.
+func (a *InternalServerTelemetryAPI) SetHostEditorAttribution(ctx context.Context, params *HostEditorAttributionRequest) (*TelemetrySetHostEditorAttributionResult, error) {
+	if params == nil {
+		params = &HostEditorAttributionRequest{}
+	}
+	raw, err := a.client.Request(ctx, "telemetry.setHostEditorAttribution", params)
+	if err != nil {
+		return nil, err
+	}
+	var result TelemetrySetHostEditorAttributionResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 // Experimental: InternalServerToolsAPI contains experimental APIs that may change or be
@@ -62824,6 +63064,7 @@ type InternalServerRPC struct {
 	Sessions         *InternalServerSessionsAPI
 	Settings         *InternalServerSettingsAPI
 	Skills           *InternalServerSkillsAPI
+	Telemetry        *InternalServerTelemetryAPI
 	Tools            *InternalServerToolsAPI
 	User             *InternalServerUserAPI
 }
@@ -62897,6 +63138,7 @@ func NewInternalServerRPC(client *jsonrpc2.Client) *InternalServerRPC {
 	r.Sessions = (*InternalServerSessionsAPI)(&r.common)
 	r.Settings = (*InternalServerSettingsAPI)(&r.common)
 	r.Skills = (*InternalServerSkillsAPI)(&r.common)
+	r.Telemetry = (*InternalServerTelemetryAPI)(&r.common)
 	r.Tools = (*InternalServerToolsAPI)(&r.common)
 	r.User = (*InternalServerUserAPI)(&r.common)
 	return r
@@ -67079,6 +67321,28 @@ func (a *ModelAPI) GetReasoningSummaries(ctx context.Context, params *ModelGetRe
 	return &result, nil
 }
 
+// GetSelectionPolicy reads pricing, enablement, entitled reasoning policy, and selectable
+// context tiers from the session's cached and registered model catalog. IDE and protocol
+// hosts use this to render model selectors without duplicating runtime policy. This read
+// never resolves credentials or fetches a catalog. Call session.model.list first; ready
+// remains false until a cached or registered model catalog is available.
+//
+// RPC method: session.model.getSelectionPolicy.
+//
+// Returns: Policy from cached and registered models without a network request.
+func (a *ModelAPI) GetSelectionPolicy(ctx context.Context) (*SessionModelGetSelectionPolicyResult, error) {
+	req := map[string]any{"sessionId": a.sessionID}
+	raw, err := a.client.Request(ctx, "session.model.getSelectionPolicy", req)
+	if err != nil {
+		return nil, err
+	}
+	var result SessionModelGetSelectionPolicyResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // Lists models available to this session using its own auth and integration context.
 // Connected hosts (CLI TUI, GitHub App) should call this through the session client so
 // remote sessions return the remote CLI's available models rather than the caller's.
@@ -67747,6 +68011,31 @@ func (a *PermissionsAPI) ModifyRules(ctx context.Context, params *PermissionsMod
 		return nil, err
 	}
 	var result PermissionsModifyRulesResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// NotifyPendingPromptShown reports that a client rendered a pending permission prompt.
+// Fires the notification hook with the runtime-captured message and original owner. Returns
+// false if the request no longer exists.
+//
+// RPC method: session.permissions.notifyPendingPromptShown.
+//
+// Parameters: A rendered prompt for one runtime-owned permission request.
+//
+// Returns: Indicates whether the operation succeeded.
+func (a *PermissionsAPI) NotifyPendingPromptShown(ctx context.Context, params *SessionPermissionsNotifyPendingPromptShownRequest) (*PermissionsNotifyPromptShownResult, error) {
+	req := map[string]any{"sessionId": a.sessionID}
+	if params != nil {
+		req["requestId"] = params.RequestID
+	}
+	raw, err := a.client.Request(ctx, "session.permissions.notifyPendingPromptShown", req)
+	if err != nil {
+		return nil, err
+	}
+	var result PermissionsNotifyPromptShownResult
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return nil, err
 	}

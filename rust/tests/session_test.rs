@@ -8244,10 +8244,10 @@ async fn set_tools_keeps_a_later_replacement_when_the_runtime_accepts_an_earlier
 }
 
 /// A tool whose parameters schema nests deeper than the runtime reads makes
-/// `set_tools` fail before anything is sent: the runtime could not identify
-/// that frame, and its null-id rejection would fail every request pending on
-/// the connection, other sessions' included. The session keeps its tools, and
-/// the next request on the connection goes through.
+/// `set_tools` fail before anything is sent: an older runtime could not
+/// identify that frame, and its null-id rejection would fail every request
+/// pending on the connection, other sessions' included. The session keeps its
+/// tools, and the next request on the connection goes through.
 #[tokio::test]
 async fn set_tools_fails_locally_for_a_schema_the_runtime_cannot_read() {
     let (session, mut server) = session_with_label_tool("old", "old handler").await;
@@ -9092,6 +9092,56 @@ async fn events_read_before_the_connection_closes_reach_subscribers() {
 }
 
 #[tokio::test]
+async fn unreadable_session_event_closes_subscription() {
+    use copilot_sdk::subscription::RecvErrorKind;
+
+    let (session, mut server) = create_session_pair().await;
+    let mut events = session.subscribe();
+    let deep = (0..200).fold(serde_json::json!(0), |value, _| Value::Array(vec![value]));
+    let mut frames = Vec::new();
+    for (id, result) in [
+        ("before", serde_json::json!({ "content": "before" })),
+        (
+            "deep",
+            serde_json::json!({ "content": "deep", "structuredContent": deep }),
+        ),
+        ("after", serde_json::json!({ "content": "after" })),
+    ] {
+        let body = serde_json::to_vec(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "session.event",
+            "params": {
+                "sessionId": server.session_id,
+                "event": {
+                    "id": id,
+                    "timestamp": "2025-01-01T00:00:00Z",
+                    "type": "tool.execution_complete",
+                    "data": { "toolCallId": id, "success": true, "result": result },
+                },
+            },
+        }))
+        .unwrap();
+        frames.extend_from_slice(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes());
+        frames.extend_from_slice(&body);
+    }
+    server.write.write_all(&frames).await.unwrap();
+
+    // Keep the peer open: the unreadable event, not EOF, must close the stream.
+    timeout(TIMEOUT, async {
+        let before = events.recv().await.expect("the earlier event is delivered");
+        assert_eq!(before.id, "before");
+        let error = events
+            .recv()
+            .await
+            .expect_err("the subscription must not silently skip an unreadable event");
+        assert!(matches!(error.kind(), RecvErrorKind::Closed), "{error:?}");
+    })
+    .await
+    .expect("the subscription must expose the interrupted event stream");
+    drop(server);
+}
+
+#[tokio::test]
 async fn capabilities_changed_event_keeps_capabilities_it_does_not_name() {
     let (session, mut server) = create_session_pair_with_capabilities(serde_json::json!({
         "ui": { "canvases": true, "mcpApps": true }
@@ -9558,6 +9608,7 @@ async fn hooks_invoke_dispatches_to_session_hooks() {
 
 /// A hook output nested deeper than the runtime's parser reads goes out as an
 /// error response for the same request: the runtime's `hooks.invoke` completes
+/// with that error instead of a bare parse error, or, on an older runtime,
 /// instead of waiting on a frame it refused, and the connection stays open.
 #[tokio::test]
 async fn hooks_invoke_answers_an_unreadably_deep_output_with_an_error_for_its_request() {

@@ -377,6 +377,44 @@ is harmless on supporting runtimes, but older runtimes can still start MCP befor
 the update arrives; require a supporting runtime version when confinement from
 the first process is mandatory.
 
+## Preparing a session before the first send
+
+The first `send` on a session loads its MCP servers and builds its tool list before it calls the model.
+To do that work before the user's first message, call the experimental
+`session.rpc.tools.initializeAndValidate()` after create or resume:
+
+<!-- docs-validate: strict -->
+```typescript
+const session = await client.createSession({
+    mcp: {
+        servers: {
+            "my-local-server": {
+                type: "local",
+                command: "node",
+                args: ["./mcp-server.js"],
+                tools: ["*"],
+            },
+        },
+    },
+});
+await session.rpc.tools.initializeAndValidate();
+await session.sendAndWait({ prompt: "List my open issues." });
+```
+
+The call loads the session's MCP servers and builds its tool list without starting a turn or
+preparing a model. The first send reuses that MCP load rather than loading the servers
+again. Every SDK exposes the call in its generated `tools` RPC group.
+
+The call makes the tool list ready, not every connection. A server with a persisted MCP tool
+snapshot contributes its tools from that snapshot and keeps connecting in the background, so it
+can still be `pending` when the call returns and when the first send reaches the model. A call to
+one of its tools waits for the connection to finish.
+
+A server that fails to start does not fail the call: the failure is logged and the call still
+returns successfully. Check each server's state with `session.rpc.mcp.listConfigured()` (see
+[Inspect configuration and lifecycle](#inspect-configuration-and-lifecycle)) when your application
+needs to know that a server connected.
+
 ## Tool configuration
 
 You can control which tools are available to an MCP server using the `tools` field.

@@ -17,8 +17,7 @@ import javax.annotation.processing.Generated;
 /**
  * Categorical retrospective measurements of the supplied trajectory, not verification that its claims are true. Model-derived classifications can be inaccurate or manipulated by adversarial content. Treat them as untrusted measurements; independently validate results used for consequential decisions and never use them as authorization or security decisions.
  *
- * @apiNote This type is experimental and may change in a future version.
- *
+ * @apiNote This method is experimental and may change in a future version.
  * @since 1.0.0
  */
 @CopilotExperimental

@@ -19,6 +19,11 @@ import (
 )
 
 var (
+	_ *ModelSelectionPolicy                 = (*SessionModelGetSelectionPolicyResult)(nil)
+	_ *SessionModelGetSelectionPolicyResult = (*ModelSelectionPolicy)(nil)
+	_ interface {
+		NotifyPendingPromptShown(context.Context, *PermissionPendingPromptShownNotification) (*PermissionsNotifyPromptShownResult, error)
+	} = (*PermissionsAPI)(nil)
 	_ = ClientGlobalAPIHandlers{
 		AcpHandler(nil),
 		EmbedderHandler(nil),

@@ -135,7 +135,7 @@ pub fn subscribe_notifications(
 }
 
 mod session_events;
-pub use session_events::{SessionEvents, subscribe_session};
+pub use session_events::{SessionEvents, subscribe_session, subscribe_session_bounded};
 
 /// Install an owner-scoped timing consumer during the native CLI's connection setup.
 ///
@@ -169,6 +169,18 @@ pub async fn start<E>(
 where
     E: From<Error>,
 {
+    start_for_client(options, None, validate_image).await
+}
+
+/// Declare the native launch surface before an owned runtime creates its telemetry sinks.
+pub async fn start_for_client<E>(
+    options: ClientOptions,
+    client_type: Option<&str>,
+    validate_image: impl FnOnce(&Client) -> Result<(), E>,
+) -> Result<Client, E>
+where
+    E: From<Error>,
+{
     if !matches!(
         &options.runtime,
         Some(RuntimeConnection::InProcess(_) | RuntimeConnection::AttachedInProcess(_))
@@ -179,8 +191,18 @@ where
         )
         .into());
     }
+    let integration_id = std::env::var("GITHUB_COPILOT_INTEGRATION_ID")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "copilot-developer-cli".to_owned());
     // Keep SDK startup out of the native host's nested initialization frames.
-    let client = Box::pin(Client::start(options)).await.map_err(E::from)?;
+    let client = Box::pin(Client::start_internal(
+        options,
+        Some(integration_id),
+        client_type,
+    ))
+    .await
+    .map_err(E::from)?;
     finish_start(client, validate_image)
 }
 

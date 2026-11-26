@@ -22,6 +22,48 @@ use super::*;
 const DEADLINE: Duration = Duration::from_secs(5);
 
 #[test]
+fn root_shutdown_ends_raw_observers_after_delivering_the_terminal_event() {
+    let router = SessionRouter::new();
+    let id = SessionId::new("terminal-observer");
+    let (_, mut observer) = router.observe(&id, 2);
+    let sink = router.event_sink();
+    let child = json!({"id":"child", "type":"session.shutdown", "agentId":"subagent",
+        "timestamp":"2026-01-01T00:00:00Z", "data":{}});
+    sink.route(json!({"sessionId":id, "event":child}));
+    assert_eq!(observer.try_recv().unwrap(), child);
+    assert!(matches!(
+        observer.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
+    let root = json!({"id":"root", "type":"session.shutdown",
+        "timestamp":"2026-01-01T00:00:00Z", "data":{}});
+    sink.route(json!({"sessionId":id, "event":root}));
+    assert_eq!(observer.try_recv().unwrap(), root);
+    assert!(matches!(
+        observer.try_recv(),
+        Err(mpsc::error::TryRecvError::Disconnected)
+    ));
+}
+
+#[test]
+fn raw_observers_preserve_unknown_envelope_fields_before_typed_projection() {
+    let router = SessionRouter::new();
+    let id = SessionId::new("raw-observer");
+    let (_, mut receiver) = router.observe(&id, 1);
+    let raw = json!({
+        "id": "future-event",
+        "type": "future.extension",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "data": {"payload": "kept"},
+        "extension": {"newField": [1, 2, 3]},
+    });
+    router
+        .event_sink()
+        .route(json!({"sessionId": id, "event": raw}));
+    assert_eq!(receiver.try_recv().unwrap(), raw);
+}
+
+#[test]
 fn terminal_connection_rejects_late_registrations() {
     let router = SessionRouter::new();
     let id = SessionId::new("closed-connection");
@@ -31,6 +73,40 @@ fn terminal_connection_rejects_late_registrations() {
         registration.channels.notifications.try_recv().err(),
         Some(mpsc::error::TryRecvError::Disconnected)
     );
+    let (_, mut observer) = router.observe(&id, 1);
+    assert_eq!(
+        observer.try_recv().err(),
+        Some(mpsc::error::TryRecvError::Disconnected)
+    );
+}
+
+#[test]
+fn queued_terminal_events_do_not_retire_a_successor_observer() {
+    let router = SessionRouter::new();
+    let id = SessionId::new("recreated-observer");
+    let (_, mut old) = router.observe(&id, 1);
+    let (dispatcher, mut inputs) = mpsc::unbounded_channel();
+    router.connect_dispatcher(&dispatcher);
+    let (_, mut successor) = router.observe(&id, 1);
+    let sink = router.event_sink();
+    let terminal = json!({"id":"old", "type":"session.shutdown",
+        "timestamp":"2026-01-01T00:00:00Z", "data":{}});
+    sink.route(json!({"sessionId":id, "event":terminal}));
+    sink.deleted(&id);
+    assert_eq!(old.try_recv().unwrap(), terminal);
+    assert_eq!(
+        successor.try_recv().err(),
+        Some(mpsc::error::TryRecvError::Empty),
+        "a successor must neither receive the old terminal event nor end"
+    );
+    let DispatcherInput::Claim(claimed_id, token) = inputs.try_recv().unwrap() else {
+        panic!("the observer must join the ordered dispatcher");
+    };
+    sink.claim(&claimed_id, token);
+    let replacement = json!({"id":"new", "type":"session.title_changed",
+        "timestamp":"2026-01-01T00:00:00Z", "data":{"title":"replacement"}});
+    sink.route(json!({"sessionId":id, "event":replacement}));
+    assert_eq!(successor.try_recv().unwrap(), replacement);
 }
 
 impl SessionRouter {

@@ -202,6 +202,17 @@ public final class SessionModelApi {
     }
 
     /**
+     * Reads pricing, enablement, entitled reasoning policy, and selectable context tiers from the session's cached and registered model catalog. IDE and protocol hosts use this to render model selectors without duplicating runtime policy. This read never resolves credentials or fetches a catalog. Call session.model.list first; ready remains false until a cached or registered model catalog is available.
+     *
+     * @apiNote This method is experimental and may change in a future version.
+     * @since 1.0.0
+     */
+    @CopilotExperimental
+    public CompletableFuture<SessionModelGetSelectionPolicyResult> getSelectionPolicy() {
+        return caller.invoke("session.model.getSelectionPolicy", java.util.Map.of("sessionId", this.sessionId), SessionModelGetSelectionPolicyResult.class);
+    }
+
+    /**
      * Computes whether the session's current model shows reasoning summaries and how a host should present them: the default Ctrl+T visibility, reasoning headers, the hidden-summaries hint, and whether a persisted `showReasoning` setting is redundant. The runtime folds in the session's model catalog, selection and reasoning-summaries experiment assignment; the host supplies only its own persisted setting and current visibility. This method reads the session's resolved model catalog rather than resolving it, so call `session.model.list` first on a session that has not listed models or run a turn; until then the result is `ready: false`. A session that resolves models without a Copilot catalog, that is a BYOK registry or an alternate provider, never caches one and stays `ready: false`.
      * <p>
      * Note: the {@code sessionId} field in the params record is overridden

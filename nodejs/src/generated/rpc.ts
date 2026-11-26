@@ -10847,6 +10847,14 @@ export type WorkspacesWorkspaceDetailsHostType =
 /** @experimental */
 export type AccountGetAllUsersResult = AccountAllUsers[];
 /**
+ * Whether an active Copilot-managed identity was signed out.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "AccountLogoutCurrentResult".
+ */
+/** @experimental */
+export type AccountLogoutCurrentResult = boolean;
+/**
  * The authenticated account's GitHub API URL, or null when no usable credential exists.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
@@ -27207,6 +27215,24 @@ export interface HostDisposeRequest {
   hostId: string;
 }
 /**
+ * Editor identity for the trusted host's process-wide usage attribution.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "HostEditorAttributionRequest".
+ */
+/** @experimental */
+/** @internal */
+export interface HostEditorAttributionRequest {
+  /**
+   * Editor name from negotiated protocol metadata. Omission clears attribution.
+   */
+  editorName?: string;
+  /**
+   * Editor version from negotiated protocol metadata.
+   */
+  editorVersion?: string;
+}
+/**
  * Empty acknowledgement for a completed host lifecycle operation.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
@@ -32125,6 +32151,11 @@ export interface McpConfigMergeSourcesRequest {
    * Include workspace files only where the runtime confirms folder trust.
    */
   includeWorkspaceSources?: boolean;
+  /**
+   * Folder-trust decision already resolved by an admitted in-process CLI host.
+   * Other clients must omit this field and use runtime folder-trust discovery.
+   */
+  resolvedWorkspaceTrust?: boolean;
 }
 /**
  * The composed MCP configuration and all omitted-source diagnostics.
@@ -36787,6 +36818,23 @@ export interface ModelClearStartupSeedResult {
   cleared: boolean;
 }
 /**
+ * A context-window choice with its runtime-resolved display label.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "ModelContextTierOption".
+ */
+/** @experimental */
+export interface ModelContextTierOption {
+  /**
+   * Context-tier identifier accepted by model selection.
+   */
+  value: string;
+  /**
+   * Display label using only provider-published window sizes.
+   */
+  name: string;
+}
+/**
  * Options for the client's session-authenticated description catalog.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
@@ -37398,6 +37446,72 @@ export interface ModelProviderStatus {
    * Provider-reported version.
    */
   version?: string;
+}
+/**
+ * Policy from cached and registered models without a network request.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "ModelSelectionPolicy".
+ */
+/** @experimental */
+export interface ModelSelectionPolicy {
+  /**
+   * Whether this session has a loaded cache or registered catalog models.
+   */
+  ready: boolean;
+  /**
+   * Policy entries in cached catalog order, followed by additional registered models.
+   */
+  models: ModelSelectionPolicyEntry[];
+}
+/**
+ * Runtime model policy for a host's model, reasoning, and context selectors.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "ModelSelectionPolicyEntry".
+ */
+/** @experimental */
+export interface ModelSelectionPolicyEntry {
+  /**
+   * Catalog model identifier.
+   */
+  modelId: string;
+  /**
+   * Provider identity for provider-qualified model selections.
+   */
+  providerId?: string;
+  /**
+   * Premium-request multiplier resolved against the complete catalog.
+   */
+  multiplier: number;
+  /**
+   * Whether this model requires user enablement.
+   */
+  needsEnablement: boolean;
+  /**
+   * Runtime model category, when the catalog supplies one.
+   */
+  pickerCategory?: string;
+  /**
+   * Runtime price category, when the catalog supplies one.
+   */
+  priceCategory?: string;
+  /**
+   * Reasoning efforts the model currently permits.
+   */
+  reasoningEfforts: string[];
+  /**
+   * Runtime default reasoning effort, when available.
+   */
+  defaultReasoningEffort?: string;
+  /**
+   * Selectable context tiers, omitted when the model has no tier control.
+   */
+  contextTiers?: ModelContextTierOption[];
+  /**
+   * Registry-preferred context tier, or the default tier when none is preferred.
+   */
+  defaultContextTier?: string;
 }
 /**
  * Host-supplied exact model selection IDs to allow for this running session. CAPI IDs are intersected with repository `.github/allowed_models.txt` policy; provider-qualified IDs remain exempt from repository-only policy but are restricted by this host list. Omit or pass null to clear the host restriction; an explicit empty or disjoint list is rejected. Validation and pre-selection fallback failures preserve the previous restriction. Failures after a fallback selection commits retain the new restriction and selected model; callers should inspect current session state after such an error.
@@ -39408,6 +39522,19 @@ export interface PermissionPathsWorkspaceCheckResult {
   allowed: boolean;
 }
 /**
+ * A rendered prompt for one runtime-owned permission request.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "PermissionPendingPromptShownNotification".
+ */
+/** @experimental */
+export interface PermissionPendingPromptShownNotification {
+  /**
+   * The pending permission request. The runtime uses its captured message and original notification owner.
+   */
+  requestId: string;
+}
+/**
  * Notification payload describing the permission prompt that the client just rendered.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
@@ -41271,6 +41398,10 @@ export interface PluginSourcesResolveResult {
    * Active records, including trusted live marketplaces and explicit directories.
    */
   plugins: JsonValue[];
+  /**
+   * Registered builtins with activation from this configuration root and managed policy.
+   */
+  builtinPlugins?: JsonValue[];
   /**
    * Persisted ambient records, including disabled or shadowed installations.
    */
@@ -61279,6 +61410,24 @@ export interface ManagedSettingsPermissionsEvaluateRequest {
    */
   operations: ManagedPermissionOperation[];
 }
+/**
+ * Editor identity for the trusted host's process-wide usage attribution.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "TelemetrySetHostEditorAttributionRequest".
+ */
+/** @experimental */
+/** @internal */
+export interface TelemetrySetHostEditorAttributionRequest {
+  /**
+   * Editor name from negotiated protocol metadata. Omission clears attribution.
+   */
+  editorName?: string;
+  /**
+   * Editor version from negotiated protocol metadata.
+   */
+  editorVersion?: string;
+}
 
 /** @experimental */
 export interface ModelsListTokenPriceUnitsRequest {
@@ -61595,6 +61744,19 @@ export interface GlobalStateGetDiagnosticsResult {
    * State file that JSONC recovery cannot read as an object; absent for missing or readable files.
    */
   unreadablePath?: string | null;
+}
+/**
+ * An authorization URL for the host browser.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "RuntimeOpenPlatformBrowserRequest".
+ */
+/** @experimental */
+export interface RuntimeOpenPlatformBrowserRequest {
+  /**
+   * The URL to open.
+   */
+  url: string;
 }
 /**
  * An HTTP request through the shared network transport.
@@ -62063,6 +62225,23 @@ export interface SessionModelClearStartupSeedRequest {
    * Provider captured with the startup seed; omission matches only an unqualified seed.
    */
   expectedProviderId?: string;
+}
+/**
+ * Policy from cached and registered models without a network request.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "SessionModelGetSelectionPolicyResult".
+ */
+/** @experimental */
+export interface SessionModelGetSelectionPolicyResult {
+  /**
+   * Whether this session has a loaded cache or registered catalog models.
+   */
+  ready: boolean;
+  /**
+   * Policy entries in cached catalog order, followed by additional registered models.
+   */
+  models: ModelSelectionPolicyEntry[];
 }
 /**
  * Raw CAPI model descriptions for client-side catalog enrichment.
@@ -63590,6 +63769,19 @@ export interface SessionPermissionsManagedReviewRequiredRequest {
   request: PermissionRequest | JsonValue;
 }
 /**
+ * A rendered prompt for one runtime-owned permission request.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "SessionPermissionsNotifyPendingPromptShownRequest".
+ */
+/** @experimental */
+export interface SessionPermissionsNotifyPendingPromptShownRequest {
+  /**
+   * The pending permission request. The runtime uses its captured message and original notification owner.
+   */
+  requestId: string;
+}
+/**
  * Session host's working directory and optional repository context.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
@@ -64986,6 +65178,13 @@ export function createServerRpc(connection: MessageConnection) {
              */
             logout: async (params: AccountLogoutRequest): Promise<AccountLogoutResult> =>
                 connection.sendRequest("account.logout", params),
+            /**
+             * Signs out the original connection's active Copilot-managed GitHub identity and clears its active authentication publication. Returns false when no identity exists. Refuses credentials owned by an environment variable, GitHub CLI, or an external host before changing authentication. Unlike account.logout, this does not immediately select a different saved account.
+             *
+             * @returns Whether an active Copilot-managed identity was signed out.
+             */
+            logoutCurrent: async (): Promise<AccountLogoutCurrentResult> =>
+                connection.sendRequest("account.logoutCurrent", {}),
         },
         /** @experimental */
         sessions: {
@@ -67000,6 +67199,20 @@ export function createInternalServerRpc(connection: MessageConnection) {
             listNonEmptySessionIds: async (params: SessionsListNonEmptySessionIdsRequest): Promise<SessionsListNonEmptySessionIdsResult> =>
                 connection.sendRequest("sessions.listNonEmptySessionIds", params),
             /**
+             * Resolves a UUID prefix across persisted sessions, including incomplete and detached sessions. Requires a trusted in-process CLI host.
+             *
+             * @param params UUID prefix to resolve to a unique session ID.
+             *
+             * @returns Session ID matching the prefix, omitted when no unique match exists.
+             */
+            resolvePersistedPrefix: async (params: SessionsFindByPrefixRequest): Promise<SessionsFindByPrefixResult> =>
+                connection.sendRequest("sessions.resolvePersistedPrefix", params),
+            /**
+             * Applies process-exit flush limits to every current session before a trusted in-process host closes its protocol connections. This changes neither admission nor session lifetime; the host still owns its shutdown order.
+             */
+            prepareProcessExit: async (): Promise<void> =>
+                connection.sendRequest("sessions.prepareProcessExit", {}),
+            /**
              * Computes the absolute path to a session's persisted events.jsonl file. Internal: filesystem paths are only meaningful in-process (CLI and runtime share a filesystem). Currently used by the CLI's contribution-graph feature to read historical events directly. Remote SDK consumers must not depend on this; a proper event-query API would replace it if the contribution graph ever needed to work over the wire.
              *
              * @param params Session ID whose event-log file path to compute.
@@ -68340,6 +68553,16 @@ export function createInternalServerRpc(connection: MessageConnection) {
             resolveDeviceForceLoginOrgsGate: async (params: ManagedSettingsResolveDeviceForceLoginOrgsGateParams): Promise<ForceLoginOrgsDecision> =>
                 connection.sendRequest("managedSettings.resolveDeviceForceLoginOrgsGate", params),
         },
+        /** @experimental */
+        telemetry: {
+            /**
+             * Updates the trusted in-process CLI host's process-wide editor attribution after protocol negotiation. The runtime validates bounded editor names and versions before telemetry export. An omitted or unrecognized editor clears attribution. This method requires private CLI host admission; request metadata never establishes authority.
+             *
+             * @param params Editor identity for the trusted host's process-wide usage attribution.
+             */
+            setHostEditorAttribution: async (params: TelemetrySetHostEditorAttributionRequest): Promise<void> =>
+                connection.sendRequest("telemetry.setHostEditorAttribution", params),
+        },
         /**
          * Performs the SDK server connection handshake and validates the optional connection token. Marked internal because this is JSON-RPC transport plumbing invoked automatically by an SDK client's own `connect()` wrapper, not a user-facing method. Stays internal as long as the SDK client owns the handshake; would only become public if the SDK ever exposed the raw schema surface to consumers without a connection wrapper.
          *
@@ -68748,6 +68971,13 @@ export function createInternalServerRpc(connection: MessageConnection) {
              */
             openBrowser: async (params: RuntimeOpenBrowserRequest): Promise<void> =>
                 connection.sendRequest("runtime.openBrowser", params),
+            /**
+             * Opens an authorization URL with the platform browser or COPILOT_DEBUG_BROWSER. Requires a trusted in-process CLI host.
+             *
+             * @param params An authorization URL for the host browser.
+             */
+            openPlatformBrowser: async (params: RuntimeOpenPlatformBrowserRequest): Promise<void> =>
+                connection.sendRequest("runtime.openPlatformBrowser", params),
         },
         /** @experimental */
         agentRegistry: {
@@ -69029,6 +69259,11 @@ export function createInternalServerRpc(connection: MessageConnection) {
              */
             shutdown: async (): Promise<void> =>
                 connection.sendRequest("acp.shutdown", {}),
+            /**
+             * Stops the original trusted SDK host's ACP listener and sessions without waiting for its telemetry callbacks. Allows a telemetry callback to request shutdown without waiting for itself. The acp.serve request still drains all callbacks.
+             */
+            requestShutdown: async (): Promise<void> =>
+                connection.sendRequest("acp.requestShutdown", {}),
         },
         /** @experimental */
         mcpSource: {
@@ -69332,6 +69567,13 @@ export function createSessionRpc(connection: MessageConnection, sessionId: strin
              */
             setReasoningEffort: async (params: ModelSetReasoningEffortRequest): Promise<ModelSetReasoningEffortResult> =>
                 connection.sendRequest("session.model.setReasoningEffort", { ...params, sessionId }),
+            /**
+             * Reads pricing, enablement, entitled reasoning policy, and selectable context tiers from the session's cached and registered model catalog. IDE and protocol hosts use this to render model selectors without duplicating runtime policy. This read never resolves credentials or fetches a catalog. Call session.model.list first; ready remains false until a cached or registered model catalog is available.
+             *
+             * @returns Policy from cached and registered models without a network request.
+             */
+            getSelectionPolicy: async (): Promise<SessionModelGetSelectionPolicyResult> =>
+                connection.sendRequest("session.model.getSelectionPolicy", { sessionId }),
             /**
              * Computes whether the session's current model shows reasoning summaries and how a host should present them: the default Ctrl+T visibility, reasoning headers, the hidden-summaries hint, and whether a persisted `showReasoning` setting is redundant. The runtime folds in the session's model catalog, selection and reasoning-summaries experiment assignment; the host supplies only its own persisted setting and current visibility. This method reads the session's resolved model catalog rather than resolving it, so call `session.model.list` first on a session that has not listed models or run a turn; until then the result is `ready: false`. A session that resolves models without a Copilot catalog, that is a BYOK registry or an alternate provider, never caches one and stays `ready: false`.
              *
@@ -71512,6 +71754,15 @@ export function createSessionRpc(connection: MessageConnection, sessionId: strin
              */
             notifyPromptShown: async (params: PermissionPromptShownNotification): Promise<PermissionsNotifyPromptShownResult> =>
                 connection.sendRequest("session.permissions.notifyPromptShown", { ...params, sessionId }),
+            /**
+             * Reports that a client rendered a pending permission prompt. Fires the notification hook with the runtime-captured message and original owner. Returns false if the request no longer exists.
+             *
+             * @param params A rendered prompt for one runtime-owned permission request.
+             *
+             * @returns Indicates whether the operation succeeded.
+             */
+            notifyPendingPromptShown: async (params: SessionPermissionsNotifyPendingPromptShownRequest): Promise<PermissionsNotifyPromptShownResult> =>
+                connection.sendRequest("session.permissions.notifyPendingPromptShown", { ...params, sessionId }),
             /** @experimental */
             additionalDirectories: {
                 /**

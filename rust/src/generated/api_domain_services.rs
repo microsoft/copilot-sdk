@@ -9061,6 +9061,23 @@ pub struct HostDisposeRequest {
 }
 crate::record_serde::wire_record!(HostDisposeRequest { host_id: "hostId" });
 
+/// Editor identity for the trusted host's process-wide usage attribution.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub(crate) struct HostEditorAttributionRequest {
+    /// Editor name from negotiated protocol metadata. Omission clears attribution.
+    pub editor_name: Option<String>,
+    /// Editor version from negotiated protocol metadata.
+    pub editor_version: Option<String>,
+}
+crate::record_serde::wire_record!(HostEditorAttributionRequest { editor_name: "editorName" if is_none, editor_version: "editorVersion" if is_none });
+
 /// Empty acknowledgement for a completed host lifecycle operation.
 ///
 /// <div class="warning">

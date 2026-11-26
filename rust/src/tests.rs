@@ -2181,6 +2181,7 @@ async fn assert_test_child_killed(mut stdout: tokio::process::ChildStdout) {
 fn client_with_list_models_handler(handler: Arc<dyn ListModelsHandler>) -> Client {
     Client {
         ahp_host_sessions: None,
+        request_handler: None,
         foreground_callback: None,
         inner: Arc::new(ClientInner {
             ahp_host_callbacks: Arc::new(ahp_host::ExitCallbacks::default()),

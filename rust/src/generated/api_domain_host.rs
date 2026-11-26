@@ -5552,6 +5552,16 @@ pub type ClientMetadata = HashMap<String, String>;
 /// </div>
 pub type AccountGetAllUsersResult = Vec<AccountAllUsers>;
 
+/// Whether an active Copilot-managed identity was signed out.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+pub type AccountLogoutCurrentResult = bool;
+
 /// The authenticated account's GitHub API URL, or null when no usable credential exists.
 ///
 /// <div class="warning">

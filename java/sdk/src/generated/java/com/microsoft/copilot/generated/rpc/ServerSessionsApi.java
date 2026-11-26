@@ -224,6 +224,28 @@ public final class ServerSessionsApi {
     }
 
     /**
+     * Resolves a UUID prefix across persisted sessions, including incomplete and detached sessions. Requires a trusted in-process CLI host.
+     *
+     * @apiNote This method is experimental and may change in a future version.
+     * @since 1.0.0
+     */
+    @CopilotExperimental
+    CompletableFuture<SessionsFindByPrefixResult> resolvePersistedPrefix(SessionsResolvePersistedPrefixParams params) {
+        return caller.invoke("sessions.resolvePersistedPrefix", params, SessionsFindByPrefixResult.class);
+    }
+
+    /**
+     * Applies process-exit flush limits to every current session before a trusted in-process host closes its protocol connections. This changes neither admission nor session lifetime; the host still owns its shutdown order.
+     *
+     * @apiNote This method is experimental and may change in a future version.
+     * @since 1.0.0
+     */
+    @CopilotExperimental
+    CompletableFuture<Void> prepareProcessExit() {
+        return caller.invoke("sessions.prepareProcessExit", java.util.Map.of(), Void.class);
+    }
+
+    /**
      * Finds all exact friendly-name candidates in the configured or explicitly selected local session profile without opening sessions or reading history. Matches persisted workspace names, not deprecated summaries. Unreadable or malformed candidate metadata is skipped. A missing store returns no matches; other store enumeration errors fail the request.
      *
      * @apiNote This method is experimental and may change in a future version.

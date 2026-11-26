@@ -205,7 +205,9 @@ fn frame_decoder_preserves_message_classification_payloads_and_errors() {
                 response.into_response().map(JsonRpcMessage::Response)
             }
             Some(IncomingMessage::Message(message)) => Ok(message),
-            Some(IncomingMessage::InvalidResponse { .. }) => unreachable!(),
+            Some(
+                IncomingMessage::InvalidResponse { .. } | IncomingMessage::InvalidRequest { .. },
+            ) => unreachable!(),
             None => JsonRpcMessage::from_slice(body.as_bytes()).map_err(Error::from),
         }
         .map(|message| serde_json::to_value(message).unwrap())

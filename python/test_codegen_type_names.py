@@ -11,6 +11,18 @@ from copilot._generated.rpc import (
 from copilot._generated.session_events import _load_AssistedApprovalAssessment
 
 
+async def test_model_selection_policy_result_accepts_canonical_consumers():
+    client = AsyncMock()
+    client.request.return_value = {"ready": True, "models": []}
+    result = await rpc.ModelApi(client, "session").get_selection_policy()
+
+    assert isinstance(result, rpc.ModelSelectionPolicy)
+    assert rpc.SessionModelGetSelectionPolicyResult is rpc.ModelSelectionPolicy
+    client.request.assert_awaited_once_with(
+        "session.model.getSelectionPolicy", {"sessionId": "session"}
+    )
+
+
 def test_user_input_events_preserve_the_positional_text_only_wire_contract():
     completed = session_events.UserInputCompletedData("request", "yes", True)
     assert completed.to_dict() == {

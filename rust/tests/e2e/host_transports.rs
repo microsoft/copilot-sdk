@@ -2876,6 +2876,12 @@ async fn acp_inherits_mcp_servers_from_its_runtime_host() {
     with_dedicated_e2e_context_no_snapshot(|ctx| {
         Box::pin(async move {
             ctx.set_default_copilot_user();
+            std::fs::create_dir_all(ctx.home_dir()).unwrap();
+            std::fs::write(
+                ctx.home_dir().join("config.json"),
+                json!({ "trustedFolders": [ctx.work_dir()] }).to_string(),
+            )
+            .unwrap();
             let harness = ctx.repo_root().join("test/harness");
             let owner = Client::start_with_host_configuration(
                 ctx.client_options_with_transport(RuntimeConnection::InProcess(
@@ -2897,82 +2903,182 @@ async fn acp_inherits_mcp_servers_from_its_runtime_host() {
             )
             .await
             .unwrap();
+            let mut defaults = acp_defaults();
+            defaults["allowAllEnv"] = json!("true");
             let (transport_id, mut reader, mut writer) =
-                connect_acp(&owner, ctx, acp_defaults()).await;
-            let (created, _) = acp_request(
-                &mut reader,
-                &mut writer,
-                2,
-                "session/new",
-                json!({
-                    "cwd": ctx.work_dir(), "mcpServers": [],
-                }),
-            )
-            .await;
-            let session_id = created["sessionId"].as_str().unwrap();
-            let servers = owner
-                .call(
-                    "session.mcp.list",
-                    Some(json!({
-                        "sessionId": session_id,
-                    })),
+                connect_acp(&owner, ctx, defaults).await;
+            for (request_id, expected_tool) in
+                [(2, Some("echo_meta")), (3, Some("host-current")), (4, None)]
+            {
+                if request_id != 2 {
+                    let servers = expected_tool.map_or_else(
+                        || json!({}),
+                        |tool| json!({
+                            "host-meta": {
+                                "command": if cfg!(windows) { "node.exe" } else { "node" },
+                                "args": [harness.join("test-mcp-server.mjs"), "--tool-name", tool],
+                                "cwd": harness,
+                                "tools": ["*"],
+                            },
+                        }),
+                    );
+                    owner
+                        .configure_in_process_server(
+                            json!({ "additionalMcpServers": servers })
+                                .as_object()
+                                .unwrap(),
+                        )
+                        .await
+                        .unwrap();
+                }
+                let (created, _) = acp_request(
+                    &mut reader,
+                    &mut writer,
+                    request_id,
+                    "session/new",
+                    json!({
+                        "cwd": ctx.work_dir(),
+                        "mcpServers": if request_id == 2 {
+                            json!([{
+                                "name": "host-meta",
+                                "command": if cfg!(windows) { "node.exe" } else { "node" },
+                                "args": [harness.join("test-mcp-server.mjs"), "--tool-name", "client-override"],
+                                "env": [],
+                            }])
+                        } else {
+                            json!([])
+                        },
+                    }),
                 )
-                .await
-                .unwrap();
-            let configured = servers["servers"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|server| server["name"] == "host-meta");
-            let tools = if configured {
-                Some(
-                    tokio::time::timeout(default_event_timeout(), async {
-                        loop {
-                            let state = owner
-                                .call(
-                                    "session.mcp.list",
-                                    Some(json!({
-                                        "sessionId": session_id,
-                                    })),
-                                )
-                                .await
-                                .unwrap();
-                            let server = state["servers"]
-                                .as_array()
-                                .unwrap()
-                                .iter()
-                                .find(|server| server["name"] == "host-meta")
-                                .unwrap();
-                            assert_ne!(server["status"], "failed", "host MCP failed: {server}");
-                            if server["status"] == "connected" {
-                                let tools = owner
+                .await;
+                let session_id = created["sessionId"].as_str().unwrap();
+                let servers = owner
+                    .call(
+                        "session.mcp.list",
+                        Some(json!({
+                            "sessionId": session_id,
+                        })),
+                    )
+                    .await
+                    .unwrap();
+                let configured = servers["servers"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|server| server["name"] == "host-meta");
+                let Some(expected_tool) = expected_tool else {
+                    assert!(
+                        !configured,
+                        "ACP restored a removed host MCP server: {servers}"
+                    );
+                    continue;
+                };
+                let tools = if configured {
+                    Some(
+                        tokio::time::timeout(default_event_timeout(), async {
+                            loop {
+                                let state = owner
                                     .call(
-                                        "session.mcp.listTools",
+                                        "session.mcp.list",
                                         Some(json!({
-                                            "sessionId": session_id, "serverName": "host-meta",
+                                            "sessionId": session_id,
                                         })),
                                     )
                                     .await
                                     .unwrap();
+                                let server = state["servers"]
+                                    .as_array()
+                                    .unwrap()
+                                    .iter()
+                                    .find(|server| server["name"] == "host-meta")
+                                    .unwrap();
+                                assert_ne!(server["status"], "failed", "host MCP failed: {server}");
+                                if server["status"] == "connected" {
+                                    let tools = owner
+                                        .call(
+                                            "session.mcp.listTools",
+                                            Some(json!({
+                                                "sessionId": session_id, "serverName": "host-meta",
+                                            })),
+                                        )
+                                        .await
+                                        .unwrap();
+                                    assert!(
+                                        tools["tools"]
+                                            .as_array()
+                                            .unwrap()
+                                            .iter()
+                                            .any(|tool| tool["name"] == expected_tool),
+                                        "{tools}"
+                                    );
+                                    break tools;
+                                }
+                                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                            }
+                        })
+                        .await
+                        .expect("host MCP tools did not become ready"),
+                    )
+                } else {
+                    None
+                };
+                assert!(
+                    configured,
+                    "ACP lost the host MCP server: {servers}; tools: {tools:?}"
+                );
+                if request_id == 2 {
+                    let next_directory = ctx.work_dir().join("mcp-next-directory");
+                    std::fs::create_dir(&next_directory).unwrap();
+                    std::fs::write(
+                        next_directory.join(".mcp.json"),
+                        serde_json::to_vec(&json!({
+                            "mcpServers": {
+                                "directory-marker": {
+                                    "command": if cfg!(windows) { "node.exe" } else { "node" },
+                                    "args": [harness.join("test-mcp-server.mjs")],
+                                    "cwd": harness,
+                                    "tools": ["*"],
+                                },
+                            },
+                        }))
+                        .unwrap(),
+                    )
+                    .unwrap();
+                    owner
+                        .call(
+                            "session.metadata.setWorkingDirectory",
+                            Some(json!({
+                                "sessionId": session_id,
+                                "workingDirectory": next_directory,
+                            })),
+                        )
+                        .await
+                        .unwrap();
+                    let mut last_state = Value::Null;
+                    tokio::time::timeout(default_event_timeout(), async {
+                        loop {
+                            last_state = owner
+                                .call("session.mcp.list", Some(json!({ "sessionId": session_id })))
+                                .await
+                                .unwrap();
+                            let reloaded = last_state["servers"].as_array().unwrap();
+                            if reloaded.iter().any(|server| {
+                                server["name"] == "directory-marker"
+                                    && server["status"] == "connected"
+                            }) {
                                 assert!(
-                                    tools["tools"]
-                                        .as_array()
-                                        .unwrap()
-                                        .iter()
-                                        .any(|tool| tool["name"] == "echo_meta"),
-                                    "{tools}"
+                                    reloaded.iter().any(|server| server["name"] == "host-meta"),
+                                    "the directory reload lost the host MCP server: {last_state}"
                                 );
-                                break tools;
+                                break;
                             }
                             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                         }
                     })
                     .await
-                    .expect("host MCP tools did not become ready"),
-                )
-            } else {
-                None
-            };
+                    .unwrap_or_else(|_| panic!("the directory MCP reload did not finish: {last_state}"));
+                }
+            }
             owner
                 .rpc()
                 .host()
@@ -2981,10 +3087,6 @@ async fn acp_inherits_mcp_servers_from_its_runtime_host() {
                 .await
                 .unwrap();
             owner.stop().await.unwrap();
-            assert!(
-                configured,
-                "ACP lost the host MCP server: {servers}; tools: {tools:?}"
-            );
         })
     })
     .await;

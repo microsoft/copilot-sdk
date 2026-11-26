@@ -40,6 +40,9 @@ record McpConfigMergeSourcesParams(
     @JsonProperty("additionalConfig") Object additionalConfig,
     /** Include workspace files only where the runtime confirms folder trust. */
     @JsonProperty("includeWorkspaceSources") Boolean includeWorkspaceSources,
+    /** Folder-trust decision already resolved by an admitted in-process CLI host.
+Other clients must omit this field and use runtime folder-trust discovery. */
+    @JsonProperty("resolvedWorkspaceTrust") Boolean resolvedWorkspaceTrust,
     @com.fasterxml.jackson.annotation.JsonIgnore java.util.Set<String> $explicitNulls
 ) {
 
@@ -70,6 +73,7 @@ record McpConfigMergeSourcesParams(
         private Object additionalConfig;
         private boolean $presence5;
         private Boolean includeWorkspaceSources;
+        private Boolean resolvedWorkspaceTrust;
 
         /**
          * Sets the {@code workingDirectory} property.
@@ -150,6 +154,17 @@ record McpConfigMergeSourcesParams(
         }
 
         /**
+         * Sets the {@code resolvedWorkspaceTrust} property.
+         * @param value the property value
+         * @return this builder
+         * @since 2.0.0
+         */
+        public Builder resolvedWorkspaceTrust(Boolean value) {
+            this.resolvedWorkspaceTrust = value;
+            return this;
+        }
+
+        /**
          * Builds a record after checking required property presence.
          * @return a new record
          * @throws IllegalStateException if a required property is missing
@@ -160,7 +175,7 @@ record McpConfigMergeSourcesParams(
             if (configDir == null) throw new IllegalStateException("Missing required property: configDir");
             java.util.Set<String> $explicitNulls = new java.util.LinkedHashSet<>();
             if ($presence5 && additionalConfig == null) $explicitNulls.add("additionalConfig");
-            return new McpConfigMergeSourcesParams(workingDirectory, configDir, repoRoot, installedPlugins, builtinPlugins, additionalConfig, includeWorkspaceSources, $explicitNulls);
+            return new McpConfigMergeSourcesParams(workingDirectory, configDir, repoRoot, installedPlugins, builtinPlugins, additionalConfig, includeWorkspaceSources, resolvedWorkspaceTrust, $explicitNulls);
         }
     }
 
@@ -180,7 +195,7 @@ record McpConfigMergeSourcesParams(
             if (!tree.isObject()) return context.reportInputMismatch(McpConfigMergeSourcesParams.class, "Expected a JSON object");
             java.util.Set<String> $explicitNulls = new java.util.LinkedHashSet<>();
             if (tree.has("additionalConfig") && tree.get("additionalConfig").isNull()) $explicitNulls.add("additionalConfig");
-            return new McpConfigMergeSourcesParams(readProperty(context, tree, "workingDirectory", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "configDir", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "repoRoot", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "installedPlugins", new com.fasterxml.jackson.core.type.TypeReference<List<?>>() {}), readProperty(context, tree, "builtinPlugins", new com.fasterxml.jackson.core.type.TypeReference<List<?>>() {}), readProperty(context, tree, "additionalConfig", new com.fasterxml.jackson.core.type.TypeReference<Object>() {}), readProperty(context, tree, "includeWorkspaceSources", new com.fasterxml.jackson.core.type.TypeReference<Boolean>() {}), $explicitNulls);
+            return new McpConfigMergeSourcesParams(readProperty(context, tree, "workingDirectory", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "configDir", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "repoRoot", new com.fasterxml.jackson.core.type.TypeReference<String>() {}), readProperty(context, tree, "installedPlugins", new com.fasterxml.jackson.core.type.TypeReference<List<?>>() {}), readProperty(context, tree, "builtinPlugins", new com.fasterxml.jackson.core.type.TypeReference<List<?>>() {}), readProperty(context, tree, "additionalConfig", new com.fasterxml.jackson.core.type.TypeReference<Object>() {}), readProperty(context, tree, "includeWorkspaceSources", new com.fasterxml.jackson.core.type.TypeReference<Boolean>() {}), readProperty(context, tree, "resolvedWorkspaceTrust", new com.fasterxml.jackson.core.type.TypeReference<Boolean>() {}), $explicitNulls);
         }
 
         private static <T> T readProperty(com.fasterxml.jackson.databind.DeserializationContext context,
