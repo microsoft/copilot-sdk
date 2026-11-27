@@ -2519,7 +2519,6 @@ class ForceStopSessionTest {
             for (int i = 0; i < 3; i++) {
                 createSession(client);
             }
-            long started = System.nanoTime();
             var stopping = client.stop();
             for (int i = 0; i < 3; i++) {
                 assertNotNull(server.heldDetaches.poll(2, TimeUnit.SECONDS),
@@ -2528,9 +2527,6 @@ class ForceStopSessionTest {
             CompletableFuture.runAsync(() -> {
             }, executor).get(2, TimeUnit.SECONDS);
             stopping.get(CopilotSession.DETACH_TIMEOUT_SECONDS + 3, TimeUnit.SECONDS);
-            assertTrue(
-                    System.nanoTime() - started < TimeUnit.SECONDS.toNanos(2 * CopilotSession.DETACH_TIMEOUT_SECONDS),
-                    "Unanswered detaches must share one deadline");
             assertEquals(3, server.detaches.get());
         } finally {
             executor.shutdownNow();

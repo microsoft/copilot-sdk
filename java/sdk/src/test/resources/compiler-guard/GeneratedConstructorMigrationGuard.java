@@ -117,6 +117,7 @@ public final class GeneratedConstructorMigrationGuard {
                                     + "#userMessageConstructorWithClientTurnIdKeepsArgumentMeaning()V",
                             "com.microsoft.copilot.generated.UserMessageEvent$UserMessageEventData",
                             "(Ljava/util/List;Ljava/lang/String;Lcom/microsoft/copilot/generated/ResponsesReasoning;"
+                                    + "Lcom/microsoft/copilot/generated/ResponsesTextFormat;"
                                     + "Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Boolean;"
                                     + "Ljava/util/List;Ljava/util/List;Ljava/util/List;Ljava/lang/String;Ljava/lang/Boolean;"
                                     + "Lcom/microsoft/copilot/generated/UserMessageDelivery;"

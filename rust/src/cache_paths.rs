@@ -6,7 +6,6 @@ const SDK_CACHE_DIR: &str = "copilot-sdk";
 const RUNTIME_CACHE_DIR: &str = "runtime";
 
 #[cfg(unix)]
-#[path = "cache_paths/unix.rs"]
 mod unix;
 
 // Shared by build.rs and the extracted-runtime resolver; unused by bundled builds and unit tests.
@@ -80,5 +79,4 @@ fn version_component(version: &str) -> String {
 }
 
 #[cfg(test)]
-#[path = "cache_paths/tests.rs"]
 mod tests;

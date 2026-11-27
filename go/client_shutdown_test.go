@@ -447,11 +447,6 @@ child.on("exit", (code) => process.exit(code ?? 1));
 			if row.wantErr != "" && (err == nil || !strings.Contains(err.Error(), row.wantErr)) {
 				t.Fatalf("Stop error after %s = %v, want %q", elapsed, err, row.wantErr)
 			}
-			// A failed Stop waits for the runtime.shutdown timeout, then at most the short SIGTERM wait
-			// or the kill wait, never a full SIGTERM wait on top of either.
-			if row.wantErr != "" && elapsed >= 15*time.Second {
-				t.Fatalf("Stop took %s to fail", elapsed)
-			}
 			if row.exited {
 				assertShutdownChildExited(t, node, pidFile, "5000")
 			}

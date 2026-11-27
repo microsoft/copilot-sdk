@@ -1,5 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 
+//! Re-exported test helpers and JSON-RPC internals for unit and integration tests.
+
 #![cfg(any(test, feature = "test-support"))]
 
 use super::*;
@@ -85,6 +87,11 @@ pub fn http_handler_inputs(
     };
     (request, context)
 }
+
+/// Test fixture helpers for spawning a controlled Node.js shutdown process.
+#[doc(hidden)]
+#[allow(dead_code)]
+pub mod node_fixture;
 
 impl Client {
     /// Construct a client with declared session filesystem capabilities for

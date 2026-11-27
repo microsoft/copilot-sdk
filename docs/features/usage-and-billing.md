@@ -51,11 +51,11 @@ The example below uses `model`, `inputTokens`, `outputTokens` and `cost`; the ca
 | `model` | `string` | Model identifier for this call |
 | `inputTokens` | `number` | Total input tokens for this call, including the cache tokens below |
 | `outputTokens` | `number` | Output tokens produced |
-| `cacheReadTokens` | `number` | Input tokens read from the prompt cache; already counted in `inputTokens` |
+| `cacheReadTokens` | `number?` | Input tokens read from the prompt cache; already counted in `inputTokens`. On Chat Completions and Responses calls it is absent when the provider did not report cache reads, which is different from a reported `0`; Anthropic Messages and Gemini Interactions calls report `0` instead |
 | `cacheWriteTokens` | `number` | Input tokens written to the prompt cache; already counted in `inputTokens` |
 | `cost` | `number` | Premium request multiplier applied to this call |
 
-`inputTokens` already includes `cacheReadTokens` and `cacheWriteTokens`, so do not add them to it. The uncached part of the input is `inputTokens - cacheReadTokens - cacheWriteTokens`. Models price these three classes differently, so compute cost from the separate counts rather than from `inputTokens` alone.
+`inputTokens` already includes `cacheReadTokens` and `cacheWriteTokens`, so do not add them to it. The uncached part of the input is `inputTokens - (cacheReadTokens ?? 0) - (cacheWriteTokens ?? 0)`; default the cache counts to `0` because both fields are optional. Models price these three classes differently, so compute cost from the separate counts rather than from `inputTokens` alone.
 
 > [!TIP]
 > `assistant.usage` is ephemeral, so it is delivered live but not replayed when you resume a session. To read accumulated totals after the fact, call `session.usage.getMetrics` (see [Accumulated AI credit and token totals](#accumulated-ai-credit-and-token-totals)).

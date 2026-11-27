@@ -10832,6 +10832,31 @@ class ResponsesReasoning:
 
 
 @dataclass
+class ResponsesTextFormat:
+    "Original request-level and effective output format for a provider history boundary, in the session.send responseFormat shape; an absent format is plain text"
+    format: Any = None
+    initial_format: Any = None
+
+    @staticmethod
+    def from_dict(obj: Any) -> "ResponsesTextFormat":
+        assert isinstance(obj, dict)
+        format = obj.get("format")
+        initial_format = obj.get("initialFormat")
+        return ResponsesTextFormat(
+            format=format,
+            initial_format=initial_format,
+        )
+
+    def to_dict(self) -> dict:
+        result: dict = {}
+        if self.format is not None:
+            result["format"] = self.format
+        if self.initial_format is not None:
+            result["initialFormat"] = self.initial_format
+        return result
+
+
+@dataclass
 class SamplingCompletedData:
     "Sampling request completion notification signaling UI dismissal"
     request_id: str
@@ -14561,6 +14586,7 @@ class SystemNotificationData:
     kind: SystemNotification
     causal_dependencies: list[str] | None = None
     responses_reasoning: ResponsesReasoning | None = None
+    responses_text_format: ResponsesTextFormat | None = field(default=None, kw_only=True)
 
     @staticmethod
     def from_dict(obj: Any) -> "SystemNotificationData":
@@ -14569,11 +14595,13 @@ class SystemNotificationData:
         kind = _load_SystemNotification(obj.get("kind"))
         causal_dependencies = from_union([from_none, lambda x: from_list(from_str, x)], obj.get("causalDependencies"))
         responses_reasoning = from_union([from_none, ResponsesReasoning.from_dict], obj.get("responsesReasoning"))
+        responses_text_format = from_union([from_none, ResponsesTextFormat.from_dict], obj.get("responsesTextFormat"))
         return SystemNotificationData(
             content=content,
             kind=kind,
             causal_dependencies=causal_dependencies,
             responses_reasoning=responses_reasoning,
+            responses_text_format=responses_text_format,
         )
 
     def to_dict(self) -> dict:
@@ -14584,6 +14612,8 @@ class SystemNotificationData:
             result["causalDependencies"] = from_union([from_none, lambda x: from_list(from_str, x)], self.causal_dependencies)
         if self.responses_reasoning is not None:
             result["responsesReasoning"] = from_union([from_none, lambda x: to_class(ResponsesReasoning, x)], self.responses_reasoning)
+        if self.responses_text_format is not None:
+            result["responsesTextFormat"] = from_union([from_none, lambda x: to_class(ResponsesTextFormat, x)], self.responses_text_format)
         return result
 
 
@@ -16451,6 +16481,7 @@ class UserMessageData:
     native_document_path_fallback_paths: list[str] | None = None
     parent_agent_task_id: str | None = None
     responses_reasoning: ResponsesReasoning | None = None
+    responses_text_format: ResponsesTextFormat | None = field(default=None, kw_only=True)
     source: str | None = None
     supported_native_document_mime_types: list[str] | None = None
     transformed_content: str | None = None
@@ -16473,6 +16504,7 @@ class UserMessageData:
         native_document_path_fallback_paths = from_union([from_none, lambda x: from_list(from_str, x)], obj.get("nativeDocumentPathFallbackPaths"))
         parent_agent_task_id = from_union([from_none, from_str], obj.get("parentAgentTaskId"))
         responses_reasoning = from_union([from_none, ResponsesReasoning.from_dict], obj.get("responsesReasoning"))
+        responses_text_format = from_union([from_none, ResponsesTextFormat.from_dict], obj.get("responsesTextFormat"))
         source = from_union([from_none, from_str], obj.get("source"))
         supported_native_document_mime_types = from_union([from_none, lambda x: from_list(from_str, x)], obj.get("supportedNativeDocumentMimeTypes"))
         transformed_content = from_union([from_none, from_str], obj.get("transformedContent"))
@@ -16492,6 +16524,7 @@ class UserMessageData:
             native_document_path_fallback_paths=native_document_path_fallback_paths,
             parent_agent_task_id=parent_agent_task_id,
             responses_reasoning=responses_reasoning,
+            responses_text_format=responses_text_format,
             source=source,
             supported_native_document_mime_types=supported_native_document_mime_types,
             transformed_content=transformed_content,
@@ -16527,6 +16560,8 @@ class UserMessageData:
             result["parentAgentTaskId"] = from_union([from_none, from_str], self.parent_agent_task_id)
         if self.responses_reasoning is not None:
             result["responsesReasoning"] = from_union([from_none, lambda x: to_class(ResponsesReasoning, x)], self.responses_reasoning)
+        if self.responses_text_format is not None:
+            result["responsesTextFormat"] = from_union([from_none, lambda x: to_class(ResponsesTextFormat, x)], self.responses_text_format)
         if self.source is not None:
             result["source"] = from_union([from_none, from_str], self.source)
         if self.supported_native_document_mime_types is not None:
@@ -19474,6 +19509,7 @@ __all__ = [
     "RecommendedAutoTier",
     "RemediationAction",
     "ResponsesReasoning",
+    "ResponsesTextFormat",
     "SamplingCompletedData",
     "SamplingRequestedData",
     "SandboxAttestation",

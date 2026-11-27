@@ -42,7 +42,9 @@ public final class SystemNotificationEvent extends SessionEvent {
         /** IDs of accepted assistant messages whose output this notification consumed, referring to assistant.message.data.messageId across the agent tree. Captured from the delivered snapshot, not the sender's later state. An empty list means no model-produced dependency; absence means provenance is unavailable. */
         @JsonProperty("causalDependencies") List<String> causalDependencies,
         /** Provider reasoning settings anchored before this model-facing message for cache-stable replay; the historical responsesReasoning name is retained for compatibility */
-        @JsonProperty("responsesReasoning") ResponsesReasoning responsesReasoning
+        @JsonProperty("responsesReasoning") ResponsesReasoning responsesReasoning,
+        /** Provider output format anchored before this model-facing message for cache-stable replay */
+        @JsonProperty("responsesTextFormat") ResponsesTextFormat responsesTextFormat
     ) {
 
         /**
@@ -68,6 +70,7 @@ public final class SystemNotificationEvent extends SessionEvent {
             private Object kind;
             private List<String> causalDependencies;
             private ResponsesReasoning responsesReasoning;
+            private ResponsesTextFormat responsesTextFormat;
 
             /**
              * Sets the {@code content} property.
@@ -114,6 +117,17 @@ public final class SystemNotificationEvent extends SessionEvent {
             }
 
             /**
+             * Sets the {@code responsesTextFormat} property.
+             * @param value the property value
+             * @return this builder
+             * @since 2.0.0
+             */
+            public Builder responsesTextFormat(ResponsesTextFormat value) {
+                this.responsesTextFormat = value;
+                return this;
+            }
+
+            /**
              * Builds a record after checking required property presence.
              * @return a new record
              * @throws IllegalStateException if a required property is missing
@@ -122,7 +136,7 @@ public final class SystemNotificationEvent extends SessionEvent {
             public SystemNotificationEventData build() {
                 if (content == null) throw new IllegalStateException("Missing required property: content");
                 if (kind == null) throw new IllegalStateException("Missing required property: kind");
-                return new SystemNotificationEventData(content, kind, causalDependencies, responsesReasoning);
+                return new SystemNotificationEventData(content, kind, causalDependencies, responsesReasoning, responsesTextFormat);
             }
         }
     }

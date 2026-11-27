@@ -14,7 +14,6 @@
 #![allow(missing_docs)]
 #![allow(rustdoc::bare_urls)]
 
-#[path = "api_facade.rs"]
 pub mod api_types;
 #[cfg(feature = "local-runtime")]
 pub(crate) mod cli_api_types;
@@ -22,7 +21,6 @@ pub(crate) mod cli_api_types;
 pub(crate) mod cli_rpc;
 pub mod lifecycle_diagnostics;
 pub mod rpc;
-#[path = "event_facade.rs"]
 pub mod session_events;
 
 // Re-export session event types at the module root — no conflicts with

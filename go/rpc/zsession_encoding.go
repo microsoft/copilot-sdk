@@ -1111,6 +1111,7 @@ func (r *UserMessageData) UnmarshalJSON(data []byte) error {
 		NativeDocumentPathFallbackPaths  []string              `json:"nativeDocumentPathFallbackPaths,omitzero"`
 		ParentAgentTaskID                *string               `json:"parentAgentTaskId,omitempty"`
 		ResponsesReasoning               *ResponsesReasoning   `json:"responsesReasoning,omitempty"`
+		ResponsesTextFormat              *ResponsesTextFormat  `json:"responsesTextFormat,omitempty"`
 		Source                           *string               `json:"source,omitempty"`
 		SupportedNativeDocumentMIMETypes []string              `json:"supportedNativeDocumentMimeTypes,omitzero"`
 		TransformedContent               *string               `json:"transformedContent,omitempty"`
@@ -1142,6 +1143,7 @@ func (r *UserMessageData) UnmarshalJSON(data []byte) error {
 	r.NativeDocumentPathFallbackPaths = raw.NativeDocumentPathFallbackPaths
 	r.ParentAgentTaskID = raw.ParentAgentTaskID
 	r.ResponsesReasoning = raw.ResponsesReasoning
+	r.ResponsesTextFormat = raw.ResponsesTextFormat
 	r.Source = raw.Source
 	r.SupportedNativeDocumentMIMETypes = raw.SupportedNativeDocumentMIMETypes
 	r.TransformedContent = raw.TransformedContent
@@ -1944,10 +1946,11 @@ func (r SystemNotificationWorkflowCompleted) MarshalJSON() ([]byte, error) {
 
 func (r *SystemNotificationData) UnmarshalJSON(data []byte) error {
 	type rawSystemNotificationData struct {
-		CausalDependencies []string            `json:"causalDependencies,omitzero"`
-		Content            string              `json:"content"`
-		Kind               json.RawMessage     `json:"kind"`
-		ResponsesReasoning *ResponsesReasoning `json:"responsesReasoning,omitempty"`
+		CausalDependencies  []string             `json:"causalDependencies,omitzero"`
+		Content             string               `json:"content"`
+		Kind                json.RawMessage      `json:"kind"`
+		ResponsesReasoning  *ResponsesReasoning  `json:"responsesReasoning,omitempty"`
+		ResponsesTextFormat *ResponsesTextFormat `json:"responsesTextFormat,omitempty"`
 	}
 	var raw rawSystemNotificationData
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -1963,6 +1966,7 @@ func (r *SystemNotificationData) UnmarshalJSON(data []byte) error {
 		r.Kind = value
 	}
 	r.ResponsesReasoning = raw.ResponsesReasoning
+	r.ResponsesTextFormat = raw.ResponsesTextFormat
 	return nil
 }
 

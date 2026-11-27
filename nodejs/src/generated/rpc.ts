@@ -12656,6 +12656,40 @@ export interface AgentDiscoveryPathList {
   paths: AgentDiscoveryPath[];
 }
 /**
+ * Repository and name of a remote custom agent whose authored prompt to fetch.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "AgentFetchRemotePromptRequest".
+ */
+/** @experimental */
+export interface AgentFetchRemotePromptRequest {
+  /**
+   * Owner of the repository that defines the remote agent.
+   */
+  repoOwner: string;
+  /**
+   * Name of the repository that defines the remote agent.
+   */
+  repoName: string;
+  /**
+   * Name of the remote agent.
+   */
+  agentName: string;
+}
+/**
+ * The authored prompt of a remote custom agent.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "AgentFetchRemotePromptResult".
+ */
+/** @experimental */
+export interface AgentFetchRemotePromptResult {
+  /**
+   * Authored prompt text. Omitted when the service does not find the agent.
+   */
+  prompt?: string | null;
+}
+/**
  * The currently selected custom agent, or null when using the default agent.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
@@ -13526,6 +13560,32 @@ export interface AgentToolCategory {
    * Tool names in their canonical order.
    */
   tools: string[];
+}
+/**
+ * An agent Markdown file to read.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "AgentsLoadFilePromptRequest".
+ */
+/** @experimental */
+export interface AgentsLoadFilePromptRequest {
+  /**
+   * Path of the agent Markdown file.
+   */
+  path: string;
+}
+/**
+ * The authored prompt of an agent file.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "AgentsLoadFilePromptResult".
+ */
+/** @experimental */
+export interface AgentsLoadFilePromptResult {
+  /**
+   * The Markdown body after the frontmatter.
+   */
+  prompt: string;
 }
 /**
  * A proposed agent name.
@@ -22096,6 +22156,36 @@ export interface EventLogReleaseInterestResult {
    * Whether the operation succeeded
    */
   success: boolean;
+}
+/**
+ * Type and payload of a session event whose binary-asset references to resolve.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "EventLogResolveBinaryReferencesRequest".
+ */
+/** @experimental */
+export interface EventLogResolveBinaryReferencesRequest {
+  /**
+   * Session event type, for example `tool.execution_complete`.
+   */
+  eventType: string;
+  /**
+   * Session event `data` payload, as the session recorded it.
+   */
+  data: {};
+}
+/**
+ * Event payload with its binary-asset references resolved to inline data.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "EventLogResolveBinaryReferencesResult".
+ */
+/** @experimental */
+export interface EventLogResolveBinaryReferencesResult {
+  /**
+   * Resolved event `data` payload. Omitted when the event carries no binary-asset reference, so the original payload is already external.
+   */
+  data?: {};
 }
 /**
  * Snapshot of the current tail cursor without returning any events. Use this when a consumer wants to subscribe to live events going forward without first paginating through the entire persisted history (which would happen if `read` were called without a cursor on a long-lived session).
@@ -57099,6 +57189,14 @@ export interface UserSettingsProblemsRequest {
    * Layers to diagnose, in the precedence order the caller applies them.
    */
   sources?: UserSettingsProblemSource[];
+  /**
+   * Whether the caller's own settings loader allows localhost and plaintext-HTTP hooks. `false` reports those hooks as problems even when the server's environment allows them. `true` or absent leaves the server's environment in charge; it never allows a hook the server rejects.
+   */
+  allowLocalhostHooks?: boolean;
+  /**
+   * Whether the caller's own settings loader allows authorization-affecting HTTP hooks. `false` reports those hooks as problems even when the server's environment allows them. `true` or absent leaves the server's environment in charge; it never allows a hook the server rejects.
+   */
+  allowHttpAuthHooks?: boolean;
 }
 /**
  * The settings that will not take effect across the given layers.
@@ -68860,6 +68958,15 @@ export function createInternalServerRpc(connection: MessageConnection) {
         /** @experimental */
         agents: {
             /**
+             * Reads an agent Markdown file and returns its authored prompt, the body after the frontmatter. Fails when the file cannot be read or parsed.
+             *
+             * @param params An agent Markdown file to read.
+             *
+             * @returns The authored prompt of an agent file.
+             */
+            loadFilePrompt: async (params: AgentsLoadFilePromptRequest): Promise<AgentsLoadFilePromptResult> =>
+                connection.sendRequest("agents.loadFilePrompt", params),
+            /**
              * Lists the agents this runtime ships, by name. A consumer separating shipped agents from ones the user or a plugin authored should compare against these names rather than against `AgentInfo.source`: an authored agent may carry the `builtin` source while not being one of these, and the runtime treats the two as separate questions. `disableableNames` is the subset a user may turn off, which a client needs to decide whether to offer a toggle. `yamlBasedNames` is the subset backed by a shipped YAML definition, which a client needs before asking the runtime to load one.
              *
              * @returns The agents this runtime ships, named so a consumer can tell them apart from authored ones.
@@ -72696,6 +72803,15 @@ export function createInternalSessionRpc(connection: MessageConnection, sessionI
              */
             publish: async (params: SessionEventLogPublishRequest): Promise<SessionEventLogPublishResult> =>
                 connection.sendRequest("session.eventLog.publish", { ...params, sessionId }),
+            /**
+             * Resolves the binary-asset references in one session event payload to inline data, from the session's asset registry. A user message's blob attachments regain their data, and its file attachments lose internal asset metadata. The result omits the payload when the event carries no reference.
+             *
+             * @param params Type and payload of a session event whose binary-asset references to resolve.
+             *
+             * @returns Event payload with its binary-asset references resolved to inline data.
+             */
+            resolveBinaryReferences: async (params: EventLogResolveBinaryReferencesRequest): Promise<EventLogResolveBinaryReferencesResult> =>
+                connection.sendRequest("session.eventLog.resolveBinaryReferences", { ...params, sessionId }),
         },
         /** @experimental */
         remote: {
@@ -72957,6 +73073,18 @@ export function createInternalSessionRpc(connection: MessageConnection, sessionI
              */
             evaluateIdleContinuation: async (): Promise<AutopilotEvaluateIdleContinuationResult> =>
                 connection.sendRequest("session.autopilot.evaluateIdleContinuation", { sessionId }),
+        },
+        /** @experimental */
+        agent: {
+            /**
+             * Fetches the authored prompt of a remote custom agent with the session's credentials. Session prompt overrides do not apply. The result omits the prompt when the service does not find the agent.
+             *
+             * @param params Repository and name of a remote custom agent whose authored prompt to fetch.
+             *
+             * @returns The authored prompt of a remote custom agent.
+             */
+            fetchRemotePrompt: async (params: AgentFetchRemotePromptRequest): Promise<AgentFetchRemotePromptResult> =>
+                connection.sendRequest("session.agent.fetchRemotePrompt", { ...params, sessionId }),
         },
         /** @experimental */
         skills: {

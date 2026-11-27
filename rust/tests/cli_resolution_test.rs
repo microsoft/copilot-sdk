@@ -22,17 +22,7 @@ use serial_test::serial;
 
 #[cfg(feature = "runtime")]
 #[allow(dead_code)]
-#[path = "support/fake_runtime.rs"]
 mod fake_runtime;
-
-#[cfg(all(not(feature = "bundled-cli"), has_extracted_cli))]
-#[allow(dead_code)]
-#[path = "../src/platform_dirs/mod.rs"]
-mod platform_dirs;
-
-#[cfg(all(not(feature = "bundled-cli"), has_extracted_cli))]
-#[path = "../src/cache_paths.rs"]
-mod cache_paths;
 
 fn unset_env(key: &str) {
     // SAFETY: these tests are serialized with #[serial(copilot_cli_path)]
@@ -286,7 +276,7 @@ fn extracted_binary_present_at_conventional_path() {
     } else {
         "copilot-runtime"
     };
-    let path = cache_paths::extracted_runtime_install_dir(cache_identity)
+    let path = copilot_sdk::extracted_runtime_install_dir(cache_identity)
         .expect("protected extraction directory")
         .join(binary);
     assert!(

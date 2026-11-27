@@ -1300,6 +1300,127 @@ async def test_external_tool_completed_cancels_blocked_handler():
     client.request.assert_not_awaited()
 
 
+@pytest.mark.parametrize(
+    "case",
+    [
+        "pending",
+        "result",
+        "error",
+        "retry",
+        "other-request",
+        "completed",
+        "completed-only",
+        "disconnected",
+    ],
+)
+@pytest.mark.asyncio
+async def test_external_tool_request_ownership_during_response(case):
+    client = Mock()
+    session = CopilotSession("session-1", client)
+    calls = []
+    sending = asyncio.Event()
+    release = asyncio.Event()
+    rejected = False
+
+    async def call_tool(invocation):
+        calls.append(invocation.request_id)
+        if case in ("error", "retry"):
+            raise RuntimeError("handler failed")
+        return ToolResult(text_result_for_llm="updated")
+
+    async def send_response(method, _params):
+        nonlocal rejected
+        assert method == "session.tools.handlePendingToolCall"
+        if case == "retry" and not rejected:
+            rejected = True
+            raise JsonRpcError(-32603, "reply rejected")
+        sending.set()
+        await release.wait()
+        return {"success": True}
+
+    client.request = AsyncMock(side_effect=send_response)
+    session._register_tools([Tool("record_note", "Records a note", call_tool)])
+    event = _external_tool_request("record_note")
+    session._dispatch_event(event)
+    original = session._pending_external_tools["request-1"]
+    tasks = [original]
+    request_ids = ["request-1"]
+    try:
+        if case != "pending":
+            await asyncio.wait_for(sending.wait(), timeout=1)
+        if case in ("completed", "completed-only"):
+            session._dispatch_event(
+                _event(
+                    ExternalToolCompletedData(request_id="request-1"),
+                    SessionEventType.EXTERNAL_TOOL_COMPLETED,
+                )
+            )
+        elif case == "disconnected":
+            session._mark_disconnected()
+        elif case == "other-request":
+            event = _external_tool_request("record_note", "request-2")
+            request_ids.append("request-2")
+
+        if case != "completed-only":
+            session._dispatch_event(event)
+        for task in session._pending_external_tools.values():
+            if task is not original:
+                tasks.append(task)
+        release.set()
+        await asyncio.wait_for(asyncio.gather(*tasks), timeout=1)
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    assert calls == request_ids
+    replies = [call.args[1] for call in client.request.await_args_list]
+    if case == "retry":
+        assert [reply["requestId"] for reply in replies] == request_ids * 2
+        assert [reply["error"] for reply in replies] == [
+            "handler failed",
+            "JSON-RPC Error -32603: reply rejected",
+        ]
+    elif case == "error":
+        assert [reply["requestId"] for reply in replies] == request_ids
+        assert replies[0]["error"] == "handler failed"
+    else:
+        assert [reply["requestId"] for reply in replies] == request_ids
+        assert all(reply["result"]["textResultForLlm"] == "updated" for reply in replies)
+
+
+@pytest.mark.asyncio
+async def test_external_tool_response_cancellation_releases_request_ownership():
+    client = Mock()
+    session = CopilotSession("session-1", client)
+    sending = asyncio.Event()
+
+    async def cancel_first_response(_method, _params):
+        if not sending.is_set():
+            sending.set()
+            await asyncio.Future()
+        return {"success": True}
+
+    client.request = AsyncMock(side_effect=cancel_first_response)
+    handler = Mock(return_value=ToolResult(text_result_for_llm="updated"))
+    session._register_tools([Tool("record_note", "Records a note", handler)])
+    event = _external_tool_request("record_note")
+    session._dispatch_event(event)
+    first = session._pending_external_tools["request-1"]
+    try:
+        await asyncio.wait_for(sending.wait(), timeout=1)
+    finally:
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+
+    session._dispatch_event(event)
+    await _wait_for_tool_result(session, client, "request-1")
+    assert handler.call_count == 2
+    assert client.request.await_count == 2
+
+
 async def _answer_tool_call(
     tool_result: ToolResult | None = None,
     *,

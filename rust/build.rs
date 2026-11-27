@@ -1,15 +1,15 @@
+mod build_support;
+
 #[cfg(feature = "runtime")]
-#[path = "build/in_process.rs"]
-mod implementation;
+mod src;
 
+#[cfg(feature = "runtime")]
+use build_support::in_process as implementation;
 #[cfg(not(feature = "runtime"))]
-#[path = "build/openssl_linkage.rs"]
-mod openssl_linkage;
-
+use build_support::openssl_linkage;
 #[cfg(feature = "runtime")]
 #[allow(dead_code)]
-#[path = "src/platform_dirs/mod.rs"]
-mod platform_dirs;
+pub(crate) use src::platform_dirs;
 
 fn main() {
     println!("cargo::rustc-check-cfg=cfg(copilot_cli_host)");

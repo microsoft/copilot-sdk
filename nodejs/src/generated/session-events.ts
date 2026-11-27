@@ -7572,6 +7572,10 @@ export interface UserMessageData {
    */
   responsesReasoning?: ResponsesReasoning;
   /**
+   * Provider output format anchored before this model-facing message for cache-stable replay
+   */
+  responsesTextFormat?: ResponsesTextFormat;
+  /**
    * Origin of this message, used for timeline filtering and attribution (e.g., `skill-pdf` for hidden skill injection or `agent-<agent-id>` for an inter-agent prompt)
    */
   source?: string;
@@ -8107,6 +8111,19 @@ export interface AttachmentSessionReference {
    * Attachment type discriminator.
    */
   type: "session_reference";
+}
+/**
+ * Original request-level and effective output format for a provider history boundary, in the session.send responseFormat shape; an absent format is plain text
+ */
+export interface ResponsesTextFormat {
+  /**
+   * Effective output format selected before this message, independent of the request-level format
+   */
+  format?: JsonValue;
+  /**
+   * Original request-level output format, retained while replaying this conversation prefix
+   */
+  initialFormat?: JsonValue;
 }
 /**
  * Session event "pending_messages.modified". Empty payload; the event signals that the pending message queue has changed
@@ -12917,6 +12934,10 @@ export interface SystemNotificationData {
    * Provider reasoning settings anchored before this model-facing message for cache-stable replay; the historical responsesReasoning name is retained for compatibility
    */
   responsesReasoning?: ResponsesReasoning;
+  /**
+   * Provider output format anchored before this model-facing message for cache-stable replay
+   */
+  responsesTextFormat?: ResponsesTextFormat;
 }
 /**
  * System notification metadata for a background agent that completed or failed, including agent ID, type, status, description, and prompt.

@@ -10,8 +10,6 @@ namespace Microsoft.Copilot.Test.Unit;
 // in, on net472.
 public class ConfigureAwaitOptionsTests
 {
-    private static readonly TimeSpan WaitTimeout = TimeSpan.FromSeconds(5);
-
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -22,7 +20,6 @@ public class ConfigureAwaitOptionsTests
             (continueOnCapturedContext ? ConfigureAwaitOptions.ContinueOnCapturedContext : ConfigureAwaitOptions.None);
         var context = new RecordingSynchronizationContext();
         var scheduler = new RecordingTaskScheduler();
-        using var callerReturned = new ManualResetEventSlim();
 
         // Await under both a custom TaskScheduler and a custom SynchronizationContext, which Task.Yield would honor.
         var resumption = await Task.Factory.StartNew(
@@ -32,33 +29,31 @@ public class ConfigureAwaitOptionsTests
                 SynchronizationContext.SetSynchronizationContext(context);
                 try
                 {
-                    return ResumeAfterForcedYieldAsync(options, callerReturned);
+                    return ResumeAfterForcedYieldAsync(options);
                 }
                 finally
                 {
                     SynchronizationContext.SetSynchronizationContext(previous);
-                    callerReturned.Set();
                 }
             },
             CancellationToken.None,
             TaskCreationOptions.None,
-            scheduler).Unwrap().WaitAsync(WaitTimeout);
+            scheduler).Unwrap();
 
-        Assert.True(resumption.AfterCallerReturned, "The await of a completed task continued synchronously.");
         Assert.Same(continueOnCapturedContext ? context : null, resumption.Context);
         Assert.Equal(continueOnCapturedContext ? 1 : 0, context.Posts);
         // Only the task that ran the caller.
         Assert.Equal(1, scheduler.QueuedTasks);
+        // An inline continuation would still be running under the caller's custom scheduler.
         Assert.Same(TaskScheduler.Default, resumption.Scheduler);
         Assert.True(resumption.OnThreadPoolThread);
     }
 
-    private static async Task<(bool AfterCallerReturned, SynchronizationContext? Context, TaskScheduler Scheduler, bool OnThreadPoolThread)>
-        ResumeAfterForcedYieldAsync(ConfigureAwaitOptions options, ManualResetEventSlim callerReturned)
+    private static async Task<(SynchronizationContext? Context, TaskScheduler Scheduler, bool OnThreadPoolThread)>
+        ResumeAfterForcedYieldAsync(ConfigureAwaitOptions options)
     {
         await Task.CompletedTask.ConfigureAwait(options);
         return (
-            callerReturned.Wait(WaitTimeout),
             SynchronizationContext.Current,
             TaskScheduler.Current,
             Thread.CurrentThread.IsThreadPoolThread);

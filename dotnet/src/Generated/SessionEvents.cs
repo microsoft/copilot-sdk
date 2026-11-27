@@ -5117,6 +5117,11 @@ public sealed partial class UserMessageData
     [JsonPropertyName("responsesReasoning")]
     public ResponsesReasoning? ResponsesReasoning { get; set; }
 
+    /// <summary>Provider output format anchored before this model-facing message for cache-stable replay.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [JsonPropertyName("responsesTextFormat")]
+    public ResponsesTextFormat? ResponsesTextFormat { get; set; }
+
     /// <summary>Origin of this message, used for timeline filtering and attribution (e.g., `skill-pdf` for hidden skill injection or `agent-&lt;agent-id&gt;` for an inter-agent prompt).</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [JsonPropertyName("source")]
@@ -7666,6 +7671,11 @@ public sealed partial class SystemNotificationData
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [JsonPropertyName("responsesReasoning")]
     public ResponsesReasoning? ResponsesReasoning { get; set; }
+
+    /// <summary>Provider output format anchored before this model-facing message for cache-stable replay.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [JsonPropertyName("responsesTextFormat")]
+    public ResponsesTextFormat? ResponsesTextFormat { get; set; }
 }
 
 /// <summary>Permission request notification requiring client approval with request details.</summary>
@@ -11476,6 +11486,21 @@ public partial class Attachment
     public virtual string Type { get; set; } = string.Empty;
 }
 
+
+/// <summary>Original request-level and effective output format for a provider history boundary, in the session.send responseFormat shape; an absent format is plain text.</summary>
+/// <remarks>Nested data type for <c>ResponsesTextFormat</c>.</remarks>
+public sealed partial class ResponsesTextFormat
+{
+    /// <summary>Effective output format selected before this message, independent of the request-level format.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [JsonPropertyName("format")]
+    public JsonElement? Format { get; set; }
+
+    /// <summary>Original request-level output format, retained while replaying this conversation prefix.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [JsonPropertyName("initialFormat")]
+    public JsonElement? InitialFormat { get; set; }
+}
 
 /// <summary>Nested data type for <c>ToolTurnBudget</c>.</summary>
 public sealed partial class ToolTurnBudget
@@ -26876,6 +26901,7 @@ public readonly struct ExtensionsLoadedExtensionStatus : IEquatable<ExtensionsLo
 [JsonSerializable(typeof(ProviderQuotaBudgetMetadata))]
 [JsonSerializable(typeof(ProviderQuotaState))]
 [JsonSerializable(typeof(ResponsesReasoning))]
+[JsonSerializable(typeof(ResponsesTextFormat))]
 [JsonSerializable(typeof(SamplingCompletedData))]
 [JsonSerializable(typeof(SamplingCompletedEvent))]
 [JsonSerializable(typeof(SamplingRequestedData))]

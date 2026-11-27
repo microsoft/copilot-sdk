@@ -43,5 +43,4 @@ pub(super) fn private_temporary_cache_dir(temp_dir: &Path) -> io::Result<PathBuf
 }
 
 #[cfg(test)]
-#[path = "unix/tests.rs"]
 mod tests;

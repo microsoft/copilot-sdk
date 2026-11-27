@@ -76,6 +76,22 @@ public final class SessionAgentApi {
     }
 
     /**
+     * Fetches the authored prompt of a remote custom agent with the session's credentials. Session prompt overrides do not apply. The result omits the prompt when the service does not find the agent.
+     * <p>
+     * Note: the {@code sessionId} field in the params record is overridden
+     * by the session-scoped wrapper; any value provided is ignored.
+     *
+     * @apiNote This method is experimental and may change in a future version.
+     * @since 1.0.0
+     */
+    @CopilotExperimental
+    CompletableFuture<AgentFetchRemotePromptResult> fetchRemotePrompt(SessionAgentFetchRemotePromptParams params) {
+        com.fasterxml.jackson.databind.node.ObjectNode _p = MAPPER.valueToTree(params);
+        _p.put("sessionId", this.sessionId);
+        return caller.invoke("session.agent.fetchRemotePrompt", _p, AgentFetchRemotePromptResult.class);
+    }
+
+    /**
      * Gets the currently selected custom agent for the session.
      *
      * @apiNote This method is experimental and may change in a future version.

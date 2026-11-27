@@ -82,6 +82,17 @@ public final class ServerAgentsApi {
     }
 
     /**
+     * Reads an agent Markdown file and returns its authored prompt, the body after the frontmatter. Fails when the file cannot be read or parsed.
+     *
+     * @apiNote This method is experimental and may change in a future version.
+     * @since 1.0.0
+     */
+    @CopilotExperimental
+    CompletableFuture<AgentsLoadFilePromptResult> loadFilePrompt(AgentsLoadFilePromptParams params) {
+        return caller.invoke("agents.loadFilePrompt", params, AgentsLoadFilePromptResult.class);
+    }
+
+    /**
      * Creates an agent file in the project or user agent directory without replacing an existing file. Returns validation and filesystem errors as author-visible outcomes.
      *
      * @apiNote This method is experimental and may change in a future version.

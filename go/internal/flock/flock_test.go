@@ -69,7 +69,7 @@ func TestLockBlocksUntilRelease(t *testing.T) {
 		t.Fatalf("Release failed: %v", err)
 	}
 
-	unlockCtx, cancelUnlock := context.WithTimeout(t.Context(), 1*time.Second)
+	unlockCtx, cancelUnlock := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancelUnlock()
 	select {
 	case err := <-result:
@@ -83,6 +83,6 @@ func TestLockBlocksUntilRelease(t *testing.T) {
 			t.Fatalf("second Release failed: %v", err)
 		}
 	case <-unlockCtx.Done():
-		t.Fatalf("second Acquire did not unblock")
+		t.Fatalf("second Acquire was still blocked 30s after the first lock was released")
 	}
 }

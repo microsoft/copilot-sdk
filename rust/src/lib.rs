@@ -72,7 +72,6 @@ pub mod network;
 /// Permission-policy helpers that produce a [`handler::PermissionHandler`].
 pub mod permission;
 #[allow(dead_code)]
-#[path = "platform_dirs/mod.rs"]
 mod platform_dirs;
 mod process_telemetry;
 mod process_tree;
@@ -174,6 +173,11 @@ pub use skill_provider::{SkillProvider, SkillProviderDescriptor};
 pub mod session_management;
 pub use session_management::SessionCreationHandler;
 
+#[cfg(all(not(feature = "bundled-cli"), has_extracted_cli))]
+#[doc(hidden)]
+pub fn extracted_runtime_install_dir(version: &str) -> std::io::Result<std::path::PathBuf> {
+    cache_paths::extracted_runtime_install_dir(version)
+}
 pub use generated::api_types::EntraAuthConfig;
 pub use generated::api_types::RuntimeHostConfiguration;
 use serde::{Deserialize, Serialize};

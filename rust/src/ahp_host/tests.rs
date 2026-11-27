@@ -20,10 +20,8 @@ fn local_options() -> AhpHostOptions {
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 
-#[path = "factory_tests.rs"]
 mod factory_tests;
 
-#[path = "authentication_tests.rs"]
 mod authentication_tests;
 
 // Same Content-Length duplex protocol fixture as tests/prepared_session_test.rs.

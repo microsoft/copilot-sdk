@@ -74,6 +74,22 @@ public final class SessionEventLogApi {
     }
 
     /**
+     * Resolves the binary-asset references in one session event payload to inline data, from the session's asset registry. A user message's blob attachments regain their data, and its file attachments lose internal asset metadata. The result omits the payload when the event carries no reference.
+     * <p>
+     * Note: the {@code sessionId} field in the params record is overridden
+     * by the session-scoped wrapper; any value provided is ignored.
+     *
+     * @apiNote This method is experimental and may change in a future version.
+     * @since 1.0.0
+     */
+    @CopilotExperimental
+    CompletableFuture<EventLogResolveBinaryReferencesResult> resolveBinaryReferences(SessionEventLogResolveBinaryReferencesParams params) {
+        com.fasterxml.jackson.databind.node.ObjectNode _p = MAPPER.valueToTree(params);
+        _p.put("sessionId", this.sessionId);
+        return caller.invoke("session.eventLog.resolveBinaryReferences", _p, EventLogResolveBinaryReferencesResult.class);
+    }
+
+    /**
      * Registers consumer interest in an event type for runtime gating purposes.
      * <p>
      * Note: the {@code sessionId} field in the params record is overridden

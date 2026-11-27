@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -63,6 +64,7 @@ func TestUserMessageDataMessageIDJSONCompatibility(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"content":"hello","messageId":"message-1"}`), &message); err != nil {
 		t.Fatal(err)
 	}
+
 	if message.MessageID == nil || *message.MessageID != "message-1" {
 		t.Fatalf("MessageID = %v, want message-1", message.MessageID)
 	}
@@ -97,5 +99,22 @@ func TestUserMessageDataMessageIDJSONCompatibility(t *testing.T) {
 	}
 	if _, ok := wire["messageId"]; ok {
 		t.Fatal("messageId should be omitted when absent")
+	}
+}
+
+func TestUserMessageDataPreservesResponseSchemaPropertyOrder(t *testing.T) {
+	const schema = `{"type":"json_schema","jsonSchema":{"schema":{"properties":{"b":{},"a":{}}}}}`
+	var message UserMessageData
+	if err := json.Unmarshal([]byte(`{"content":"hello","responsesTextFormat":{"initialFormat":`+schema+`,"format":`+schema+`}}`), &message); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(message)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"initialFormat", "format"} {
+		if !strings.Contains(string(encoded), `"`+field+`":`+schema) {
+			t.Errorf("%s lost schema property order: %s", field, encoded)
+		}
 	}
 }

@@ -101,6 +101,7 @@ _HOST_MATRIX_PROFILES = [
 ]
 
 _UNIT_TEST_SRC_GLOBS = [
+    "src/mod.rs",
     "src/**/*_tests.rs",
     "src/**/tests.rs",
     "src/**/tests/**/*.rs",
@@ -175,8 +176,8 @@ def _sdk_profile(profile, features):
         )
     copilot_rust_build_script(
         name = name + "_build_script",
-        srcs = ["build.rs", "src/cache_paths.rs", "src/cache_paths/unix.rs"] + native.glob([
-            "build/**/*.rs",
+        srcs = ["build.rs", "src/mod.rs", "src/cache_paths.rs", "src/cache_paths/unix.rs"] + native.glob([
+            "build_support/**/*.rs",
             "src/platform_dirs/**/*.rs",
         ]),
         aliases = aliases(build = True),
@@ -239,9 +240,7 @@ def _sdk_profile(profile, features):
         target = name + "_" + fixture
         copilot_rust_binary_explicit(
             name = target,
-            srcs = native.glob(["tests/fixtures/**/*.rs"]) + (
-                ["examples/runtime_host_transports.rs"] if fixture == "copilot-host-transports-fixture" else []
-            ),
+            srcs = native.glob(["tests/fixtures/**/*.rs"]),
             crate_features = features,
             crate_root = source,
             edition = "2024",
@@ -255,8 +254,8 @@ def _sdk_profile(profile, features):
         fixture_env["CARGO_BIN_EXE_" + fixture] = "bazel-bin/$(rootpath :" + target + ")"
 
     tests = []
-    for source in native.glob(["tests/*.rs"]):
-        test = source.removeprefix("tests/").removesuffix(".rs")
+    for source in native.glob(["tests/*.rs", "tests/*/main.rs"]):
+        test = source.removeprefix("tests/").removesuffix("/main.rs").removesuffix(".rs")
 
         # Cargo's external-stream CI selection intentionally only compiles this
         # integration test; the remaining suites exercise runtime management.
@@ -268,12 +267,13 @@ def _sdk_profile(profile, features):
             continue
         tests.append((test, source))
     if profile != "external-test":
+        tests.append(("build_acquisition", "build_tests.rs"))
         tests.append(("lib", "src/lib.rs"))
     for test, source in tests:
         needs_fixtures = test in ["e2e", "extension_launch_provider_runtime_test"]
         copilot_rust_test(
             name = name + "_" + test,
-            srcs = native.glob(["src/**/*.rs", "tests/**/*.rs", "build/**/*.rs"]) + ["build.rs"],
+            srcs = native.glob(["src/**/*.rs", "tests/**/*.rs", "build_support/**/*.rs"]) + ["build.rs", "build_tests.rs"],
             compile_data = native.glob(["tests/**/*.json"]),
             crate_features = features,
             crate_name = (name + "_" + test).replace("-", "_"),
@@ -294,8 +294,8 @@ def _sdk_profile(profile, features):
         )
     examples = []
     if profile != "external-test":
-        for source in native.glob(["examples/*.rs"]):
-            example = source.removeprefix("examples/").removesuffix(".rs")
+        for source in native.glob(["examples/*.rs", "examples/*/main.rs"]):
+            example = source.removeprefix("examples/").removesuffix("/main.rs").removesuffix(".rs")
             target = name + "_example_" + example
             copilot_rust_binary_explicit(
                 name = target,
@@ -310,15 +310,15 @@ def _sdk_profile(profile, features):
             examples.append(":" + target)
         copilot_rust_test(
             name = name + "_example_session_fs_test",
-            srcs = native.glob(["examples/session_fs*.rs", "examples/session_fs/**/*.rs"]),
+            srcs = native.glob(["examples/session_fs/**/*.rs"]),
             crate_features = features,
-            crate_root = "examples/session_fs.rs",
+            crate_root = "examples/session_fs/main.rs",
             edition = "2024",
             proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
             tags = ["manual"],
             deps = [":" + name] + all_crate_deps(normal = True, normal_dev = True),
         )
-        tests.append(("example_session_fs_test", "examples/session_fs.rs"))
+        tests.append(("example_session_fs_test", "examples/session_fs/main.rs"))
         rust_doc_test(
             name = name + "_doctest",
             crate = ":" + name + "_doc_crate",
@@ -485,24 +485,14 @@ def sdk_targets(name = "platform_dirs_srcs"):
     ]
     copilot_rust_test(
         name = "sdk_wire_compatibility_binary",
-        srcs = ["tests/wire_suite/bazel.rs"] + ["tests/" + test + "_test.rs" for test in wire_tests],
-        crate_root = "tests/wire_suite/bazel.rs",
+        srcs = ["tests/wire_suite/main.rs"] + ["tests/wire_suite/sdk_" + test + "_test.rs" for test in wire_tests],
+        crate_root = "tests/wire_suite/main.rs",
         edition = "2024",
         tags = ["manual"],
         deps = wire_deps,
     )
     for test in wire_tests:
         suite = "sdk_" + test + "_test"
-
-        # Clippy still checks each standalone Cargo root with the local-runtime SDK.
-        copilot_rust_test(
-            name = suite + "_standalone",
-            srcs = ["tests/" + test + "_test.rs"],
-            crate_root = "tests/" + test + "_test.rs",
-            edition = "2024",
-            tags = ["manual"],
-            deps = wire_deps,
-        )
         shared_rust_test(
             name = suite,
             binary = ":sdk_wire_compatibility_binary",
@@ -514,7 +504,7 @@ def sdk_targets(name = "platform_dirs_srcs"):
         name = "sdk_network_test",
         srcs = [
             "tests/network_test.rs",
-            "tests/support/fake_runtime.rs",
+            "tests/fake_runtime/mod.rs",
         ],
         crate_root = "tests/network_test.rs",
         edition = "2024",

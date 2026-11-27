@@ -2,7 +2,6 @@
 
 #![allow(clippy::unwrap_used)]
 
-#[path = "support/fake_runtime.rs"]
 mod fake_runtime;
 
 use copilot_sdk::{RuntimeConnection, TcpRuntimeOptions};

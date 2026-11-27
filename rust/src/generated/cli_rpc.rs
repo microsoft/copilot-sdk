@@ -1191,6 +1191,38 @@ impl<'a> ClientRpcSessionEventLog<'a> {
             .call_typed(rpc_methods::SESSION_EVENTLOG_PUBLISH, Some(wire_params))
             .await
     }
+
+    /// Resolves the binary-asset references in one session event payload to inline data, from the session's asset registry. A user message's blob attachments regain their data, and its file attachments lose internal asset metadata. The result omits the payload when the event carries no reference.
+    ///
+    /// Wire method: `session.eventLog.resolveBinaryReferences`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - Type and payload of a session event whose binary-asset references to resolve.
+    ///
+    /// # Returns
+    ///
+    /// Event payload with its binary-asset references resolved to inline data.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub async fn resolve_binary_references(
+        &self,
+        params: EventLogResolveBinaryReferencesRequest,
+    ) -> Result<EventLogResolveBinaryReferencesResult, Error> {
+        let wire_params = serde_json::to_value(params)?;
+        self.client
+            .call_typed(
+                rpc_methods::SESSION_EVENTLOG_RESOLVEBINARYREFERENCES,
+                Some(wire_params),
+            )
+            .await
+    }
 }
 
 /// `session.mcp.*` RPCs.

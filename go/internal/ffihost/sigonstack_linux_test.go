@@ -60,14 +60,20 @@ func TestProtectLinuxSignalHandlerRearmsConcurrentReplacement(t *testing.T) {
 		t.Fatal("failed to clear SA_ONSTACK")
 	}
 
-	deadline := time.Now().Add(time.Second)
+	// The guard goroutine re-arms continuously, so a correct run restores the
+	// flag almost immediately. The deadline is only a hang backstop that turns a
+	// regression into a specific failure instead of a test-binary timeout.
+	deadline := time.Now().Add(30 * time.Second)
 	for {
 		var action linuxSigaction
-		if linuxGetSigaction(int(syscall.SIGUSR1), &action) && action.flags&linuxSaOnStack != 0 {
+		if !linuxGetSigaction(int(syscall.SIGUSR1), &action) {
+			t.Fatal("failed to read SIGUSR1 action while waiting for the signal guard")
+		}
+		if action.flags&linuxSaOnStack != 0 {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("signal guard did not restore SA_ONSTACK")
+			t.Fatalf("signal guard did not restore SA_ONSTACK; last observed flags %#x", action.flags)
 		}
 		runtime.Gosched()
 	}

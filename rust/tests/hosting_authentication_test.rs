@@ -2,14 +2,8 @@
 #![cfg(feature = "test-support")]
 #![allow(clippy::unwrap_used)]
 
-#[path = "support/byok.rs"]
-mod byok;
-#[allow(dead_code)]
-#[path = "e2e/runtime_host_support.rs"]
-mod host_support;
-#[allow(dead_code)]
-#[path = "e2e/support.rs"]
 mod support;
+use support::{byok, runtime_host_support as host_support};
 
 use copilot_sdk::{OwnedRuntimeOptions, RuntimeConnection, SpawnedProcessOptions};
 use std::path::{Path, PathBuf};

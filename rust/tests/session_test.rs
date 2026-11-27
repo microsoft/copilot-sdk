@@ -1,9 +1,6 @@
 #![allow(clippy::unwrap_used)]
 
-#[path = "session_test/auto_mode_recovery.rs"]
-mod auto_mode_recovery;
-#[path = "session_test/options_update_compatibility.rs"]
-mod options_update_compatibility;
+mod session_test_cases;
 
 use std::collections::HashMap;
 use std::fmt;

@@ -2786,6 +2786,8 @@ type UserMessageData struct {
 	ParentAgentTaskID *string `json:"parentAgentTaskId,omitempty"`
 	// Provider reasoning settings anchored before this model-facing message for cache-stable replay; the historical responsesReasoning name is retained for compatibility
 	ResponsesReasoning *ResponsesReasoning `json:"responsesReasoning,omitempty"`
+	// Provider output format anchored before this model-facing message for cache-stable replay
+	ResponsesTextFormat *ResponsesTextFormat `json:"responsesTextFormat,omitempty"`
 	// Origin of this message, used for timeline filtering and attribution (e.g., `skill-pdf` for hidden skill injection or `agent-<agent-id>` for an inter-agent prompt)
 	Source *string `json:"source,omitempty"`
 	// Normalized document MIME types that were sent natively instead of through tagged_files XML
@@ -3707,6 +3709,8 @@ type SystemNotificationData struct {
 	Kind SystemNotification `json:"kind"`
 	// Provider reasoning settings anchored before this model-facing message for cache-stable replay; the historical responsesReasoning name is retained for compatibility
 	ResponsesReasoning *ResponsesReasoning `json:"responsesReasoning,omitempty"`
+	// Provider output format anchored before this model-facing message for cache-stable replay
+	ResponsesTextFormat *ResponsesTextFormat `json:"responsesTextFormat,omitempty"`
 }
 
 func (*SystemNotificationData) sessionEventData()      {}
@@ -6056,6 +6060,14 @@ type ResponsesReasoning struct {
 	InitialEffort string `json:"initialEffort"`
 	// Provider model whose reasoning settings this boundary records
 	Model string `json:"model"`
+}
+
+// Original request-level and effective output format for a provider history boundary, in the session.send responseFormat shape; an absent format is plain text
+type ResponsesTextFormat struct {
+	// Effective output format selected before this message, independent of the request-level format
+	Format json.RawMessage `json:"format,omitempty"`
+	// Original request-level output format, retained while replaying this conversation prefix
+	InitialFormat json.RawMessage `json:"initialFormat,omitempty"`
 }
 
 // A sensitivity label the provider applied to one model request.

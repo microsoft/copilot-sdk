@@ -102,6 +102,9 @@ pub mod rpc_methods {
     pub const SESSION_MCP_OAUTH_STOREKEY: &str = "session.mcp.oauth.storeKey";
     /// `session.eventLog.publish`
     pub const SESSION_EVENTLOG_PUBLISH: &str = "session.eventLog.publish";
+    /// `session.eventLog.resolveBinaryReferences`
+    pub const SESSION_EVENTLOG_RESOLVEBINARYREFERENCES: &str =
+        "session.eventLog.resolveBinaryReferences";
     /// `session.remote.reattach`
     pub const SESSION_REMOTE_REATTACH: &str = "session.remote.reattach";
     /// `session.remote.readProjection`
@@ -1211,6 +1214,21 @@ pub struct CafeMetricsStartResult {
     pub started: bool,
 }
 crate::record_serde::wire_record!(CafeMetricsStartResult { reason: "reason" if is_none, started: "started" });
+
+/// Event payload with its binary-asset references resolved to inline data.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct EventLogResolveBinaryReferencesResult {
+    /// Resolved event `data` payload. Omitted when the event carries no binary-asset reference, so the original payload is already external.
+    pub data: Option<serde_json::Value>,
+}
+crate::record_serde::wire_record!(EventLogResolveBinaryReferencesResult { data: "data" if is_none });
 
 /// Result of configuring GitHub MCP.
 ///
@@ -2331,6 +2349,44 @@ pub struct SessionEventLogPublishResult {
 crate::record_serde::wire_record!(SessionEventLogPublishResult {
     event_id: "eventId"
 });
+
+/// Type and payload of a session event whose binary-asset references to resolve.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct EventLogResolveBinaryReferencesRequest {
+    /// Target session identifier
+    pub session_id: SessionId,
+    /// Session event type, for example `tool.execution_complete`.
+    pub event_type: String,
+    /// Session event `data` payload, as the session recorded it.
+    pub data: serde_json::Value,
+}
+crate::record_serde::wire_record!(EventLogResolveBinaryReferencesRequest {
+    session_id: "sessionId",
+    event_type: "eventType",
+    data: "data"
+});
+
+/// Event payload with its binary-asset references resolved to inline data.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub struct SessionEventLogResolveBinaryReferencesResult {
+    /// Resolved event `data` payload. Omitted when the event carries no binary-asset reference, so the original payload is already external.
+    pub data: Option<serde_json::Value>,
+}
+crate::record_serde::wire_record!(SessionEventLogResolveBinaryReferencesResult { data: "data" if is_none });
 
 /// Request for one phase of replacing an attached session's transport subscription.
 ///

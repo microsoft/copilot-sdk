@@ -495,7 +495,7 @@ Ephemeral. Token usage and cost information for an individual API call.
 | `inputTokens` | `number` | | Total input tokens for this call, including `cacheReadTokens` and `cacheWriteTokens` |
 | `outputTokens` | `number` | | Output tokens produced |
 | `reasoningTokens` | `number` | | Output tokens used for reasoning/chain-of-thought (subset of `outputTokens`) |
-| `cacheReadTokens` | `number` | | Tokens read from prompt cache (subset of `inputTokens`) |
+| `cacheReadTokens` | `number` | | Tokens read from prompt cache (subset of `inputTokens`). On Chat Completions and Responses calls, absent when the provider did not report cache reads, and a reported `0` means it read none; Anthropic Messages and Gemini Interactions calls report `0` when the provider did not report them |
 | `cacheWriteTokens` | `number` | | Tokens written to prompt cache (subset of `inputTokens`) |
 | `cacheExpiresAt` | `string` | | ISO 8601 timestamp when the prompt cache for this model call expires |
 | `contentFilterTriggered` | `boolean` | | Whether the response was blocked or truncated by content filtering (`finish_reason === 'content_filter'`) |

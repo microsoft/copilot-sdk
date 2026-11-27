@@ -285,6 +285,10 @@ pub const SESSION_METHOD_PATHS: &[(&str, &[&str])] = &[
     ("session.eventLog.read", &["eventLog", "read"]),
     ("session.eventLog.tail", &["eventLog", "tail"]),
     (
+        "session.eventLog.resolveBinaryReferences",
+        &["eventLog", "resolveBinaryReferences"],
+    ),
+    (
         "session.eventLog.registerInterest",
         &["eventLog", "registerInterest"],
     ),
@@ -617,6 +621,10 @@ pub const SESSION_METHOD_PATHS: &[(&str, &[&str])] = &[
     ("session.fleet.start", &["fleet", "start"]),
     ("session.agent.list", &["agent", "list"]),
     ("session.agent.setPrompt", &["agent", "setPrompt"]),
+    (
+        "session.agent.fetchRemotePrompt",
+        &["agent", "fetchRemotePrompt"],
+    ),
     ("session.agent.getCurrent", &["agent", "getCurrent"]),
     ("session.agent.select", &["agent", "select"]),
     ("session.agent.deselect", &["agent", "deselect"]),
@@ -2540,6 +2548,35 @@ impl<'a> ClientRpcAgents<'a> {
         let wire_params = serde_json::to_value(params)?;
         self.client
             .call_typed(rpc_methods::AGENTS_GENERATEFILECONTENT, Some(wire_params))
+            .await
+    }
+
+    /// Reads an agent Markdown file and returns its authored prompt, the body after the frontmatter. Fails when the file cannot be read or parsed.
+    ///
+    /// Wire method: `agents.loadFilePrompt`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - An agent Markdown file to read.
+    ///
+    /// # Returns
+    ///
+    /// The authored prompt of an agent file.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub(crate) async fn load_file_prompt(
+        &self,
+        params: AgentsLoadFilePromptRequest,
+    ) -> Result<AgentsLoadFilePromptResult, Error> {
+        let wire_params = serde_json::to_value(params)?;
+        self.client
+            .call_typed(rpc_methods::AGENTS_LOADFILEPROMPT, Some(wire_params))
             .await
     }
 
@@ -16701,6 +16738,40 @@ impl<'a> ClientRpcUserSettings<'a> {
             .await
     }
 
+    /// Diagnoses a set of already-loaded settings layers, reporting each key that will not take effect and why. Settings load tolerantly so that one bad key does not stop a session from starting; this method surfaces what was dropped so a caller can report it instead of silently ignoring the user's intent. Takes the layers as given rather than reading them, so a caller can diagnose exactly the content it is showing, including unsaved edits. Never echoes a setting's value, because a value may be a token or another secret. Marked internal because it exists to carry a CLI call site off the native addon, not to serve a consumer-facing need; it becomes public once an SDK consumer needs to inspect settings health itself.
+    ///
+    /// Wire method: `user.settings.diagnoseProblems`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - The settings layers to diagnose.
+    ///
+    /// # Returns
+    ///
+    /// The settings that will not take effect across the given layers.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    ///
+    /// Accepts [`UserSettingsProblemsOptions`], including inputs added after [`UserSettingsProblemsRequest`].
+    pub(crate) async fn diagnose_problems_with_options(
+        &self,
+        params: UserSettingsProblemsOptions,
+    ) -> Result<UserSettingsProblemsResult, Error> {
+        let wire_params = serde_json::to_value(params)?;
+        self.client
+            .call_typed(
+                rpc_methods::USER_SETTINGS_DIAGNOSEPROBLEMS,
+                Some(wire_params),
+            )
+            .await
+    }
+
     /// Validates one top-level setting subtree and writes just that key to settings.json as a single step. Doing both here closes the race a caller cannot close itself: between a separate preflight read and the write, the file may change. Rewriting only the touched key keeps legacy siblings out of settings.json. Answers a status rather than failing, so a validation problem and a write problem stay distinguishable.
     ///
     /// Wire method: `user.settings.applyTopKey`.
@@ -18298,6 +18369,40 @@ impl<'a> SessionRpcAgent<'a> {
             .call_typed(rpc_methods::SESSION_AGENT_SETPROMPT, Some(wire_params))
             .await?;
         Ok(())
+    }
+
+    /// Fetches the authored prompt of a remote custom agent with the session's credentials. Session prompt overrides do not apply. The result omits the prompt when the service does not find the agent.
+    ///
+    /// Wire method: `session.agent.fetchRemotePrompt`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - Repository and name of a remote custom agent whose authored prompt to fetch.
+    ///
+    /// # Returns
+    ///
+    /// The authored prompt of a remote custom agent.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub(crate) async fn fetch_remote_prompt(
+        &self,
+        params: AgentFetchRemotePromptRequest,
+    ) -> Result<AgentFetchRemotePromptResult, Error> {
+        let mut wire_params = serde_json::to_value(params)?;
+        wire_params["sessionId"] = serde_json::Value::String(self.session.id().to_string());
+        self.session
+            .client()
+            .call_typed(
+                rpc_methods::SESSION_AGENT_FETCHREMOTEPROMPT,
+                Some(wire_params),
+            )
+            .await
     }
 
     /// Gets the currently selected custom agent for the session.
@@ -20050,6 +20155,40 @@ impl<'a> SessionRpcEventLog<'a> {
         self.session
             .client()
             .call_typed(rpc_methods::SESSION_EVENTLOG_TAIL, Some(wire_params))
+            .await
+    }
+
+    /// Resolves the binary-asset references in one session event payload to inline data, from the session's asset registry. A user message's blob attachments regain their data, and its file attachments lose internal asset metadata. The result omits the payload when the event carries no reference.
+    ///
+    /// Wire method: `session.eventLog.resolveBinaryReferences`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - Type and payload of a session event whose binary-asset references to resolve.
+    ///
+    /// # Returns
+    ///
+    /// Event payload with its binary-asset references resolved to inline data.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub(crate) async fn resolve_binary_references(
+        &self,
+        params: EventLogResolveBinaryReferencesRequest,
+    ) -> Result<EventLogResolveBinaryReferencesResult, Error> {
+        let mut wire_params = serde_json::to_value(params)?;
+        wire_params["sessionId"] = serde_json::Value::String(self.session.id().to_string());
+        self.session
+            .client()
+            .call_typed(
+                rpc_methods::SESSION_EVENTLOG_RESOLVEBINARYREFERENCES,
+                Some(wire_params),
+            )
             .await
     }
 

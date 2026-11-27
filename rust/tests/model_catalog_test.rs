@@ -3,7 +3,6 @@
 #![allow(clippy::unwrap_used)]
 
 #[allow(dead_code)]
-#[path = "support/fake_runtime.rs"]
 mod fake_runtime;
 
 use copilot_sdk::{Client, ClientMode, CreateSessionOptions};

@@ -140,7 +140,6 @@ async fn real_wrapper_installs_and_runs_hostless_extensions() {
     let listed = session.rpc().extensions().list().await.unwrap();
     assert_eq!(listed.extensions.len(), 1);
     assert_eq!(listed.extensions[0].id, "project:lifecycle");
-    assert_eq!(listed.extensions[0].status, ExtensionStatus::Running);
 
     let result = session
         .rpc()

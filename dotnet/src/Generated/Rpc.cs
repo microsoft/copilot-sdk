@@ -15657,6 +15657,16 @@ public sealed class UserSettingsProblemSource
 [Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
 internal sealed class UserSettingsProblemsRequest
 {
+    /// <summary>Whether the caller's own settings loader allows authorization-affecting HTTP hooks. `false` reports those hooks as problems even when the server's environment allows them. `true` or absent leaves the server's environment in charge; it never allows a hook the server rejects.</summary>
+    [JsonPropertyName("allowHttpAuthHooks")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? AllowHttpAuthHooks { get; set; }
+
+    /// <summary>Whether the caller's own settings loader allows localhost and plaintext-HTTP hooks. `false` reports those hooks as problems even when the server's environment allows them. `true` or absent leaves the server's environment in charge; it never allows a hook the server rejects.</summary>
+    [JsonPropertyName("allowLocalhostHooks")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? AllowLocalhostHooks { get; set; }
+
     /// <summary>Layers to diagnose, in the precedence order the caller applies them.</summary>
     [JsonPropertyName("sources")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -24827,6 +24837,24 @@ internal sealed class AgentsGenerateFileContentRequest
     [JsonPropertyName("tools")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IList<string>? Tools { get; set; }
+}
+
+/// <summary>The authored prompt of an agent file.</summary>
+[Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+internal sealed class AgentsLoadFilePromptResult
+{
+    /// <summary>The Markdown body after the frontmatter.</summary>
+    [JsonPropertyName("prompt")]
+    public string Prompt { get; set; } = string.Empty;
+}
+
+/// <summary>An agent Markdown file to read.</summary>
+[Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+internal sealed class AgentsLoadFilePromptRequest
+{
+    /// <summary>Path of the agent Markdown file.</summary>
+    [JsonPropertyName("path")]
+    public string Path { get; set; } = string.Empty;
 }
 
 /// <summary>The outcome of agent file creation.</summary>
@@ -35279,6 +35307,33 @@ internal sealed class SessionEventLogTailRequest
     public string SessionId { get; set; } = string.Empty;
 }
 
+/// <summary>Event payload with its binary-asset references resolved to inline data.</summary>
+[Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+internal sealed class EventLogResolveBinaryReferencesResult
+{
+    /// <summary>Resolved event `data` payload. Omitted when the event carries no binary-asset reference, so the original payload is already external.</summary>
+    [JsonPropertyName("data")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IDictionary<string, JsonElement>? Data { get; set; }
+}
+
+/// <summary>Type and payload of a session event whose binary-asset references to resolve.</summary>
+[Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+internal sealed class EventLogResolveBinaryReferencesRequest
+{
+    /// <summary>Session event `data` payload, as the session recorded it.</summary>
+    [JsonPropertyName("data")]
+    public IDictionary<string, JsonElement> Data { get => field ??= new Dictionary<string, JsonElement>(); set; }
+
+    /// <summary>Session event type, for example `tool.execution_complete`.</summary>
+    [JsonPropertyName("eventType")]
+    public string EventType { get; set; } = string.Empty;
+
+    /// <summary>Target session identifier.</summary>
+    [JsonPropertyName("sessionId")]
+    public string SessionId { get; set; } = string.Empty;
+}
+
 /// <summary>Opaque handle representing an event-type interest registration.</summary>
 [Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
 public sealed class RegisterEventInterestResult
@@ -40775,6 +40830,37 @@ internal sealed class AgentSetPromptRequest
     /// <summary>Replacement authored prompt. Empty text is valid.</summary>
     [JsonPropertyName("prompt")]
     public string Prompt { get; set; } = string.Empty;
+
+    /// <summary>Target session identifier.</summary>
+    [JsonPropertyName("sessionId")]
+    public string SessionId { get; set; } = string.Empty;
+}
+
+/// <summary>The authored prompt of a remote custom agent.</summary>
+[Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+internal sealed class AgentFetchRemotePromptResult
+{
+    /// <summary>Authored prompt text. Omitted when the service does not find the agent.</summary>
+    [JsonPropertyName("prompt")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Prompt { get; set; }
+}
+
+/// <summary>Repository and name of a remote custom agent whose authored prompt to fetch.</summary>
+[Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+internal sealed class AgentFetchRemotePromptRequest
+{
+    /// <summary>Name of the remote agent.</summary>
+    [JsonPropertyName("agentName")]
+    public string AgentName { get; set; } = string.Empty;
+
+    /// <summary>Name of the repository that defines the remote agent.</summary>
+    [JsonPropertyName("repoName")]
+    public string RepoName { get; set; } = string.Empty;
+
+    /// <summary>Owner of the repository that defines the remote agent.</summary>
+    [JsonPropertyName("repoOwner")]
+    public string RepoOwner { get; set; } = string.Empty;
 
     /// <summary>Target session identifier.</summary>
     [JsonPropertyName("sessionId")]
@@ -82091,6 +82177,16 @@ public sealed class ServerUserSettingsApi
         return await CopilotClient.InvokeRpcAsync<UserSettingsProblemsResult>(_rpc, "user.settings.diagnoseProblems", [request], cancellationToken);
     }
 
+    /// <summary>Diagnoses a set of already-loaded settings layers, reporting each key that will not take effect and why. Settings load tolerantly so that one bad key does not stop a session from starting; this method surfaces what was dropped so a caller can report it instead of silently ignoring the user's intent. Takes the layers as given rather than reading them, so a caller can diagnose exactly the content it is showing, including unsaved edits. Never echoes a setting's value, because a value may be a token or another secret. Marked internal because it exists to carry a CLI call site off the native addon, not to serve a consumer-facing need; it becomes public once an SDK consumer needs to inspect settings health itself.</summary>
+    /// <param name="request">The settings layers to diagnose.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>The settings that will not take effect across the given layers.</returns>
+    internal async Task<UserSettingsProblemsResult> DiagnoseProblemsAsync(UserSettingsProblemsRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return await CopilotClient.InvokeRpcAsync<UserSettingsProblemsResult>(_rpc, "user.settings.diagnoseProblems", [request], cancellationToken);
+    }
+
     /// <summary>Validates one top-level setting subtree and writes just that key to settings.json as a single step. Doing both here closes the race a caller cannot close itself: between a separate preflight read and the write, the file may change. Rewriting only the touched key keeps legacy siblings out of settings.json. Answers a status rather than failing, so a validation problem and a write problem stay distinguishable.</summary>
     /// <param name="canonicalPath">Canonical path of the setting the caller is editing. Currently informational only.</param>
     /// <param name="topKey">Top-level setting name to write.</param>
@@ -84241,6 +84337,18 @@ public sealed class ServerAgentsApi
 
         var request = new AgentsGenerateFileContentRequest { Name = name, Description = description, Instructions = instructions, Tools = tools };
         return await CopilotClient.InvokeRpcAsync<AgentsGenerateFileContentResult>(_rpc, "agents.generateFileContent", [request], cancellationToken);
+    }
+
+    /// <summary>Reads an agent Markdown file and returns its authored prompt, the body after the frontmatter. Fails when the file cannot be read or parsed.</summary>
+    /// <param name="path">Path of the agent Markdown file.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>The authored prompt of an agent file.</returns>
+    internal async Task<AgentsLoadFilePromptResult> LoadFilePromptAsync(string path, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+
+        var request = new AgentsLoadFilePromptRequest { Path = path };
+        return await CopilotClient.InvokeRpcAsync<AgentsLoadFilePromptResult>(_rpc, "agents.loadFilePrompt", [request], cancellationToken);
     }
 
     /// <summary>Creates an agent file in the project or user agent directory without replacing an existing file. Returns validation and filesystem errors as author-visible outcomes.</summary>
@@ -87938,6 +88046,21 @@ public sealed class EventLogApi
         return await CopilotClient.InvokeRpcAsync<EventLogTailResult>(_session.Rpc, "session.eventLog.tail", [request], cancellationToken);
     }
 
+    /// <summary>Resolves the binary-asset references in one session event payload to inline data, from the session's asset registry. A user message's blob attachments regain their data, and its file attachments lose internal asset metadata. The result omits the payload when the event carries no reference.</summary>
+    /// <param name="eventType">Session event type, for example `tool.execution_complete`.</param>
+    /// <param name="data">Session event `data` payload, as the session recorded it.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>Event payload with its binary-asset references resolved to inline data.</returns>
+    internal async Task<EventLogResolveBinaryReferencesResult> ResolveBinaryReferencesAsync(string eventType, IDictionary<string, JsonElement> data, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(eventType);
+        ArgumentNullException.ThrowIfNull(data);
+        _session.ThrowIfDisposed();
+
+        var request = new EventLogResolveBinaryReferencesRequest { SessionId = _session.SessionId, EventType = eventType, Data = data };
+        return await CopilotClient.InvokeRpcAsync<EventLogResolveBinaryReferencesResult>(_session.Rpc, "session.eventLog.resolveBinaryReferences", [request], cancellationToken);
+    }
+
     /// <summary>Registers consumer interest in an event type for runtime gating purposes.</summary>
     /// <param name="eventType">The event type the consumer wants the runtime to treat as 'observed' for behavior-switching gating. Some runtime code paths inspect whether any consumer is interested in a specific event type and choose a different implementation accordingly (e.g. `mcp.oauth_required`: when interest is registered the runtime delegates interactive OAuth token acquisition to the consumer via `mcp.oauth_required` events; when no interest is registered the runtime still attempts non-interactive reconnect from cached or refreshable tokens, and only marks the server `needs-auth` if usable credentials are unavailable — it does not open a browser or start interactive OAuth without a consumer). SDK clients that long-poll events do NOT automatically appear as listeners to these gating checks — they must explicitly call `registerInterest` for each event type they want the runtime to count as having a consumer. Multiple registrations for the same event type from the same or different consumers are tracked independently and must each be released. See: `mcp.oauth_required`, `sampling.requested`, `auto_mode_switch.requested`, `session_limits_exhausted.requested`, `user_input.requested`, `elicitation.requested`, `command.queued`, `exit_plan_mode.requested`.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
@@ -89896,6 +90019,23 @@ public sealed class AgentApi
 
         var request = new AgentSetPromptRequest { SessionId = _session.SessionId, Id = id, Prompt = prompt };
         await CopilotClient.InvokeRpcAsync(_session.Rpc, "session.agent.setPrompt", [request], cancellationToken);
+    }
+
+    /// <summary>Fetches the authored prompt of a remote custom agent with the session's credentials. Session prompt overrides do not apply. The result omits the prompt when the service does not find the agent.</summary>
+    /// <param name="repoOwner">Owner of the repository that defines the remote agent.</param>
+    /// <param name="repoName">Name of the repository that defines the remote agent.</param>
+    /// <param name="agentName">Name of the remote agent.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>The authored prompt of a remote custom agent.</returns>
+    internal async Task<AgentFetchRemotePromptResult> FetchRemotePromptAsync(string repoOwner, string repoName, string agentName, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(repoOwner);
+        ArgumentNullException.ThrowIfNull(repoName);
+        ArgumentNullException.ThrowIfNull(agentName);
+        _session.ThrowIfDisposed();
+
+        var request = new AgentFetchRemotePromptRequest { SessionId = _session.SessionId, RepoOwner = repoOwner, RepoName = repoName, AgentName = agentName };
+        return await CopilotClient.InvokeRpcAsync<AgentFetchRemotePromptResult>(_session.Rpc, "session.agent.fetchRemotePrompt", [request], cancellationToken);
     }
 
     /// <summary>Gets the currently selected custom agent for the session.</summary>
@@ -94100,6 +94240,7 @@ internal static class ClientGlobalApiRegistration
 [JsonSerializable(typeof(Microsoft.Copilot.RecommendedAutoTier), TypeInfoPropertyName = "SessionEventsRecommendedAutoTier")]
 [JsonSerializable(typeof(Microsoft.Copilot.RemediationAction), TypeInfoPropertyName = "SessionEventsRemediationAction")]
 [JsonSerializable(typeof(Microsoft.Copilot.ResponsesReasoning), TypeInfoPropertyName = "SessionEventsResponsesReasoning")]
+[JsonSerializable(typeof(Microsoft.Copilot.ResponsesTextFormat), TypeInfoPropertyName = "SessionEventsResponsesTextFormat")]
 [JsonSerializable(typeof(Microsoft.Copilot.SamplingCompletedData), TypeInfoPropertyName = "SessionEventsSamplingCompletedData")]
 [JsonSerializable(typeof(Microsoft.Copilot.SamplingCompletedEvent), TypeInfoPropertyName = "SessionEventsSamplingCompletedEvent")]
 [JsonSerializable(typeof(Microsoft.Copilot.SamplingRequestedData), TypeInfoPropertyName = "SessionEventsSamplingRequestedData")]
@@ -94322,6 +94463,8 @@ internal static class ClientGlobalApiRegistration
 [JsonSerializable(typeof(AcpServeRequest))]
 [JsonSerializable(typeof(AgentDiscoveryPath))]
 [JsonSerializable(typeof(AgentDiscoveryPathList))]
+[JsonSerializable(typeof(AgentFetchRemotePromptRequest))]
+[JsonSerializable(typeof(AgentFetchRemotePromptResult))]
 [JsonSerializable(typeof(AgentGetCurrentResult))]
 [JsonSerializable(typeof(AgentInfo))]
 [JsonSerializable(typeof(AgentList))]
@@ -94357,6 +94500,8 @@ internal static class ClientGlobalApiRegistration
 [JsonSerializable(typeof(AgentsGetBuiltinsResult))]
 [JsonSerializable(typeof(AgentsGetDiscoveryPathsRequest))]
 [JsonSerializable(typeof(AgentsListToolCategoriesResult))]
+[JsonSerializable(typeof(AgentsLoadFilePromptRequest))]
+[JsonSerializable(typeof(AgentsLoadFilePromptResult))]
 [JsonSerializable(typeof(AgentsValidateNameRequest))]
 [JsonSerializable(typeof(AgentsValidateNameResult))]
 [JsonSerializable(typeof(AgentsValidateSpawnAgentNameRequest))]
@@ -94643,6 +94788,8 @@ internal static class ClientGlobalApiRegistration
 [JsonSerializable(typeof(EnvironmentsListResult))]
 [JsonSerializable(typeof(EventLogReadRequest))]
 [JsonSerializable(typeof(EventLogReleaseInterestResult))]
+[JsonSerializable(typeof(EventLogResolveBinaryReferencesRequest))]
+[JsonSerializable(typeof(EventLogResolveBinaryReferencesResult))]
 [JsonSerializable(typeof(EventLogTailResult))]
 [JsonSerializable(typeof(EventsReadResult))]
 [JsonSerializable(typeof(ExecuteCommandParams))]

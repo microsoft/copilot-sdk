@@ -1,0 +1,1707 @@
+use copilot_sdk::{
+    InProcessRuntimeOptions, OwnedRuntimeOptions, RuntimeConnection, SpawnedTcpRuntimeOptions,
+};
+use std::ffi::OsString;
+use std::future::Future;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{TcpStream, ToSocketAddrs};
+use std::ops::Deref;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+use std::panic::AssertUnwindSafe;
+use std::path::{Path, PathBuf};
+use std::pin::Pin;
+use std::process::{Child, Command, Stdio};
+use std::sync::LazyLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
+
+use copilot_sdk::handler::ApproveAllHandler;
+use copilot_sdk::session::Session;
+use copilot_sdk::subscription::{EventSubscription, LifecycleSubscription};
+use copilot_sdk::{
+    CliProgram, Client, ClientOptions, CopilotRequestHandler, CreateSessionOptions, SessionEvent,
+    SessionId, SessionLifecycleEvent,
+};
+use futures_util::FutureExt;
+use serde_json::json;
+use tokio::sync::{Mutex, Semaphore};
+
+static E2E_CONCURRENCY: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(e2e_concurrency()));
+static SHARED_E2E_RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_name("rust-e2e-shared")
+        .build()
+        .expect("create shared E2E runtime")
+});
+const SHARED_E2E_CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
+const PROXY_STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
+
+pub const DEFAULT_TEST_TOKEN: &str = "rust-e2e-token";
+
+type TestFuture<'a> = Pin<Box<dyn Future<Output = ()> + 'a>>;
+
+/// Fixed client options for one explicitly declared shared E2E group.
+pub type SharedClientOptions = fn(&E2eContext) -> ClientOptions;
+
+/// A file- or group-scoped shared E2E runtime.
+///
+/// This deliberately has no options-keyed registry: every Rust source group owns
+/// its own static instance and selects its options at that declaration site.
+pub struct SharedE2eGroup {
+    category: &'static str,
+    client_options: SharedClientOptions,
+    expected_invocations: usize,
+    completed_invocations: AtomicUsize,
+    state: Mutex<Option<SharedE2eState>>,
+}
+
+struct SharedE2eState {
+    context: E2eContext,
+    client: Client,
+}
+
+/// Test facade over a group's shared context and client.
+///
+/// It dereferences to [`E2eContext`] for proxy and fixture helpers, while
+/// [`Self::start_client`] returns a clone of the group's already-started client.
+pub struct SharedE2eContext<'a> {
+    context: &'a mut E2eContext,
+    client: Client,
+}
+
+/// A clone of a group's shared client.
+///
+/// `stop` is deliberately a no-op: tests retain their existing local teardown
+/// shape without shutting down the next test's runtime. The group stops the
+/// actual client after its final expected invocation. Tests that verify
+/// stopping or force-stopping a client stay on the dedicated helper.
+#[derive(Clone)]
+pub struct SharedE2eClient(Client);
+
+impl Deref for SharedE2eClient {
+    type Target = Client;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl SharedE2eClient {
+    pub async fn stop(&self) -> std::result::Result<(), copilot_sdk::StopErrors> {
+        Ok(())
+    }
+}
+
+impl Deref for SharedE2eContext<'_> {
+    type Target = E2eContext;
+
+    fn deref(&self) -> &Self::Target {
+        self.context
+    }
+}
+
+impl SharedE2eContext<'_> {
+    /// Clone the group client. Shared tests must not call `Client::stop`; the
+    /// group tears it down after its final expected test invocation.
+    pub async fn start_client(&self) -> SharedE2eClient {
+        SharedE2eClient(self.client.clone())
+    }
+}
+
+impl SharedE2eGroup {
+    pub const fn new(
+        category: &'static str,
+        client_options: SharedClientOptions,
+        expected_invocations: usize,
+    ) -> Self {
+        Self {
+            category,
+            client_options,
+            expected_invocations,
+            completed_invocations: AtomicUsize::new(0),
+            state: Mutex::const_new(None),
+        }
+    }
+
+    pub const fn standard(category: &'static str, expected_invocations: usize) -> Self {
+        Self::new(
+            category,
+            standard_shared_client_options,
+            expected_invocations,
+        )
+    }
+}
+
+/// The standard stdio/default-transport options used by most shared groups.
+pub fn standard_shared_client_options(context: &E2eContext) -> ClientOptions {
+    context.client_options()
+}
+
+/// Run a test against an explicitly declared, file/group-scoped shared client.
+///
+/// Calls using one group serialize, while different groups still use the suite
+/// concurrency limit. Before and after every test, sessions are disconnected and
+/// deleted, the work directory is emptied, and the proxy is reconfigured for the
+/// test's snapshot so exchanges cannot bleed across tests. After the declared
+/// number of invocations completes, the group's client and proxy are stopped.
+pub async fn with_shared_e2e_context<F>(
+    group: &'static SharedE2eGroup,
+    category: &str,
+    snapshot_name: &str,
+    test: F,
+) where
+    F: for<'a> FnOnce(&'a mut SharedE2eContext<'a>) -> TestFuture<'a>,
+{
+    assert_eq!(
+        category, group.category,
+        "shared E2E group category must match the test's snapshots"
+    );
+    let mut state = group.state.lock().await;
+    let _permit = E2E_CONCURRENCY
+        .acquire()
+        .await
+        .expect("E2E concurrency semaphore should stay open");
+    let completed = group.completed_invocations.fetch_add(1, Ordering::Relaxed) + 1;
+    if state.is_none() {
+        let context = E2eContext::new(group.category, snapshot_name)
+            .await
+            .unwrap_or_else(|err| panic!("create shared E2E context: {err}"));
+        let options = (group.client_options)(&context);
+        let mut startup = SHARED_E2E_RUNTIME.spawn(async move {
+            let client = Client::start(options).await?;
+            client.start_router_for_test();
+            Ok::<_, copilot_sdk::Error>(client)
+        });
+        let client = match tokio::time::timeout(default_test_timeout(), &mut startup).await {
+            Ok(result) => result
+                .expect("join shared E2E client startup")
+                .expect("start shared E2E client"),
+            Err(_) => {
+                startup.abort();
+                let _ = tokio::time::timeout(SHARED_E2E_CLEANUP_TIMEOUT, startup).await;
+                panic!(
+                    "timed out after {:?} starting shared E2E client",
+                    default_test_timeout()
+                );
+            }
+        };
+        *state = Some(SharedE2eState { context, client });
+    }
+
+    let (result, cleanup_result) = {
+        let state = state.as_mut().expect("shared E2E state initialized");
+        let result = match tokio::time::timeout(
+            SHARED_E2E_CLEANUP_TIMEOUT,
+            state.prepare_test(group.category, snapshot_name),
+        )
+        .await
+        {
+            Ok(Ok(())) => Ok({
+                let mut context = SharedE2eContext {
+                    context: &mut state.context,
+                    client: state.client.clone(),
+                };
+                AssertUnwindSafe(tokio::time::timeout(
+                    default_test_timeout(),
+                    test(&mut context),
+                ))
+                .catch_unwind()
+                .await
+            }),
+            Ok(Err(error)) => Err(error),
+            Err(_) => Err(std::io::Error::other(format!(
+                "timed out after {SHARED_E2E_CLEANUP_TIMEOUT:?} preparing shared E2E test"
+            ))),
+        };
+        if !matches!(&result, Ok(Ok(Ok(())))) {
+            state.context.print_sdk_diagnostics();
+        }
+        let cleanup_result = match tokio::time::timeout(
+            SHARED_E2E_CLEANUP_TIMEOUT,
+            state.cleanup_after_test(),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => {
+                state.client.force_stop();
+                Err(std::io::Error::other(format!(
+                    "timed out after {SHARED_E2E_CLEANUP_TIMEOUT:?} cleaning up shared E2E test"
+                )))
+            }
+        };
+        (result, cleanup_result)
+    };
+
+    let test_succeeded = matches!(&result, Ok(Ok(Ok(()))));
+    let skip_writing_cache = !test_succeeded || cleanup_result.is_err();
+    let teardown_result = if !test_succeeded
+        || cleanup_result.is_err()
+        || is_filtered_test_run()
+        || completed == group.expected_invocations
+    {
+        state
+            .take()
+            .expect("shared E2E state initialized")
+            .shutdown_bounded(skip_writing_cache)
+            .await
+    } else {
+        Ok(())
+    };
+
+    match result {
+        Ok(Ok(Ok(()))) => {
+            cleanup_result.unwrap_or_else(|error| panic!("clean up shared E2E test: {error}"));
+            teardown_result.unwrap_or_else(|error| panic!("tear down shared E2E group: {error}"));
+        }
+        Ok(Ok(Err(_))) => {
+            if let Err(error) = cleanup_result {
+                eprintln!("failed to clean up timed-out shared E2E test: {error}");
+            }
+            if let Err(error) = teardown_result {
+                eprintln!("failed to tear down shared E2E group after timeout: {error}");
+            }
+            panic!(
+                "timed out after {:?} running shared E2E test {}/{}",
+                default_test_timeout(),
+                group.category,
+                snapshot_name
+            );
+        }
+        Ok(Err(payload)) => {
+            if let Err(error) = cleanup_result {
+                eprintln!("failed to clean up shared E2E test after panic: {error}");
+            }
+            if let Err(error) = teardown_result {
+                eprintln!("failed to tear down shared E2E group after panic: {error}");
+            }
+            std::panic::resume_unwind(payload);
+        }
+        Err(error) => {
+            if let Err(cleanup_error) = cleanup_result {
+                eprintln!(
+                    "failed to clean up shared E2E test after setup failure: {cleanup_error}"
+                );
+            }
+            if let Err(teardown_error) = teardown_result {
+                eprintln!(
+                    "failed to tear down shared E2E group after setup failure: {teardown_error}"
+                );
+            }
+            panic!("prepare shared E2E test: {error}");
+        }
+    }
+}
+
+pub async fn with_dedicated_e2e_context<F>(category: &str, snapshot_name: &str, test: F)
+where
+    F: for<'a> FnOnce(&'a mut E2eContext) -> TestFuture<'a>,
+{
+    let _permit = E2E_CONCURRENCY
+        .acquire()
+        .await
+        .expect("E2E concurrency semaphore should stay open");
+    let mut ctx = E2eContext::new(category, snapshot_name)
+        .await
+        .unwrap_or_else(|err| panic!("create E2E context: {err}"));
+
+    let timed_out = tokio::time::timeout(default_test_timeout(), test(&mut ctx))
+        .await
+        .is_err();
+    if timed_out {
+        ctx.print_sdk_diagnostics();
+    }
+    ctx.cleanup(timed_out)
+        .await
+        .unwrap_or_else(|err| panic!("clean up E2E context: {err}"));
+    assert!(
+        !timed_out,
+        "timed out after {:?} running E2E test {category}/{snapshot_name}",
+        default_test_timeout()
+    );
+}
+
+pub async fn with_dedicated_group_e2e_context<F>(
+    _group: &'static SharedE2eGroup,
+    category: &str,
+    snapshot_name: &str,
+    test: F,
+) where
+    F: for<'a> FnOnce(&'a mut E2eContext) -> TestFuture<'a>,
+{
+    with_dedicated_e2e_context(category, snapshot_name, test).await;
+}
+
+/// Run a dedicated one-client E2E test.
+///
+/// New tests should call [`with_dedicated_e2e_context`] to make the lifecycle
+/// choice visible at the call site. This name remains for existing dedicated
+/// tests while they are migrated group by group.
+pub async fn with_e2e_context<F>(category: &str, snapshot_name: &str, test: F)
+where
+    F: for<'a> FnOnce(&'a mut E2eContext) -> TestFuture<'a>,
+{
+    with_dedicated_e2e_context(category, snapshot_name, test).await;
+}
+
+/// Like [`with_dedicated_e2e_context`] but starts the CapiProxy without loading a
+/// recorded snapshot. Used by the LLM inference callback tests, whose
+/// registered provider fabricates every model-layer response so no CAPI
+/// replay is needed — only the auth/user endpoints are served by the proxy.
+pub async fn with_dedicated_e2e_context_no_snapshot<F>(test: F)
+where
+    F: for<'a> FnOnce(&'a mut E2eContext) -> TestFuture<'a>,
+{
+    let _permit = E2E_CONCURRENCY
+        .acquire()
+        .await
+        .expect("E2E concurrency semaphore should stay open");
+    let mut ctx = E2eContext::new_no_snapshot()
+        .await
+        .unwrap_or_else(|err| panic!("create E2E context: {err}"));
+
+    let timed_out = tokio::time::timeout(default_test_timeout(), test(&mut ctx))
+        .await
+        .is_err();
+    ctx.cleanup(timed_out)
+        .await
+        .unwrap_or_else(|err| panic!("clean up E2E context: {err}"));
+    assert!(
+        !timed_out,
+        "timed out after {:?} running no-snapshot E2E test",
+        default_test_timeout()
+    );
+}
+
+/// Dedicated no-snapshot compatibility helper. See
+/// [`with_dedicated_e2e_context_no_snapshot`].
+pub async fn with_e2e_context_no_snapshot<F>(test: F)
+where
+    F: for<'a> FnOnce(&'a mut E2eContext) -> TestFuture<'a>,
+{
+    with_dedicated_e2e_context_no_snapshot(test).await;
+}
+
+pub struct E2eContext {
+    repo_root: PathBuf,
+    cli_path: PathBuf,
+    home_dir: tempfile::TempDir,
+    work_dir: tempfile::TempDir,
+    proxy: Option<CapiProxy>,
+    diagnostics: bool,
+}
+
+impl E2eContext {
+    async fn new(category: &str, snapshot_name: &str) -> std::io::Result<Self> {
+        Self::new_with_cli(category, snapshot_name, None).await
+    }
+
+    pub async fn new_with_cli(
+        category: &str,
+        snapshot_name: &str,
+        cli_override: Option<PathBuf>,
+    ) -> std::io::Result<Self> {
+        let repo_root = repo_root();
+        let cli_path = match cli_override {
+            Some(path) => path,
+            None => cli_path(&repo_root)?,
+        };
+        let home_dir = tempfile::tempdir()?;
+        let work_dir = tempfile::tempdir()?;
+        let proxy_root = repo_root.clone();
+        let proxy = tokio::task::spawn_blocking(move || CapiProxy::start(&proxy_root))
+            .await
+            .map_err(|err| std::io::Error::other(format!("proxy startup task failed: {err}")))??;
+        let mut ctx = Self {
+            repo_root,
+            cli_path,
+            home_dir,
+            work_dir,
+            proxy: Some(proxy),
+            diagnostics: matches!(category, "pending_work_resume" | "telemetry"),
+        };
+        ctx.configure(category, snapshot_name)?;
+        ctx.set_default_copilot_user();
+        Ok(ctx)
+    }
+
+    async fn new_no_snapshot() -> std::io::Result<Self> {
+        let repo_root = repo_root();
+        let cli_path = cli_path(&repo_root)?;
+        let home_dir = tempfile::tempdir()?;
+        let work_dir = tempfile::tempdir()?;
+        let proxy_root = repo_root.clone();
+        let proxy = tokio::task::spawn_blocking(move || CapiProxy::start(&proxy_root))
+            .await
+            .map_err(|err| std::io::Error::other(format!("proxy startup task failed: {err}")))??;
+        let ctx = Self {
+            repo_root,
+            cli_path,
+            home_dir,
+            work_dir,
+            proxy: Some(proxy),
+            diagnostics: false,
+        };
+        // Initialize proxy state without replaying any recorded exchanges: the
+        // snapshot path intentionally does not exist, so `/copilot_internal/user`
+        // and the default `/meta` catalog are served while all model-layer
+        // traffic is fabricated by the registered inference callback.
+        let dummy_snapshot = ctx.work_dir.path().join("__no_snapshot__.yaml");
+        ctx.proxy()
+            .configure(&dummy_snapshot, ctx.work_dir.path())
+            .map_err(|err| {
+                std::io::Error::other(format!("configure proxy without snapshot failed: {err}"))
+            })?;
+        ctx.set_default_copilot_user();
+        Ok(ctx)
+    }
+
+    pub fn repo_root(&self) -> &Path {
+        &self.repo_root
+    }
+
+    pub fn work_dir(&self) -> &Path {
+        self.work_dir.path()
+    }
+
+    pub fn proxy_url(&self) -> &str {
+        self.proxy().url()
+    }
+
+    #[cfg(feature = "in-process")]
+    pub fn network_fixture_url(&self) -> &str {
+        &self.proxy().network_fixture_url
+    }
+
+    #[cfg(feature = "in-process")]
+    pub fn configure_network_fixture(&self, config: &serde_json::Value) -> std::io::Result<()> {
+        CapiProxy::post_json_at(
+            self.network_fixture_url(),
+            "/configure",
+            &config.to_string(),
+        )
+    }
+
+    pub fn snapshot_path(&self, category: &str, snapshot_name: &str) -> PathBuf {
+        self.repo_root
+            .join("test")
+            .join("snapshots")
+            .join(category)
+            .join(format!("{snapshot_name}.yaml"))
+    }
+
+    pub fn client_options(&self) -> ClientOptions {
+        self.client_options_with_extra_env(&[])
+    }
+
+    /// The isolated home the runtime uses as `COPILOT_HOME` and its XDG roots,
+    /// which also holds `session-state/`.
+    pub fn home_dir(&self) -> PathBuf {
+        canonical_temp_path(self.home_dir.path())
+    }
+
+    /// [`Self::client_options`] with `extra_env` appended to the runtime's
+    /// environment, where a later entry overrides an earlier one.
+    pub fn client_options_with_extra_env(&self, extra_env: &[(&str, &str)]) -> ClientOptions {
+        let mut env = self.environment();
+        env.extend(
+            extra_env
+                .iter()
+                .map(|(key, value)| (OsString::from(*key), OsString::from(*value))),
+        );
+        self.client_options_with_environment(
+            RuntimeConnection::for_default(Default::default()).unwrap(),
+            env,
+        )
+    }
+
+    pub fn client_options_with_transport(&self, transport: RuntimeConnection) -> ClientOptions {
+        self.client_options_with_environment(transport, self.environment())
+    }
+
+    fn client_options_with_environment(
+        &self,
+        transport: RuntimeConnection,
+        environment: Vec<(OsString, OsString)>,
+    ) -> ClientOptions {
+        let mut options =
+            client_options_for_cli(&self.cli_path, self.work_dir.path(), environment, transport);
+        if let Some(owned) = options
+            .runtime
+            .as_mut()
+            .and_then(RuntimeConnection::owned_options_mut)
+            && owned.base_directory.is_none()
+        {
+            owned.base_directory = Some(self.home_dir());
+        }
+        if matches!(options.runtime, Some(RuntimeConnection::Tcp(_))) {
+            return options;
+        }
+        self.configure_internal_test_options(&mut options);
+        if self.diagnostics {
+            options.with_observability(|group| group.with_log_level(copilot_sdk::LogLevel::Debug))
+        } else {
+            options
+        }
+    }
+
+    pub fn client_options_with_github_token(&self, token: &str) -> ClientOptions {
+        self.client_options()
+            .with_github(|group| group.with_token(token))
+    }
+
+    pub async fn start_client(&self) -> Client {
+        Client::start(self.client_options_with_github_token(DEFAULT_TEST_TOKEN))
+            .await
+            .expect("start E2E client")
+    }
+
+    /// Start a client that hosts the bundled runtime directly in-process over
+    /// FFI ([`RuntimeConnection::for_in_process(Default::default())`]).
+    #[cfg_attr(not(feature = "in-process"), allow(dead_code))]
+    pub async fn start_inprocess_client(&self) -> Client {
+        let mut options = ClientOptions::new(copilot_sdk::ClientMode::CodingAgent)
+            .with_runtime(RuntimeConnection::for_in_process(
+                InProcessRuntimeOptions::new().with_owned(|_| {
+                    OwnedRuntimeOptions::new().with_base_directory(self.home_dir())
+                }),
+            ))
+            .with_github(|group| group.with_token(DEFAULT_TEST_TOKEN))
+            .with_github(|group| group.with_use_logged_in_user(false));
+        self.configure_internal_test_options(&mut options);
+        Client::start(options)
+            .await
+            .expect("start in-process FFI E2E client")
+    }
+
+    /// Start a client wired to a Copilot request handler.
+    pub async fn start_llm_client<H>(&self, handler: H) -> Client
+    where
+        H: CopilotRequestHandler,
+    {
+        let options = self
+            .client_options()
+            .with_github(|group| group.with_token(DEFAULT_TEST_TOKEN))
+            .with_models(|group| group.with_request_handler(handler));
+        Client::start(options).await.expect("start E2E LLM client")
+    }
+
+    #[expect(dead_code, reason = "used by follow-on E2E ports")]
+    pub async fn start_tcp_client(&self, port: u16, token: &str) -> Client {
+        Client::start(
+            self.client_options_with_transport(RuntimeConnection::SpawnedTcp(
+                SpawnedTcpRuntimeOptions {
+                    process: Default::default(),
+                    port,
+                    connection_token: Some(token.to_string()),
+                },
+            )),
+        )
+        .await
+        .expect("start TCP E2E client")
+    }
+
+    pub fn approve_all_session_config(&self) -> CreateSessionOptions {
+        CreateSessionOptions::default()
+            .with_working_directory(self.work_dir())
+            .with_permissions(|group| group.with_on_request(std::sync::Arc::new(ApproveAllHandler)))
+            .with_github(|group| group.with_token(DEFAULT_TEST_TOKEN))
+    }
+
+    pub fn set_default_copilot_user(&self) {
+        self.set_copilot_user_by_token(DEFAULT_TEST_TOKEN);
+    }
+
+    pub fn set_copilot_user_by_token(&self, token: &str) {
+        self.set_copilot_user_by_token_with_login(token, "rust-e2e-user");
+    }
+
+    pub fn set_copilot_user_by_token_with_login(&self, token: &str, login: &str) {
+        self.set_copilot_user_by_token_with_login_and_quota(token, login, None);
+    }
+
+    pub fn set_copilot_user_by_token_with_login_and_quota(
+        &self,
+        token: &str,
+        login: &str,
+        quota_snapshots: Option<serde_json::Value>,
+    ) {
+        let mut user = json!({
+            "login": login,
+            "id": 12345,
+            "copilot_plan": "individual_pro",
+            "endpoints": {
+                "api": self.proxy_url(),
+                "telemetry": "https://sdk-hydro-collector.example.com"
+            },
+            "analytics_tracking_id": "rust-e2e-tracking-id"
+        });
+        if let Some(quota_snapshots) = quota_snapshots {
+            user["quota_snapshots"] = quota_snapshots;
+        }
+        self.set_copilot_user_response(token, user);
+    }
+
+    pub fn set_copilot_user_response(&self, token: &str, user: serde_json::Value) {
+        self.proxy()
+            .set_copilot_user_by_token(token, user)
+            .expect("configure copilot user");
+    }
+
+    pub fn exchanges(&self) -> Vec<serde_json::Value> {
+        self.proxy()
+            .get_json("/exchanges")
+            .expect("get captured proxy exchanges")
+    }
+
+    pub fn configure_scripted_replay(
+        &self,
+        responses: serde_json::Value,
+        replay: serde_json::Value,
+    ) {
+        let file_path = self.work_dir.path().join("scripted-rust-sdk-replay.yaml");
+        self.proxy()
+            .post_json(
+                "/config",
+                &json!({
+                    "filePath": file_path,
+                    "workDir": self.work_dir.path(),
+                    "replayOnly": true,
+                })
+                .to_string(),
+            )
+            .expect("configure scripted replay");
+        self.proxy()
+            .post_json("/replay-data", &replay.to_string())
+            .expect("configure scripted replay data");
+        self.proxy()
+            .post_json("/scripted-responses", &responses.to_string())
+            .expect("configure scripted responses");
+    }
+
+    pub async fn cleanup(&mut self, skip_writing_cache: bool) -> std::io::Result<()> {
+        if let Some(mut proxy) = self.proxy.take() {
+            tokio::task::spawn_blocking(move || proxy.stop(skip_writing_cache))
+                .await
+                .map_err(|err| {
+                    std::io::Error::other(format!("proxy shutdown task failed: {err}"))
+                })??;
+        }
+        Ok(())
+    }
+
+    fn configure(&mut self, category: &str, snapshot_name: &str) -> std::io::Result<()> {
+        let snapshot_path = self.snapshot_path(category, snapshot_name);
+        self.proxy()
+            .configure(&snapshot_path, self.work_dir.path())
+            .map_err(|err| {
+                std::io::Error::other(format!(
+                    "configure proxy for {} failed: {err}",
+                    snapshot_path.display()
+                ))
+            })
+    }
+
+    fn configure_internal_test_options(&self, options: &mut ClientOptions) {
+        options.internal_test_options = Some(copilot_sdk::InternalTestOptions {
+            copilot_api_url: Some(self.proxy_url().to_owned()),
+            github_api_url: Some(self.proxy_url().to_owned()),
+            proxy_url: Some(self.proxy().connect_proxy_url.clone()),
+            no_proxy: Some("127.0.0.1,localhost,::1".to_owned()),
+            ca_certificate_path: Some(self.proxy().ca_file_path.clone()),
+        });
+        if let Some(child) = options
+            .runtime
+            .as_mut()
+            .and_then(RuntimeConnection::child_process_options_mut)
+        {
+            child
+                .env
+                .as_mut()
+                .expect("harness replacement environment")
+                .retain(|(key, _)| {
+                    !matches!(
+                        key.to_str(),
+                        Some(
+                            "COPILOT_API_URL"
+                                | "COPILOT_DEBUG_GITHUB_API_URL"
+                                | "HTTP_PROXY"
+                                | "HTTPS_PROXY"
+                                | "http_proxy"
+                                | "https_proxy"
+                                | "NO_PROXY"
+                                | "no_proxy"
+                                | "NODE_EXTRA_CA_CERTS"
+                                | "SSL_CERT_FILE"
+                                | "REQUESTS_CA_BUNDLE"
+                                | "CURL_CA_BUNDLE"
+                                | "GIT_SSL_CAINFO"
+                        )
+                    )
+                });
+        }
+    }
+
+    pub fn environment(&self) -> Vec<(OsString, OsString)> {
+        let mut env = self.proxy().proxy_env();
+        env.extend([
+            ("COPILOT_API_URL".into(), self.proxy_url().into()),
+            (
+                "COPILOT_DEBUG_GITHUB_API_URL".into(),
+                self.proxy_url().into(),
+            ),
+            (
+                "COPILOT_HOME".into(),
+                canonical_temp_path(self.home_dir.path())
+                    .as_os_str()
+                    .to_owned(),
+            ),
+            (
+                "GH_CONFIG_DIR".into(),
+                canonical_temp_path(self.home_dir.path())
+                    .as_os_str()
+                    .to_owned(),
+            ),
+            (
+                "XDG_CONFIG_HOME".into(),
+                canonical_temp_path(self.home_dir.path())
+                    .as_os_str()
+                    .to_owned(),
+            ),
+            (
+                "XDG_STATE_HOME".into(),
+                canonical_temp_path(self.home_dir.path())
+                    .as_os_str()
+                    .to_owned(),
+            ),
+        ]);
+        env.extend(isolated_cache_environment(self.home_dir.path()));
+        if self.diagnostics {
+            env.push(("RUST_LOG".into(), "error,sdk_diagnostics=debug".into()));
+        }
+        env.extend([
+            ("COPILOT_MCP_APPS".into(), "true".into()),
+            ("MCP_APPS".into(), "true".into()),
+            ("GH_TOKEN".into(), DEFAULT_TEST_TOKEN.into()),
+            ("GITHUB_TOKEN".into(), DEFAULT_TEST_TOKEN.into()),
+            ("GH_ENTERPRISE_TOKEN".into(), "".into()),
+            ("GITHUB_ENTERPRISE_TOKEN".into(), "".into()),
+            ("COPILOT_HMAC_KEY".into(), "".into()),
+            ("CAPI_HMAC_KEY".into(), "".into()),
+        ]);
+        if is_inprocess_default() {
+            env.extend([
+                ("COPILOT_ALLOW_GET_PROVIDER_ENDPOINT".into(), "true".into()),
+                (
+                    "COPILOT_EXP_COPILOT_CLI_WEBSOCKET_RESPONSES".into(),
+                    "true".into(),
+                ),
+                (
+                    "COPILOT_EXP_COPILOT_CLI_SESSION_BASED_SUBAGENTS".into(),
+                    "true".into(),
+                ),
+            ]);
+        }
+        env
+    }
+
+    fn proxy(&self) -> &CapiProxy {
+        self.proxy.as_ref().expect("proxy already stopped")
+    }
+
+    fn print_sdk_diagnostics(&self) {
+        if !self.diagnostics {
+            return;
+        }
+        let mut command = Command::new("node");
+        command
+            .arg(self.repo_root.join("test/harness/sdk-diagnostics.mjs"))
+            .arg(self.home_dir.path());
+        #[cfg(windows)]
+        {
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
+        match command.output() {
+            Ok(output) if output.status.success() => {
+                eprintln!("{}", String::from_utf8_lossy(&output.stdout));
+            }
+            _ => eprintln!("SDK diagnostics unavailable"),
+        }
+    }
+}
+
+impl SharedE2eState {
+    async fn prepare_test(&mut self, category: &str, snapshot_name: &str) -> std::io::Result<()> {
+        self.cleanup_sessions().await?;
+        clear_directory_contents(self.context.work_dir()).await?;
+        self.context.configure(category, snapshot_name)?;
+        self.context.set_default_copilot_user();
+        Ok(())
+    }
+
+    async fn cleanup_after_test(&mut self) -> std::io::Result<()> {
+        self.cleanup_sessions().await?;
+        clear_directory_contents(self.context.work_dir()).await
+    }
+
+    async fn cleanup_sessions(&self) -> std::io::Result<()> {
+        self.client
+            .cleanup_sessions_for_test()
+            .await
+            .map_err(|err| {
+                std::io::Error::other(format!("clean up shared E2E sessions failed: {err}"))
+            })
+    }
+
+    async fn shutdown_bounded(mut self, skip_writing_cache: bool) -> std::io::Result<()> {
+        let client_result = if skip_writing_cache {
+            // Failed cleanup can leave an unanswered session.detach. Force stop
+            // closes its transport instead of repeating that unbounded request.
+            self.client.force_stop();
+            Ok(())
+        } else {
+            // Successful cleanup has detached every session. Let stop own its
+            // bounded shutdown, EOF grace, and reap phases without a competing timer.
+            self.client.stop().await.map_err(|err| {
+                std::io::Error::other(format!("stop shared E2E client failed: {err}"))
+            })
+        };
+        let proxy_result = self.context.cleanup(skip_writing_cache).await;
+
+        match (client_result, proxy_result) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+            (Err(client_error), Err(proxy_error)) => Err(std::io::Error::other(format!(
+                "{client_error}; stop shared E2E proxy failed: {proxy_error}"
+            ))),
+        }
+    }
+}
+
+fn wait_for_child_exit(child: &mut Child) -> std::io::Result<()> {
+    let deadline = Instant::now() + SHARED_E2E_CLEANUP_TIMEOUT;
+    loop {
+        if child.try_wait()?.is_some() {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            kill_and_wait_child(child);
+            return Err(std::io::Error::other(format!(
+                "timed out after {SHARED_E2E_CLEANUP_TIMEOUT:?} waiting for child process"
+            )));
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn kill_and_wait_child(child: &mut Child) {
+    if let Err(error) = child.kill() {
+        eprintln!("failed to kill E2E child process: {error}");
+    }
+    let deadline = Instant::now() + SHARED_E2E_CLEANUP_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return,
+            Ok(None) => {}
+            Err(error) => {
+                eprintln!("failed to inspect E2E child process after kill: {error}");
+                return;
+            }
+        }
+        if Instant::now() >= deadline {
+            eprintln!(
+                "timed out after {SHARED_E2E_CLEANUP_TIMEOUT:?} waiting for killed E2E child process"
+            );
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn connect_with_timeout(host: &str, port: u16) -> std::io::Result<TcpStream> {
+    let mut last_error = None;
+    for address in (host, port).to_socket_addrs()? {
+        match TcpStream::connect_timeout(&address, SHARED_E2E_CLEANUP_TIMEOUT) {
+            Ok(stream) => {
+                stream.set_read_timeout(Some(SHARED_E2E_CLEANUP_TIMEOUT))?;
+                stream.set_write_timeout(Some(SHARED_E2E_CLEANUP_TIMEOUT))?;
+                return Ok(stream);
+            }
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| {
+        std::io::Error::other(format!("no socket addresses resolved for {host}:{port}"))
+    }))
+}
+
+fn is_filtered_test_run() -> bool {
+    std::env::args().skip(1).any(|arg| {
+        !arg.starts_with('-') || matches!(arg.as_str(), "--ignored" | "--include-ignored")
+    })
+}
+
+async fn clear_directory_contents(directory: &Path) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(directory)? {
+        let entry = entry?;
+        let path = entry.path();
+        let is_directory = entry.file_type()?.is_dir();
+
+        for attempt in 1..=20 {
+            let result = if is_directory {
+                std::fs::remove_dir_all(&path)
+            } else {
+                std::fs::remove_file(&path)
+            };
+
+            match result {
+                Ok(()) => break,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+                Err(error) if is_transient_windows_file_lock(&error) && attempt < 20 => {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+    Ok(())
+}
+
+fn is_transient_windows_file_lock(error: &std::io::Error) -> bool {
+    cfg!(windows) && matches!(error.raw_os_error(), Some(5 | 32 | 145))
+}
+
+impl Drop for E2eContext {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.print_sdk_diagnostics();
+        }
+        if let Some(mut proxy) = self.proxy.take() {
+            let _ = proxy.stop(true);
+        }
+    }
+}
+
+pub async fn wait_for_event<P>(
+    events: EventSubscription,
+    description: &'static str,
+    predicate: P,
+) -> SessionEvent
+where
+    P: Fn(&SessionEvent) -> bool,
+{
+    wait_for_event_core(events, description, predicate, false).await
+}
+
+pub async fn wait_for_event_allowing_rate_limit<P>(
+    events: EventSubscription,
+    description: &'static str,
+    predicate: P,
+) -> SessionEvent
+where
+    P: Fn(&SessionEvent) -> bool,
+{
+    wait_for_event_core(events, description, predicate, true).await
+}
+
+async fn wait_for_event_core<P>(
+    mut events: EventSubscription,
+    description: &'static str,
+    predicate: P,
+    allow_rate_limit_error: bool,
+) -> SessionEvent
+where
+    P: Fn(&SessionEvent) -> bool,
+{
+    tokio::time::timeout(default_event_timeout(), async {
+        loop {
+            let event = events.recv().await.unwrap_or_else(|err| {
+                panic!("event stream closed while waiting for {description}: {err}")
+            });
+            let is_allowed_rate_limit = allow_rate_limit_error
+                && event.parsed_type()
+                    == copilot_sdk::session_events::SessionEventType::SessionError
+                && event.data.get("errorType").and_then(|value| value.as_str())
+                    == Some("rate_limit");
+            if event.parsed_type() == copilot_sdk::session_events::SessionEventType::SessionError
+                && !is_allowed_rate_limit
+            {
+                panic!(
+                    "session.error while waiting for {description}: {}",
+                    event.data
+                );
+            }
+            if predicate(&event) {
+                return event;
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("timed out waiting for {description}"))
+}
+
+pub async fn recv_with_timeout<T>(
+    receiver: &mut tokio::sync::mpsc::UnboundedReceiver<T>,
+    description: &'static str,
+) -> T {
+    tokio::time::timeout(default_event_timeout(), receiver.recv())
+        .await
+        .unwrap_or_else(|_| panic!("timed out waiting for {description}"))
+        .unwrap_or_else(|| panic!("{description} channel closed"))
+}
+
+pub async fn wait_for_lifecycle_event<P>(
+    mut events: LifecycleSubscription,
+    description: &'static str,
+    predicate: P,
+) -> SessionLifecycleEvent
+where
+    P: Fn(&SessionLifecycleEvent) -> bool,
+{
+    tokio::time::timeout(default_event_timeout(), async {
+        loop {
+            let event = events.recv().await.unwrap_or_else(|err| {
+                panic!("lifecycle stream closed while waiting for {description}: {err}")
+            });
+            if predicate(&event) {
+                return event;
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("timed out waiting for {description}"))
+}
+
+pub async fn wait_for_condition<F, Fut>(description: &'static str, mut predicate: F)
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = bool>,
+{
+    let deadline = tokio::time::Instant::now() + default_event_timeout();
+    loop {
+        if predicate().await {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "timed out waiting for {description}"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+pub async fn collect_until_idle(mut events: EventSubscription) -> Vec<SessionEvent> {
+    let mut observed = Vec::new();
+    tokio::time::timeout(default_event_timeout(), async {
+        loop {
+            let event = events
+                .recv()
+                .await
+                .unwrap_or_else(|err| panic!("event stream closed while collecting events: {err}"));
+            let is_idle =
+                event.parsed_type() == copilot_sdk::session_events::SessionEventType::SessionIdle;
+            if event.parsed_type() == copilot_sdk::session_events::SessionEventType::SessionError {
+                panic!("session.error while collecting events: {}", event.data);
+            }
+            observed.push(event);
+            if is_idle {
+                return;
+            }
+        }
+    })
+    .await
+    .expect("timed out collecting events through session.idle");
+    observed
+}
+
+pub fn event_types(events: &[SessionEvent]) -> Vec<&str> {
+    events
+        .iter()
+        .map(|event| event.event_type.as_str())
+        .collect()
+}
+
+pub fn is_inference_url(url: &str) -> bool {
+    let url = url.to_lowercase();
+    url.ends_with("/chat/completions")
+        || url.ends_with("/responses")
+        || url.ends_with("/v1/messages")
+        || url.ends_with("/messages")
+}
+
+/// Wraps a `/models` catalog body in the CAPI `GET /meta` shape, adding the
+/// Auto tier metadata the runtime needs to resolve the `auto` model.
+pub fn capi_meta_body(models: serde_json::Value) -> serde_json::Value {
+    let tier = |id: &str, display_name: &str, description: &str| {
+        json!({
+            "id": id,
+            "display_name": display_name,
+            "description": description,
+            "type": "auto",
+            "status": { "enabled": true },
+        })
+    };
+    json!({
+        "models": models,
+        "auto": {
+            "default_tier": "balance",
+            "tiers": [
+                tier("efficiency", "Efficiency", "Faster, lower-cost models"),
+                tier("balance", "Balance", "A balance of speed and capability"),
+                tier("intelligence", "Intelligence", "The most capable models"),
+            ],
+        },
+    })
+}
+
+#[allow(dead_code, reason = "used by follow-on E2E ports")]
+pub async fn wait_for_idle(session: &Session) -> SessionEvent {
+    wait_for_event(session.subscribe(), "session.idle event", |event| {
+        event.parsed_type() == copilot_sdk::session_events::SessionEventType::SessionIdle
+    })
+    .await
+}
+
+#[allow(dead_code, reason = "used by follow-on E2E ports")]
+pub async fn wait_for_final_assistant_message(session: &Session) -> SessionEvent {
+    wait_for_idle(session).await;
+    last_assistant_message(session).await
+}
+
+#[allow(dead_code, reason = "used by follow-on E2E ports")]
+pub async fn last_assistant_message(session: &Session) -> SessionEvent {
+    session
+        .get_events()
+        .await
+        .expect("get session messages")
+        .into_iter()
+        .rev()
+        .find(|event| {
+            event.parsed_type() == copilot_sdk::session_events::SessionEventType::AssistantMessage
+        })
+        .expect("assistant.message event")
+}
+
+pub fn assistant_message_content(event: &SessionEvent) -> String {
+    event
+        .typed_data::<copilot_sdk::session_events::AssistantMessageData>()
+        .expect("assistant.message data")
+        .content
+}
+
+pub fn assert_uuid_like(session_id: &SessionId) {
+    let text = session_id.as_str();
+    let parsed = uuid::Uuid::parse_str(text).expect("session id should be UUID-shaped");
+    assert_eq!(
+        parsed.hyphenated().to_string(),
+        text,
+        "session id should use canonical hyphenated UUID formatting"
+    );
+}
+
+pub fn default_event_timeout() -> Duration {
+    if cfg!(windows) {
+        Duration::from_secs(120)
+    } else {
+        Duration::from_secs(60)
+    }
+}
+
+fn default_test_timeout() -> Duration {
+    if cfg!(windows) {
+        Duration::from_secs(300)
+    } else {
+        Duration::from_secs(180)
+    }
+}
+
+fn e2e_concurrency() -> usize {
+    std::env::var("RUST_E2E_CONCURRENCY")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|&value| value > 0)
+        .unwrap_or(4)
+}
+
+/// True when the E2E suite runs over the in-process (FFI) transport, i.e. the SDK
+/// resolves `COPILOT_SDK_DEFAULT_CONNECTION=inprocess` to [`RuntimeConnection::for_in_process(Default::default())`].
+pub fn is_inprocess_default() -> bool {
+    std::env::var("COPILOT_SDK_DEFAULT_CONNECTION")
+        .map(|value| value.is_empty() || value.eq_ignore_ascii_case("inprocess"))
+        .unwrap_or(true)
+}
+
+/// Skip guard for E2E tests exercising features the in-process (FFI) transport does not
+/// support (the runtime loads into the shared host process). Returns `true` — and logs —
+/// when running in-process so the caller can `return` early; such tests remain covered
+/// by the explicit stdio transport. See <https://github.com/github/copilot-sdk/issues/1934>.
+pub fn skip_inprocess(reason: &str) -> bool {
+    if is_inprocess_default() {
+        eprintln!("skipping test over the in-process (FFI) transport: {reason}");
+        true
+    } else {
+        false
+    }
+}
+
+pub fn get_system_message(exchange: &serde_json::Value) -> String {
+    exchange
+        .get("request")
+        .and_then(|request| request.get("messages"))
+        .and_then(serde_json::Value::as_array)
+        .and_then(|messages| {
+            messages.iter().find_map(|message| {
+                let role = message.get("role").and_then(serde_json::Value::as_str)?;
+                if role == "system" {
+                    message
+                        .get("content")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string)
+                } else {
+                    None
+                }
+            })
+        })
+        .unwrap_or_default()
+}
+
+pub fn get_tool_names(exchange: &serde_json::Value) -> Vec<String> {
+    exchange
+        .get("request")
+        .and_then(|request| request.get("tools"))
+        .and_then(serde_json::Value::as_array)
+        .map(|tools| {
+            tools
+                .iter()
+                .filter_map(|tool| {
+                    tool.get("function")
+                        .and_then(|function| function.get("name"))
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn repo_root() -> PathBuf {
+    // Node's entry-point guards compare regular paths with file URLs; Windows
+    // canonicalization adds a verbatim prefix that those URLs do not preserve.
+    std::path::absolute(env!("CARGO_MANIFEST_DIR"))
+        .expect("absolute Rust SDK checkout path")
+        .parent()
+        .expect("rust package has parent repo")
+        .to_path_buf()
+}
+
+fn cli_path(repo_root: &Path) -> std::io::Result<PathBuf> {
+    if let Some(path) = std::env::var_os("COPILOT_CLI_PATH") {
+        let path = PathBuf::from(path);
+        if path.exists() {
+            return Ok(path);
+        }
+    }
+
+    let output = std::process::Command::new(npm_program())
+        .args(["run", "--silent", "prepare:runtime", "--", "--print-path"])
+        .current_dir(repo_root.join("nodejs"))
+        .output()?;
+    if output.status.success() {
+        let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+        if path.is_file() {
+            return Ok(path);
+        }
+    }
+
+    Err(std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        format!(
+            "failed to prepare the pinned Copilot CLI: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ),
+    ))
+}
+
+fn client_options_for_cli(
+    cli_path: &Path,
+    cwd: &Path,
+    env: Vec<(OsString, OsString)>,
+    mut runtime: RuntimeConnection,
+) -> ClientOptions {
+    let owned = runtime.owned_options_mut().is_some();
+    if let Some(process) = runtime.child_process_options_mut() {
+        if process.working_directory.as_os_str().is_empty() {
+            process.working_directory = cwd.to_owned();
+        }
+        if process.env.is_none() {
+            process.env = Some(std::env::vars_os().chain(env).collect());
+        }
+        if matches!(process.program, CliProgram::Resolve) {
+            if cli_path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("js"))
+            {
+                process.program = CliProgram::Path(PathBuf::from(node_program()));
+                process.args.insert(0, cli_path.as_os_str().to_owned());
+            } else {
+                process.program = CliProgram::Path(cli_path.to_owned());
+            }
+        }
+    }
+    let options = ClientOptions::new(copilot_sdk::ClientMode::CodingAgent).with_runtime(runtime);
+    if owned {
+        options.with_github(|group| group.with_use_logged_in_user(false))
+    } else {
+        options
+    }
+}
+
+fn canonical_temp_path(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn isolated_cache_environment(path: &Path) -> [(OsString, OsString); 2] {
+    let home_dir = canonical_temp_path(path);
+    let cache_dir = home_dir.join(".cache");
+    // COPILOT_HOME does not redirect platform cache paths, so isolate the cache
+    // to prevent concurrent CLI processes from sharing mutable startup state.
+    [
+        (
+            "COPILOT_CACHE_HOME".into(),
+            cache_dir.join("copilot").into_os_string(),
+        ),
+        ("XDG_CACHE_HOME".into(), cache_dir.into_os_string()),
+    ]
+}
+
+struct CapiProxy {
+    child: Option<Child>,
+    proxy_url: String,
+    connect_proxy_url: String,
+    ca_file_path: String,
+    #[cfg(feature = "in-process")]
+    network_fixture_url: String,
+}
+
+impl CapiProxy {
+    fn start(repo_root: &Path) -> std::io::Result<Self> {
+        let mut command = Command::new(node_program());
+        command
+            .args(["--import", "tsx", "server.ts"])
+            .current_dir(repo_root.join("test").join("harness"))
+            .env("GITHUB_ACTIONS", "true")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit());
+        #[cfg(windows)]
+        {
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
+        let mut child = command.spawn()?;
+
+        let stdout = child.stdout.take().expect("proxy stdout");
+        let (line_tx, line_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines() {
+                let failed = line.is_err();
+                if line_tx.send(line).is_err() || failed {
+                    break;
+                }
+            }
+        });
+        let re = regex::Regex::new(r"Listening: (http://[^\s]+)\s+(\{.*\})$").unwrap();
+        let deadline = Instant::now() + PROXY_STARTUP_TIMEOUT;
+        while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+            let line = match line_rx.recv_timeout(remaining) {
+                Ok(Ok(line)) => line,
+                Ok(Err(error)) => {
+                    kill_and_wait_child(&mut child);
+                    return Err(error);
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    kill_and_wait_child(&mut child);
+                    return Err(std::io::Error::other("proxy exited before startup"));
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break,
+            };
+            if let Some(captures) = re.captures(&line) {
+                let parsed = (|| {
+                    let proxy_url = captures
+                        .get(1)
+                        .ok_or_else(|| {
+                            std::io::Error::other("proxy startup line missing URL capture")
+                        })?
+                        .as_str()
+                        .to_string();
+                    let metadata_text = captures.get(2).ok_or_else(|| {
+                        std::io::Error::other("proxy startup line missing metadata capture")
+                    })?;
+                    let metadata: serde_json::Value = serde_json::from_str(metadata_text.as_str())?;
+                    let connect_proxy_url = metadata
+                        .get("connectProxyUrl")
+                        .and_then(|value| value.as_str())
+                        .ok_or_else(|| {
+                            std::io::Error::other("proxy startup metadata missing connectProxyUrl")
+                        })?
+                        .to_string();
+                    let ca_file_path = metadata
+                        .get("caFilePath")
+                        .and_then(|value| value.as_str())
+                        .ok_or_else(|| {
+                            std::io::Error::other("proxy startup metadata missing caFilePath")
+                        })?
+                        .to_string();
+                    let network_fixture_url = metadata
+                        .get("networkFixtureUrl")
+                        .and_then(|value| value.as_str())
+                        .ok_or_else(|| {
+                            std::io::Error::other(
+                                "proxy startup metadata missing networkFixtureUrl",
+                            )
+                        })?
+                        .to_string();
+                    Ok::<_, std::io::Error>((
+                        proxy_url,
+                        connect_proxy_url,
+                        ca_file_path,
+                        network_fixture_url,
+                    ))
+                })();
+                let (proxy_url, connect_proxy_url, ca_file_path, _network_fixture_url) =
+                    match parsed {
+                        Ok(metadata) => metadata,
+                        Err(error) => {
+                            kill_and_wait_child(&mut child);
+                            return Err(error);
+                        }
+                    };
+                return Ok(Self {
+                    child: Some(child),
+                    proxy_url,
+                    connect_proxy_url,
+                    ca_file_path,
+                    #[cfg(feature = "in-process")]
+                    network_fixture_url: _network_fixture_url,
+                });
+            }
+            if line.contains("Listening: ") {
+                kill_and_wait_child(&mut child);
+                return Err(std::io::Error::other(format!(
+                    "proxy startup line missing metadata: {line}"
+                )));
+            }
+        }
+
+        kill_and_wait_child(&mut child);
+        Err(std::io::Error::other(format!(
+            "timed out after {PROXY_STARTUP_TIMEOUT:?} waiting for proxy startup"
+        )))
+    }
+
+    fn url(&self) -> &str {
+        &self.proxy_url
+    }
+
+    fn configure(&self, file_path: &Path, work_dir: &Path) -> std::io::Result<()> {
+        self.post_json(
+            "/config",
+            &json!({
+                "filePath": file_path,
+                "workDir": work_dir,
+            })
+            .to_string(),
+        )
+    }
+
+    fn set_copilot_user_by_token(
+        &self,
+        token: &str,
+        response: serde_json::Value,
+    ) -> std::io::Result<()> {
+        self.post_json(
+            "/copilot-user-config",
+            &json!({
+                "token": token,
+                "response": response,
+            })
+            .to_string(),
+        )
+    }
+
+    fn stop(&mut self, skip_writing_cache: bool) -> std::io::Result<()> {
+        let path = if skip_writing_cache {
+            "/stop?skipWritingCache=true"
+        } else {
+            "/stop"
+        };
+        let result = self.post_json(path, "");
+        if let Some(mut child) = self.child.take()
+            && let Err(error) = wait_for_child_exit(&mut child)
+        {
+            if result.is_err() {
+                return Err(error);
+            }
+            // The proxy acknowledges /stop before its asynchronous server shutdown.
+            // npm/tsx can occasionally leave its wrapper alive after the proxy has
+            // accepted the request; wait_for_child_exit has reaped it, so do not turn
+            // an otherwise successful test into a teardown failure.
+            eprintln!("force-killed E2E proxy after successful stop request: {error}");
+        }
+        result
+    }
+
+    fn proxy_env(&self) -> Vec<(OsString, OsString)> {
+        let no_proxy = "127.0.0.1,localhost,::1";
+        [
+            ("HTTP_PROXY", self.connect_proxy_url.as_str()),
+            ("HTTPS_PROXY", self.connect_proxy_url.as_str()),
+            ("http_proxy", self.connect_proxy_url.as_str()),
+            ("https_proxy", self.connect_proxy_url.as_str()),
+            ("NO_PROXY", no_proxy),
+            ("no_proxy", no_proxy),
+            ("NODE_EXTRA_CA_CERTS", self.ca_file_path.as_str()),
+            ("SSL_CERT_FILE", self.ca_file_path.as_str()),
+            ("REQUESTS_CA_BUNDLE", self.ca_file_path.as_str()),
+            ("CURL_CA_BUNDLE", self.ca_file_path.as_str()),
+            ("GIT_SSL_CAINFO", self.ca_file_path.as_str()),
+            ("GH_TOKEN", ""),
+            ("GITHUB_TOKEN", ""),
+            ("GH_ENTERPRISE_TOKEN", ""),
+            ("GITHUB_ENTERPRISE_TOKEN", ""),
+        ]
+        .into_iter()
+        .map(|(key, value)| (key.into(), value.into()))
+        .collect()
+    }
+
+    fn post_json(&self, path: &str, body: &str) -> std::io::Result<()> {
+        Self::post_json_at(&self.proxy_url, path, body)
+    }
+
+    fn post_json_at(url: &str, path: &str, body: &str) -> std::io::Result<()> {
+        let response = Self::request_at(url, "POST", path, body)?;
+        if !response.starts_with("HTTP/1.1 200") && !response.starts_with("HTTP/1.1 204") {
+            return Err(std::io::Error::other(format!(
+                "proxy POST {path} failed: {response}"
+            )));
+        }
+        Ok(())
+    }
+
+    fn get_json<T: serde::de::DeserializeOwned>(&self, path: &str) -> std::io::Result<T> {
+        let response = self.request("GET", path, "")?;
+        if !response.starts_with("HTTP/1.1 200") {
+            return Err(std::io::Error::other(format!(
+                "proxy GET {path} failed: {response}"
+            )));
+        }
+        let body = response_body(&response)?;
+        serde_json::from_str(&body).map_err(std::io::Error::other)
+    }
+
+    fn request(&self, method: &str, path: &str, body: &str) -> std::io::Result<String> {
+        Self::request_at(&self.proxy_url, method, path, body)
+    }
+
+    fn request_at(url: &str, method: &str, path: &str, body: &str) -> std::io::Result<String> {
+        let (host, port) = parse_http_url(url)?;
+        let mut stream = connect_with_timeout(&host, port)?;
+        write!(
+            stream,
+            "{method} {path} HTTP/1.1\r\nHost: {host}:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )?;
+
+        let mut response = String::new();
+        stream.read_to_string(&mut response)?;
+        Ok(response)
+    }
+}
+
+impl Drop for CapiProxy {
+    fn drop(&mut self) {
+        if self.child.is_some() {
+            let _ = self.stop(true);
+        }
+    }
+}
+
+fn response_body(response: &str) -> std::io::Result<String> {
+    let Some((headers, body)) = response.split_once("\r\n\r\n") else {
+        return Ok(String::new());
+    };
+    if headers
+        .lines()
+        .any(|line| line.eq_ignore_ascii_case("Transfer-Encoding: chunked"))
+    {
+        return decode_chunked_body(body);
+    }
+    Ok(body.to_string())
+}
+
+fn decode_chunked_body(body: &str) -> std::io::Result<String> {
+    let mut rest = body;
+    let mut decoded = String::new();
+    loop {
+        let Some((size_line, after_size)) = rest.split_once("\r\n") else {
+            return Err(std::io::Error::other("malformed chunked response"));
+        };
+        let size_text = size_line
+            .split_once(';')
+            .map_or(size_line, |(size, _)| size);
+        let size = usize::from_str_radix(size_text.trim(), 16)
+            .map_err(|err| std::io::Error::other(format!("invalid chunk size: {err}")))?;
+        if size == 0 {
+            return Ok(decoded);
+        }
+        if after_size.len() < size + 2 {
+            return Err(std::io::Error::other("truncated chunked response"));
+        }
+        decoded.push_str(&after_size[..size]);
+        rest = &after_size[size + 2..];
+    }
+}
+
+fn parse_http_url(url: &str) -> std::io::Result<(String, u16)> {
+    let without_scheme = url
+        .strip_prefix("http://")
+        .ok_or_else(|| std::io::Error::other(format!("unsupported proxy URL: {url}")))?;
+    let (host, port) = without_scheme
+        .rsplit_once(':')
+        .ok_or_else(|| std::io::Error::other(format!("proxy URL missing port: {url}")))?;
+    let port = port
+        .parse::<u16>()
+        .map_err(|err| std::io::Error::other(format!("invalid proxy URL port: {err}")))?;
+    Ok((host.to_string(), port))
+}
+
+fn node_program() -> &'static str {
+    if cfg!(windows) { "node.exe" } else { "node" }
+}
+
+fn npm_program() -> &'static str {
+    if cfg!(windows) {
+        windows_program(&["npm.cmd", "npm.exe", "npm"])
+    } else {
+        "npm"
+    }
+}
+
+fn windows_program(candidates: &[&'static str]) -> &'static str {
+    candidates
+        .iter()
+        .copied()
+        .find(|candidate| program_exists_on_path(candidate))
+        .unwrap_or(candidates[0])
+}
+
+fn program_exists_on_path(program: &str) -> bool {
+    std::env::var_os("PATH").is_some_and(|path| {
+        std::env::split_paths(&path).any(|directory| directory.join(program).is_file())
+    })
+}

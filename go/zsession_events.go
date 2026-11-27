@@ -355,6 +355,7 @@ type (
 	RecommendedAutoTier                                            = rpc.RecommendedAutoTier
 	RemediationAction                                              = rpc.RemediationAction
 	ResponsesReasoning                                             = rpc.ResponsesReasoning
+	ResponsesTextFormat                                            = rpc.ResponsesTextFormat
 	SamplingCompletedData                                          = rpc.SamplingCompletedData
 	SamplingRequestedData                                          = rpc.SamplingRequestedData
 	SandboxDecisionData                                            = rpc.SandboxDecisionData

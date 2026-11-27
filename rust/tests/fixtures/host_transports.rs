@@ -1,6 +1,3 @@
-#[path = "../../examples/runtime_host_transports.rs"]
-mod example;
-
 use copilot_sdk::rpc::{
     HostAcpTransportOptions, HostTransportKind, HostTransportProtocol, HostTransportRequest,
     HostTransportStartRequest,
@@ -33,8 +30,71 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .nth(1)
     {
         Some(address) => controlled(address),
-        None => example::main(),
+        None => stdio_serve(),
     }
+}
+
+#[tokio::main(flavor = "current_thread")]
+async fn stdio_serve() -> Result<(), Box<dyn std::error::Error>> {
+    let home = std::env::var_os("COPILOT_HOME")
+        .map(std::path::PathBuf::from)
+        .ok_or("Set COPILOT_HOME to a private state directory")?;
+    let client = Client::start(
+        ClientOptions::new(copilot_sdk::ClientMode::CodingAgent)
+            .with_runtime(RuntimeConnection::InProcess(
+                InProcessRuntimeOptions::default()
+                    .with_owned(|owned| owned.with_base_directory(&home)),
+            ))
+            .with_github(|group| group.with_token(""))
+            .with_github(|group| group.with_use_logged_in_user(false))
+            .with_observability(|group| group.with_disable_client_telemetry(true)),
+    )
+    .await?;
+    let result = async {
+        let acp = std::env::args().any(|arg| arg == "--acp");
+        let listener = client
+            .rpc()
+            .host()
+            .transports()
+            .start(HostTransportStartRequest {
+                protocol: if acp {
+                    HostTransportProtocol::Acp
+                } else {
+                    HostTransportProtocol::JsonRpc
+                },
+                transport: HostTransportKind::Stdio,
+                acp: acp.then(|| HostAcpTransportOptions {
+                    temp_directory: home.to_string_lossy().into_owned(),
+                    agent_version: env!("CARGO_PKG_VERSION").to_owned(),
+                    login_command: "copilot".to_owned(),
+                    login_args: vec!["login".to_owned()],
+                    session_defaults: None,
+                }),
+                ..Default::default()
+            })
+            .await?;
+        let request = HostTransportRequest {
+            transport_id: listener.transport_id,
+        };
+        client
+            .rpc()
+            .host()
+            .transports()
+            .wait(request.clone())
+            .await?;
+        client.rpc().host().transports().stop(request).await?;
+        Ok::<(), Box<dyn std::error::Error>>(())
+    }
+    .await;
+    let stopped = client.stop().await;
+    if let Err(error) = result {
+        if let Err(shutdown) = stopped {
+            eprintln!("Runtime shutdown also failed: {shutdown}");
+        }
+        return Err(error);
+    }
+    stopped?;
+    Ok(())
 }
 
 #[tokio::main(flavor = "current_thread")]

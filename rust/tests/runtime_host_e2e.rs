@@ -2,15 +2,10 @@
 #![cfg(all(feature = "test-support", target_os = "linux"))]
 #![allow(clippy::unwrap_used)]
 
-#[allow(dead_code)]
-#[path = "e2e/runtime_host_support.rs"]
-mod host_support;
-#[allow(dead_code)]
-#[path = "e2e/support.rs"]
+mod runtime_host_callbacks;
 mod support;
 
-#[path = "e2e/runtime_host_callbacks.rs"]
-mod callbacks;
+use support::runtime_host_support as host_support;
 
 use std::time::Duration;
 

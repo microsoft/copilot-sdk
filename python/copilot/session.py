@@ -2199,6 +2199,7 @@ class CopilotSession:
         self._tool_handlers_lock = threading.Lock()
         self._set_tools_lock = asyncio.Lock()
         self._pending_external_tools: dict[str, asyncio.Task[None]] = {}
+        self._responding_external_tools: dict[str, asyncio.Task[None]] = {}
         self._permission_handler: _PermissionHandlerFn | None = None
         self._permission_handler_lock = threading.Lock()
         self._mcp_auth_handler: McpAuthHandler | None = None
@@ -3154,6 +3155,11 @@ class CopilotSession:
                 handler = self._get_tool_handler(tool_name)
                 if handler is None:
                     return  # This client doesn't handle this tool; another client will.
+                if (
+                    request_id in self._pending_external_tools
+                    or request_id in self._responding_external_tools
+                ):
+                    return
 
                 tool_call_id = data.tool_call_id or ""
                 arguments = data.arguments
@@ -3171,9 +3177,6 @@ class CopilotSession:
                         event.agent_id or None,
                     )
                 )
-                if request_id in self._pending_external_tools:
-                    task.cancel()
-                    return
                 self._pending_external_tools[request_id] = task
                 task.add_done_callback(
                     lambda completed, rid=request_id: self._remove_pending_external_tool(
@@ -3518,16 +3521,22 @@ class CopilotSession:
                         exc_info=send_exc,
                     )
                     error = str(send_exc) or type(send_exc).__name__
+        finally:
+            current = asyncio.current_task()
+            if current is not None and self._responding_external_tools.get(request_id) is current:
+                del self._responding_external_tools[request_id]
 
     def _remove_pending_external_tool(self, request_id: str, completed: asyncio.Task[None]) -> None:
         if self._pending_external_tools.get(request_id) is completed:
             self._pending_external_tools.pop(request_id, None)
 
     def _claim_external_tool(self, request_id: str) -> bool:
-        current = asyncio.current_task()
-        if self._destroyed or self._pending_external_tools.get(request_id) is not current:
+        task = self._pending_external_tools.get(request_id)
+        if self._destroyed or task is None or task is not asyncio.current_task():
             return False
-        self._pending_external_tools.pop(request_id, None)
+        # Completion and disconnect only cancel handlers that have not started sending.
+        del self._pending_external_tools[request_id]
+        self._responding_external_tools[request_id] = task
         return True
 
     async def _execute_permission_and_respond(

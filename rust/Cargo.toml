@@ -15,10 +15,11 @@ readme = "README.md"
 license = "MIT"
 include = [
     "src/**/*",
-    "build/**/*",
+    "build_support/**/*",
     "examples/**/*",
     "tests/**/*",
     "build.rs",
+    "build_tests.rs",
     "Cargo.toml",
     "README.md",
     "LICENSE",
@@ -210,6 +211,10 @@ path = "tests/fixtures/host_transports.rs"
 required-features = ["test-support", "in-process"]
 test = false
 bench = false
+
+[[test]]
+name = "build_acquisition"
+path = "build_tests.rs"
 
 [[test]]
 name = "skill_provider_test"

@@ -39,3 +39,11 @@ def test_user_message_id_uses_camel_case_and_is_optional():
 
     assert older_message.message_id is None
     assert "messageId" not in older_message.to_dict()
+
+
+def test_response_text_format_does_not_shift_user_message_positional_arguments():
+    message = UserMessageData("hello", *([None] * 13), "terminal")
+
+    assert message.source == "terminal"
+    assert message.responses_text_format is None
+    assert UserMessageData.__match_args__[14] == "source"

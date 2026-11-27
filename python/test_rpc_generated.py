@@ -24,6 +24,7 @@ from copilot._generated.rpc import (
     UsageGetMetricsResult,
     UserSettingsApplyTopKeyRequest,
     UserSettingsNormalizeRequest,
+    UserSettingsProblemSource,
     UserSettingsProblemsRequest,
     UserSettingsSetRequest,
     UserSettingsValidateRequest,
@@ -143,6 +144,19 @@ def test_existing_requests_keep_every_positional_field_despite_legacy_metadata()
     seatbelt = SandboxConfigUserPolicySeatbelt(["com.apple.example"], True)
     assert seatbelt.extra_mach_lookups == ["com.apple.example"]
     assert seatbelt.keychain_access is True
+
+
+def test_settings_problems_preserves_positional_sources():
+    source = UserSettingsProblemSource(file_path="/settings.json", kind="user", label="User")
+    sources = [{"filePath": "/settings.json", "kind": "user", "label": "User"}]
+
+    assert UserSettingsProblemsRequest([source]).to_dict() == {"sources": sources}
+    payload = {"sources": sources, "allowHttpAuthHooks": False, "allowLocalhostHooks": True}
+    request = UserSettingsProblemsRequest(
+        [source], allow_http_auth_hooks=False, allow_localhost_hooks=True
+    )
+    assert request.to_dict() == payload
+    assert UserSettingsProblemsRequest.from_dict(payload).to_dict() == payload
 
 
 def test_session_import_preserves_positional_arguments():

@@ -41,6 +41,8 @@ public final class UserMessageEvent extends SessionEvent {
         @JsonProperty("content") String content,
         /** Provider reasoning settings anchored before this model-facing message for cache-stable replay; the historical responsesReasoning name is retained for compatibility */
         @JsonProperty("responsesReasoning") ResponsesReasoning responsesReasoning,
+        /** Provider output format anchored before this model-facing message for cache-stable replay */
+        @JsonProperty("responsesTextFormat") ResponsesTextFormat responsesTextFormat,
         /** Stable identity of the logical user message, matching the ID returned by send and retained by pending queue snapshots */
         @JsonProperty("messageId") String messageId,
         /** Opaque clientTurnId the caller supplied on the send that delivered this message, echoed when the message is consumed, whether it started a turn, drained from the queue or was consumed as steering. Absent when that send supplied none. */
@@ -95,6 +97,7 @@ public final class UserMessageEvent extends SessionEvent {
             private List<String> causalDependencies;
             private String content;
             private ResponsesReasoning responsesReasoning;
+            private ResponsesTextFormat responsesTextFormat;
             private String messageId;
             private String clientTurnId;
             private String transformedContent;
@@ -141,6 +144,17 @@ public final class UserMessageEvent extends SessionEvent {
              */
             public Builder responsesReasoning(ResponsesReasoning value) {
                 this.responsesReasoning = value;
+                return this;
+            }
+
+            /**
+             * Sets the {@code responsesTextFormat} property.
+             * @param value the property value
+             * @return this builder
+             * @since 2.0.0
+             */
+            public Builder responsesTextFormat(ResponsesTextFormat value) {
+                this.responsesTextFormat = value;
                 return this;
             }
 
@@ -317,7 +331,7 @@ public final class UserMessageEvent extends SessionEvent {
              */
             public UserMessageEventData build() {
                 if (content == null) throw new IllegalStateException("Missing required property: content");
-                return new UserMessageEventData(causalDependencies, content, responsesReasoning, messageId, clientTurnId, transformedContent, hasSubmittedTask, attachments, supportedNativeDocumentMimeTypes, nativeDocumentPathFallbackPaths, source, agentAuthored, delivery, agentMode, isAutopilotContinuation, interactionId, turnId, parentAgentTaskId);
+                return new UserMessageEventData(causalDependencies, content, responsesReasoning, responsesTextFormat, messageId, clientTurnId, transformedContent, hasSubmittedTask, attachments, supportedNativeDocumentMimeTypes, nativeDocumentPathFallbackPaths, source, agentAuthored, delivery, agentMode, isAutopilotContinuation, interactionId, turnId, parentAgentTaskId);
             }
         }
     }

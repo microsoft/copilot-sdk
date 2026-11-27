@@ -340,7 +340,8 @@ public sealed class StdioShutdownTests(ITestOutputHelper output)
                 case "fallback":
                     // Allow shutdown RPC, graceful exit, kill/reap, and stderr drain their separate budgets.
                     await client.StopAsync().WaitAsync(TimeSpan.FromSeconds(40));
-                    Assert.True(elapsed.Elapsed >= TimeSpan.FromSeconds(10),
+                    // The 10s exit timer can fire a clock tick before Stopwatch reaches 10s.
+                    Assert.True(elapsed.Elapsed >= TimeSpan.FromSeconds(9),
                         "Graceful stop must wait for its exit timeout before terminating the child.");
                     break;
                 default:

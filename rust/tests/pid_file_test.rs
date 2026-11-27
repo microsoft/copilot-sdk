@@ -1,7 +1,7 @@
 use std::io::{self, Write};
 
-#[path = "fixtures/pid_file.rs"]
-mod pid_file;
+mod fixtures;
+use fixtures::pid_file;
 
 #[test]
 fn publishes_only_the_complete_pid() {

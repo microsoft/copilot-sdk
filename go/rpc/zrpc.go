@@ -774,6 +774,26 @@ type AgentDiscoveryPathList struct {
 	Paths []AgentDiscoveryPath `json:"paths"`
 }
 
+// Repository and name of a remote custom agent whose authored prompt to fetch.
+// Experimental: AgentFetchRemotePromptRequest is part of an experimental API and may change
+// or be removed.
+type AgentFetchRemotePromptRequest struct {
+	// Name of the remote agent.
+	AgentName string `json:"agentName"`
+	// Name of the repository that defines the remote agent.
+	RepoName string `json:"repoName"`
+	// Owner of the repository that defines the remote agent.
+	RepoOwner string `json:"repoOwner"`
+}
+
+// The authored prompt of a remote custom agent.
+// Experimental: AgentFetchRemotePromptResult is part of an experimental API and may change
+// or be removed.
+type AgentFetchRemotePromptResult struct {
+	// Authored prompt text. Omitted when the service does not find the agent.
+	Prompt *string `json:"prompt,omitempty"`
+}
+
 // The currently selected custom agent, or null when using the default agent.
 // Experimental: AgentGetCurrentResult is part of an experimental API and may change or be
 // removed.
@@ -1398,6 +1418,22 @@ type AgentsGetDiscoveryPathsRequest struct {
 type AgentsListToolCategoriesResult struct {
 	// The selectable tool groups.
 	Categories []AgentToolCategory `json:"categories"`
+}
+
+// An agent Markdown file to read.
+// Experimental: AgentsLoadFilePromptRequest is part of an experimental API and may change
+// or be removed.
+type AgentsLoadFilePromptRequest struct {
+	// Path of the agent Markdown file.
+	Path string `json:"path"`
+}
+
+// The authored prompt of an agent file.
+// Experimental: AgentsLoadFilePromptResult is part of an experimental API and may change or
+// be removed.
+type AgentsLoadFilePromptResult struct {
+	// The Markdown body after the frontmatter.
+	Prompt string `json:"prompt"`
 }
 
 // A proposed agent name.
@@ -8324,6 +8360,25 @@ type EventLogReadRequest struct {
 type EventLogReleaseInterestResult struct {
 	// Whether the operation succeeded
 	Success bool `json:"success"`
+}
+
+// Type and payload of a session event whose binary-asset references to resolve.
+// Experimental: EventLogResolveBinaryReferencesRequest is part of an experimental API and
+// may change or be removed.
+type EventLogResolveBinaryReferencesRequest struct {
+	// Session event `data` payload, as the session recorded it.
+	Data any `json:"data"`
+	// Session event type, for example `tool.execution_complete`.
+	EventType string `json:"eventType"`
+}
+
+// Event payload with its binary-asset references resolved to inline data.
+// Experimental: EventLogResolveBinaryReferencesResult is part of an experimental API and
+// may change or be removed.
+type EventLogResolveBinaryReferencesResult struct {
+	// Resolved event `data` payload. Omitted when the event carries no binary-asset reference,
+	// so the original payload is already external.
+	Data any `json:"data,omitempty"`
 }
 
 // Snapshot of the current tail cursor without returning any events. Use this when a
@@ -40662,6 +40717,16 @@ type UserSettingsProblemSource struct {
 // Experimental: UserSettingsProblemsRequest is part of an experimental API and may change
 // or be removed.
 type UserSettingsProblemsRequest struct {
+	// Whether the caller's own settings loader allows authorization-affecting HTTP hooks.
+	// `false` reports those hooks as problems even when the server's environment allows them.
+	// `true` or absent leaves the server's environment in charge; it never allows a hook the
+	// server rejects.
+	AllowHTTPAuthHooks *bool `json:"allowHttpAuthHooks,omitempty"`
+	// Whether the caller's own settings loader allows localhost and plaintext-HTTP hooks.
+	// `false` reports those hooks as problems even when the server's environment allows them.
+	// `true` or absent leaves the server's environment in charge; it never allows a hook the
+	// server rejects.
+	AllowLocalhostHooks *bool `json:"allowLocalhostHooks,omitempty"`
 	// Layers to diagnose, in the precedence order the caller applies them.
 	Sources []UserSettingsProblemSource `json:"sources,omitzero"`
 }
@@ -56564,6 +56629,28 @@ func (a *InternalServerAgentsAPI) GetBuiltins(ctx context.Context) (*AgentsGetBu
 		return nil, err
 	}
 	var result AgentsGetBuiltinsResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// LoadFilePrompt reads an agent Markdown file and returns its authored prompt, the body
+// after the frontmatter. Fails when the file cannot be read or parsed.
+//
+// RPC method: agents.loadFilePrompt.
+//
+// Parameters: An agent Markdown file to read.
+//
+// Returns: The authored prompt of an agent file.
+// Internal: LoadFilePrompt is part of the SDK's internal handshake/plumbing; external
+// callers should not use it.
+func (a *InternalServerAgentsAPI) LoadFilePrompt(ctx context.Context, params *AgentsLoadFilePromptRequest) (*AgentsLoadFilePromptResult, error) {
+	raw, err := a.client.Request(ctx, "agents.loadFilePrompt", params)
+	if err != nil {
+		return nil, err
+	}
+	var result AgentsLoadFilePromptResult
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return nil, err
 	}
@@ -72843,6 +72930,38 @@ type internalSessionAPI struct {
 	sessionID string
 }
 
+// Experimental: InternalAgentAPI contains experimental APIs that may change or be removed.
+type InternalAgentAPI internalSessionAPI
+
+// FetchRemotePrompt fetches the authored prompt of a remote custom agent with the session's
+// credentials. Session prompt overrides do not apply. The result omits the prompt when the
+// service does not find the agent.
+//
+// RPC method: session.agent.fetchRemotePrompt.
+//
+// Parameters: Repository and name of a remote custom agent whose authored prompt to fetch.
+//
+// Returns: The authored prompt of a remote custom agent.
+// Internal: FetchRemotePrompt is part of the SDK's internal handshake/plumbing; external
+// callers should not use it.
+func (a *InternalAgentAPI) FetchRemotePrompt(ctx context.Context, params *AgentFetchRemotePromptRequest) (*AgentFetchRemotePromptResult, error) {
+	req := map[string]any{"sessionId": a.sessionID}
+	if params != nil {
+		req["agentName"] = params.AgentName
+		req["repoName"] = params.RepoName
+		req["repoOwner"] = params.RepoOwner
+	}
+	raw, err := a.client.Request(ctx, "session.agent.fetchRemotePrompt", req)
+	if err != nil {
+		return nil, err
+	}
+	var result AgentFetchRemotePromptResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // Experimental: InternalAutopilotAPI contains experimental APIs that may change or be
 // removed.
 type InternalAutopilotAPI internalSessionAPI
@@ -73201,6 +73320,35 @@ func (a *InternalEventLogAPI) Publish(ctx context.Context, params *SessionEventL
 		return nil, err
 	}
 	var result SessionEventLogPublishResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ResolveBinaryReferences resolves the binary-asset references in one session event payload
+// to inline data, from the session's asset registry. A user message's blob attachments
+// regain their data, and its file attachments lose internal asset metadata. The result
+// omits the payload when the event carries no reference.
+//
+// RPC method: session.eventLog.resolveBinaryReferences.
+//
+// Parameters: Type and payload of a session event whose binary-asset references to resolve.
+//
+// Returns: Event payload with its binary-asset references resolved to inline data.
+// Internal: ResolveBinaryReferences is part of the SDK's internal handshake/plumbing;
+// external callers should not use it.
+func (a *InternalEventLogAPI) ResolveBinaryReferences(ctx context.Context, params *EventLogResolveBinaryReferencesRequest) (*EventLogResolveBinaryReferencesResult, error) {
+	req := map[string]any{"sessionId": a.sessionID}
+	if params != nil {
+		req["data"] = params.Data
+		req["eventType"] = params.EventType
+	}
+	raw, err := a.client.Request(ctx, "session.eventLog.resolveBinaryReferences", req)
+	if err != nil {
+		return nil, err
+	}
+	var result EventLogResolveBinaryReferencesResult
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return nil, err
 	}
@@ -75765,6 +75913,7 @@ type InternalSessionRPC struct {
 	// Reuse a single struct instead of allocating one for each service on the heap.
 	common internalSessionAPI
 
+	Agent        *InternalAgentAPI
 	Autopilot    *InternalAutopilotAPI
 	CafeMetrics  *InternalCafeMetricsAPI
 	Canvas       *InternalCanvasAPI
@@ -75969,6 +76118,7 @@ func (a *InternalSessionRPC) SendSystemNotification(ctx context.Context, params 
 func NewInternalSessionRPC(client *jsonrpc2.Client, sessionID string) *InternalSessionRPC {
 	r := &InternalSessionRPC{}
 	r.common = internalSessionAPI{client: client, sessionID: sessionID}
+	r.Agent = (*InternalAgentAPI)(&r.common)
 	r.Autopilot = (*InternalAutopilotAPI)(&r.common)
 	r.CafeMetrics = (*InternalCafeMetricsAPI)(&r.common)
 	r.Canvas = (*InternalCanvasAPI)(&r.common)
