@@ -2338,14 +2338,20 @@ async fn acp_inherits_host_lifecycle_mode_unless_the_transport_overrides_it() {
             std::fs::write(ctx.home_dir().join("config.json"), json!({
                 "trustedFolders": [ctx.work_dir()],
             }).to_string()).unwrap();
-            let owner = Client::start_with_host_configuration(ctx.client_options_with_transport(RuntimeConnection::InProcess(InProcessRuntimeOptions::new()))
-                .with_github(|group| group.with_token(DEFAULT_TEST_TOKEN)),
+            let host_log = ctx.work_dir().join("acp-lifecycle-host.log");
+            let owner = Client::start_with_host_configuration(ctx.client_options_with_transport(RuntimeConnection::InProcess(InProcessRuntimeOptions {
+                file_logging_path: Some(host_log.clone()),
+                ..Default::default()
+            }))
+                .with_github(|group| group.with_token(DEFAULT_TEST_TOKEN))
+                .with_observability(|group| group.with_log_level(copilot_sdk::LogLevel::Debug)),
                 RuntimeHostConfiguration {
                     session_lifecycle_mode: Some(SessionLifecycleMode::Interactive),
                     ..Default::default()
                 }
                 ).await.unwrap();
             let mut observed = Vec::new();
+            let mut first_session_id = None;
             for (override_mode, prompt) in [
                 (false, "ACP_HOST_HOOK_MODE"),
                 (true, "ACP_TRANSPORT_HOOK_MODE"),
@@ -2377,7 +2383,33 @@ async fn acp_inherits_host_lifecycle_mode_unless_the_transport_overrides_it() {
                     let ran_before_close = marker.is_file();
                     acp_request(&mut reader, &mut writer, 4, "session/close",
                         json!({ "sessionId": created["sessionId"] })).await;
-                    observed.push((ran_before_close, marker.is_file()));
+                    let ran_after_close = marker.is_file();
+                    observed.push((ran_before_close, ran_after_close));
+                    if !override_mode && index == 0 {
+                        let session_id = created["sessionId"].as_str().unwrap();
+                        first_session_id = Some(session_id.to_owned());
+                        let journal = ctx.home_dir().join("session-state").join(session_id).join("events.jsonl");
+                        let evidence = std::fs::read_to_string(&journal)
+                            .map_err(|error| error.to_string())
+                            .and_then(|contents| {
+                                contents.lines().map(serde_json::from_str::<Value>)
+                                    .collect::<Result<Vec<_>, _>>()
+                                    .map_err(|error| error.to_string())
+                            })
+                            .map(|events| events.into_iter().filter(|event| {
+                                (matches!(event["type"].as_str(), Some("hook.start" | "hook.end"))
+                                    && event["data"]["hookType"] == "sessionEnd")
+                                    || matches!(event["type"].as_str(), Some("session.error" | "session.warning" | "session.shutdown"))
+                            }).collect::<Vec<_>>());
+                        eprintln!("ACP_FIRST_CLOSE_EVIDENCE {}", json!({
+                            "sessionId": session_id,
+                            "phase": "interactive-first-close",
+                            "journal": journal,
+                            "markerBefore": ran_before_close,
+                            "markerAfter": ran_after_close,
+                            "hookEvidence": evidence,
+                        }));
+                    }
                     if marker.is_file() {
                         assert_eq!(std::fs::read_to_string(&marker).unwrap(), "end\n");
                         std::fs::remove_file(&marker).unwrap();
@@ -2386,7 +2418,16 @@ async fn acp_inherits_host_lifecycle_mode_unless_the_transport_overrides_it() {
                 owner.rpc().host().transports().stop(HostTransportRequest { transport_id }).await.unwrap();
             }
             owner.stop().await.unwrap();
-            assert_eq!(observed, [(false, true), (false, true), (true, true)],
+            let expected = [(false, true), (false, true), (true, true)];
+            if observed != expected {
+                let session_log = std::fs::read_to_string(&host_log).map(|log| {
+                    log.lines().filter(|line| {
+                        first_session_id.as_deref().is_some_and(|id| line.contains(id))
+                    }).map(str::to_owned).collect::<Vec<_>>()
+                });
+                eprintln!("ACP_FIRST_CLOSE_SESSION_LOG {:?}", session_log);
+            }
+            assert_eq!(observed, expected,
                 "ACP ignored host defaults or the explicit transport override");
         })
     }).await;

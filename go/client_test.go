@@ -823,14 +823,31 @@ func TestClient_TCPConnections(t *testing.T) {
 		if client.port != 8080 {
 			t.Errorf("Expected port=8080, got %d", client.port)
 		}
+		if client.actualHost != "127.0.0.1" {
+			t.Errorf("Expected IPv4 loopback, got %q", client.actualHost)
+		}
 	})
 
-	t.Run("existing TCP connection is treated as external server", func(t *testing.T) {
-		client := NewClient(&ClientOptions{Mode: ModeCodingAgent,
-			Runtime: TCPConnection{Host: "localhost", Port: 8080},
-		})
-		if !client.isExternalServer {
-			t.Error("Expected isExternalServer=true for TCPConnection")
+	t.Run("spawned TCP uses the last explicit bind host", func(t *testing.T) {
+		for _, tc := range []struct {
+			args []string
+			host string
+		}{
+			{[]string{"--host", "::1"}, "::1"},
+			{[]string{"--host=127.0.0.1", "--host", "::1"}, "::1"},
+			{[]string{"--host", "127.0.0.1", "--host=::1"}, "::1"},
+			{[]string{"--host=::"}, "::1"},
+			{[]string{"--host", "0.0.0.0"}, "127.0.0.1"},
+		} {
+			args := tc.args
+			original := append([]string(nil), args...)
+			client := NewClient(&ClientOptions{Mode: ModeCodingAgent, Runtime: SpawnedTCPConnection{Args: args}})
+			if client.actualHost != tc.host {
+				t.Errorf("Args %v: expected dial host %q, got %q", args, tc.host, client.actualHost)
+			}
+			if !reflect.DeepEqual(args, original) || !reflect.DeepEqual(client.cliArgs, original) {
+				t.Errorf("Host selection changed CLI arguments: input %v, forwarded %v, original %v", args, client.cliArgs, original)
+			}
 		}
 	})
 }
@@ -3092,15 +3109,7 @@ func TestClient_ForwardsCapiOptionsToSessionRequests(t *testing.T) {
 	}{
 		{"omitted", nil, nil},
 		{"empty", &CapiSessionOptions{}, map[string]any{}},
-		{"websocket only", &CapiSessionOptions{EnableWebSocketResponses: Bool(false)}, map[string]any{"enableWebSocketResponses": false}},
-		{"efficiency", &CapiSessionOptions{AutoTier: AutoTierEfficiency}, map[string]any{"autoTier": "efficiency"}},
-		{"balance", &CapiSessionOptions{AutoTier: AutoTierBalance}, map[string]any{"autoTier": "balance"}},
-		{"intelligence", &CapiSessionOptions{AutoTier: AutoTierIntelligence}, map[string]any{"autoTier": "intelligence"}},
-		{"fast", &CapiSessionOptions{AutoTier: AutoTierFast}, map[string]any{"autoTier": "fast"}},
 		{"efficiency with websocket", &CapiSessionOptions{AutoTier: AutoTierEfficiency, EnableWebSocketResponses: Bool(false)}, map[string]any{"autoTier": "efficiency", "enableWebSocketResponses": false}},
-		{"balance with websocket", &CapiSessionOptions{AutoTier: AutoTierBalance, EnableWebSocketResponses: Bool(false)}, map[string]any{"autoTier": "balance", "enableWebSocketResponses": false}},
-		{"intelligence with websocket", &CapiSessionOptions{AutoTier: AutoTierIntelligence, EnableWebSocketResponses: Bool(false)}, map[string]any{"autoTier": "intelligence", "enableWebSocketResponses": false}},
-		{"fast with websocket", &CapiSessionOptions{AutoTier: AutoTierFast, EnableWebSocketResponses: Bool(false)}, map[string]any{"autoTier": "fast", "enableWebSocketResponses": false}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -3132,7 +3141,6 @@ func TestClient_ForwardsInteractiveUserToSessionRequests(t *testing.T) {
 		name  string
 		value *bool
 	}{
-		{"true", Bool(true)},
 		{"false", Bool(false)},
 		{"omitted", nil},
 	}
@@ -3164,9 +3172,7 @@ func TestClient_ForwardsInteractiveUserToSessionRequests(t *testing.T) {
 
 func TestClient_ForwardsPermissionModeToSessionRequests(t *testing.T) {
 	for _, mode := range []rpc.PermissionMode{
-		rpc.PermissionModeManual,
 		rpc.PermissionModeAssisted,
-		rpc.PermissionModeAllowAll,
 		"",
 	} {
 		name := string(mode)
@@ -3305,7 +3311,6 @@ func TestClient_RefreshCustomInstructionsIsCreateOnly(t *testing.T) {
 		name    string
 		refresh *bool
 	}{
-		{"true", Bool(true)},
 		{"false", Bool(false)},
 		{"omitted", nil},
 	} {
@@ -3722,7 +3727,7 @@ func TestClient_ForwardsNewSessionOptionsToSessionRequests(t *testing.T) {
 }
 
 func TestClient_SendsDisabledSkillsAndExcludedToolsOnResume(t *testing.T) {
-	// The runtime replaces a loaded session's disabled skills and excluded tools
+	// The runtime replaces a loaded session's disabled skills, excluded tools and excluded agents
 	// whenever the key is present, so an empty list must reach it to clear them;
 	// nil keeps them.
 	for _, tc := range []struct {
@@ -3749,6 +3754,7 @@ func TestClient_SendsDisabledSkillsAndExcludedToolsOnResume(t *testing.T) {
 			if _, err := client.ResumeSession(t.Context(), "s1", &ResumeSessionOptions{
 				Skills: SessionSkillOptions{DisabledSkills: tc.names},
 				Tools:  SessionToolOptions{ExcludedTools: tc.names},
+				Agents: SessionAgentOptions{ExcludedBuiltinAgents: tc.names},
 			}); err != nil {
 				t.Fatal(err)
 			}
@@ -3756,7 +3762,7 @@ func TestClient_SendsDisabledSkillsAndExcludedToolsOnResume(t *testing.T) {
 			if err := json.Unmarshal(<-params, &payload); err != nil {
 				t.Fatal(err)
 			}
-			for group, key := range map[string]string{"skills": "disabledSkills", "tools": "excludedTools"} {
+			for group, key := range map[string]string{"skills": "disabledSkills", "tools": "excludedTools", "agents": "excludedBuiltinAgents"} {
 				var fields map[string]json.RawMessage
 				if raw, present := payload[group]; present {
 					if err := json.Unmarshal(raw, &fields); err != nil {
@@ -3829,51 +3835,6 @@ func TestClient_PreservesIncludedBuiltInAgentsOnCreateAndResume(t *testing.T) {
 						t.Fatalf("expected allowlist %s, got %s", want, value)
 					}
 				}
-			}
-		})
-	}
-}
-
-func TestClient_SendsExcludedBuiltInAgentsOnResume(t *testing.T) {
-	// The runtime replaces a loaded session's exclusions whenever the key is
-	// present, so an empty list must reach it to clear them; nil keeps them.
-	for _, tc := range []struct {
-		name   string
-		agents []string
-		want   string
-	}{
-		{"omitted", nil, ""},
-		{"empty", []string{}, `[]`},
-		{"subset", []string{"task"}, `["task"]`},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			rpcClient, server, _ := newRuntimeShutdownRpcPair(t)
-			t.Cleanup(server.Stop)
-			client := &Client{
-				client: rpcClient, RPC: rpc.NewServerRPC(rpcClient),
-				sessions: make(map[string]*Session),
-			}
-			params := make(chan json.RawMessage, 1)
-			server.SetRequestHandler("session.resume", func(request json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
-				params <- append(json.RawMessage(nil), request...)
-				return []byte(`{"sessionId":"` + sessionIDFromParams(t, request) + `"}`), nil
-			})
-			if _, err := client.ResumeSession(t.Context(), "s1", &ResumeSessionOptions{Agents: SessionAgentOptions{ExcludedBuiltinAgents: tc.agents}}); err != nil {
-				t.Fatal(err)
-			}
-			var payload map[string]json.RawMessage
-			if err := json.Unmarshal(<-params, &payload); err != nil {
-				t.Fatal(err)
-			}
-			value, present := sessionWireGroup(payload, "agents")["excludedBuiltinAgents"]
-			if tc.want == "" {
-				if present {
-					t.Fatalf("expected excludedBuiltinAgents to be omitted, got %s", value)
-				}
-				return
-			}
-			if !present || string(value) != tc.want {
-				t.Fatalf("expected excludedBuiltinAgents %s, got %s (present=%v)", tc.want, value, present)
 			}
 		})
 	}
@@ -4455,35 +4416,18 @@ func TestClient_CreateSessionDeletesCloudSessionWhenProviderValidationFailsAfter
 }
 
 func TestClient_AuthOptions(t *testing.T) {
-	t.Run("should accept GitHubToken option", func(t *testing.T) {
-		client := NewClient(&ClientOptions{Mode: ModeCodingAgent, GitHub: ClientGitHubOptions{Token: "gho_test_token"}})
-
-		if client.options.GitHubToken != "gho_test_token" {
-			t.Errorf("Expected GitHubToken to be 'gho_test_token', got %q", client.options.GitHubToken)
-		}
-	})
-
-	t.Run("should default UseLoggedInUser to nil when no GitHubToken", func(t *testing.T) {
-		client := NewClient(&ClientOptions{Mode: ModeCodingAgent})
-
-		if client.options.UseLoggedInUser != nil {
-			t.Errorf("Expected UseLoggedInUser to be nil, got %v", client.options.UseLoggedInUser)
-		}
-	})
-
-	t.Run("should allow explicit UseLoggedInUser false", func(t *testing.T) {
-		client := NewClient(&ClientOptions{Mode: ModeCodingAgent, GitHub: ClientGitHubOptions{UseLoggedInUser: Bool(false)}})
-
-		if client.options.UseLoggedInUser == nil || *client.options.UseLoggedInUser != false {
-			t.Error("Expected UseLoggedInUser to be false")
-		}
-	})
-
-	t.Run("should allow explicit UseLoggedInUser true with GitHubToken", func(t *testing.T) {
-		client := NewClient(&ClientOptions{Mode: ModeCodingAgent, GitHub: ClientGitHubOptions{Token: "gho_test_token", UseLoggedInUser: Bool(true)}})
-
-		if client.options.UseLoggedInUser == nil || *client.options.UseLoggedInUser != true {
-			t.Error("Expected UseLoggedInUser to be true")
+	t.Run("token disables logged-in user unless explicitly enabled", func(t *testing.T) {
+		for _, tc := range []struct {
+			useLoggedInUser *bool
+			want            []string
+		}{
+			{nil, []string{"--auth-token-env", "COPILOT_SDK_AUTH_TOKEN", "--no-auto-login"}},
+			{Bool(true), []string{"--auth-token-env", "COPILOT_SDK_AUTH_TOKEN"}},
+		} {
+			client := NewClient(&ClientOptions{Mode: ModeCodingAgent, GitHub: ClientGitHubOptions{Token: "gho_test_token", UseLoggedInUser: tc.useLoggedInUser}, Runtime: InProcessConnection{}})
+			if got := client.inProcessHostConfig("").Args; !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("UseLoggedInUser=%v args = %v, want %v", tc.useLoggedInUser, got, tc.want)
+			}
 		}
 	})
 
@@ -4500,16 +4444,6 @@ func TestClient_AuthOptions(t *testing.T) {
 		}()
 
 		NewClient(&ClientOptions{Mode: ModeCodingAgent, GitHub: ClientGitHubOptions{Token: "gho_test_token"}, Runtime: TCPConnection{Host: "localhost", Port: 8080}})
-	})
-
-	t.Run("should panic when UseLoggedInUser is used with TCPConnection", func(t *testing.T) {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Error("Expected panic for auth options with TCPConnection")
-			}
-		}()
-
-		NewClient(&ClientOptions{Mode: ModeCodingAgent, GitHub: ClientGitHubOptions{UseLoggedInUser: Bool(false)}, Runtime: TCPConnection{Host: "localhost", Port: 8080}})
 	})
 }
 
@@ -4570,48 +4504,8 @@ func TestClient_TCPAllowsClientCallbacksWithDefaultRuntimeOptions(t *testing.T) 
 	}
 }
 
-func TestClient_BaseDirectory(t *testing.T) {
-	t.Run("should accept BaseDirectory option", func(t *testing.T) {
-		client := NewClient(&ClientOptions{Mode: ModeCodingAgent, Runtime: SpawnedStdioConnection{BaseDirectory: "/custom/copilot/home"}})
-
-		if client.options.BaseDirectory != "/custom/copilot/home" {
-			t.Errorf("Expected BaseDirectory to be '/custom/copilot/home', got %q", client.options.BaseDirectory)
-		}
-	})
-
-	t.Run("should default BaseDirectory to empty string", func(t *testing.T) {
-		client := NewClient(&ClientOptions{Mode: ModeCodingAgent})
-
-		if client.options.BaseDirectory != "" {
-			t.Errorf("Expected BaseDirectory to be empty, got %q", client.options.BaseDirectory)
-		}
-	})
-}
-
 func TestClient_EnvOptions(t *testing.T) {
-	t.Run("should store custom environment variables", func(t *testing.T) {
-		client := NewClient(&ClientOptions{Mode: ModeCodingAgent, Runtime: SpawnedStdioConnection{Env: []string{"FOO=bar", "BAZ=qux"}}})
-
-		if len(client.environment) != 2 {
-			t.Errorf("Expected 2 environment variables, got %d", len(client.environment))
-		}
-		if client.environment[0] != "FOO=bar" {
-			t.Errorf("Expected first env var to be 'FOO=bar', got %q", client.environment[0])
-		}
-		if client.environment[1] != "BAZ=qux" {
-			t.Errorf("Expected second env var to be 'BAZ=qux', got %q", client.environment[1])
-		}
-	})
-
 	t.Run("should default to inherit from current process", func(t *testing.T) {
-		client := NewClient(&ClientOptions{Mode: ModeCodingAgent})
-
-		if want := os.Environ(); !reflect.DeepEqual(client.environment, want) {
-			t.Errorf("Expected Env to be %v, got %v", want, client.environment)
-		}
-	})
-
-	t.Run("should default to inherit from current process with nil options", func(t *testing.T) {
 		client := NewClient(&ClientOptions{Mode: ModeCodingAgent})
 
 		if want := os.Environ(); !reflect.DeepEqual(client.environment, want) {
@@ -5176,24 +5070,6 @@ func TestClient_ConnectionLevelEnv(t *testing.T) {
 	})
 }
 
-func TestClient_SessionIdleTimeoutSeconds(t *testing.T) {
-	t.Run("should store SessionIdleTimeoutSeconds option", func(t *testing.T) {
-		client := NewClient(&ClientOptions{Mode: ModeCodingAgent, Runtime: SpawnedStdioConnection{SessionIdleTimeoutSeconds: 600}})
-
-		if client.options.SessionIdleTimeoutSeconds != 600 {
-			t.Errorf("Expected SessionIdleTimeoutSeconds to be 600, got %d", client.options.SessionIdleTimeoutSeconds)
-		}
-	})
-
-	t.Run("should default SessionIdleTimeoutSeconds to zero", func(t *testing.T) {
-		client := NewClient(&ClientOptions{Mode: ModeCodingAgent})
-
-		if client.options.SessionIdleTimeoutSeconds != 0 {
-			t.Errorf("Expected SessionIdleTimeoutSeconds to be 0, got %d", client.options.SessionIdleTimeoutSeconds)
-		}
-	})
-}
-
 func findCLIPathForTest(t *testing.T) string {
 	t.Helper()
 
@@ -5226,9 +5102,15 @@ func findCLIPathForTest(t *testing.T) string {
 	return cliPath
 }
 
-func TestCreateSessionRequest_ClientName(t *testing.T) {
-	t.Run("includes clientName in JSON when set", func(t *testing.T) {
-		req := createSessionRequest{ClientName: "my-app"}
+// One populated and one empty request per direction pin each field's wire name, session group
+// placement and presence semantics: explicit false is kept, unset fields are omitted.
+func TestSessionRequests_FieldWireFormat(t *testing.T) {
+	type wireField struct {
+		path []string
+		want any
+	}
+	marshal := func(t *testing.T, req any) map[string]any {
+		t.Helper()
 		data, err := json.Marshal(req)
 		if err != nil {
 			t.Fatalf("Failed to marshal: %v", err)
@@ -5237,220 +5119,118 @@ func TestCreateSessionRequest_ClientName(t *testing.T) {
 		if err := json.Unmarshal(data, &m); err != nil {
 			t.Fatalf("Failed to unmarshal: %v", err)
 		}
-		if m["clientName"] != "my-app" {
-			t.Errorf("Expected clientName to be 'my-app', got %v", m["clientName"])
+		return m
+	}
+	lookup := func(m map[string]any, path []string) (any, bool) {
+		var current any = m
+		for _, key := range path {
+			object, ok := current.(map[string]any)
+			if !ok {
+				return nil, false
+			}
+			if current, ok = object[key]; !ok {
+				return nil, false
+			}
 		}
+		return current, true
+	}
+	check := func(t *testing.T, populated, empty any, fields []wireField) {
+		t.Helper()
+		got := marshal(t, populated)
+		omitted := marshal(t, empty)
+		for _, field := range fields {
+			key := strings.Join(field.path, ".")
+			if value, ok := lookup(got, field.path); !ok || !reflect.DeepEqual(value, field.want) {
+				t.Errorf("Expected %s to be %#v, got %#v (present=%v)", key, field.want, value, ok)
+			}
+			if value, ok := lookup(omitted, field.path); ok {
+				t.Errorf("Expected %s to be omitted when unset, got %#v", key, value)
+			}
+		}
+	}
+
+	t.Run("create", func(t *testing.T) {
+		check(t, createSessionRequest{
+			ClientName:                         "my-app",
+			Name:                               "named at create",
+			ReasoningSummary:                   ReasoningSummaryConcise,
+			ContextTier:                        ContextTierLongContext,
+			EnableConfigDiscovery:              Bool(false),
+			Memory:                             &MemoryConfiguration{Enabled: true, Mode: MemoryModeUserPrompt},
+			Agent:                              "test-agent",
+			InstructionDirectories:             []string{`C:\extra-instructions`, `C:\more-instructions`},
+			MCPOAuthTokenStorage:               "in-memory",
+			RequestElicitation:                 Bool(true),
+			RequestExitPlanMode:                Bool(true),
+			RequestAutoModeSwitch:              Bool(true),
+			RequestMCPApps:                     Bool(true),
+			IsExperimentalMode:                 Bool(false),
+			EnableSessionTelemetry:             Bool(false),
+			EnableOnDemandInstructionDiscovery: Bool(false),
+		}, createSessionRequest{}, []wireField{
+			{[]string{"clientName"}, "my-app"},
+			{[]string{"name"}, "named at create"},
+			{[]string{"inference", "reasoningSummary"}, "concise"},
+			{[]string{"inference", "contextTier"}, "long_context"},
+			{[]string{"enableConfigDiscovery"}, false},
+			{[]string{"state", "memory"}, map[string]any{"enabled": true, "mode": "user-prompt"}},
+			{[]string{"agents", "selected"}, "test-agent"},
+			{[]string{"instructions", "directories"}, []any{`C:\extra-instructions`, `C:\more-instructions`}},
+			{[]string{"mcp", "oauthTokenStorage"}, "in-memory"},
+			{[]string{"interaction", "requestElicitation"}, true},
+			{[]string{"interaction", "requestExitPlanMode"}, true},
+			{[]string{"interaction", "requestAutoModeSwitch"}, true},
+			{[]string{"mcp", "enableApps"}, true},
+			{[]string{"experiments", "enableExperimentalMode"}, false},
+			{[]string{"github", "telemetryEnabled"}, false},
+			{[]string{"instructions", "onDemandDiscovery"}, false},
+		})
 	})
 
-	t.Run("omits clientName from JSON when empty", func(t *testing.T) {
-		req := createSessionRequest{}
-		data, _ := json.Marshal(req)
-		var m map[string]any
-		json.Unmarshal(data, &m)
-		if _, ok := m["clientName"]; ok {
-			t.Error("Expected clientName to be omitted when empty")
-		}
+	t.Run("resume", func(t *testing.T) {
+		check(t, resumeSessionRequest{
+			SessionID:                          "s1",
+			ClientName:                         "my-app",
+			ReasoningSummary:                   ReasoningSummaryNone,
+			ContextTier:                        ContextTierDefault,
+			EnableConfigDiscovery:              Bool(false),
+			Memory:                             &MemoryConfiguration{Enabled: false, Mode: MemoryModeSystemPrompt},
+			Agent:                              "test-agent",
+			InstructionDirectories:             []string{`C:\resume-instructions`},
+			MCPOAuthTokenStorage:               "persistent",
+			RequestElicitation:                 Bool(true),
+			RequestExitPlanMode:                Bool(true),
+			RequestAutoModeSwitch:              Bool(true),
+			RequestMCPApps:                     Bool(true),
+			IsExperimentalMode:                 Bool(true),
+			ContinuePendingWork:                Bool(false),
+			EnableSessionTelemetry:             Bool(false),
+			EnableOnDemandInstructionDiscovery: Bool(true),
+		}, resumeSessionRequest{SessionID: "s1"}, []wireField{
+			{[]string{"clientName"}, "my-app"},
+			{[]string{"inference", "reasoningSummary"}, "none"},
+			{[]string{"inference", "contextTier"}, "default"},
+			{[]string{"enableConfigDiscovery"}, false},
+			{[]string{"state", "memory"}, map[string]any{"enabled": false, "mode": "system-prompt"}},
+			{[]string{"agents", "selected"}, "test-agent"},
+			{[]string{"instructions", "directories"}, []any{`C:\resume-instructions`}},
+			{[]string{"mcp", "oauthTokenStorage"}, "persistent"},
+			{[]string{"interaction", "requestElicitation"}, true},
+			{[]string{"interaction", "requestExitPlanMode"}, true},
+			{[]string{"interaction", "requestAutoModeSwitch"}, true},
+			{[]string{"mcp", "enableApps"}, true},
+			{[]string{"experiments", "enableExperimentalMode"}, true},
+			{[]string{"continuePendingWork"}, false},
+			{[]string{"github", "telemetryEnabled"}, false},
+			{[]string{"instructions", "onDemandDiscovery"}, true},
+		})
 	})
 }
-
-func TestCreateSessionRequest_Name(t *testing.T) {
-	t.Run("includes name in JSON when set", func(t *testing.T) {
-		req := createSessionRequest{Name: "named at create"}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if m["name"] != "named at create" {
-			t.Errorf("Expected name to be 'named at create', got %v", m["name"])
-		}
-	})
-
-	t.Run("omits name from JSON when empty", func(t *testing.T) {
-		req := createSessionRequest{}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if _, ok := m["name"]; ok {
-			t.Error("Expected name to be omitted when empty")
-		}
-	})
-}
-
-func TestResumeSessionRequest_ClientName(t *testing.T) {
-	t.Run("includes clientName in JSON when set", func(t *testing.T) {
-		req := resumeSessionRequest{SessionID: "s1", ClientName: "my-app"}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if m["clientName"] != "my-app" {
-			t.Errorf("Expected clientName to be 'my-app', got %v", m["clientName"])
-		}
-	})
-
-	t.Run("omits clientName from JSON when empty", func(t *testing.T) {
-		req := resumeSessionRequest{SessionID: "s1"}
-		data, _ := json.Marshal(req)
-		var m map[string]any
-		json.Unmarshal(data, &m)
-		if _, ok := m["clientName"]; ok {
-			t.Error("Expected clientName to be omitted when empty")
-		}
-	})
-}
-
-func TestSessionRequests_ReasoningSummary(t *testing.T) {
-	t.Run("create includes reasoningSummary in JSON when set", func(t *testing.T) {
-		req := createSessionRequest{ReasoningSummary: ReasoningSummaryConcise}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if sessionWireGroup(m, "inference")["reasoningSummary"] != "concise" {
-			t.Errorf("Expected reasoningSummary to be 'concise', got %v", sessionWireGroup(m, "inference")["reasoningSummary"])
-		}
-	})
-
-	t.Run("resume includes reasoningSummary in JSON when set", func(t *testing.T) {
-		req := resumeSessionRequest{SessionID: "s1", ReasoningSummary: ReasoningSummaryNone}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if sessionWireGroup(m, "inference")["reasoningSummary"] != "none" {
-			t.Errorf("Expected reasoningSummary to be 'none', got %v", sessionWireGroup(m, "inference")["reasoningSummary"])
-		}
-	})
-}
-
-func TestSessionRequests_ContextTier(t *testing.T) {
-	t.Run("create includes contextTier in JSON when set", func(t *testing.T) {
-		req := createSessionRequest{ContextTier: ContextTierLongContext}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if sessionWireGroup(m, "inference")["contextTier"] != "long_context" {
-			t.Errorf("Expected contextTier to be 'long_context', got %v", sessionWireGroup(m, "inference")["contextTier"])
-		}
-	})
-
-	t.Run("resume includes contextTier in JSON when set", func(t *testing.T) {
-		req := resumeSessionRequest{SessionID: "s1", ContextTier: ContextTierDefault}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if sessionWireGroup(m, "inference")["contextTier"] != "default" {
-			t.Errorf("Expected contextTier to be 'default', got %v", sessionWireGroup(m, "inference")["contextTier"])
-		}
-	})
-}
-
-func TestSessionRequests_EnableConfigDiscovery(t *testing.T) {
-	t.Run("create includes enableConfigDiscovery when true", func(t *testing.T) {
-		req := createSessionRequest{EnableConfigDiscovery: Bool(true)}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if m["enableConfigDiscovery"] != true {
-			t.Errorf("Expected enableConfigDiscovery to be true, got %v", m["enableConfigDiscovery"])
-		}
-	})
-
-	t.Run("create includes enableConfigDiscovery when false", func(t *testing.T) {
-		req := createSessionRequest{EnableConfigDiscovery: Bool(false)}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if m["enableConfigDiscovery"] != false {
-			t.Errorf("Expected enableConfigDiscovery to be false, got %v", m["enableConfigDiscovery"])
-		}
-	})
-
-	t.Run("create omits enableConfigDiscovery when unset", func(t *testing.T) {
-		req := createSessionRequest{}
-		data, _ := json.Marshal(req)
-		var m map[string]any
-		json.Unmarshal(data, &m)
-		if _, ok := m["enableConfigDiscovery"]; ok {
-			t.Error("Expected enableConfigDiscovery to be omitted when unset")
-		}
-	})
-
-	t.Run("resume includes enableConfigDiscovery when false", func(t *testing.T) {
-		req := resumeSessionRequest{SessionID: "s1", EnableConfigDiscovery: Bool(false)}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if m["enableConfigDiscovery"] != false {
-			t.Errorf("Expected enableConfigDiscovery to be false, got %v", m["enableConfigDiscovery"])
-		}
-	})
-
-	t.Run("resume omits enableConfigDiscovery when unset", func(t *testing.T) {
-		req := resumeSessionRequest{SessionID: "s1"}
-		data, _ := json.Marshal(req)
-		var m map[string]any
-		json.Unmarshal(data, &m)
-		if _, ok := m["enableConfigDiscovery"]; ok {
-			t.Error("Expected enableConfigDiscovery to be omitted when unset")
-		}
-	})
-}
-
 func TestCreateSessionRequest_TrustAndCustomAgentModelPolicy(t *testing.T) {
-	for _, scope := range []WorkingDirectoryTrust{"", WorkingDirectoryTrustSession, WorkingDirectoryTrustUser} {
+	for _, scope := range []WorkingDirectoryTrust{"", WorkingDirectoryTrustUser} {
 		t.Run(string(scope), func(t *testing.T) {
 			policy := AgentModelPolicy("")
-			switch scope {
-			case "session":
-				policy = AgentModelPolicyPreferred
-			case "user":
+			if scope != "" {
 				policy = AgentModelPolicyRequired
 			}
 			config := CreateSessionOptions{Filesystem: CreateSessionFilesystemOptions{TrustWorkingDirectory: scope}}
@@ -5822,8 +5602,9 @@ func TestClient_ForwardsCommandsPresenceToSessionRequests(t *testing.T) {
 		// An explicitly empty slice must reach the runtime: on resume it replaces the
 		// session's slash commands with none, which omitting the key cannot express.
 		{"empty", []CommandDefinition{}, []any{}},
-		{"one command", []CommandDefinition{{Name: "deploy", Description: "Deploy", Handler: noop}}, []any{
-			map[string]any{"name": "deploy", "description": "Deploy"},
+		// Description is not omitempty: an empty description still reaches the runtime.
+		{"one command", []CommandDefinition{{Name: "deploy", Handler: noop}}, []any{
+			map[string]any{"name": "deploy", "description": ""},
 		}},
 	}
 
@@ -5920,255 +5701,9 @@ func TestSessionRequests_SandboxConfig(t *testing.T) {
 	}
 }
 
-func TestSessionRequests_Memory(t *testing.T) {
-	t.Run("create includes memory in JSON when enabled", func(t *testing.T) {
-		req := createSessionRequest{Memory: &MemoryConfiguration{Enabled: true, Mode: MemoryModeUserPrompt}}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		expected := map[string]any{"enabled": true, "mode": "user-prompt"}
-		if !reflect.DeepEqual(sessionWireGroup(m, "state")["memory"], expected) {
-			t.Errorf("Expected memory %v, got %v", expected, sessionWireGroup(m, "state")["memory"])
-		}
-	})
-
-	t.Run("resume includes memory in JSON when disabled", func(t *testing.T) {
-		req := resumeSessionRequest{SessionID: "s1", Memory: &MemoryConfiguration{Enabled: false, Mode: MemoryModeSystemPrompt}}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		expected := map[string]any{"enabled": false, "mode": "system-prompt"}
-		if !reflect.DeepEqual(sessionWireGroup(m, "state")["memory"], expected) {
-			t.Errorf("Expected memory %v, got %v", expected, sessionWireGroup(m, "state")["memory"])
-		}
-	})
-
-	t.Run("create omits memory when nil", func(t *testing.T) {
-		req := createSessionRequest{}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if _, ok := sessionWireGroup(m, "state")["memory"]; ok {
-			t.Errorf("Expected memory to be omitted")
-		}
-	})
-
-	t.Run("resume omits memory when nil", func(t *testing.T) {
-		req := resumeSessionRequest{SessionID: "s1"}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if _, ok := sessionWireGroup(m, "state")["memory"]; ok {
-			t.Errorf("Expected memory to be omitted")
-		}
-	})
-}
-
-func TestCreateSessionRequest_Agent(t *testing.T) {
-	t.Run("includes agent in JSON when set", func(t *testing.T) {
-		req := createSessionRequest{Agent: "test-agent"}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if sessionWireGroup(m, "agents")["selected"] != "test-agent" {
-			t.Errorf("Expected agent to be 'test-agent', got %v", sessionWireGroup(m, "agents")["selected"])
-		}
-	})
-
-	t.Run("omits agent from JSON when empty", func(t *testing.T) {
-		req := createSessionRequest{}
-		data, _ := json.Marshal(req)
-		var m map[string]any
-		json.Unmarshal(data, &m)
-		if _, ok := sessionWireGroup(m, "agents")["selected"]; ok {
-			t.Error("Expected agent to be omitted when empty")
-		}
-	})
-}
-
-func TestResumeSessionRequest_Agent(t *testing.T) {
-	t.Run("includes agent in JSON when set", func(t *testing.T) {
-		req := resumeSessionRequest{SessionID: "s1", Agent: "test-agent"}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if sessionWireGroup(m, "agents")["selected"] != "test-agent" {
-			t.Errorf("Expected agent to be 'test-agent', got %v", sessionWireGroup(m, "agents")["selected"])
-		}
-	})
-
-	t.Run("omits agent from JSON when empty", func(t *testing.T) {
-		req := resumeSessionRequest{SessionID: "s1"}
-		data, _ := json.Marshal(req)
-		var m map[string]any
-		json.Unmarshal(data, &m)
-		if _, ok := sessionWireGroup(m, "agents")["selected"]; ok {
-			t.Error("Expected agent to be omitted when empty")
-		}
-	})
-}
-
-func TestCreateSessionRequest_InstructionDirectories(t *testing.T) {
-	t.Run("includes instructionDirectories in JSON when set", func(t *testing.T) {
-		req := createSessionRequest{InstructionDirectories: []string{`C:\extra-instructions`, `C:\more-instructions`}}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		got := sessionWireGroup(m, "instructions")["directories"].([]any)
-		if len(got) != 2 || got[0] != `C:\extra-instructions` || got[1] != `C:\more-instructions` {
-			t.Errorf("Expected instructionDirectories to be serialized, got %v", got)
-		}
-	})
-
-	t.Run("omits instructionDirectories from JSON when empty", func(t *testing.T) {
-		req := createSessionRequest{}
-		data, _ := json.Marshal(req)
-		var m map[string]any
-		json.Unmarshal(data, &m)
-		if _, ok := sessionWireGroup(m, "instructions")["directories"]; ok {
-			t.Error("Expected instructionDirectories to be omitted when empty")
-		}
-	})
-}
-
-func TestResumeSessionRequest_InstructionDirectories(t *testing.T) {
-	t.Run("includes instructionDirectories in JSON when set", func(t *testing.T) {
-		req := resumeSessionRequest{
-			SessionID:              "s1",
-			InstructionDirectories: []string{`C:\resume-instructions`},
-		}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		got := sessionWireGroup(m, "instructions")["directories"].([]any)
-		if len(got) != 1 || got[0] != `C:\resume-instructions` {
-			t.Errorf("Expected instructionDirectories to be serialized, got %v", got)
-		}
-	})
-
-	t.Run("omits instructionDirectories from JSON when empty", func(t *testing.T) {
-		req := resumeSessionRequest{SessionID: "s1"}
-		data, _ := json.Marshal(req)
-		var m map[string]any
-		json.Unmarshal(data, &m)
-		if _, ok := sessionWireGroup(m, "instructions")["directories"]; ok {
-			t.Error("Expected instructionDirectories to be omitted when empty")
-		}
-	})
-}
-
-func TestCreateSessionRequest_MCPOAuthTokenStorage(t *testing.T) {
-	t.Run("includes mcpOAuthTokenStorage in JSON when set", func(t *testing.T) {
-		req := createSessionRequest{MCPOAuthTokenStorage: "in-memory"}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if sessionWireGroup(m, "mcp")["oauthTokenStorage"] != "in-memory" {
-			t.Errorf("Expected mcpOAuthTokenStorage to be 'in-memory', got %v", sessionWireGroup(m, "mcp")["oauthTokenStorage"])
-		}
-	})
-
-	t.Run("omits mcpOAuthTokenStorage from JSON when empty", func(t *testing.T) {
-		req := createSessionRequest{}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if _, ok := sessionWireGroup(m, "mcp")["oauthTokenStorage"]; ok {
-			t.Error("Expected mcpOAuthTokenStorage to be omitted when empty")
-		}
-	})
-}
-
-func TestResumeSessionRequest_MCPOAuthTokenStorage(t *testing.T) {
-	t.Run("includes mcpOAuthTokenStorage in JSON when set", func(t *testing.T) {
-		req := resumeSessionRequest{SessionID: "s1", MCPOAuthTokenStorage: "persistent"}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if sessionWireGroup(m, "mcp")["oauthTokenStorage"] != "persistent" {
-			t.Errorf("Expected mcpOAuthTokenStorage to be 'persistent', got %v", sessionWireGroup(m, "mcp")["oauthTokenStorage"])
-		}
-	})
-
-	t.Run("omits mcpOAuthTokenStorage from JSON when empty", func(t *testing.T) {
-		req := resumeSessionRequest{SessionID: "s1"}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if _, ok := sessionWireGroup(m, "mcp")["oauthTokenStorage"]; ok {
-			t.Error("Expected mcpOAuthTokenStorage to be omitted when empty")
-		}
-	})
-}
-
-func TestOverridesBuiltInTool(t *testing.T) {
-	t.Run("OverridesBuiltInTool is serialized in tool definition", func(t *testing.T) {
-		tool := Tool{
-			Name:                 "grep",
-			Description:          "Custom grep",
-			OverridesBuiltInTool: true,
-			Handler:              func(_ ToolInvocation) (ToolResult, error) { return ToolResult{}, nil },
-		}
+func TestToolDefinitionOptionalFieldsWireFormat(t *testing.T) {
+	marshal := func(t *testing.T, tool Tool) map[string]any {
+		t.Helper()
 		data, err := json.Marshal(tool)
 		if err != nil {
 			t.Fatalf("failed to marshal: %v", err)
@@ -6177,119 +5712,56 @@ func TestOverridesBuiltInTool(t *testing.T) {
 		if err := json.Unmarshal(data, &m); err != nil {
 			t.Fatalf("failed to unmarshal: %v", err)
 		}
-		if v, ok := m["overridesBuiltInTool"]; !ok || v != true {
-			t.Errorf("expected overridesBuiltInTool=true, got %v", m)
-		}
-	})
+		return m
+	}
 
-	t.Run("OverridesBuiltInTool omitted when false", func(t *testing.T) {
-		tool := Tool{
-			Name:        "custom_tool",
-			Description: "A custom tool",
-			Handler:     func(_ ToolInvocation) (ToolResult, error) { return ToolResult{}, nil },
-		}
-		data, err := json.Marshal(tool)
-		if err != nil {
-			t.Fatalf("failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("failed to unmarshal: %v", err)
-		}
-		if _, ok := m["overridesBuiltInTool"]; ok {
-			t.Errorf("expected overridesBuiltInTool to be omitted, got %v", m)
-		}
+	m := marshal(t, Tool{
+		Name:                 "grep",
+		Description:          "Custom grep",
+		OverridesBuiltInTool: true,
+		IsTerminal:           true,
+		Defer:                ToolDeferAuto,
+		Metadata: map[string]any{
+			"github.com/copilot:safeForTelemetry": map[string]any{"name": true, "inputsNames": false},
+		},
+		Namespace: &ToolNamespace{Name: "word"},
+		Handler:   func(_ ToolInvocation) (ToolResult, error) { return ToolResult{}, nil },
 	})
+	if v, ok := m["overridesBuiltInTool"]; !ok || v != true {
+		t.Errorf("expected overridesBuiltInTool=true, got %v", m)
+	}
+	if m["isTerminal"] != true {
+		t.Errorf("expected isTerminal to be true, got %v", m["isTerminal"])
+	}
+	if v, ok := m["defer"]; !ok || v != "auto" {
+		t.Errorf("expected defer=auto, got %v", m)
+	}
+	meta, ok := m["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected metadata object, got %v", m)
+	}
+	if _, ok := meta["github.com/copilot:safeForTelemetry"]; !ok {
+		t.Errorf("expected namespaced key preserved, got %v", meta)
+	}
+	namespace, ok := m["namespace"].(map[string]any)
+	if !ok || namespace["name"] != "word" {
+		t.Fatalf("expected namespace {name: word}, got %v", m["namespace"])
+	}
+	if _, ok := namespace["description"]; ok {
+		t.Errorf("expected empty namespace description to be omitted, got %v", namespace["description"])
+	}
+
+	plain := marshal(t, Tool{
+		Name:        "custom_tool",
+		Description: "A custom tool",
+		Handler:     func(_ ToolInvocation) (ToolResult, error) { return ToolResult{}, nil },
+	})
+	for _, key := range []string{"overridesBuiltInTool", "isTerminal", "defer", "metadata", "namespace"} {
+		if _, ok := plain[key]; ok {
+			t.Errorf("expected %s to be omitted when unset, got %v", key, plain)
+		}
+	}
 }
-
-func TestToolDefer(t *testing.T) {
-	t.Run("Defer is serialized in tool definition", func(t *testing.T) {
-		tool := Tool{
-			Name:        "lookup_issue",
-			Description: "Fetch issue details",
-			Defer:       ToolDeferAuto,
-			Handler:     func(_ ToolInvocation) (ToolResult, error) { return ToolResult{}, nil },
-		}
-		data, err := json.Marshal(tool)
-		if err != nil {
-			t.Fatalf("failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("failed to unmarshal: %v", err)
-		}
-		if v, ok := m["defer"]; !ok || v != "auto" {
-			t.Errorf("expected defer=auto, got %v", m)
-		}
-	})
-
-	t.Run("Defer omitted when unset", func(t *testing.T) {
-		tool := Tool{
-			Name:        "custom_tool",
-			Description: "A custom tool",
-			Handler:     func(_ ToolInvocation) (ToolResult, error) { return ToolResult{}, nil },
-		}
-		data, err := json.Marshal(tool)
-		if err != nil {
-			t.Fatalf("failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("failed to unmarshal: %v", err)
-		}
-		if _, ok := m["defer"]; ok {
-			t.Errorf("expected defer to be omitted, got %v", m)
-		}
-	})
-}
-
-func TestToolMetadata(t *testing.T) {
-	t.Run("Metadata is serialized in tool definition", func(t *testing.T) {
-		tool := Tool{
-			Name:        "my_tool",
-			Description: "A custom tool",
-			Metadata: map[string]any{
-				"github.com/copilot:safeForTelemetry": map[string]any{"name": true, "inputsNames": false},
-			},
-			Handler: func(_ ToolInvocation) (ToolResult, error) { return ToolResult{}, nil },
-		}
-		data, err := json.Marshal(tool)
-		if err != nil {
-			t.Fatalf("failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("failed to unmarshal: %v", err)
-		}
-		meta, ok := m["metadata"].(map[string]any)
-		if !ok {
-			t.Fatalf("expected metadata object, got %v", m)
-		}
-		if _, ok := meta["github.com/copilot:safeForTelemetry"]; !ok {
-			t.Errorf("expected namespaced key preserved, got %v", meta)
-		}
-	})
-
-	t.Run("Metadata omitted when unset", func(t *testing.T) {
-		tool := Tool{
-			Name:        "custom_tool",
-			Description: "A custom tool",
-			Handler:     func(_ ToolInvocation) (ToolResult, error) { return ToolResult{}, nil },
-		}
-		data, err := json.Marshal(tool)
-		if err != nil {
-			t.Fatalf("failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("failed to unmarshal: %v", err)
-		}
-		if _, ok := m["metadata"]; ok {
-			t.Errorf("expected metadata to be omitted, got %v", m)
-		}
-	})
-}
-
 func TestClient_CreateSession_AllowsMissingPermissionHandler(t *testing.T) {
 	t.Run("accepts nil config before connection validation", func(t *testing.T) {
 		client := NewClient(&ClientOptions{Mode: ModeCodingAgent, Runtime: SpawnedStdioConnection{Path: "/__nonexistent_copilot_binary__"}})
@@ -6438,6 +5910,9 @@ func TestListModelsWithCustomHandler(t *testing.T) {
 	if len(models) != 1 || models[0].ID != "my-custom-model" {
 		t.Errorf("unexpected models: %+v", models)
 	}
+	if _, err := client.ListModels(t.Context()); err != nil || callCount != 1 {
+		t.Errorf("expected cached second ListModels, got err=%v calls=%d", err, callCount)
+	}
 	if client.RPC != nil || client.state != stateDisconnected {
 		t.Fatal("custom OnListModels started the runtime")
 	}
@@ -6512,33 +5987,6 @@ func TestModelBillingTokenPricesJSON(t *testing.T) {
 	}
 	if reparsed.TokenPrices == nil || !reflect.DeepEqual(*reparsed.TokenPrices, expected) {
 		t.Errorf("round-trip lost token price data: %s", out)
-	}
-}
-
-func TestListModelsHandlerCachesResults(t *testing.T) {
-	customModels := []Model{
-		{
-			ID:   "cached-model",
-			Name: "Cached Model",
-			Capabilities: ModelCapabilities{
-				Supports: &ModelCapabilitiesSupports{Vision: Bool(false), ReasoningEffort: Bool(false)},
-				Limits:   &ModelCapabilitiesLimits{MaxContextWindowTokens: new(int64(128000))},
-			},
-		},
-	}
-
-	callCount := 0
-	handler := func(ctx context.Context) ([]Model, error) {
-		callCount++
-		return customModels, nil
-	}
-
-	client := NewClient(&ClientOptions{Mode: ModeCodingAgent, Models: ClientModelOptions{OnListModels: handler}})
-
-	_, _ = client.ListModels(t.Context())
-	_, _ = client.ListModels(t.Context())
-	if callCount != 1 {
-		t.Errorf("expected handler called once due to caching, got %d", callCount)
 	}
 }
 
@@ -6962,25 +6410,6 @@ func TestClient_EmptyModeIncludedBuiltinSkills(t *testing.T) {
 		}
 	})
 
-	t.Run("resume post-patch sends empty includedBuiltinSkills", func(t *testing.T) {
-		client, requests, cleanup := newInMemoryClientWithOptions(t, &ClientOptions{Mode: ModeEmpty, Runtime: SpawnedStdioConnection{BaseDirectory: "/tmp/copilot-test"}})
-		defer cleanup()
-
-		session, err := client.ResumeSession(t.Context(), "session-empty", &ResumeSessionOptions{Permissions: SessionPermissionOptions{OnRequest: PermissionHandler.ApproveAll}, Events: SessionEventOptions{OnEvent: func(SessionEvent) {}}, Tools: SessionToolOptions{AvailableTools: []string{}}})
-		if err != nil {
-			t.Fatalf("ResumeSession failed: %v", err)
-		}
-		defer session.Disconnect()
-
-		update, ok := findRequest(requests.snapshot(), "session.options.update")
-		if !ok {
-			t.Fatalf("expected session.options.update in %+v", requests.snapshot())
-		}
-		if arr, isArr := sessionWireGroup(update.Params, "skills")["includedBuiltinSkills"].([]any); !isArr || len(arr) != 0 {
-			t.Fatalf("expected includedBuiltinSkills=[], got %#v", sessionWireGroup(update.Params, "skills")["includedBuiltinSkills"])
-		}
-	})
-
 	t.Run("resume preserves explicit built-in skill allowlist", func(t *testing.T) {
 		client, requests, cleanup := newInMemoryClientWithOptions(t, &ClientOptions{Mode: ModeEmpty, Runtime: SpawnedStdioConnection{BaseDirectory: "/tmp/copilot-test"}})
 		defer cleanup()
@@ -6998,25 +6427,6 @@ func TestClient_EmptyModeIncludedBuiltinSkills(t *testing.T) {
 		skills, ok := sessionWireGroup(update.Params, "skills")["includedBuiltinSkills"].([]any)
 		if !ok || len(skills) != 1 || skills[0] != "code-review" {
 			t.Fatalf("expected includedBuiltinSkills=[code-review], got %#v", sessionWireGroup(update.Params, "skills")["includedBuiltinSkills"])
-		}
-	})
-
-	t.Run("caller opting into custom skills keeps includedBuiltinSkills empty", func(t *testing.T) {
-		client, requests, cleanup := newInMemoryClientWithOptions(t, &ClientOptions{Mode: ModeEmpty, Runtime: SpawnedStdioConnection{BaseDirectory: "/tmp/copilot-test"}})
-		defer cleanup()
-
-		session, err := client.CreateSession(t.Context(), &CreateSessionOptions{Permissions: SessionPermissionOptions{OnRequest: PermissionHandler.ApproveAll}, Events: SessionEventOptions{OnEvent: func(SessionEvent) {}}, Tools: SessionToolOptions{AvailableTools: []string{}}, Skills: SessionSkillOptions{Enabled: Bool(true), Directories: []string{"/tmp/custom-skills"}}})
-		if err != nil {
-			t.Fatalf("CreateSession failed: %v", err)
-		}
-		defer session.Disconnect()
-
-		update, ok := findRequest(requests.snapshot(), "session.options.update")
-		if !ok {
-			t.Fatalf("expected session.options.update in %+v", requests.snapshot())
-		}
-		if arr, isArr := sessionWireGroup(update.Params, "skills")["includedBuiltinSkills"].([]any); !isArr || len(arr) != 0 {
-			t.Fatalf("expected includedBuiltinSkills=[], got %#v", sessionWireGroup(update.Params, "skills")["includedBuiltinSkills"])
 		}
 	})
 
@@ -7232,49 +6642,6 @@ func assertCreateRequestPermission(t *testing.T, requests []recordedRequest) {
 	t.Fatalf("session.create request not found in %+v", requests)
 }
 
-func TestCreateSessionRequest_Commands(t *testing.T) {
-	t.Run("forwards commands in session.create RPC", func(t *testing.T) {
-		req := createSessionRequest{
-			Commands: []wireCommand{
-				{Name: "deploy", Description: "Deploy the app"},
-				{Name: "rollback", Description: "Rollback last deploy"},
-			},
-		}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		cmds, ok := sessionWireGroup(m, "interaction")["commands"].([]any)
-		if !ok {
-			t.Fatalf("Expected commands to be an array, got %T", sessionWireGroup(m, "interaction")["commands"])
-		}
-		if len(cmds) != 2 {
-			t.Fatalf("Expected 2 commands, got %d", len(cmds))
-		}
-		cmd0 := cmds[0].(map[string]any)
-		if cmd0["name"] != "deploy" {
-			t.Errorf("Expected first command name 'deploy', got %v", cmd0["name"])
-		}
-		if cmd0["description"] != "Deploy the app" {
-			t.Errorf("Expected first command description 'Deploy the app', got %v", cmd0["description"])
-		}
-	})
-
-	t.Run("omits commands from JSON when nil", func(t *testing.T) {
-		req := createSessionRequest{}
-		data, _ := json.Marshal(req)
-		var m map[string]any
-		json.Unmarshal(data, &m)
-		if _, ok := sessionWireGroup(m, "interaction")["commands"]; ok {
-			t.Error("Expected commands to be omitted when nil")
-		}
-	})
-}
-
 func TestCreateSessionRequest_Cloud(t *testing.T) {
 	t.Run("forwards cloud options in session.create RPC", func(t *testing.T) {
 		req := createSessionRequest{
@@ -7324,61 +6691,6 @@ func TestCreateSessionRequest_Cloud(t *testing.T) {
 	})
 }
 
-func TestSessionRequests_Capi(t *testing.T) {
-	t.Run("forwards capi options in session.create RPC", func(t *testing.T) {
-		req := createSessionRequest{
-			Capi: &CapiSessionOptions{EnableWebSocketResponses: Bool(false)},
-		}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		capi, ok := sessionWireGroup(m, "github")["capi"].(map[string]any)
-		if !ok {
-			t.Fatalf("Expected capi to be an object, got %T", sessionWireGroup(m, "github")["capi"])
-		}
-		if capi["enableWebSocketResponses"] != false {
-			t.Errorf("Expected enableWebSocketResponses=false, got %v", capi["enableWebSocketResponses"])
-		}
-	})
-
-	t.Run("forwards capi options in session.resume RPC", func(t *testing.T) {
-		req := resumeSessionRequest{
-			SessionID: "s1",
-			Capi:      &CapiSessionOptions{EnableWebSocketResponses: Bool(false)},
-		}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		capi, ok := sessionWireGroup(m, "github")["capi"].(map[string]any)
-		if !ok {
-			t.Fatalf("Expected capi to be an object, got %T", sessionWireGroup(m, "github")["capi"])
-		}
-		if capi["enableWebSocketResponses"] != false {
-			t.Errorf("Expected enableWebSocketResponses=false, got %v", capi["enableWebSocketResponses"])
-		}
-	})
-
-	t.Run("omits capi from JSON when unset", func(t *testing.T) {
-		req := createSessionRequest{}
-		data, _ := json.Marshal(req)
-		var m map[string]any
-		json.Unmarshal(data, &m)
-		if _, ok := sessionWireGroup(m, "github")["capi"]; ok {
-			t.Error("Expected capi to be omitted when unset")
-		}
-	})
-}
-
 func TestProviderConfig_Transport(t *testing.T) {
 	t.Run("serializes transport with camelCase key", func(t *testing.T) {
 		cfg := ProviderConfig{BaseURL: "https://example.com", Transport: "websockets"}
@@ -7402,260 +6714,6 @@ func TestProviderConfig_Transport(t *testing.T) {
 		json.Unmarshal(data, &m)
 		if _, ok := m["transport"]; ok {
 			t.Error("Expected transport to be omitted when unset")
-		}
-	})
-}
-
-func TestResumeSessionRequest_Commands(t *testing.T) {
-	t.Run("forwards commands in session.resume RPC", func(t *testing.T) {
-		req := resumeSessionRequest{
-			SessionID: "s1",
-			Commands: []wireCommand{
-				{Name: "deploy"},
-			},
-		}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		cmds, ok := sessionWireGroup(m, "interaction")["commands"].([]any)
-		if !ok {
-			t.Fatalf("Expected commands to be an array, got %T", sessionWireGroup(m, "interaction")["commands"])
-		}
-		if len(cmds) != 1 {
-			t.Fatalf("Expected 1 command, got %d", len(cmds))
-		}
-		cmd0 := cmds[0].(map[string]any)
-		if cmd0["name"] != "deploy" {
-			t.Errorf("Expected command name 'deploy', got %v", cmd0["name"])
-		}
-		if description, ok := cmd0["description"]; !ok || description != "" {
-			t.Errorf("Expected empty command description, got %v", description)
-		}
-	})
-
-	t.Run("omits commands from JSON when nil", func(t *testing.T) {
-		req := resumeSessionRequest{SessionID: "s1"}
-		data, _ := json.Marshal(req)
-		var m map[string]any
-		json.Unmarshal(data, &m)
-		if _, ok := sessionWireGroup(m, "interaction")["commands"]; ok {
-			t.Error("Expected commands to be omitted when nil")
-		}
-	})
-}
-
-func TestCreateSessionRequest_RequestElicitation(t *testing.T) {
-	t.Run("sends requestElicitation flag when OnElicitationRequest is provided", func(t *testing.T) {
-		req := createSessionRequest{
-			RequestElicitation: Bool(true),
-		}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if sessionWireGroup(m, "interaction")["requestElicitation"] != true {
-			t.Errorf("Expected requestElicitation to be true, got %v", sessionWireGroup(m, "interaction")["requestElicitation"])
-		}
-	})
-
-	t.Run("does not send requestElicitation when no handler provided", func(t *testing.T) {
-		req := createSessionRequest{}
-		data, _ := json.Marshal(req)
-		var m map[string]any
-		json.Unmarshal(data, &m)
-		if _, ok := sessionWireGroup(m, "interaction")["requestElicitation"]; ok {
-			t.Error("Expected requestElicitation to be omitted when not set")
-		}
-	})
-}
-
-func TestCreateSessionRequest_ModeCallbackFlags(t *testing.T) {
-	t.Run("sends mode callback flags when handlers are provided", func(t *testing.T) {
-		req := createSessionRequest{
-			RequestExitPlanMode:   Bool(true),
-			RequestAutoModeSwitch: Bool(true),
-		}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if sessionWireGroup(m, "interaction")["requestExitPlanMode"] != true {
-			t.Errorf("Expected requestExitPlanMode to be true, got %v", sessionWireGroup(m, "interaction")["requestExitPlanMode"])
-		}
-		if sessionWireGroup(m, "interaction")["requestAutoModeSwitch"] != true {
-			t.Errorf("Expected requestAutoModeSwitch to be true, got %v", sessionWireGroup(m, "interaction")["requestAutoModeSwitch"])
-		}
-	})
-
-	t.Run("omits mode callback flags when handlers are not provided", func(t *testing.T) {
-		req := createSessionRequest{}
-		data, _ := json.Marshal(req)
-		var m map[string]any
-		json.Unmarshal(data, &m)
-		if _, ok := sessionWireGroup(m, "interaction")["requestExitPlanMode"]; ok {
-			t.Error("Expected requestExitPlanMode to be omitted when not set")
-		}
-		if _, ok := sessionWireGroup(m, "interaction")["requestAutoModeSwitch"]; ok {
-			t.Error("Expected requestAutoModeSwitch to be omitted when not set")
-		}
-	})
-}
-
-func TestResumeSessionRequest_RequestElicitation(t *testing.T) {
-	t.Run("sends requestElicitation flag when OnElicitationRequest is provided", func(t *testing.T) {
-		req := resumeSessionRequest{
-			SessionID:          "s1",
-			RequestElicitation: Bool(true),
-		}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if sessionWireGroup(m, "interaction")["requestElicitation"] != true {
-			t.Errorf("Expected requestElicitation to be true, got %v", sessionWireGroup(m, "interaction")["requestElicitation"])
-		}
-	})
-
-	t.Run("does not send requestElicitation when no handler provided", func(t *testing.T) {
-		req := resumeSessionRequest{SessionID: "s1"}
-		data, _ := json.Marshal(req)
-		var m map[string]any
-		json.Unmarshal(data, &m)
-		if _, ok := sessionWireGroup(m, "interaction")["requestElicitation"]; ok {
-			t.Error("Expected requestElicitation to be omitted when not set")
-		}
-	})
-}
-
-func TestCreateSessionRequest_RequestMCPApps(t *testing.T) {
-	t.Run("sends requestMCPApps flag when EnableMCPApps is set", func(t *testing.T) {
-		req := createSessionRequest{
-			RequestMCPApps: Bool(true),
-		}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if sessionWireGroup(m, "mcp")["enableApps"] != true {
-			t.Errorf("Expected requestMcpApps to be true, got %v", sessionWireGroup(m, "mcp")["enableApps"])
-		}
-	})
-
-	t.Run("does not send requestMcpApps when EnableMCPApps is unset", func(t *testing.T) {
-		req := createSessionRequest{}
-		data, _ := json.Marshal(req)
-		var m map[string]any
-		json.Unmarshal(data, &m)
-		if _, ok := sessionWireGroup(m, "mcp")["enableApps"]; ok {
-			t.Error("Expected requestMcpApps to be omitted when not set")
-		}
-	})
-}
-
-func TestSessionRequests_EnableExperimentalMode(t *testing.T) {
-	t.Run("create forwards enableExperimentalMode when explicitly false", func(t *testing.T) {
-		req := createSessionRequest{
-			IsExperimentalMode: Bool(false),
-		}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if sessionWireGroup(m, "experiments")["enableExperimentalMode"] != false {
-			t.Errorf("Expected isExperimentalMode to be false, got %v", sessionWireGroup(m, "experiments")["enableExperimentalMode"])
-		}
-	})
-
-	t.Run("create omits enableExperimentalMode when unset", func(t *testing.T) {
-		req := createSessionRequest{}
-		data, _ := json.Marshal(req)
-		var m map[string]any
-		json.Unmarshal(data, &m)
-		if _, ok := sessionWireGroup(m, "experiments")["enableExperimentalMode"]; ok {
-			t.Error("Expected isExperimentalMode to be omitted when not set")
-		}
-	})
-
-	t.Run("resume forwards enableExperimentalMode when explicitly true", func(t *testing.T) {
-		req := resumeSessionRequest{
-			SessionID:          "s1",
-			IsExperimentalMode: Bool(true),
-		}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if sessionWireGroup(m, "experiments")["enableExperimentalMode"] != true {
-			t.Errorf("Expected isExperimentalMode to be true, got %v", sessionWireGroup(m, "experiments")["enableExperimentalMode"])
-		}
-	})
-
-	t.Run("resume omits enableExperimentalMode when unset", func(t *testing.T) {
-		req := resumeSessionRequest{SessionID: "s1"}
-		data, _ := json.Marshal(req)
-		var m map[string]any
-		json.Unmarshal(data, &m)
-		if _, ok := sessionWireGroup(m, "experiments")["enableExperimentalMode"]; ok {
-			t.Error("Expected isExperimentalMode to be omitted when not set")
-		}
-	})
-}
-
-func TestResumeSessionRequest_RequestMCPApps(t *testing.T) {
-	t.Run("sends requestMcpApps flag when EnableMCPApps is set", func(t *testing.T) {
-		req := resumeSessionRequest{
-			SessionID:      "s1",
-			RequestMCPApps: Bool(true),
-		}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if sessionWireGroup(m, "mcp")["enableApps"] != true {
-			t.Errorf("Expected requestMcpApps to be true, got %v", sessionWireGroup(m, "mcp")["enableApps"])
-		}
-	})
-
-	t.Run("does not send requestMcpApps when RequestMCPApps is unset", func(t *testing.T) {
-		req := resumeSessionRequest{SessionID: "s1"}
-		data, _ := json.Marshal(req)
-		var m map[string]any
-		json.Unmarshal(data, &m)
-		if _, ok := sessionWireGroup(m, "mcp")["enableApps"]; ok {
-			t.Error("Expected requestMcpApps to be omitted when not set")
 		}
 	})
 }
@@ -7720,28 +6778,6 @@ func TestSessionRequests_GitHubMCPToolConfig(t *testing.T) {
 			t.Fatal("Expected githubMcpToolConfig to be omitted")
 		}
 	})
-}
-
-func TestResumeSessionRequest_ModeCallbackFlags(t *testing.T) {
-	req := resumeSessionRequest{
-		SessionID:             "s1",
-		RequestExitPlanMode:   Bool(true),
-		RequestAutoModeSwitch: Bool(true),
-	}
-	data, err := json.Marshal(req)
-	if err != nil {
-		t.Fatalf("Failed to marshal: %v", err)
-	}
-	var m map[string]any
-	if err := json.Unmarshal(data, &m); err != nil {
-		t.Fatalf("Failed to unmarshal: %v", err)
-	}
-	if sessionWireGroup(m, "interaction")["requestExitPlanMode"] != true {
-		t.Errorf("Expected requestExitPlanMode to be true, got %v", sessionWireGroup(m, "interaction")["requestExitPlanMode"])
-	}
-	if sessionWireGroup(m, "interaction")["requestAutoModeSwitch"] != true {
-		t.Errorf("Expected requestAutoModeSwitch to be true, got %v", sessionWireGroup(m, "interaction")["requestAutoModeSwitch"])
-	}
 }
 
 func TestModeCallbackRequestHandlers(t *testing.T) {
@@ -7838,7 +6874,6 @@ func TestUserInputRequestCallbackRequestID(t *testing.T) {
 		want   string
 	}{
 		{"present", `{"sessionId":"s1","question":"Continue?","requestId":"req-user-1"}`, "req-user-1"},
-		{"absent", `{"sessionId":"s1","question":"Continue?"}`, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			session := &Session{SessionID: "s1"}
@@ -7873,7 +6908,6 @@ func TestExitPlanModeRequestCallbackRequestID(t *testing.T) {
 		want   string
 	}{
 		{"present", `{"sessionId":"s1","summary":"Plan","actions":["autopilot"],"recommendedAction":"autopilot","requestId":"req-plan-1"}`, "req-plan-1"},
-		{"absent", `{"sessionId":"s1","summary":"Plan","actions":["autopilot"],"recommendedAction":"autopilot"}`, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			session := &Session{SessionID: "s1"}
@@ -7909,10 +6943,7 @@ func TestResumeTranscriptRecoveryDefaultsAndReport(t *testing.T) {
 		want     *bool
 	}{
 		{"CLI default", ModeCodingAgent, nil, nil},
-		{"empty default", ModeEmpty, nil, nil},
 		{"CLI strict", ModeCodingAgent, Bool(false), Bool(false)},
-		{"CLI recovery", ModeCodingAgent, Bool(true), Bool(true)},
-		{"empty strict", ModeEmpty, Bool(false), Bool(false)},
 		{"empty recovery", ModeEmpty, Bool(true), Bool(true)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -7996,246 +7027,6 @@ func TestTranscriptRecoveryReportCopyIsolation(t *testing.T) {
 	if (&Session{}).TranscriptRecovery() != nil {
 		t.Fatal("new session should have no recovery report")
 	}
-}
-
-func TestResumeSessionRequest_ContinuePendingWork(t *testing.T) {
-	t.Run("forwards continuePendingWork when true", func(t *testing.T) {
-		req := resumeSessionRequest{
-			SessionID:           "s1",
-			ContinuePendingWork: Bool(true),
-		}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if m["continuePendingWork"] != true {
-			t.Errorf("Expected continuePendingWork to be true, got %v", m["continuePendingWork"])
-		}
-	})
-
-	t.Run("forwards continuePendingWork when false", func(t *testing.T) {
-		req := resumeSessionRequest{
-			SessionID:           "s1",
-			ContinuePendingWork: Bool(false),
-		}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if m["continuePendingWork"] != false {
-			t.Errorf("Expected continuePendingWork to be false, got %v", m["continuePendingWork"])
-		}
-	})
-
-	t.Run("omits continuePendingWork when not set", func(t *testing.T) {
-		req := resumeSessionRequest{SessionID: "s1"}
-		data, _ := json.Marshal(req)
-		var m map[string]any
-		json.Unmarshal(data, &m)
-		if _, ok := m["continuePendingWork"]; ok {
-			t.Error("Expected continuePendingWork to be omitted when not set")
-		}
-	})
-}
-
-func TestCreateSessionRequest_EnableSessionTelemetry(t *testing.T) {
-	t.Run("forwards enableSessionTelemetry when false", func(t *testing.T) {
-		req := createSessionRequest{
-			EnableSessionTelemetry: Bool(false),
-		}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if sessionWireGroup(m, "github")["telemetryEnabled"] != false {
-			t.Errorf("Expected enableSessionTelemetry to be false, got %v", sessionWireGroup(m, "github")["telemetryEnabled"])
-		}
-	})
-
-	t.Run("omits enableSessionTelemetry when not set", func(t *testing.T) {
-		req := createSessionRequest{}
-		data, _ := json.Marshal(req)
-		var m map[string]any
-		json.Unmarshal(data, &m)
-		if _, ok := sessionWireGroup(m, "github")["telemetryEnabled"]; ok {
-			t.Error("Expected enableSessionTelemetry to be omitted when not set")
-		}
-	})
-}
-
-func TestCreateSessionRequest_IncludeSubAgentStreamingEvents(t *testing.T) {
-	t.Run("defaults to true when nil", func(t *testing.T) {
-		req := createSessionRequest{
-			IncludeSubAgentStreamingEvents: Bool(true),
-		}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if sessionWireGroup(m, "events")["includeSubAgentStreamingEvents"] != true {
-			t.Errorf("Expected includeSubAgentStreamingEvents to be true, got %v", sessionWireGroup(m, "events")["includeSubAgentStreamingEvents"])
-		}
-	})
-
-	t.Run("preserves explicit false", func(t *testing.T) {
-		req := createSessionRequest{
-			IncludeSubAgentStreamingEvents: Bool(false),
-		}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if sessionWireGroup(m, "events")["includeSubAgentStreamingEvents"] != false {
-			t.Errorf("Expected includeSubAgentStreamingEvents to be false, got %v", sessionWireGroup(m, "events")["includeSubAgentStreamingEvents"])
-		}
-	})
-}
-
-func TestResumeSessionRequest_EnableSessionTelemetry(t *testing.T) {
-	t.Run("forwards enableSessionTelemetry when false", func(t *testing.T) {
-		req := resumeSessionRequest{
-			SessionID:              "s1",
-			EnableSessionTelemetry: Bool(false),
-		}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if sessionWireGroup(m, "github")["telemetryEnabled"] != false {
-			t.Errorf("Expected enableSessionTelemetry to be false, got %v", sessionWireGroup(m, "github")["telemetryEnabled"])
-		}
-	})
-
-	t.Run("omits enableSessionTelemetry when not set", func(t *testing.T) {
-		req := resumeSessionRequest{SessionID: "s1"}
-		data, _ := json.Marshal(req)
-		var m map[string]any
-		json.Unmarshal(data, &m)
-		if _, ok := sessionWireGroup(m, "github")["telemetryEnabled"]; ok {
-			t.Error("Expected enableSessionTelemetry to be omitted when not set")
-		}
-	})
-}
-
-func TestResumeSessionRequest_IncludeSubAgentStreamingEvents(t *testing.T) {
-	t.Run("defaults to true when nil", func(t *testing.T) {
-		req := resumeSessionRequest{
-			SessionID:                      "s1",
-			IncludeSubAgentStreamingEvents: Bool(true),
-		}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if sessionWireGroup(m, "events")["includeSubAgentStreamingEvents"] != true {
-			t.Errorf("Expected includeSubAgentStreamingEvents to be true, got %v", sessionWireGroup(m, "events")["includeSubAgentStreamingEvents"])
-		}
-	})
-
-	t.Run("preserves explicit false", func(t *testing.T) {
-		req := resumeSessionRequest{
-			SessionID:                      "s1",
-			IncludeSubAgentStreamingEvents: Bool(false),
-		}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if sessionWireGroup(m, "events")["includeSubAgentStreamingEvents"] != false {
-			t.Errorf("Expected includeSubAgentStreamingEvents to be false, got %v", sessionWireGroup(m, "events")["includeSubAgentStreamingEvents"])
-		}
-	})
-}
-
-func TestCreateSessionRequest_EnableGitHubTelemetryForwarding(t *testing.T) {
-	t.Run("forwards explicit true", func(t *testing.T) {
-		req := createSessionRequest{
-			EnableGitHubTelemetryForwarding: Bool(true),
-		}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if sessionWireGroup(m, "github")["telemetryForwarding"] != true {
-			t.Errorf("Expected enableGitHubTelemetryForwarding to be true, got %v", sessionWireGroup(m, "github")["telemetryForwarding"])
-		}
-	})
-
-	t.Run("omits when not set", func(t *testing.T) {
-		req := createSessionRequest{}
-		data, _ := json.Marshal(req)
-		var m map[string]any
-		json.Unmarshal(data, &m)
-		if _, ok := sessionWireGroup(m, "github")["telemetryForwarding"]; ok {
-			t.Error("Expected enableGitHubTelemetryForwarding to be omitted when not set")
-		}
-	})
-}
-
-func TestResumeSessionRequest_EnableGitHubTelemetryForwarding(t *testing.T) {
-	t.Run("forwards explicit true", func(t *testing.T) {
-		req := resumeSessionRequest{
-			SessionID:                       "s1",
-			EnableGitHubTelemetryForwarding: Bool(true),
-		}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if sessionWireGroup(m, "github")["telemetryForwarding"] != true {
-			t.Errorf("Expected enableGitHubTelemetryForwarding to be true, got %v", sessionWireGroup(m, "github")["telemetryForwarding"])
-		}
-	})
-
-	t.Run("omits when not set", func(t *testing.T) {
-		req := resumeSessionRequest{SessionID: "s1"}
-		data, _ := json.Marshal(req)
-		var m map[string]any
-		json.Unmarshal(data, &m)
-		if _, ok := sessionWireGroup(m, "github")["telemetryForwarding"]; ok {
-			t.Error("Expected enableGitHubTelemetryForwarding to be omitted when not set")
-		}
-	})
 }
 
 func TestClient_ForwardsGitHubTelemetryForwardingToSessionRequests(t *testing.T) {
@@ -8472,100 +7263,6 @@ func TestGitHubTelemetryNotificationRoutesToCallback(t *testing.T) {
 	}
 }
 
-func TestCreateSessionRequest_EnableOnDemandInstructionDiscovery(t *testing.T) {
-	t.Run("forwards explicit true", func(t *testing.T) {
-		req := createSessionRequest{
-			EnableOnDemandInstructionDiscovery: Bool(true),
-		}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if sessionWireGroup(m, "instructions")["onDemandDiscovery"] != true {
-			t.Errorf("Expected enableOnDemandInstructionDiscovery to be true, got %v", sessionWireGroup(m, "instructions")["onDemandDiscovery"])
-		}
-	})
-
-	t.Run("preserves explicit false", func(t *testing.T) {
-		req := createSessionRequest{
-			EnableOnDemandInstructionDiscovery: Bool(false),
-		}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if sessionWireGroup(m, "instructions")["onDemandDiscovery"] != false {
-			t.Errorf("Expected enableOnDemandInstructionDiscovery to be false, got %v", sessionWireGroup(m, "instructions")["onDemandDiscovery"])
-		}
-	})
-
-	t.Run("omits enableOnDemandInstructionDiscovery when not set", func(t *testing.T) {
-		req := createSessionRequest{}
-		data, _ := json.Marshal(req)
-		var m map[string]any
-		json.Unmarshal(data, &m)
-		if _, ok := sessionWireGroup(m, "instructions")["onDemandDiscovery"]; ok {
-			t.Error("Expected enableOnDemandInstructionDiscovery to be omitted when not set")
-		}
-	})
-}
-
-func TestResumeSessionRequest_EnableOnDemandInstructionDiscovery(t *testing.T) {
-	t.Run("forwards explicit true", func(t *testing.T) {
-		req := resumeSessionRequest{
-			SessionID:                          "s1",
-			EnableOnDemandInstructionDiscovery: Bool(true),
-		}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if sessionWireGroup(m, "instructions")["onDemandDiscovery"] != true {
-			t.Errorf("Expected enableOnDemandInstructionDiscovery to be true, got %v", sessionWireGroup(m, "instructions")["onDemandDiscovery"])
-		}
-	})
-
-	t.Run("preserves explicit false", func(t *testing.T) {
-		req := resumeSessionRequest{
-			SessionID:                          "s1",
-			EnableOnDemandInstructionDiscovery: Bool(false),
-		}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if sessionWireGroup(m, "instructions")["onDemandDiscovery"] != false {
-			t.Errorf("Expected enableOnDemandInstructionDiscovery to be false, got %v", sessionWireGroup(m, "instructions")["onDemandDiscovery"])
-		}
-	})
-
-	t.Run("omits enableOnDemandInstructionDiscovery when not set", func(t *testing.T) {
-		req := resumeSessionRequest{SessionID: "s1"}
-		data, _ := json.Marshal(req)
-		var m map[string]any
-		json.Unmarshal(data, &m)
-		if _, ok := sessionWireGroup(m, "instructions")["onDemandDiscovery"]; ok {
-			t.Error("Expected enableOnDemandInstructionDiscovery to be omitted when not set")
-		}
-	})
-}
-
 func TestCreateSessionResponse_Capabilities(t *testing.T) {
 	t.Run("reads capabilities from session.create response", func(t *testing.T) {
 		responseJSON := `{"sessionId":"s1","workspacePath":"/tmp","capabilities":{"ui":{"elicitation":true}}}`
@@ -8581,17 +7278,6 @@ func TestCreateSessionResponse_Capabilities(t *testing.T) {
 		}
 		if !response.Capabilities.UI.Elicitation {
 			t.Errorf("Expected capabilities.UI.Elicitation to be true")
-		}
-	})
-
-	t.Run("defaults capabilities when not present", func(t *testing.T) {
-		responseJSON := `{"sessionId":"s1","workspacePath":"/tmp"}`
-		var response createSessionResponse
-		if err := json.Unmarshal([]byte(responseJSON), &response); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if response.Capabilities != nil && response.Capabilities.UI != nil && response.Capabilities.UI.Elicitation {
-			t.Errorf("Expected capabilities.UI.Elicitation to be falsy when not injected")
 		}
 	})
 }
@@ -8709,18 +7395,7 @@ func TestMonitorProcess_StderrCapturedOnZeroExit(t *testing.T) {
 	}
 }
 
-// TestStartCLIServer_StderrFieldSet verifies that startCLIServer sets
-// exec.Cmd.Stderr to a *truncbuffer.TruncBuffer so CLI diagnostic output is captured.
-func TestStartCLIServer_StderrFieldSet(t *testing.T) {
-	cmd := exec.Command(os.Args[0])
-	buf := truncbuffer.NewTruncBuffer(stderrBufferSize)
-	cmd.Stderr = buf
-	if _, ok := cmd.Stderr.(*truncbuffer.TruncBuffer); !ok {
-		t.Error("expected Stderr to be *truncbuffer.TruncBuffer after assignment")
-	}
-}
-
-func TestCreateSessionRequest_ExpAssignments(t *testing.T) {
+func TestSessionRequests_ExpAssignments(t *testing.T) {
 	assignments := &CopilotExpAssignmentResponse{
 		Features: []string{"copilot_exp_flag"},
 		Flights:  map[string]string{"copilot_exp_flag": "treatment"},
@@ -8729,42 +7404,42 @@ func TestCreateSessionRequest_ExpAssignments(t *testing.T) {
 		},
 		AssignmentContext: "ctx-123",
 	}
-
-	t.Run("includes expAssignments in JSON when set", func(t *testing.T) {
-		req := createSessionRequest{ExpAssignments: assignments}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		got, ok := sessionWireGroup(m, "experiments")["assignments"].(map[string]any)
-		if !ok {
-			t.Fatalf("Expected expAssignments to be an object, got %v", sessionWireGroup(m, "experiments")["assignments"])
-		}
-		if got["AssignmentContext"] != "ctx-123" {
-			t.Errorf("Expected AssignmentContext 'ctx-123', got %v", got["AssignmentContext"])
-		}
-	})
-
-	t.Run("omits expAssignments from JSON when nil", func(t *testing.T) {
-		req := createSessionRequest{}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if _, ok := sessionWireGroup(m, "experiments")["assignments"]; ok {
-			t.Error("Expected expAssignments to be omitted when nil")
-		}
-	})
+	for _, tc := range []struct {
+		name string
+		req  any
+		set  bool
+	}{
+		{"create set", createSessionRequest{ExpAssignments: assignments}, true},
+		{"resume set", resumeSessionRequest{SessionID: "s1", ExpAssignments: assignments}, true},
+		{"create nil", createSessionRequest{}, false},
+		{"resume nil", resumeSessionRequest{SessionID: "s1"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := json.Marshal(tc.req)
+			if err != nil {
+				t.Fatalf("Failed to marshal: %v", err)
+			}
+			var m map[string]any
+			if err := json.Unmarshal(data, &m); err != nil {
+				t.Fatalf("Failed to unmarshal: %v", err)
+			}
+			value, present := sessionWireGroup(m, "experiments")["assignments"]
+			if !tc.set {
+				if present {
+					t.Error("Expected expAssignments to be omitted when nil")
+				}
+				return
+			}
+			got, ok := value.(map[string]any)
+			if !ok {
+				t.Fatalf("Expected expAssignments to be an object, got %v", value)
+			}
+			if got["AssignmentContext"] != "ctx-123" {
+				t.Errorf("Expected AssignmentContext 'ctx-123', got %v", got["AssignmentContext"])
+			}
+		})
+	}
 }
-
 func TestCopilotExpAssignmentResponse_MarshalNormalizesNilCollections(t *testing.T) {
 	// A response left with zero-value collections must still serialize the
 	// required fields as JSON arrays/objects, not null, so the runtime does not
@@ -8799,51 +7474,6 @@ func TestCopilotExpAssignmentResponse_MarshalNormalizesNilCollections(t *testing
 	if got := string(m["Parameters"]); got != "{}" {
 		t.Errorf("Expected Parameters to serialize as {}, got %s", got)
 	}
-}
-
-func TestResumeSessionRequest_ExpAssignments(t *testing.T) {
-	assignments := &CopilotExpAssignmentResponse{
-		Features: []string{"copilot_exp_flag"},
-		Flights:  map[string]string{"copilot_exp_flag": "treatment"},
-		Configs: []ExpConfigEntry{
-			{ID: "cfg-1", Parameters: map[string]ExpFlagValue{"copilot_exp_flag": "treatment"}},
-		},
-		AssignmentContext: "ctx-456",
-	}
-
-	t.Run("includes expAssignments in JSON when set", func(t *testing.T) {
-		req := resumeSessionRequest{SessionID: "s1", ExpAssignments: assignments}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		got, ok := sessionWireGroup(m, "experiments")["assignments"].(map[string]any)
-		if !ok {
-			t.Fatalf("Expected expAssignments to be an object, got %v", sessionWireGroup(m, "experiments")["assignments"])
-		}
-		if got["AssignmentContext"] != "ctx-456" {
-			t.Errorf("Expected AssignmentContext 'ctx-456', got %v", got["AssignmentContext"])
-		}
-	})
-
-	t.Run("omits expAssignments from JSON when nil", func(t *testing.T) {
-		req := resumeSessionRequest{SessionID: "s1"}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if _, ok := sessionWireGroup(m, "experiments")["assignments"]; ok {
-			t.Error("Expected expAssignments to be omitted when nil")
-		}
-	})
 }
 
 func TestSessionRequests_FeatureFlags(t *testing.T) {
@@ -8900,82 +7530,6 @@ func TestSessionRequests_FeatureFlags(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestIsTerminal(t *testing.T) {
-	t.Run("IsTerminal is serialized in tool definition", func(t *testing.T) {
-		tool := Tool{
-			Name:        "clear_context",
-			Description: "Clear the conversation",
-			IsTerminal:  true,
-			Handler:     func(_ ToolInvocation) (ToolResult, error) { return ToolResult{}, nil },
-		}
-		data, err := json.Marshal(tool)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if m["isTerminal"] != true {
-			t.Errorf("Expected isTerminal to be true, got %v", m["isTerminal"])
-		}
-	})
-
-	t.Run("IsTerminal is omitted when false", func(t *testing.T) {
-		tool := Tool{Name: "plain", Description: "A plain tool"}
-		data, err := json.Marshal(tool)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if _, ok := m["isTerminal"]; ok {
-			t.Error("Expected isTerminal to be omitted when false")
-		}
-	})
-}
-
-func TestToolNamespace(t *testing.T) {
-	t.Run("Namespace is serialized in tool definition", func(t *testing.T) {
-		tool := Tool{
-			Name:        "word_create",
-			Description: "Create a document",
-			Namespace:   &ToolNamespace{Name: "word"},
-		}
-		data, err := json.Marshal(tool)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		namespace, ok := m["namespace"].(map[string]any)
-		if !ok || namespace["name"] != "word" {
-			t.Fatalf("Expected namespace {name: word}, got %v", m["namespace"])
-		}
-		if _, ok := namespace["description"]; ok {
-			t.Errorf("Expected empty namespace description to be omitted, got %v", namespace["description"])
-		}
-	})
-
-	t.Run("Namespace is omitted when nil", func(t *testing.T) {
-		data, err := json.Marshal(Tool{Name: "plain", Description: "A plain tool"})
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		if _, ok := m["namespace"]; ok {
-			t.Error("Expected namespace to be omitted when nil")
-		}
-	})
 }
 
 func TestSessionRequests_ManagedSettings(t *testing.T) {
@@ -9063,26 +7617,6 @@ func TestSessionRequests_ManagedSettings(t *testing.T) {
 		}
 	})
 
-	t.Run("accepts future bypass-permissions modes", func(t *testing.T) {
-		req := createSessionRequest{ManagedSettings: &ManagedSettings{
-			Permissions: &ManagedSettingsPermissions{
-				DisableBypassPermissionsMode: DisableBypassPermissionsMode("future-fail-closed-mode"),
-			},
-		}}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("Failed to unmarshal: %v", err)
-		}
-		perms := sessionWireGroup(m, "policy")["managedSettings"].(map[string]any)["permissions"].(map[string]any)
-		if perms["disableBypassPermissionsMode"] != "future-fail-closed-mode" {
-			t.Errorf("Expected future mode preserved, got %v", perms["disableBypassPermissionsMode"])
-		}
-	})
-
 	t.Run("omits managedSettings when nil", func(t *testing.T) {
 		req := createSessionRequest{}
 		data, _ := json.Marshal(req)
@@ -9153,25 +7687,4 @@ func TestSessionRequests_ManagedSettings(t *testing.T) {
 		}
 	})
 
-	t.Run("distinguishes explicit empty arrays on resume", func(t *testing.T) {
-		req := resumeSessionRequest{SessionID: "s1", ManagedSettings: &ManagedSettings{
-			Permissions: &ManagedSettingsPermissions{
-				Deny:  []string{},
-				Ask:   []string{},
-				Allow: []string{},
-			},
-		}}
-		data, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("Failed to marshal: %v", err)
-		}
-		var m map[string]any
-		json.Unmarshal(data, &m)
-		perms := sessionWireGroup(m, "policy")["managedSettings"].(map[string]any)["permissions"].(map[string]any)
-		for _, key := range []string{"deny", "ask", "allow"} {
-			if value, ok := perms[key].([]any); !ok || len(value) != 0 {
-				t.Errorf("Expected %s to be an explicit empty array on resume, got %v", key, perms[key])
-			}
-		}
-	})
 }

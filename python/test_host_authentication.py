@@ -78,7 +78,6 @@ async def test_authentication_cancelled_before_handler_task_starts():
     assert not client._ahp_hosts._authentications
 
 
-@pytest.mark.parametrize("mode", ["coding-agent", "empty"])
 @pytest.mark.parametrize(
     "authentication,mission_control",
     [
@@ -89,8 +88,10 @@ async def test_authentication_cancelled_before_handler_task_starts():
         (custom(AsyncMock()), True),
     ],
 )
-async def test_invalid_policy_fails_before_connection(mode, authentication, mission_control):
-    client = CopilotClient(mode=mode, runtime=RuntimeConnection.for_tcp("localhost", 1234))
+async def test_invalid_policy_fails_before_connection(authentication, mission_control):
+    client = CopilotClient(
+        mode="coding-agent", runtime=RuntimeConnection.for_tcp("localhost", 1234)
+    )
     client.start = AsyncMock()
     with pytest.raises(ValueError, match="authentication"):
         await client.start_ahp_host(
@@ -108,8 +109,7 @@ async def test_invalid_policy_fails_before_connection(mode, authentication, miss
     assert not client._ahp_hosts._hosts
 
 
-@pytest.mark.parametrize("separator", ["T", "t"])
-@pytest.mark.parametrize("zone", ["Z", "z", "+00:00"])
+@pytest.mark.parametrize(("separator", "zone"), [("T", "Z"), ("t", "z"), ("T", "+00:00")])
 async def test_authentication_accepts_rfc3339_case_variants(separator, zone):
     client, _ = client_fixture()
     expiry = future().replace("T", separator).replace("+00:00", zone)

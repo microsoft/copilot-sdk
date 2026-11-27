@@ -6,9 +6,7 @@ configures a dedicated client with file-based telemetry, runs a single SDK turn
 that calls a custom tool, and validates the exported JSONL spans (root
 ``invoke_agent``, child ``chat`` and ``execute_tool`` spans, attributes).
 
-Also includes the unit-style coverage from ``dotnet/test/TelemetryTests.cs``:
-``TelemetryConfig`` defaults / setters, ``SubprocessConfig.telemetry`` default,
-and W3C trace context propagation via ``copilot._telemetry``.
+Also covers W3C trace context propagation via ``copilot._telemetry``.
 """
 
 from __future__ import annotations
@@ -271,42 +269,6 @@ class TestTelemetryExport:
         assert "SUBAGENT_OTEL_FILE_CONTENT" in (
             _string_attribute(finals[0], "gen_ai.input.messages") or ""
         )
-
-
-# ---------------------------------------------------------------------------
-# Unit-style tests mirroring dotnet/test/TelemetryTests.cs
-# ---------------------------------------------------------------------------
-
-
-class TestTelemetryConfig:
-    """Mirrors TelemetryConfig_DefaultValues_AreNull / TelemetryConfig_CanSetAllProperties."""
-
-    async def test_default_values_are_unset(self):
-        # Python's TelemetryConfig is a TypedDict with total=False, so an empty
-        # constructor leaves every field unset (equivalent to C#'s null defaults).
-        cfg: TelemetryConfig = TelemetryConfig()
-        assert cfg.get("otlp_endpoint") is None
-        assert cfg.get("otlp_protocol") is None
-        assert cfg.get("file_path") is None
-        assert cfg.get("exporter_type") is None
-        assert cfg.get("source_name") is None
-        assert cfg.get("capture_content") is None
-
-    async def test_can_set_all_properties(self):
-        cfg: TelemetryConfig = TelemetryConfig(
-            otlp_endpoint="http://localhost:4318",
-            otlp_protocol="http/protobuf",
-            file_path="/tmp/traces.json",
-            exporter_type="otlp-http",
-            source_name="my-app",
-            capture_content=True,
-        )
-        assert cfg["otlp_endpoint"] == "http://localhost:4318"
-        assert cfg["otlp_protocol"] == "http/protobuf"
-        assert cfg["file_path"] == "/tmp/traces.json"
-        assert cfg["exporter_type"] == "otlp-http"
-        assert cfg["source_name"] == "my-app"
-        assert cfg["capture_content"] is True
 
 
 class TestTelemetryHelpers:

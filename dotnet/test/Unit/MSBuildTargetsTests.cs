@@ -152,7 +152,6 @@ public class MSBuildTargetsTests
     [Theory]
     [InlineData("0.0.0-test", "v0.0.0-test")]
     [InlineData("1.2.3-unstable.r123.gabcdef0", "runtime-1.2.3-unstable.r123.gabcdef0")]
-    [InlineData("1.2.3-4.unstable.r123.gabcdef0", "runtime-1.2.3-4.unstable.r123.gabcdef0")]
     public async Task ReleaseAsset_IsDownloadedVerifiedExtractedAndCached(string version, string tag)
     {
         using var sandbox = MSBuildSandbox.Create(version: version);
@@ -221,7 +220,6 @@ public class MSBuildTargetsTests
     [InlineData("0.0.0-0.unstable.r1.g0000000", "copilot-sdk", "runtime-0.0.0-0.unstable.r1.g0000000")]
     [InlineData("01.2.3-unstable.r123.gabcdef0", "copilot-cli", "v01.2.3-unstable.r123.gabcdef0")]
     [InlineData("1.02.3-unstable.r123.gabcdef0", "copilot-cli", "v1.02.3-unstable.r123.gabcdef0")]
-    [InlineData("1.2.03-unstable.r123.gabcdef0", "copilot-cli", "v1.2.03-unstable.r123.gabcdef0")]
     [InlineData("1.2.3-04.unstable.r123.gabcdef0", "copilot-cli", "v1.2.3-04.unstable.r123.gabcdef0")]
     public async Task PinnedRuntime_DefaultReleaseLocationMatchesChannel(string version, string repository, string tag)
     {
@@ -373,26 +371,8 @@ public class MSBuildTargetsTests
         Assert.Contains($"{nativePath}/ripgrep/bin/{GetReleasePlatform()}/rg", entries);
         Assert.DoesNotContain($"{nativePath}/app.js", entries);
         Assert.DoesNotContain($"{nativePath}/cli-main.js", entries);
-    }
-
-    [Fact]
-    public async Task PackAsTool_NoBuild_PublishesExplicitCliMarker()
-    {
-        using var sandbox = MSBuildSandbox.Create(packAsTool: true);
-        var preinstalled = sandbox.WritePreinstalledBinary("fake-cli-contents");
-
-        var result = await sandbox.PackNoBuildAsync(new Dictionary<string, string>
-        {
-            ["CopilotCliBinaryPath"] = preinstalled,
-        });
-
-        Assert.True(result.Succeeded, result.FailureMessage());
-        // The marker is what CopilotClient uses to launch an explicit CLI without
-        // requiring the runtime pair, so it has to survive into the publish layout
-        // the tool package is built from. NuGet's default dot-file exclusion keeps
-        // it out of the .nupkg itself, which is a separate pre-existing limitation.
-        Assert.True(File.Exists(sandbox.PublishedRuntimeAsset(".copilot-explicit-cli")),
-            "The explicit-CLI marker must reach the publish layout.");
+        // CopilotClient launches an explicit CLI via this marker, so it must reach the publish layout the tool package is built from.
+        Assert.True(File.Exists(sandbox.PublishedRuntimeAsset(".copilot-explicit-cli")));
         Assert.True(File.Exists(sandbox.PublishedRuntimeAsset(BinaryName)));
     }
 

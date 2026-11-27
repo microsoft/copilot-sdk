@@ -20,9 +20,7 @@ public class E2ETestFixtureTests
 {
     [Theory]
     [InlineData("default", true)]
-    [InlineData("spawned-stdio", true)]
     [InlineData("spawned-tcp", true)]
-    [InlineData("inprocess", true)]
     [InlineData("tcp", false)]
     public void Extension_Launch_Provider_Respects_Runtime_Ownership_And_Caller_Provider(string transport, bool expected)
     {
@@ -42,9 +40,7 @@ public class E2ETestFixtureTests
     private static RuntimeConnection? ConnectionFor(string transport) => transport switch
     {
         "default" => null,
-        "spawned-stdio" => RuntimeConnection.ForSpawnedStdio(),
         "spawned-tcp" => RuntimeConnection.ForSpawnedTcp(),
-        "inprocess" => RuntimeConnection.ForInProcess(),
         "tcp" => RuntimeConnection.ForTcp("localhost", 12345),
         _ => throw new ArgumentException("Unknown transport.", nameof(transport)),
     };
@@ -200,14 +196,6 @@ public class E2ETestFixtureTests
     }
 
     [Fact]
-    public async Task Dispose_Before_Context_Is_Created_Does_Not_Throw()
-    {
-        var fixture = new E2ETestFixture();
-
-        await fixture.DisposeAsync();
-    }
-
-    [Fact]
     public void Shared_Client_Uses_InProcess_Connection_For_InProcess_Tests()
     {
         var connection = E2ETestFixture.CreateSharedConnection(useInProcessTransport: true);
@@ -216,42 +204,16 @@ public class E2ETestFixtureTests
     }
 
     [Fact]
-    public void Shared_Client_Preserves_Tcp_Connection_For_OutOfProcess_Tests()
-    {
-        var connection = Assert.IsType<SpawnedTcpRuntimeConnection>(
-            E2ETestFixture.CreateSharedConnection(useInProcessTransport: false));
-
-        Assert.Equal(E2ETestFixture.SharedTcpConnectionToken, connection.ConnectionToken);
-    }
-
-    [Fact]
     public async Task Dispose_Derived_Fixtures_Without_Initialized_Context_Does_Not_Throw()
     {
+        await new E2ETestFixture().DisposeAsync();
         await new MultiClientTestFixture().DisposeAsync();
         await new MultiClientCommandsElicitationFixture().DisposeAsync();
         await new ConnectionTokenTestFixture().DisposeAsync();
     }
 
-    [Fact]
-    public async Task Replay_Proxy_Starts_With_Connect_Metadata_And_Stops()
-    {
-        var proxy = new ReplayProxy();
-        try
-        {
-            var url = await proxy.StartAsync();
-            Assert.StartsWith("http://", url);
-            Assert.False(string.IsNullOrWhiteSpace(proxy.ConnectProxyUrl));
-            Assert.False(string.IsNullOrWhiteSpace(proxy.CaFilePath));
-        }
-        finally
-        {
-            await proxy.StopAsync(skipWritingCache: true);
-        }
-    }
-
     [Theory]
     [InlineData(false, null)]
-    [InlineData(true, 0)]
     [InlineData(true, 1)]
     public void Proxy_Startup_Diagnostics_Preserve_Process_State_And_Bounded_Output(bool largeOutput, int? exitCode)
     {

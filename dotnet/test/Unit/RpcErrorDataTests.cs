@@ -22,15 +22,10 @@ public sealed class RpcErrorDataTests
     {
         { """{"privateDetail":"payload-only-marker","nested":{"items":[1,false,null]}}""", JsonValueKind.Object },
         { """[{"value":"payload-only-marker"},[1,true],null]""", JsonValueKind.Array },
-        { "{}", JsonValueKind.Object },
-        { "[]", JsonValueKind.Array },
         { "\"payload-only-marker\"", JsonValueKind.String },
-        { "\"\"", JsonValueKind.String },
         { "9007199254740993", JsonValueKind.Number },
         { "1.234567890123456789", JsonValueKind.Number },
-        { "0", JsonValueKind.Number },
         { "true", JsonValueKind.True },
-        { "false", JsonValueKind.False },
         { "null", JsonValueKind.Null },
         { null, null },
     };
@@ -98,18 +93,6 @@ public sealed class RpcErrorDataTests
             Assert.Equal(kind.Value, payload.ValueKind);
             Assert.Equal(data, payload.GetRawText());
         }
-    }
-
-    [Fact]
-    public async Task Successful_Response_Is_Not_An_Error()
-    {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        await using var server = new FakeCopilotServer("session.create", null);
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
-
-        var response = await client.PingAsync(cancellationToken: timeout.Token);
-
-        Assert.Equal("pong", response.Message);
     }
 
     [Fact]

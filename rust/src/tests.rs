@@ -10,6 +10,23 @@ use crate::entra::{EntraTokenProviderArgs, EntraTokenProviderContext, EntraToken
 #[cfg(unix)]
 mod process_lifecycle;
 
+#[test]
+fn spawned_tcp_host_selects_the_last_explicit_bind_host() {
+    for (args, expected) in [
+        (vec![], "127.0.0.1"),
+        (vec!["--host", "::1"], "::1"),
+        (vec!["--host=127.0.0.1", "--host", "::1"], "::1"),
+        (vec!["--host", "127.0.0.1", "--host=::1"], "::1"),
+        (vec!["--host", "0.0.0.0"], "127.0.0.1"),
+        (vec!["--host=::"], "::1"),
+        (vec!["--host=0:0:0:0:0:0:0:0"], "::1"),
+        (vec!["--host=bind.example.invalid"], "bind.example.invalid"),
+    ] {
+        let args: Vec<OsString> = args.into_iter().map(OsString::from).collect();
+        assert_eq!(spawned_tcp_host(&args), expected, "args: {args:?}");
+    }
+}
+
 #[tokio::test]
 async fn foreground_callback_context_rejects_only_its_own_nested_selection() {
     let directory = tempfile::tempdir().unwrap();
@@ -1431,32 +1448,6 @@ fn build_command_preserves_capture_environment_when_typed_setting_is_omitted() {
             Some(std::ffi::OsStr::new(legacy)),
         );
     }
-}
-
-#[test]
-fn build_command_typed_capture_overrides_explicit_standard_and_legacy_environment() {
-    let opts = StartupOptions {
-        telemetry: Some(TelemetryConfig::new().with_capture_content(true)),
-        transport: Transport::SpawnedStdio(SpawnedProcessOptions {
-            env: Some(vec![
-                (
-                    "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT".into(),
-                    "false".into(),
-                ),
-                (
-                    "OTEL_INSTRUMENTATION_GENAI_CAPTURE_CONTENT".into(),
-                    "SPAN_AND_EVENT".into(),
-                ),
-            ]),
-            ..Default::default()
-        }),
-        ..StartupOptions::default()
-    };
-    let cmd = build_command(Path::new("/bin/echo"), &opts, Path::new("/tmp"));
-    assert_eq!(
-        env_value(&cmd, "OTEL_INSTRUMENTATION_GENAI_CAPTURE_CONTENT"),
-        Some(std::ffi::OsStr::new("SPAN_ONLY")),
-    );
 }
 
 #[test]

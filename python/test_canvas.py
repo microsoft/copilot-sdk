@@ -15,9 +15,6 @@ from copilot.canvas import (
     CanvasDeclaration,
     CanvasError,
     CanvasHandler,
-    CanvasProviderIdentity,
-    ExtensionInfo,
-    OpenCanvasInstance,
 )
 from copilot.rpc import (
     CanvasProviderCloseRequest,
@@ -47,58 +44,16 @@ def test_canvas_declaration_serializes_camelcase_and_drops_optional():
         "description": "Does the thing",
     }
 
-
-def test_canvas_declaration_serializes_input_schema_and_actions():
-    action = CanvasAction(
-        name="refresh",
-        description="Refresh the canvas",
-    )
-    decl = CanvasDeclaration(
-        id="c",
-        display_name="C",
-        description="D",
-        input_schema={"type": "object"},
-        actions=[action],
-    )
-    payload = decl.to_dict()
-    assert payload["inputSchema"] == {"type": "object"}
-    assert payload["actions"] == [action.to_dict()]
-
-
-def test_extension_info_serializes():
-    info = ExtensionInfo(source="github-app", name="my-ext")
-    assert info.to_dict() == {"source": "github-app", "name": "my-ext"}
-
-
-def test_canvas_provider_identity_serializes():
-    provider = CanvasProviderIdentity(id="app:builtin:window-1", name="Built-in")
-    assert provider.to_dict() == {"id": "app:builtin:window-1", "name": "Built-in"}
-
-
-def test_canvas_provider_identity_drops_optional_name():
-    provider = CanvasProviderIdentity(id="app:builtin:window-1")
-    assert provider.to_dict() == {"id": "app:builtin:window-1"}
-
-
-def test_canvas_open_response_drops_none_fields():
-    assert CanvasProviderOpenResult().to_dict() == {}
-    assert CanvasProviderOpenResult(url="https://x", status="ok").to_dict() == {
-        "url": "https://x",
-        "status": "ok",
+    action = CanvasAction(name="refresh", description="Refresh the canvas")
+    decl.input_schema = {"type": "object"}
+    decl.actions = [action]
+    assert decl.to_dict() == {
+        "id": "my-canvas",
+        "displayName": "My Canvas",
+        "description": "Does the thing",
+        "inputSchema": {"type": "object"},
+        "actions": [action.to_dict()],
     }
-
-
-def test_canvas_error_envelope_and_factories():
-    err = CanvasError("oops", "something broke")
-    assert err.code == "oops"
-    assert err.message == "something broke"
-    assert err.to_envelope() == {"code": "oops", "message": "something broke"}
-
-    no_handler = CanvasError.no_handler()
-    assert no_handler.code == "canvas_action_no_handler"
-
-    unset = CanvasError.handler_unset()
-    assert unset.code == "canvas_handler_unset"
 
 
 async def test_default_canvas_handler_on_action_raises_no_handler():
@@ -246,17 +201,6 @@ def test_register_canvas_handler_can_clear_generated_handler():
     session = CopilotSession("sess-1", client=None)
     session._register_canvas_handler(None)
     assert session._client_session_apis.canvas is None
-
-
-def test_set_open_canvases_round_trip():
-    inst = OpenCanvasInstance(
-        canvas_id="c",
-        extension_id="e",
-        instance_id="i",
-    )
-    session = CopilotSession("sess-1", client=None)
-    session._set_open_canvases([inst])
-    assert session.open_canvases == [inst]
 
 
 def test_session_canvas_opened_updates_open_canvases(caplog: pytest.LogCaptureFixture):

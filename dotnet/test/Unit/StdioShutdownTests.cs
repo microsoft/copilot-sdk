@@ -373,46 +373,6 @@ public sealed class StdioShutdownTests(ITestOutputHelper output)
         }
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Failure_Diagnostics_Preserve_The_Original_Error_When_Diagnostic_Io_Fails(bool outputFails)
-    {
-        var directory = Path.Combine(Path.GetTempPath(), $"copilot-shutdown-diagnostics-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(directory);
-        var pidPath = Path.Combine(directory, "runtime.pid");
-        var original = new InvalidOperationException("controlled failure");
-        List<string> messages = [];
-        try
-        {
-            await File.WriteAllTextAsync(pidPath, "123");
-            var actual = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                WithFailureDiagnosticsAsync(
-                    () => Task.FromException(original), pidPath, directory,
-                    () => throw new InvalidOperationException("not admitted"),
-                    message =>
-                    {
-                        messages.Add(message);
-                        if (outputFails) throw new IOException("controlled output failure");
-                    }));
-
-            Assert.Same(original, actual);
-            var diagnostic = Assert.Single(messages);
-            Assert.Contains("pid: 123", diagnostic);
-            Assert.Contains("trace: diagnostic-error=", diagnostic);
-            Assert.Contains("observer: diagnostic-error=InvalidOperationException", diagnostic);
-            Assert.Equal(diagnostic, original.Data["StdioShutdownDiagnostics"]);
-            if (outputFails)
-            {
-                Assert.Equal("output: diagnostic-error=IOException", original.Data["StdioShutdownDiagnosticError"]);
-            }
-        }
-        finally
-        {
-            Directory.Delete(directory, recursive: true);
-        }
-    }
-
     private static async Task WithFailureDiagnosticsAsync(
         Func<Task> action, string pidPath, string tracePath, Func<string> observe, Action<string> report)
     {

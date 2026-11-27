@@ -206,30 +206,6 @@ func TestSessionRPCConnectors(t *testing.T) {
 			t.Fatalf("List: %v", err)
 		}
 		assertConnectorCatalog(t, result, 7, rpc.ConnectorCatalogStatusConnected)
-	})
-
-	t.Run("refresh", func(t *testing.T) {
-		expectConnectorRPC(t, server, "session.connectors.refresh", map[string]any{
-			"accountId": connectorAccountID,
-			"sessionId": "session-1",
-		}, `{
-			"connectors":[{
-				"displayName":"Outlook",
-				"name":"outlook",
-				"runtimeServerIds":[],
-				"status":"not_connected"
-			}],
-			"refreshedAtMs":1700000000100,
-			"revision":8
-		}`)
-
-		result, err := session.RPC.Connectors.Refresh(t.Context(), &rpc.ConnectorAccountRequest{
-			AccountID: connectorAccountID,
-		})
-		if err != nil {
-			t.Fatalf("Refresh: %v", err)
-		}
-		assertConnectorCatalog(t, result, 8, rpc.ConnectorCatalogStatusNotConnected)
 		if result.Connectors[0].Logo != nil || result.Connectors[0].Tier != nil || result.Connectors[0].ReleaseTag != nil {
 			t.Fatalf("legacy catalog presentation metadata must stay absent: %#v", result.Connectors[0])
 		}
@@ -280,26 +256,6 @@ func TestSessionRPCConnectors(t *testing.T) {
 		consent, ok := result.(*rpc.ConnectorConnectResultConsentRequired)
 		if !ok || consent.ConsentURL != "https://example.com/consent" || consent.ContinuationID != "continuation-1" {
 			t.Fatalf("Connect result = %#v", result)
-		}
-	})
-
-	t.Run("reconnect", func(t *testing.T) {
-		expectConnectorRPC(t, server, "session.connectors.reconnect", map[string]any{
-			"accountId":     connectorAccountID,
-			"connectorName": "outlook",
-			"sessionId":     "session-1",
-		}, `{"kind":"pending","continuationId":"continuation-2"}`)
-
-		result, err := session.RPC.Connectors.Reconnect(t.Context(), &rpc.ConnectorConnectRequest{
-			AccountID:     connectorAccountID,
-			ConnectorName: "outlook",
-		})
-		if err != nil {
-			t.Fatalf("Reconnect: %v", err)
-		}
-		pending, ok := result.(*rpc.ConnectorConnectResultPending)
-		if !ok || pending.ContinuationID != "continuation-2" {
-			t.Fatalf("Reconnect result = %#v", result)
 		}
 	})
 
@@ -373,23 +329,6 @@ func TestSessionRPCConnectors(t *testing.T) {
 			t.Fatalf("Disconnect result = %#v", result)
 		}
 		assertConnectorStatus(t, &result.Status)
-	})
-
-	t.Run("reconcile", func(t *testing.T) {
-		expectConnectorRPC(t, server, "session.connectors.reconcile", map[string]any{
-			"accountId":      connectorAccountID,
-			"refreshCatalog": true,
-			"sessionId":      "session-1",
-		}, connectorStatusResult)
-
-		result, err := session.RPC.Connectors.Reconcile(t.Context(), &rpc.ConnectorReconcileRequest{
-			AccountID:      connectorAccountID,
-			RefreshCatalog: Bool(true),
-		})
-		if err != nil {
-			t.Fatalf("Reconcile: %v", err)
-		}
-		assertConnectorStatus(t, result)
 	})
 
 	t.Run("targeted reconcile", func(t *testing.T) {

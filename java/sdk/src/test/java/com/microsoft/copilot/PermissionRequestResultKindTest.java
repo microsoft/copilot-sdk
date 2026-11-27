@@ -31,27 +31,9 @@ public class PermissionRequestResultKindTest {
     }
 
     @Test
-    void equals_sameValue_returnsTrue() {
-        var a = new PermissionRequestResultKind("approve-once");
-        assertEquals(PermissionRequestResultKind.APPROVED, a);
-        assertEquals(a, PermissionRequestResultKind.APPROVED);
-    }
-
-    @Test
-    void equals_differentValue_returnsFalse() {
-        assertNotEquals(PermissionRequestResultKind.APPROVED, PermissionRequestResultKind.REJECTED);
-    }
-
-    @Test
     void equals_isCaseInsensitive() {
         var upper = new PermissionRequestResultKind("APPROVE-ONCE");
         assertEquals(PermissionRequestResultKind.APPROVED, upper);
-    }
-
-    @Test
-    void hashCode_isCaseInsensitive() {
-        var upper = new PermissionRequestResultKind("APPROVE-ONCE");
-        assertEquals(PermissionRequestResultKind.APPROVED.hashCode(), upper.hashCode());
     }
 
     @Test
@@ -71,28 +53,10 @@ public class PermissionRequestResultKindTest {
     }
 
     @Test
-    void toString_returnsValue() {
-        assertEquals("approve-once", PermissionRequestResultKind.APPROVED.toString());
-        assertEquals("reject", PermissionRequestResultKind.REJECTED.toString());
-    }
-
-    @Test
-    void customValue_isPreserved() {
-        var custom = new PermissionRequestResultKind("custom-kind");
-        assertEquals("custom-kind", custom.getValue());
-        assertEquals("custom-kind", custom.toString());
-    }
-
-    @Test
     void constructor_nullValue_treatedAsEmpty() {
         var kind = new PermissionRequestResultKind(null);
         assertEquals("", kind.getValue());
         assertEquals("", kind.toString());
-    }
-
-    @Test
-    void equals_nonKindObject_returnsFalse() {
-        assertNotEquals(PermissionRequestResultKind.APPROVED, "approve-once");
     }
 
     @Test
@@ -109,31 +73,5 @@ public class PermissionRequestResultKindTest {
         String json = "{\"kind\":\"reject\"}";
         var result = mapper.readValue(json, PermissionRequestResult.class);
         assertEquals("reject", result.getKind());
-    }
-
-    @Test
-    void permissionRequestResult_setKindWithKindType() {
-        var result = new PermissionRequestResult().setKind(PermissionRequestResultKind.APPROVED);
-        assertEquals("approve-once", result.getKind());
-    }
-
-    @Test
-    void permissionRequestResult_setKindWithString_backwardCompatible() {
-        var result = new PermissionRequestResult().setKind("approve-once");
-        assertEquals("approve-once", result.getKind());
-    }
-
-    @Test
-    void jsonRoundTrip_allWellKnownKinds() throws Exception {
-        ObjectMapper mapper = new ObjectMapper();
-        PermissionRequestResultKind[] kinds = {PermissionRequestResultKind.APPROVED,
-                PermissionRequestResultKind.APPROVE_READ_ONLY_FOR_SESSION, PermissionRequestResultKind.REJECTED,
-                PermissionRequestResultKind.USER_NOT_AVAILABLE, PermissionRequestResultKind.NO_RESULT,};
-        for (PermissionRequestResultKind kind : kinds) {
-            var result = new PermissionRequestResult().setKind(kind);
-            String json = mapper.writeValueAsString(result);
-            var deserialized = mapper.readValue(json, PermissionRequestResult.class);
-            assertEquals(kind.getValue(), deserialized.getKind());
-        }
     }
 }

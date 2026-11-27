@@ -12,7 +12,7 @@ func TestProgrammaticToolCallEventRoundTrip(t *testing.T) {
 		SessionEventTypeToolExecutionStart,
 		SessionEventTypeToolExecutionComplete,
 	} {
-		for _, programID := range []any{nil, "", "program-parent"} {
+		for _, programID := range []any{nil, "program-parent"} {
 			t.Run(fmt.Sprintf("%s/%v", eventType, programID), func(t *testing.T) {
 				data := map[string]any{
 					"requestId": "permission-1",

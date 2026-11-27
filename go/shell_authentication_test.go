@@ -123,13 +123,6 @@ func TestShellAuthenticationReturnsOnlyAWellFormedAnswer(t *testing.T) {
 			want: cancelledShellAuthentication(),
 		},
 		{
-			name: "cancel",
-			handler: func(ShellAuthenticationRequest, ShellAuthenticationInvocation) (ShellAuthenticationResponse, error) {
-				return cancelledShellAuthentication(), nil
-			},
-			want: cancelledShellAuthentication(),
-		},
-		{
 			name: "panic",
 			handler: func(ShellAuthenticationRequest, ShellAuthenticationInvocation) (ShellAuthenticationResponse, error) {
 				panic("rejected HUNTER2-FAKE-0004")

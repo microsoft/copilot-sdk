@@ -107,31 +107,17 @@ async def test_github_hosting_with_optional_local_transport(local):
     assert host.pid is None
 
 
-@pytest.mark.parametrize("compute_id", [None, "", "stable-local-compute"])
-async def test_local_compute_identity_is_forwarded_without_sdk_defaults(compute_id):
+@pytest.mark.parametrize(
+    ("compute_id", "workspace"),
+    [(None, None), ("", "/runtime/workspace"), ("stable-local-compute", None)],
+)
+async def test_optional_host_identity_is_forwarded_without_sdk_defaults(compute_id, workspace):
     client, rpc = client_fixture()
     host = await client.start_ahp_host(
         AhpHostOptions(
             authentication=AhpHostAuthentication("none"),
             local_server=HostLocalServerOptions(),
             compute_id=compute_id,
-        )
-    )
-    assert rpc.request.call_args.args[1] == {
-        "hostId": host.host_id,
-        "authentication": {"mode": "none"},
-        "localServer": {},
-        **({"computeId": compute_id} if compute_id is not None else {}),
-    }
-
-
-@pytest.mark.parametrize("workspace", [None, "/runtime/workspace"])
-async def test_host_workspace_is_forwarded_without_an_sdk_default(workspace):
-    client, rpc = client_fixture()
-    host = await client.start_ahp_host(
-        AhpHostOptions(
-            authentication=AhpHostAuthentication("none"),
-            local_server=HostLocalServerOptions(),
             workspace=workspace,
         )
     )
@@ -139,6 +125,7 @@ async def test_host_workspace_is_forwarded_without_an_sdk_default(workspace):
         "hostId": host.host_id,
         "authentication": {"mode": "none"},
         "localServer": {},
+        **({"computeId": compute_id} if compute_id is not None else {}),
         **({"workspace": workspace} if workspace is not None else {}),
     }
 

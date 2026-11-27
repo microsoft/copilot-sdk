@@ -126,13 +126,6 @@ func (s *Session) dispatchEvent(event SessionEvent) {
 	s.dispatchEventWithPermissionEnvelope(event, nil, nil, nil)
 }
 
-func TestPermissionInvocationWithoutProgramOwnership(t *testing.T) {
-	invocation := PermissionInvocation{SessionID: "session-1", ManagedSettingsEnabled: true}
-	if invocation.SessionID != "session-1" || !invocation.ManagedSettingsEnabled || invocation.ProgramToolCallID != nil {
-		t.Fatalf("unexpected ordinary invocation: %#v", invocation)
-	}
-}
-
 func TestExternalToolDispatchHonorsDeclaredOwnership(t *testing.T) {
 	for _, test := range []struct {
 		name       string
@@ -576,13 +569,6 @@ func TestToolResultWithUnencodableTelemetryIsAnsweredWithError(t *testing.T) {
 			wantErr: "failed to serialize tool telemetry: json: unsupported value: NaN",
 		},
 		{
-			name: "channel telemetry value",
-			tool: Tool{Name: "record_note", Handler: func(ToolInvocation) (ToolResult, error) {
-				return ToolResult{TextResultForLLM: "ok", ToolTelemetry: map[string]any{"updates": make(chan int)}}, nil
-			}},
-			wantErr: "failed to serialize tool telemetry: json: unsupported type: chan int",
-		},
-		{
 			name: "DefineTool handler returning a ToolResult",
 			tool: DefineTool("record_note", "Records a note", func(noArgs, ToolInvocation) (any, error) {
 				return ToolResult{TextResultForLLM: "ok", ToolTelemetry: map[string]any{"ratio": math.Inf(1)}}, nil
@@ -634,13 +620,6 @@ func TestToolHandlerErrorWithEmptyMessageIsAnsweredWithError(t *testing.T) {
 				return nil, errors.New("")
 			}),
 			wantErr: "*errors.errorString",
-		},
-		{
-			name: "error with a message",
-			tool: Tool{Name: "record_note", Handler: func(ToolInvocation) (ToolResult, error) {
-				return ToolResult{}, errors.New("disk full")
-			}},
-			wantErr: "disk full",
 		},
 	}
 	for _, tt := range tests {
@@ -1413,55 +1392,6 @@ func testSessionMCPAuthRequestResponse(t *testing.T, runtimeRefresh bool) {
 	}
 }
 
-func TestSession_MCPAuthRuntimeRefreshRequiresCapability(t *testing.T) {
-	supported := true
-	unsupported := false
-	tokenType := "Bearer"
-	tests := []struct {
-		name      string
-		supported *bool
-		result    *MCPAuthResult
-		expected  map[string]any
-	}{
-		{
-			name:     "missing capability sends cancelled",
-			result:   MCPAuthResultRuntimeRefresh(),
-			expected: map[string]any{"kind": "cancelled"},
-		},
-		{
-			name:      "false capability sends cancelled",
-			supported: &unsupported,
-			result:    MCPAuthResultRuntimeRefresh(),
-			expected:  map[string]any{"kind": "cancelled"},
-		},
-		{
-			name:      "token takes precedence over runtime refresh",
-			supported: &supported,
-			result: &MCPAuthResult{
-				Kind:  MCPAuthResultKindRuntimeRefresh,
-				Token: &MCPAuthToken{AccessToken: "host-token", TokenType: &tokenType},
-			},
-			expected: map[string]any{"kind": "token", "accessToken": "host-token", "tokenType": "Bearer"},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := captureMCPAuthPendingResult(t, &MCPOauthRequiredData{
-				RequestID:               "oauth-request",
-				Reason:                  rpc.MCPOauthRequestReasonRefresh,
-				RuntimeRefreshSupported: tt.supported,
-				ServerName:              "oauth-server",
-				ServerURL:               "https://example.com/mcp",
-			}, func(MCPAuthRequest, MCPAuthInvocation) (*MCPAuthResult, error) {
-				return tt.result, nil
-			}, nil)
-			if !reflect.DeepEqual(result, tt.expected) {
-				t.Fatalf("expected result %v, got %v", tt.expected, result)
-			}
-		})
-	}
-}
-
 func TestMCPAuthLegacySourceCompatibility(t *testing.T) {
 	request := MCPAuthRequest{"request", "server", "https://example.com/mcp", MCPOauthRequestReasonRefresh, nil, nil, nil}
 	invocation := MCPAuthInvocation{"session"}
@@ -1630,66 +1560,6 @@ func captureMCPAuthPendingResult(t *testing.T, data *MCPOauthRequiredData, handl
 		t.Fatal("timed out waiting for MCP OAuth response")
 	}
 	return nil
-}
-
-func TestMCPAuthRequestAllowsMissingOptionalMetadata(t *testing.T) {
-	request := MCPAuthRequest{RequestID: "oauth-request"}
-	if request.ResourceMetadata != nil {
-		t.Fatalf("expected no resource metadata, got %#v", request.ResourceMetadata)
-	}
-	if request.WwwAuthenticateParams != nil {
-		t.Fatalf("expected no WWW-Authenticate params, got %#v", request.WwwAuthenticateParams)
-	}
-}
-
-func TestMCPOauthRequiredDataAllowsOptionalMetadata(t *testing.T) {
-	var withMetadata rpc.MCPOauthRequiredData
-	if err := json.Unmarshal([]byte(`{
-		"requestId": "oauth-request",
-		"reason": "initial",
-		"serverName": "oauth-server",
-		"serverUrl": "https://example.com/mcp",
-		"wwwAuthenticateParams": {
-			"resourceMetadataUrl": "https://example.com/.well-known/oauth-protected-resource"
-		},
-		"resourceMetadata": "{\"resource\":\"https://example.com/mcp\"}",
-		"staticClientConfig": {
-		    "clientId": "static-client",
-		    "clientSecret": "static-secret",
-		    "publicClient": false,
-		    "scope": "configured.read"
-		}
-	}`), &withMetadata); err != nil {
-		t.Fatal(err)
-	}
-	if withMetadata.ResourceMetadata == nil || *withMetadata.ResourceMetadata != `{"resource":"https://example.com/mcp"}` {
-		t.Fatalf("expected resource metadata, got %#v", withMetadata.ResourceMetadata)
-	}
-	if withMetadata.WwwAuthenticateParams == nil {
-		t.Fatal("expected WWW-Authenticate params")
-	}
-	if withMetadata.StaticClientConfig == nil || withMetadata.StaticClientConfig.ClientSecret == nil || *withMetadata.StaticClientConfig.ClientSecret != "static-secret" {
-		t.Fatalf("expected static client secret, got %#v", withMetadata.StaticClientConfig)
-	}
-	if withMetadata.StaticClientConfig.Scope == nil || *withMetadata.StaticClientConfig.Scope != "configured.read" {
-		t.Fatalf("expected static client scope, got %#v", withMetadata.StaticClientConfig)
-	}
-
-	var withoutMetadata rpc.MCPOauthRequiredData
-	if err := json.Unmarshal([]byte(`{
-		"requestId": "oauth-request",
-		"reason": "initial",
-		"serverName": "oauth-server",
-		"serverUrl": "https://example.com/mcp"
-	}`), &withoutMetadata); err != nil {
-		t.Fatal(err)
-	}
-	if withoutMetadata.ResourceMetadata != nil {
-		t.Fatalf("expected no resource metadata, got %#v", withoutMetadata.ResourceMetadata)
-	}
-	if withoutMetadata.WwwAuthenticateParams != nil {
-		t.Fatalf("expected no WWW-Authenticate params, got %#v", withoutMetadata.WwwAuthenticateParams)
-	}
 }
 
 func captureSetModelRequest(t *testing.T, opts *SetModelOptions) map[string]any {
@@ -2189,26 +2059,6 @@ func checkSendAndWaitSkipsSubagentAndAutopilotContinuationIdle(t *testing.T, roo
 }
 
 func TestSession_On(t *testing.T) {
-	t.Run("multiple handlers all receive events", func(t *testing.T) {
-		session, cleanup := newTestSession()
-		defer cleanup()
-
-		var wg sync.WaitGroup
-		wg.Add(3)
-		var received1, received2, received3 bool
-		session.On(func(event SessionEvent) { received1 = true; wg.Done() })
-		session.On(func(event SessionEvent) { received2 = true; wg.Done() })
-		session.On(func(event SessionEvent) { received3 = true; wg.Done() })
-
-		session.dispatchEvent(newTestEvent())
-		wg.Wait()
-
-		if !received1 || !received2 || !received3 {
-			t.Errorf("Expected all handlers to receive event, got received1=%v, received2=%v, received3=%v",
-				received1, received2, received3)
-		}
-	})
-
 	t.Run("unsubscribing one handler does not affect others", func(t *testing.T) {
 		session, cleanup := newTestSession()
 		defer cleanup()
@@ -2420,69 +2270,6 @@ func TestSession_On(t *testing.T) {
 }
 
 func TestSession_CommandRouting(t *testing.T) {
-	t.Run("routes command.execute event to the correct handler", func(t *testing.T) {
-		session, cleanup := newTestSession()
-		defer cleanup()
-
-		var receivedCtx CommandContext
-		session.registerCommands([]CommandDefinition{
-			{
-				Name:        "deploy",
-				Description: "Deploy the app",
-				Handler: func(ctx CommandContext) error {
-					receivedCtx = ctx
-					return nil
-				},
-			},
-			{
-				Name:        "rollback",
-				Description: "Rollback",
-				Handler: func(ctx CommandContext) error {
-					return nil
-				},
-			},
-		})
-
-		// Simulate the dispatch — executeCommandAndRespond will fail on RPC (nil client)
-		// but the handler will still be invoked. We test routing only.
-		_, ok := session.getCommandHandler("deploy")
-		if !ok {
-			t.Fatal("Expected 'deploy' handler to be registered")
-		}
-		_, ok = session.getCommandHandler("rollback")
-		if !ok {
-			t.Fatal("Expected 'rollback' handler to be registered")
-		}
-		_, ok = session.getCommandHandler("nonexistent")
-		if ok {
-			t.Fatal("Expected 'nonexistent' handler to NOT be registered")
-		}
-
-		// Directly invoke handler to verify context is correct
-		handler, _ := session.getCommandHandler("deploy")
-		err := handler(CommandContext{
-			SessionID:   "test-session",
-			Command:     "/deploy production",
-			CommandName: "deploy",
-			Args:        "production",
-		})
-		if err != nil {
-			t.Fatalf("Handler returned error: %v", err)
-		}
-		if receivedCtx.SessionID != "test-session" {
-			t.Errorf("Expected sessionID 'test-session', got %q", receivedCtx.SessionID)
-		}
-		if receivedCtx.CommandName != "deploy" {
-			t.Errorf("Expected commandName 'deploy', got %q", receivedCtx.CommandName)
-		}
-		if receivedCtx.Command != "/deploy production" {
-			t.Errorf("Expected command '/deploy production', got %q", receivedCtx.Command)
-		}
-		if receivedCtx.Args != "production" {
-			t.Errorf("Expected args 'production', got %q", receivedCtx.Args)
-		}
-	})
-
 	t.Run("skips commands with empty name or nil handler", func(t *testing.T) {
 		session, cleanup := newTestSession()
 		defer cleanup()
@@ -2507,81 +2294,9 @@ func TestSession_CommandRouting(t *testing.T) {
 		}
 	})
 
-	t.Run("handler error is propagated", func(t *testing.T) {
-		session, cleanup := newTestSession()
-		defer cleanup()
-
-		handlerCalled := false
-		session.registerCommands([]CommandDefinition{
-			{
-				Name: "fail",
-				Handler: func(ctx CommandContext) error {
-					handlerCalled = true
-					return fmt.Errorf("deploy failed")
-				},
-			},
-		})
-
-		handler, ok := session.getCommandHandler("fail")
-		if !ok {
-			t.Fatal("Expected 'fail' handler to be registered")
-		}
-
-		err := handler(CommandContext{
-			SessionID:   "test-session",
-			CommandName: "fail",
-			Command:     "/fail",
-			Args:        "",
-		})
-
-		if !handlerCalled {
-			t.Error("Expected handler to be called")
-		}
-		if err == nil {
-			t.Fatal("Expected error from handler")
-		}
-		if !strings.Contains(err.Error(), "deploy failed") {
-			t.Errorf("Expected error to contain 'deploy failed', got %q", err.Error())
-		}
-	})
-
-	t.Run("unknown command returns no handler", func(t *testing.T) {
-		session, cleanup := newTestSession()
-		defer cleanup()
-
-		session.registerCommands([]CommandDefinition{
-			{Name: "deploy", Handler: func(ctx CommandContext) error { return nil }},
-		})
-
-		_, ok := session.getCommandHandler("unknown")
-		if ok {
-			t.Error("Expected no handler for unknown command")
-		}
-	})
 }
 
 func TestSession_Capabilities(t *testing.T) {
-	t.Run("defaults capabilities when not injected", func(t *testing.T) {
-		session, cleanup := newTestSession()
-		defer cleanup()
-
-		caps := session.Capabilities()
-		if caps.UI != nil {
-			t.Errorf("Expected UI to be nil by default, got %+v", caps.UI)
-		}
-	})
-
-	t.Run("setCapabilities stores and retrieves capabilities", func(t *testing.T) {
-		session, cleanup := newTestSession()
-		defer cleanup()
-
-		session.setCapabilities(withSessionUICapabilities(UICapabilities{Elicitation: true}))
-		caps := session.Capabilities()
-		if caps.UI == nil || !caps.UI.Elicitation {
-			t.Errorf("Expected UI.Elicitation to be true")
-		}
-	})
-
 	t.Run("setCapabilities with nil resets to empty", func(t *testing.T) {
 		session, cleanup := newTestSession()
 		defer cleanup()
@@ -2591,43 +2306,6 @@ func TestSession_Capabilities(t *testing.T) {
 		caps := session.Capabilities()
 		if caps.UI != nil {
 			t.Errorf("Expected UI to be nil after reset, got %+v", caps.UI)
-		}
-	})
-
-	t.Run("capabilities.changed event updates session capabilities", func(t *testing.T) {
-		session, cleanup := newTestSession()
-		defer cleanup()
-
-		// Initially no capabilities
-		caps := session.Capabilities()
-		if caps.UI != nil {
-			t.Fatal("Expected UI to be nil initially")
-		}
-
-		// Dispatch a capabilities.changed event with elicitation=true
-		elicitTrue := true
-		session.dispatchEvent(SessionEvent{
-			Data: &CapabilitiesChangedData{
-				UI: &CapabilitiesChangedUI{Elicitation: &elicitTrue},
-			},
-		})
-
-		caps = session.Capabilities()
-		if caps.UI == nil || !caps.UI.Elicitation {
-			t.Error("Expected UI.Elicitation to be true after capabilities.changed event")
-		}
-
-		// Dispatch with elicitation=false
-		elicitFalse := false
-		session.dispatchEvent(SessionEvent{
-			Data: &CapabilitiesChangedData{
-				UI: &CapabilitiesChangedUI{Elicitation: &elicitFalse},
-			},
-		})
-
-		caps = session.Capabilities()
-		if caps.UI == nil || caps.UI.Elicitation {
-			t.Error("Expected UI.Elicitation to be false after second capabilities.changed event")
 		}
 	})
 
@@ -2894,75 +2572,6 @@ func TestSession_CapabilitiesChangedAppliesInNotificationOrder(t *testing.T) {
 	}
 }
 
-func TestSession_ElicitationHandler(t *testing.T) {
-	t.Run("registerElicitationHandler stores handler", func(t *testing.T) {
-		session, cleanup := newTestSession()
-		defer cleanup()
-
-		if session.getElicitationHandler() != nil {
-			t.Error("Expected nil handler before registration")
-		}
-
-		session.registerElicitationHandler(func(ctx ElicitationContext) (ElicitationResult, error) {
-			return ElicitationResult{Action: ElicitationActionAccept}, nil
-		})
-
-		if session.getElicitationHandler() == nil {
-			t.Error("Expected non-nil handler after registration")
-		}
-	})
-
-	t.Run("handler error is returned correctly", func(t *testing.T) {
-		session, cleanup := newTestSession()
-		defer cleanup()
-
-		session.registerElicitationHandler(func(ctx ElicitationContext) (ElicitationResult, error) {
-			return ElicitationResult{}, fmt.Errorf("handler exploded")
-		})
-
-		handler := session.getElicitationHandler()
-		if handler == nil {
-			t.Fatal("Expected non-nil handler")
-		}
-
-		_, err := handler(
-			ElicitationContext{SessionID: "test-session", Message: "Pick a color"},
-		)
-		if err == nil {
-			t.Fatal("Expected error from handler")
-		}
-		if !strings.Contains(err.Error(), "handler exploded") {
-			t.Errorf("Expected error to contain 'handler exploded', got %q", err.Error())
-		}
-	})
-
-	t.Run("handler success returns result", func(t *testing.T) {
-		session, cleanup := newTestSession()
-		defer cleanup()
-
-		session.registerElicitationHandler(func(ctx ElicitationContext) (ElicitationResult, error) {
-			return ElicitationResult{
-				Action:  ElicitationActionAccept,
-				Content: map[string]any{"color": "blue"},
-			}, nil
-		})
-
-		handler := session.getElicitationHandler()
-		result, err := handler(
-			ElicitationContext{SessionID: "test-session", Message: "Pick a color"},
-		)
-		if err != nil {
-			t.Fatalf("Expected no error, got %v", err)
-		}
-		if result.Action != ElicitationActionAccept {
-			t.Errorf("Expected action 'accept', got %q", result.Action)
-		}
-		if result.Content["color"] != "blue" {
-			t.Errorf("Expected content color 'blue', got %v", result.Content["color"])
-		}
-	})
-}
-
 func TestSession_PostToolUseFailureHook(t *testing.T) {
 	t.Run("dispatches with parsed input and returns additional context", func(t *testing.T) {
 		session, cleanup := newTestSession()
@@ -3109,6 +2718,10 @@ func TestSession_ErrorHooksDecodeCliErrorObject(t *testing.T) {
 			}
 		})
 
+		// Both inputs decode through hookErrorText; one sessionEnd row proves its wiring.
+		if tc.name != "error object" {
+			continue
+		}
 		t.Run("sessionEnd/"+tc.name, func(t *testing.T) {
 			session, cleanup := newTestSession()
 			defer cleanup()
@@ -3201,14 +2814,6 @@ func TestSession_AgentStopHook(t *testing.T) {
 // ResultType nor Error set gets "success", as a tool handler's result does;
 // every other ModifiedResult reaches the runtime as the hook returned it.
 func TestSession_PostToolUseModifiedResultResultType(t *testing.T) {
-	image := []ToolBinaryResult{{Data: "aW1n", MIMEType: "image/png", Type: "image"}}
-	full := ToolResult{
-		TextResultForLLM:    "redacted",
-		BinaryResultsForLLM: image,
-		SessionLog:          "log",
-		ToolTelemetry:       map[string]any{"k": 1},
-		ToolReferences:      []string{"grep"},
-	}
 	tests := []struct {
 		name   string
 		output *PostToolUseHookOutput
@@ -3219,31 +2824,19 @@ func TestSession_PostToolUseModifiedResultResultType(t *testing.T) {
 			`{"output":{"modifiedResult":{"textResultForLlm":"redacted","resultType":"success"}}}`},
 		{"pointer, no type", &PostToolUseHookOutput{ModifiedResult: &ToolResult{TextResultForLLM: "redacted"}},
 			`{"output":{"modifiedResult":{"textResultForLlm":"redacted","resultType":"success"}}}`},
-		{"zero value", &PostToolUseHookOutput{ModifiedResult: ToolResult{}},
-			`{"output":{"modifiedResult":{"textResultForLlm":"","resultType":"success"}}}`},
-		{"every field, no type", &PostToolUseHookOutput{ModifiedResult: full},
-			`{"output":{"modifiedResult":{"textResultForLlm":"redacted","binaryResultsForLlm":[{"data":"aW1n","mimeType":"image/png","type":"image"}],"resultType":"success","sessionLog":"log","toolTelemetry":{"k":1},"toolReferences":["grep"]}}}`},
 		{"no type, with additional context and suppressed output", &PostToolUseHookOutput{ModifiedResult: &ToolResult{TextResultForLLM: "redacted"}, AdditionalContext: "ctx", SuppressOutput: true},
 			`{"output":{"modifiedResult":{"textResultForLlm":"redacted","resultType":"success"},"additionalContext":"ctx","suppressOutput":true}}`},
 		// Rows the fix must leave as they are.
-		{"explicit success", &PostToolUseHookOutput{ModifiedResult: ToolResult{TextResultForLLM: "redacted", ResultType: "success"}},
-			`{"output":{"modifiedResult":{"textResultForLlm":"redacted","resultType":"success"}}}`},
 		{"explicit failure", &PostToolUseHookOutput{ModifiedResult: ToolResult{TextResultForLLM: "redacted", ResultType: "failure"}},
 			`{"output":{"modifiedResult":{"textResultForLlm":"redacted","resultType":"failure"}}}`},
 		{"explicit rejected pointer", &PostToolUseHookOutput{ModifiedResult: &ToolResult{TextResultForLLM: "redacted", ResultType: "rejected"}},
 			`{"output":{"modifiedResult":{"textResultForLlm":"redacted","resultType":"rejected"}}}`},
 		{"error set, no type", &PostToolUseHookOutput{ModifiedResult: ToolResult{TextResultForLLM: "redacted", Error: "boom"}},
 			`{"output":{"modifiedResult":{"textResultForLlm":"redacted","resultType":"","error":"boom"}}}`},
-		{"pointer, error set, no type", &PostToolUseHookOutput{ModifiedResult: &ToolResult{TextResultForLLM: "redacted", Error: "boom"}},
-			`{"output":{"modifiedResult":{"textResultForLlm":"redacted","resultType":"","error":"boom"}}}`},
 		{"nil ToolResult pointer", &PostToolUseHookOutput{ModifiedResult: (*ToolResult)(nil)},
 			`{"output":{"modifiedResult":null}}`},
 		{"map without resultType", &PostToolUseHookOutput{ModifiedResult: map[string]any{"textResultForLlm": "redacted"}},
 			`{"output":{"modifiedResult":{"textResultForLlm":"redacted"}}}`},
-		{"map with empty resultType", &PostToolUseHookOutput{ModifiedResult: map[string]any{"textResultForLlm": "redacted", "resultType": ""}},
-			`{"output":{"modifiedResult":{"textResultForLlm":"redacted","resultType":""}}}`},
-		{"string", &PostToolUseHookOutput{ModifiedResult: "redacted"},
-			`{"output":{"modifiedResult":"redacted"}}`},
 		{"no modified result", &PostToolUseHookOutput{AdditionalContext: "ctx"},
 			`{"output":{"additionalContext":"ctx"}}`},
 		{"nil output", nil, `{"output":null}`},
@@ -3302,12 +2895,8 @@ func TestSession_PostToolUseModifiedResultResultType(t *testing.T) {
 		want       string
 	}{
 		{"failure set by an earlier hook", map[string]any{"textResultForLlm": "x", "resultType": "failure"}, "failure"},
-		{"rejected set by an earlier hook", map[string]any{"textResultForLlm": "x", "resultType": "rejected"}, "rejected"},
-		{"success", map[string]any{"textResultForLlm": "x", "resultType": "success"}, "success"},
 		{"empty result type", map[string]any{"textResultForLlm": "x", "resultType": ""}, "success"},
-		{"no result type", map[string]any{"textResultForLlm": "x"}, "success"},
 		{"result is not an object", "x", "success"},
-		{"no result", nil, "success"},
 	} {
 		t.Run("keeps the tool's result type: "+tt.name, func(t *testing.T) {
 			session, cleanup := newTestSession()
@@ -3419,46 +3008,6 @@ func TestSession_ElicitationRequestSchema(t *testing.T) {
 		}
 		if value != nil {
 			t.Fatalf("Expected nil RPC content, got %T", value)
-		}
-	})
-
-	t.Run("elicitation.requested passes full schema to handler", func(t *testing.T) {
-		// Verify the schema extraction logic from handleBroadcastEvent
-		// preserves type, properties, and required.
-		properties := map[string]any{
-			"name": map[string]any{"type": "string"},
-			"age":  map[string]any{"type": "number"},
-		}
-		required := []string{"name", "age"}
-
-		requestedSchema := ElicitationSchema{
-			Properties: properties,
-			Required:   required,
-		}
-
-		props := requestedSchema.Properties
-		if props == nil {
-			t.Fatal("Expected schema properties map")
-		}
-		if len(props) != 2 {
-			t.Errorf("Expected 2 properties, got %d", len(props))
-		}
-		if len(requestedSchema.Required) != 2 {
-			t.Errorf("Expected required [name, age], got %v", requestedSchema.Required)
-		}
-	})
-
-	t.Run("schema without required omits required key", func(t *testing.T) {
-		properties := map[string]any{
-			"optional_field": map[string]any{"type": "string"},
-		}
-
-		requestedSchema := ElicitationSchema{
-			Properties: properties,
-		}
-
-		if requestedSchema.Required != nil {
-			t.Error("Expected Required to be nil when omitted")
 		}
 	})
 

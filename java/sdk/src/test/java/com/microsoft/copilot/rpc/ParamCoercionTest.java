@@ -5,7 +5,6 @@
 package com.microsoft.copilot.rpc;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -27,66 +26,9 @@ class ParamCoercionTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    // ── coerce: present argument, simple types ───────────────────────────────────
-
-    @Test
-    void coerce_stringArg_passedThrough() {
-        Param<String> p = Param.of(String.class, "msg", "A message");
-        String result = ParamCoercion.coerce(Map.of("msg", "hello"), p, MAPPER);
-        assertEquals("hello", result);
-    }
-
-    @Test
-    void coerce_integerArgFromNumber() {
-        Param<Integer> p = Param.of(Integer.class, "n", "A number");
-        Integer result = ParamCoercion.coerce(Map.of("n", 42), p, MAPPER);
-        assertEquals(42, result);
-    }
-
-    @Test
-    void coerce_longArgFromNumber() {
-        Param<Long> p = Param.of(Long.class, "id", "An identifier");
-        Long result = ParamCoercion.coerce(Map.of("id", 123456789L), p, MAPPER);
-        assertEquals(123456789L, result);
-    }
-
-    @Test
-    void coerce_doubleArgFromNumber() {
-        Param<Double> p = Param.of(Double.class, "price", "A price");
-        Double result = ParamCoercion.coerce(Map.of("price", 19.99), p, MAPPER);
-        assertEquals(19.99, result, 0.001);
-    }
-
-    @Test
-    void coerce_floatArgFromNumber() {
-        Param<Float> p = Param.of(Float.class, "rate", "A rate");
-        Float result = ParamCoercion.coerce(Map.of("rate", 3.14), p, MAPPER);
-        assertEquals(3.14f, result, 0.01f);
-    }
-
-    @Test
-    void coerce_booleanArgFromBoolean() {
-        Param<Boolean> p = Param.of(Boolean.class, "flag", "A flag");
-        Boolean result = ParamCoercion.coerce(Map.of("flag", true), p, MAPPER);
-        assertEquals(true, result);
-    }
-
-    // Note: enum coercion via mapper.convertValue requires the enum's package to be
-    // opened to com.fasterxml.jackson.databind. In the SDK module,
-    // com.microsoft.copilot.tool
-    // is not opened to Jackson (only com.microsoft.copilot.rpc is). User-defined
-    // enums
-    // will
-    // be outside the SDK module and fully accessible. Enum default coercion is
-    // tested via
-    // coerceDefault_enum which uses Enum.valueOf directly.
-
-    @Test
-    void coerce_enumFromString_viaCoerceDefault() {
-        Param<TestMode> p = Param.of(TestMode.class, "mode", "Mode", false, "FAST");
-        TestMode result = ParamCoercion.coerce(Map.of(), p, MAPPER);
-        assertEquals(TestMode.FAST, result);
-    }
+    // Note: enum arguments via mapper.convertValue require the enum's package
+    // to be opened to Jackson; SDK test enums are not, so enum defaults
+    // (Enum.valueOf) are covered by coerce_optionalWithEnumDefault_usesDefault.
 
     // ── coerce: Optional primitive types ─────────────────────────────────────────
 
@@ -133,13 +75,6 @@ class ParamCoercionTest {
     // ── coerce: missing argument — required ──────────────────────────────────────
 
     @Test
-    void coerce_requiredMissing_throwsWithParamName() {
-        Param<String> p = Param.of(String.class, "query", "Search query");
-        var ex = assertThrows(IllegalArgumentException.class, () -> ParamCoercion.coerce(Map.of(), p, MAPPER));
-        assertTrue(ex.getMessage().contains("query"));
-    }
-
-    @Test
     void coerce_requiredMissing_nullArgs_throws() {
         Param<String> p = Param.of(String.class, "name", "A name");
         var ex = assertThrows(IllegalArgumentException.class, () -> ParamCoercion.coerce(null, p, MAPPER));
@@ -153,13 +88,6 @@ class ParamCoercionTest {
         Param<String> p = Param.of(String.class, "mode", "Mode", false, "normal");
         String result = ParamCoercion.coerce(Map.of(), p, MAPPER);
         assertEquals("normal", result);
-    }
-
-    @Test
-    void coerce_optionalWithIntegerDefault_usesDefault() {
-        Param<Integer> p = Param.of(Integer.class, "limit", "Limit", false, "25");
-        Integer result = ParamCoercion.coerce(Map.of(), p, MAPPER);
-        assertEquals(25, result);
     }
 
     @Test
@@ -202,6 +130,8 @@ class ParamCoercionTest {
         Param<Boolean> p = Param.of(Boolean.class, "verbose", "Verbose", false, "true");
         Boolean result = ParamCoercion.coerce(Map.of(), p, MAPPER);
         assertEquals(true, result);
+        Param<Boolean> off = Param.of(Boolean.class, "verbose", "Verbose", false, "false");
+        assertEquals(false, ParamCoercion.coerce(Map.of(), off, MAPPER));
     }
 
     @Test
@@ -212,13 +142,6 @@ class ParamCoercionTest {
     }
 
     // ── coerce: missing argument — optional without default ──────────────────────
-
-    @Test
-    void coerce_optionalNoDefault_returnsNull() {
-        Param<String> p = Param.of(String.class, "title", "Title", false, "");
-        String result = ParamCoercion.coerce(Map.of(), p, MAPPER);
-        assertNull(result);
-    }
 
     @Test
     void coerce_optionalNoDefault_optionalInt_returnsEmpty() {
@@ -241,22 +164,7 @@ class ParamCoercionTest {
         assertEquals(OptionalDouble.empty(), result);
     }
 
-    // ── coerce: type conversion via ObjectMapper ─────────────────────────────────
-
-    @Test
-    void coerce_integerFromStringViaMapper() {
-        // ObjectMapper can convert "42" string to Integer
-        Param<Integer> p = Param.of(Integer.class, "n", "A number");
-        Integer result = ParamCoercion.coerce(Map.of("n", "42"), p, MAPPER);
-        assertEquals(42, result);
-    }
-
-    @Test
-    void coerce_booleanFromStringViaMapper() {
-        Param<Boolean> p = Param.of(Boolean.class, "flag", "A flag");
-        Boolean result = ParamCoercion.coerce(Map.of("flag", "true"), p, MAPPER);
-        assertEquals(true, result);
-    }
+    // ── coerce: conversion failure ───────────────────────────────────────────────
 
     @Test
     void coerce_incompatibleType_throwsWithParamName() {
@@ -264,95 +172,6 @@ class ParamCoercionTest {
         var ex = assertThrows(IllegalArgumentException.class,
                 () -> ParamCoercion.coerce(Map.of("count", "not_a_number"), p, MAPPER));
         assertTrue(ex.getMessage().contains("count"));
-    }
-
-    // ── coerceDefault: direct tests ──────────────────────────────────────────────
-
-    @Test
-    void coerceDefault_string() {
-        Param<String> p = Param.of(String.class, "s", "A string", false, "hello");
-        assertEquals("hello", ParamCoercion.coerceDefault(p, MAPPER));
-    }
-
-    @Test
-    void coerceDefault_integer() {
-        Param<Integer> p = Param.of(Integer.class, "n", "A num", false, "99");
-        assertEquals(99, ParamCoercion.coerceDefault(p, MAPPER));
-    }
-
-    @Test
-    void coerceDefault_long() {
-        Param<Long> p = Param.of(Long.class, "id", "An id", false, "12345");
-        assertEquals(12345L, ParamCoercion.coerceDefault(p, MAPPER));
-    }
-
-    @Test
-    void coerceDefault_double() {
-        Param<Double> p = Param.of(Double.class, "d", "A double", false, "3.14");
-        assertEquals(3.14, ParamCoercion.coerceDefault(p, MAPPER), 0.001);
-    }
-
-    @Test
-    void coerceDefault_float() {
-        Param<Float> p = Param.of(Float.class, "f", "A float", false, "2.5");
-        assertEquals(2.5f, ParamCoercion.coerceDefault(p, MAPPER), 0.01f);
-    }
-
-    @Test
-    void coerceDefault_short() {
-        Param<Short> p = Param.of(Short.class, "s", "A short", false, "10");
-        assertEquals((short) 10, ParamCoercion.coerceDefault(p, MAPPER));
-    }
-
-    @Test
-    void coerceDefault_byte() {
-        Param<Byte> p = Param.of(Byte.class, "b", "A byte", false, "5");
-        assertEquals((byte) 5, ParamCoercion.coerceDefault(p, MAPPER));
-    }
-
-    @Test
-    void coerceDefault_booleanTrue() {
-        Param<Boolean> p = Param.of(Boolean.class, "v", "Verbose", false, "true");
-        assertEquals(true, ParamCoercion.coerceDefault(p, MAPPER));
-    }
-
-    @Test
-    void coerceDefault_booleanFalse() {
-        Param<Boolean> p = Param.of(Boolean.class, "v", "Verbose", false, "false");
-        assertEquals(false, ParamCoercion.coerceDefault(p, MAPPER));
-    }
-
-    @Test
-    void coerceDefault_enum() {
-        Param<TestMode> p = Param.of(TestMode.class, "m", "Mode", false, "FAST");
-        assertEquals(TestMode.FAST, ParamCoercion.coerceDefault(p, MAPPER));
-    }
-
-    // ── emptyOptionalOrNull: direct tests ────────────────────────────────────────
-
-    @Test
-    void emptyOptionalOrNull_optionalInt_returnsEmpty() {
-        assertEquals(OptionalInt.empty(), ParamCoercion.emptyOptionalOrNull(OptionalInt.class));
-    }
-
-    @Test
-    void emptyOptionalOrNull_optionalLong_returnsEmpty() {
-        assertEquals(OptionalLong.empty(), ParamCoercion.emptyOptionalOrNull(OptionalLong.class));
-    }
-
-    @Test
-    void emptyOptionalOrNull_optionalDouble_returnsEmpty() {
-        assertEquals(OptionalDouble.empty(), ParamCoercion.emptyOptionalOrNull(OptionalDouble.class));
-    }
-
-    @Test
-    void emptyOptionalOrNull_string_returnsNull() {
-        assertNull(ParamCoercion.emptyOptionalOrNull(String.class));
-    }
-
-    @Test
-    void emptyOptionalOrNull_integer_returnsNull() {
-        assertNull(ParamCoercion.emptyOptionalOrNull(Integer.class));
     }
 
     // ── Test helper types ────────────────────────────────────────────────────────

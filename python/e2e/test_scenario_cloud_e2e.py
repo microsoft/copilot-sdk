@@ -123,6 +123,14 @@ class TestScenarioCloud:
             try:
                 assert connection.session_id == "runtime-session-id"
                 assert session.session_id == "runtime-session-id"
+                assert connection.metadata.session_id == "remote-resource-id"
+                assert connection.metadata.resource_id == "remote-resource-id"
+                assert connection.metadata.repository.owner == "github"
+                assert connection.metadata.repository.name == "copilot-sdk"
+                assert connection.metadata.repository.branch == "scenario-branch"
+                assert connection.metadata.pull_request_number == 42
+                assert connection.metadata.state == "running"
+                assert connection.metadata.summary == "Remote task summary"
                 requests = read_scenario_capture(capture_path)["requests"]
                 resume = next(
                     request for request in requests if request["method"] == "session.resume"
@@ -130,29 +138,5 @@ class TestScenarioCloud:
                 assert resume["params"]["sessionId"] == "runtime-session-id"
             finally:
                 await session.disconnect()
-        finally:
-            await client.stop()
-
-    async def test_should_expose_cloud_resource_mismatch_before_resume(
-        self,
-        ctx: E2ETestContext,
-    ):
-        client, _capture_path = create_scenario_client(ctx, "cloud-connect")
-        try:
-            await client.start()
-            connection = await client.rpc.sessions.connect(
-                ConnectRemoteSessionParams(session_id="remote-resource-id")
-            )
-
-            assert connection.session_id == "runtime-session-id"
-            assert connection.metadata.session_id == "remote-resource-id"
-            assert connection.metadata.resource_id == "remote-resource-id"
-            assert connection.metadata.session_id != connection.session_id
-            assert connection.metadata.repository.owner == "github"
-            assert connection.metadata.repository.name == "copilot-sdk"
-            assert connection.metadata.repository.branch == "scenario-branch"
-            assert connection.metadata.pull_request_number == 42
-            assert connection.metadata.state == "running"
-            assert connection.metadata.summary == "Remote task summary"
         finally:
             await client.stop()

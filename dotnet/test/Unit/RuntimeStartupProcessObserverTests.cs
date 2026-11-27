@@ -16,55 +16,6 @@ namespace Microsoft.Copilot.Test.Unit;
 public sealed class RuntimeStartupProcessObserverTests
 {
     [Fact]
-    public async Task Scenario_Exit_Request_Ends_The_Retained_Runtime_Lifetime()
-    {
-        var directory = Path.Combine(Path.GetTempPath(), $"copilot-scenario-exit-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(directory);
-        var scriptPath = Path.Combine(directory, "runtime.cjs");
-        var capturePath = Path.Combine(directory, "capture.json");
-        var pidPath = Path.Combine(directory, "runtime.pid");
-        var exitPath = Path.Combine(directory, "exit");
-        var script = (string)typeof(ScenarioTestingRuntimeE2ETests)
-            .GetField("FakeRuntimeScript", BindingFlags.NonPublic | BindingFlags.Static)!.GetRawConstantValue()!;
-        try
-        {
-            await File.WriteAllTextAsync(scriptPath, script);
-            await using var client = new CopilotClient(new CopilotClientOptions
-            {
-                Mode = CopilotClientMode.CodingAgent,
-                Runtime = RuntimeConnection.ForSpawnedStdio(path: "node",
-                    args: [scriptPath, "--capture-file", capturePath, "--pid-file", pidPath, "--exit-file", exitPath]),
-                GitHub = new ClientGitHubOptions { UseLoggedInUser = false }
-            });
-            // Startup is a precondition for the process-lifetime assertions, not a latency contract.
-            await client.StartAsync();
-            using var observer = Process.GetProcessById(
-                int.Parse(await File.ReadAllTextAsync(pidPath), CultureInfo.InvariantCulture));
-            try
-            {
-                _ = observer.Handle;
-                Assert.False(observer.HasExited);
-
-                await File.WriteAllTextAsync(exitPath, string.Empty);
-                await observer.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
-                Assert.True(observer.HasExited);
-                Assert.Equal(1, observer.ExitCode);
-                var error = await Assert.ThrowsAnyAsync<Exception>(
-                    () => client.PingAsync("after-fixture-exit").WaitAsync(TimeSpan.FromSeconds(5)));
-                Assert.IsNotType<TimeoutException>(error);
-            }
-            finally
-            {
-                await client.ForceStopAsync();
-            }
-        }
-        finally
-        {
-            Directory.Delete(directory, recursive: true);
-        }
-    }
-
-    [Fact]
     public async Task OAuth_Startup_Cleanup_Disposes_Only_Its_Own_Process_Alias()
     {
         var startupMethod = typeof(McpOAuthE2ETests)

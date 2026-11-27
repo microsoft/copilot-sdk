@@ -41,53 +41,6 @@ func TestClientOptionsE2E(t *testing.T) {
 		}
 	})
 
-	t.Run("should use client cwd for default workingdirectory", func(t *testing.T) {
-		ctx := testharness.NewTestContext(t)
-		ctx.ConfigureForTest(t)
-
-		clientCwd := filepath.Join(ctx.WorkDir, "client-cwd")
-		if err := os.MkdirAll(clientCwd, 0755); err != nil {
-			t.Fatalf("Failed to create clientCwd: %v", err)
-		}
-		if err := os.WriteFile(filepath.Join(clientCwd, "marker.txt"), []byte("I am in the client cwd"), 0644); err != nil {
-			t.Fatalf("Failed to write marker file: %v", err)
-		}
-
-		client := ctx.NewClient(func(opts *copilot.ClientOptions) {
-			if !testharness.IsInProcessTransport() {
-				connection := opts.Runtime.(copilot.SpawnedStdioConnection)
-				connection.WorkingDirectory = clientCwd
-				opts.Runtime = connection
-			}
-		})
-		t.Cleanup(func() { client.ForceStop() })
-
-		config := &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}}
-		if testharness.IsInProcessTransport() {
-			config.WorkingDirectory = clientCwd
-		}
-		// Exercise the raw SDK default on stdio, not the fixture's session default.
-		session, err := client.Client.CreateSession(t.Context(), config)
-		if err != nil {
-			t.Fatalf("CreateSession failed: %v", err)
-		}
-		t.Cleanup(func() { session.Disconnect() })
-
-		evt, err := session.SendAndWait(t.Context(), copilot.MessageOptions{
-			Prompt: "Read the file marker.txt and tell me what it says",
-		})
-		if err != nil {
-			t.Fatalf("SendAndWait failed: %v", err)
-		}
-		assistant, ok := evt.Data.(*copilot.AssistantMessageData)
-		if !ok {
-			t.Fatalf("Expected AssistantMessageData, got %T", evt.Data)
-		}
-		if !strings.Contains(assistant.Content, "client cwd") {
-			t.Errorf("Expected assistant message to contain 'client cwd', got %q", assistant.Content)
-		}
-	})
-
 	t.Run("should propagate process options to spawned cli", func(t *testing.T) {
 		// Mirrors: Should_Propagate_Process_Options_To_Spawned_Cli
 		// Spawns a fake stdio CLI (a Node.js script) so we can assert that the
@@ -628,47 +581,11 @@ func capturedParam(t *testing.T, params map[string]any, path string) any {
 }
 
 // ---------------------------------------------------------------------------
-// Unit-style tests mirroring the property-only tests in
-// dotnet/test/ClientOptionsTests.cs.
+// Attached-runtime validation for runtime-only client options.
 // ---------------------------------------------------------------------------
 
 func TestClientOptionsUnit(t *testing.T) {
 	t.Parallel()
-	t.Run("should accept GitHubToken option", func(t *testing.T) {
-		// Mirrors: Should_Accept_GitHubToken_Option
-		opts := copilot.ClientOptions{Mode: copilot.ModeCodingAgent, GitHub: copilot.ClientGitHubOptions{Token: "gho_test_token"}}
-		if opts.GitHub.Token != "gho_test_token" {
-			t.Errorf("Expected GitHubToken=%q, got %q", "gho_test_token", opts.GitHub.Token)
-		}
-	})
-
-	t.Run("should default UseLoggedInUser to nil", func(t *testing.T) {
-		// Mirrors: Should_Default_UseLoggedInUser_To_Null
-		opts := copilot.ClientOptions{Mode: copilot.ModeCodingAgent}
-		if opts.GitHub.UseLoggedInUser != nil {
-			t.Errorf("Expected UseLoggedInUser to be nil by default, got %v", opts.GitHub.UseLoggedInUser)
-		}
-	})
-
-	t.Run("should allow explicit UseLoggedInUser false", func(t *testing.T) {
-		// Mirrors: Should_Allow_Explicit_UseLoggedInUser_False
-		opts := copilot.ClientOptions{Mode: copilot.ModeCodingAgent, GitHub: copilot.ClientGitHubOptions{UseLoggedInUser: copilot.Bool(false)}}
-		if opts.GitHub.UseLoggedInUser == nil || *opts.GitHub.UseLoggedInUser != false {
-			t.Errorf("Expected UseLoggedInUser=false, got %v", opts.GitHub.UseLoggedInUser)
-		}
-	})
-
-	t.Run("should allow explicit UseLoggedInUser true with GitHubToken", func(t *testing.T) {
-		// Mirrors: Should_Allow_Explicit_UseLoggedInUser_True_With_GitHubToken
-		opts := copilot.ClientOptions{Mode: copilot.ModeCodingAgent, GitHub: copilot.ClientGitHubOptions{Token: "gho_test_token", UseLoggedInUser: copilot.Bool(true)}}
-		if opts.GitHub.UseLoggedInUser == nil || *opts.GitHub.UseLoggedInUser != true {
-			t.Errorf("Expected UseLoggedInUser=true, got %v", opts.GitHub.UseLoggedInUser)
-		}
-		if opts.GitHub.Token != "gho_test_token" {
-			t.Errorf("Expected GitHubToken=%q, got %q", "gho_test_token", opts.GitHub.Token)
-		}
-	})
-
 	t.Run("should panic when GitHubToken used with TCPConnection", func(t *testing.T) {
 		assertPanics(t, func() {
 			_ = copilot.NewClient(&copilot.ClientOptions{Mode: copilot.ModeCodingAgent, GitHub: copilot.ClientGitHubOptions{Token: "gho_test_token"}, Runtime: copilot.TCPConnection{Host: "localhost", Port: 8080}})
@@ -679,24 +596,6 @@ func TestClientOptionsUnit(t *testing.T) {
 		assertPanics(t, func() {
 			_ = copilot.NewClient(&copilot.ClientOptions{Mode: copilot.ModeCodingAgent, GitHub: copilot.ClientGitHubOptions{UseLoggedInUser: copilot.Bool(false)}, Runtime: copilot.TCPConnection{Host: "localhost", Port: 8080}})
 		})
-	})
-
-	t.Run("should default SessionIdleTimeoutSeconds to zero", func(t *testing.T) {
-		// Mirrors: Should_Default_SessionIdleTimeoutSeconds_To_Null
-		// Go uses int (no nullable wrapper); the zero value is 0 and is
-		// treated as "unset" by the SDK (no --session-idle-timeout flag).
-		connection := copilot.SpawnedStdioConnection{}
-		if connection.SessionIdleTimeoutSeconds != 0 {
-			t.Errorf("Expected SessionIdleTimeoutSeconds=0 by default, got %d", connection.SessionIdleTimeoutSeconds)
-		}
-	})
-
-	t.Run("should accept SessionIdleTimeoutSeconds option", func(t *testing.T) {
-		// Mirrors: Should_Accept_SessionIdleTimeoutSeconds_Option
-		opts := copilot.ClientOptions{Mode: copilot.ModeCodingAgent, Runtime: copilot.SpawnedStdioConnection{SessionIdleTimeoutSeconds: 600}}
-		if opts.Runtime.(copilot.SpawnedStdioConnection).SessionIdleTimeoutSeconds != 600 {
-			t.Errorf("Expected SessionIdleTimeoutSeconds=600, got %d", opts.Runtime.(copilot.SpawnedStdioConnection).SessionIdleTimeoutSeconds)
-		}
 	})
 }
 

@@ -14,7 +14,6 @@ mod client_options;
 mod commands;
 mod copilot_request_handler;
 mod elicitation;
-mod error_resilience;
 mod event_fidelity;
 mod external_tool_cancellation;
 mod github_telemetry;

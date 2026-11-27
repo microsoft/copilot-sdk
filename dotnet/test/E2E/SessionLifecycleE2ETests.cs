@@ -10,43 +10,13 @@ namespace Microsoft.Copilot.Test.E2E;
 
 /// <summary>
 /// Lifecycle coverage at the <see cref="CopilotClient"/> level: listing
-/// persisted sessions, deleting a session, retrieving a session's stored
-/// events, and running multiple sessions concurrently. Mirrors
-/// <c>nodejs/test/e2e/session_lifecycle.e2e.test.ts</c>.
+/// persisted sessions, deleting a session, and running multiple sessions concurrently. Mirrors
+/// <c>nodejs/test/e2e/session_lifecycle.e2e.test.ts</c>. Stored-event retrieval is owned by
+/// <see cref="EventFidelityE2ETests"/>.
 /// </summary>
 public class SessionLifecycleE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
     : E2ETestBase(fixture, "session_lifecycle", output)
 {
-    [Fact]
-    public async Task Should_List_Created_Sessions_After_Sending_A_Message()
-    {
-        var session1 = await CreateSessionAsync();
-        var session2 = await CreateSessionAsync();
-
-        // Sessions must have activity to be persisted to disk
-        await session1.SendAndWaitAsync(new MessageOptions { Prompt = "Say hello" });
-        await session2.SendAndWaitAsync(new MessageOptions { Prompt = "Say world" });
-
-        IList<SessionMetadata>? sessions = null;
-        await TestHelper.WaitForConditionAsync(
-            async () =>
-            {
-                sessions = await Client.ListSessionsAsync();
-                var ids = sessions.Select(s => s.SessionId).ToHashSet();
-                return ids.Contains(session1.SessionId) && ids.Contains(session2.SessionId);
-            },
-            timeout: TimeSpan.FromSeconds(10),
-            timeoutMessage: "Timed out waiting for both created sessions to appear in ListSessionsAsync().");
-
-        Assert.NotNull(sessions);
-        var sessionIds = sessions!.Select(s => s.SessionId).ToList();
-        Assert.Contains(session1.SessionId, sessionIds);
-        Assert.Contains(session2.SessionId, sessionIds);
-
-        await session1.DisposeAsync();
-        await session2.DisposeAsync();
-    }
-
     [Fact]
     public async Task Should_Delete_Session_Permanently()
     {
@@ -72,28 +42,6 @@ public class SessionLifecycleE2ETests(E2ETestFixture fixture, ITestOutputHelper 
         // After delete, the session should not be in the list
         var after = await Client.ListSessionsAsync();
         Assert.DoesNotContain(after, s => s.SessionId == sessionId);
-    }
-
-    [Fact]
-    public async Task Should_Return_Events_Via_GetMessages_After_Conversation()
-    {
-        var session = await CreateSessionAsync();
-
-        await session.SendAndWaitAsync(new MessageOptions
-        {
-            Prompt = "What is 2+2? Reply with just the number.",
-        });
-
-        var messages = await session.GetEventsAsync();
-        Assert.NotEmpty(messages);
-
-        // Should have at least session.start, user.message, assistant.message
-        var types = messages.Select(m => m.Type).ToList();
-        Assert.Contains("session.start", types);
-        Assert.Contains("user.message", types);
-        Assert.Contains("assistant.message", types);
-
-        await session.DisposeAsync();
     }
 
     [Fact]

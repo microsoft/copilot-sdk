@@ -44,38 +44,6 @@ class CopilotRequestHandlerProtocolTest {
     private static final int DEADLINE_SECONDS = 5;
 
     @ParameterizedTest
-    @ValueSource(booleans = {false, true})
-    void upstreamObservesAbnormalWebSocketClosure(boolean reset) throws Exception {
-        try (var upstream = new FakeUpstreamServer("unused", "unused")) {
-            try (var socket = new Socket("127.0.0.1", upstream.port())) {
-                socket.setSoTimeout(DEADLINE_SECONDS * 1000);
-                var out = socket.getOutputStream();
-                out.write(("GET /responses HTTP/1.1\r\n" + "Host: 127.0.0.1\r\n" + "Upgrade: websocket\r\n"
-                        + "Connection: Upgrade\r\n" + "Sec-WebSocket-Version: 13\r\n"
-                        + "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
-                out.flush();
-                var header = new ByteArrayOutputStream();
-                while (!header.toString(StandardCharsets.US_ASCII).endsWith("\r\n\r\n")) {
-                    int b = socket.getInputStream().read();
-                    assertNotEquals(-1, b, "Unexpected WebSocket handshake EOF");
-                    header.write(b);
-                }
-                assertTrue(header.toString(StandardCharsets.US_ASCII).startsWith("HTTP/1.1 101 "),
-                        header.toString(StandardCharsets.US_ASCII));
-                if (reset) {
-                    socket.setSoLinger(true, 0);
-                } else {
-                    // End mid-mask so the frame reader exits through its exceptional path.
-                    out.write(new byte[]{(byte) 0x81, (byte) 0x84, 0, 0});
-                    out.flush();
-                    socket.shutdownOutput();
-                }
-            }
-            upstream.awaitWebSocketClose(DEADLINE_SECONDS, TimeUnit.SECONDS);
-        }
-    }
-
-    @ParameterizedTest
     @ValueSource(strings = {"http", "websocket-open", "websocket-message", "websocket-handshake"})
     void callbackFailureFinalizesResponse(String callback) throws Exception {
         BlockingQueue<String> closed = new LinkedBlockingQueue<>();

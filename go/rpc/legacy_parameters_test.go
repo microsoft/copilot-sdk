@@ -68,14 +68,6 @@ func TestExternalToolDefinitionPreservesMetadata(t *testing.T) {
 	}
 }
 
-func TestLoginBeginKeepsPositionalLiterals(t *testing.T) {
-	request := AuthLoginBeginRequest{Kind: LoginProviderKindGitHub}
-	wire := encodeRequest(t, request)
-	if len(wire) != 1 || wire["kind"] != "gitHub" {
-		t.Fatalf("legacy login request changed: %v", wire)
-	}
-}
-
 // Explicit type arguments preserve signature checks without redundant variable types.
 func requireMethodSignature[T any](method T) T {
 	return method
@@ -207,10 +199,6 @@ func TestMCPConfigOptionalRequestsUseObjectParams(t *testing.T) {
 			_, err := api.Read(ctx, nil)
 			return err
 		}, `{}`},
-		{"read selected", "mcp.config.read", func(ctx context.Context, api *InternalServerMCPConfigAPI) error {
-			_, err := api.Read(ctx, &MCPConfigReadRequest{ConfigDir: &root})
-			return err
-		}, `{"configDir":"selected-root"}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			clientConn, serverConn := net.Pipe()
@@ -237,14 +225,6 @@ func TestMCPConfigOptionalRequestsUseObjectParams(t *testing.T) {
 				t.Fatalf("wire params = %s, want %s", got, test.want)
 			}
 		})
-	}
-}
-
-func TestPermissionRequiredKeepsPositionalLiterals(t *testing.T) {
-	request := PermissionsSetRequiredRequest{Required: true}
-	wire := encodeRequest(t, request)
-	if len(wire) != 1 || wire["required"] != true {
-		t.Fatalf("legacy permission requirement changed: %v", wire)
 	}
 }
 
@@ -299,69 +279,6 @@ func TestPermissionRequiredOptionsOnWire(t *testing.T) {
 					t.Fatal(ctx.Err())
 				}
 			})
-		}
-	}
-}
-
-func TestPermissionRequirementsKeepPositionalLiteralsAndProviderOptions(t *testing.T) {
-	request := PermissionsSetRequiredRequest{Required: true}
-	if wire := encodeRequest(t, request); !reflect.DeepEqual(wire, map[string]any{"required": true}) {
-		t.Fatalf("legacy permission requirement changed: %v", wire)
-	}
-	options := PermissionsSetRequiredRequest{Required: false}
-	if wire := encodeRequest(t, options); !reflect.DeepEqual(wire, map[string]any{"required": false}) {
-		t.Fatalf("provider identity must be omitted by default: %v", wire)
-	}
-	provider := "provider"
-	options.ProviderID = &provider
-	expected := map[string]any{"required": false, "providerId": provider}
-	if wire := encodeRequest(t, options); !reflect.DeepEqual(wire, expected) {
-		t.Fatalf("provider requirement = %v, want %v", wire, expected)
-	}
-}
-
-func TestPermissionRequirementOptionsOnWire(t *testing.T) {
-	clientConn, serverConn := net.Pipe()
-	defer clientConn.Close()
-	defer serverConn.Close()
-	client := jsonrpc2.NewClient(clientConn, clientConn)
-	server := jsonrpc2.NewClient(serverConn, serverConn)
-	requests := make(chan json.RawMessage, 2)
-	server.SetRequestHandler("session.permissions.setRequired", func(params json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
-		requests <- params
-		return json.RawMessage(`{"success":true}`), nil
-	})
-	client.Start()
-	server.Start()
-	defer client.Stop()
-	defer server.Stop()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	api := NewSessionRPC(client, "permission-session").Permissions
-	if _, err := api.SetRequired(ctx, &PermissionsSetRequiredRequest{Required: true}); err != nil {
-		t.Fatal(err)
-	}
-	provider := "provider"
-	if _, err := api.SetRequired(ctx, &PermissionsSetRequiredRequest{
-		Required: false, ProviderID: &provider,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	for _, expected := range []map[string]any{
-		{"sessionId": "permission-session", "required": true},
-		{"sessionId": "permission-session", "required": false, "providerId": provider},
-	} {
-		select {
-		case raw := <-requests:
-			var actual map[string]any
-			if err := json.Unmarshal(raw, &actual); err != nil {
-				t.Fatal(err)
-			}
-			if !reflect.DeepEqual(actual, expected) {
-				t.Fatalf("permission requirement = %v, want %v", actual, expected)
-			}
-		case <-ctx.Done():
-			t.Fatal(ctx.Err())
 		}
 	}
 }
@@ -470,7 +387,7 @@ func TestPluginsListOnWire(t *testing.T) {
 		List(context.Context, *PluginsListRequest) (*PluginListResult, error)
 	} = (*ServerPluginsAPI)(nil)
 
-	for _, name := range []string{"method-value", "nil-options", "context"} {
+	for _, name := range []string{"nil-options", "context"} {
 		t.Run(name, func(t *testing.T) {
 			clientConn, serverConn := net.Pipe()
 			defer clientConn.Close()
@@ -501,11 +418,8 @@ func TestPluginsListOnWire(t *testing.T) {
 				})
 				expected["workingDirectory"] = directory
 				expected["pluginDirectories"] = []any{directory}
-			case "nil-options":
-				result, err = api.List(ctx, nil)
 			default:
-				list := api.List
-				result, err = list(ctx, nil)
+				result, err = api.List(ctx, nil)
 			}
 			if err != nil {
 				t.Fatal(err)

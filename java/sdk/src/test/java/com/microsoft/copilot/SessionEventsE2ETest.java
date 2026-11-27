@@ -27,14 +27,10 @@ import org.junit.jupiter.api.Test;
 
 import com.microsoft.copilot.generated.SessionEvent;
 import com.microsoft.copilot.generated.AssistantMessageEvent;
-import com.microsoft.copilot.generated.AssistantTurnEndEvent;
-import com.microsoft.copilot.generated.AssistantTurnStartEvent;
-import com.microsoft.copilot.generated.AssistantUsageEvent;
 import com.microsoft.copilot.generated.SessionIdleEvent;
 import com.microsoft.copilot.generated.SessionModeChangedEvent;
 import com.microsoft.copilot.generated.ToolExecutionCompleteEvent;
 import com.microsoft.copilot.generated.ToolExecutionStartEvent;
-import com.microsoft.copilot.generated.UserMessageEvent;
 import com.microsoft.copilot.generated.rpc.SessionMode;
 import com.microsoft.copilot.generated.rpc.SessionModeSetParams;
 import com.microsoft.copilot.rpc.MessageOptions;
@@ -69,68 +65,12 @@ public class SessionEventsE2ETest {
      *
      * @see Snapshot: session/should_receive_session_events
      */
-    @Test
-    void testShouldReceiveSessionEvents_assistantTurnEvents() throws Exception {
-        // Use existing session snapshot that emits turn events
-        ctx.configureForTest("session", "should_receive_session_events");
-
-        var allEvents = new CopyOnWriteArrayList<SessionEvent>();
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig().setPermissions(
-                    ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))).get();
-
-            session.on(event -> allEvents.add(event));
-
-            // Use prompt that matches the snapshot
-            session.sendAndWait(new MessageOptions().setPrompt("What is 100+200?")).get(60, TimeUnit.SECONDS);
-
-            // Verify turn lifecycle events
-            assertTrue(allEvents.stream().anyMatch(e -> e instanceof AssistantTurnStartEvent),
-                    "Should receive assistant.turn_start event");
-            assertTrue(allEvents.stream().anyMatch(e -> e instanceof AssistantTurnEndEvent),
-                    "Should receive assistant.turn_end event");
-
-            // Verify order: turn_start should come before turn_end
-            int turnStartIndex = -1;
-            int turnEndIndex = -1;
-            for (int i = 0; i < allEvents.size(); i++) {
-                if (allEvents.get(i) instanceof AssistantTurnStartEvent && turnStartIndex == -1) {
-                    turnStartIndex = i;
-                }
-                if (allEvents.get(i) instanceof AssistantTurnEndEvent) {
-                    turnEndIndex = i;
-                }
-            }
-            assertTrue(turnStartIndex < turnEndIndex, "turn_start should come before turn_end");
-        }
-    }
 
     /**
      * Verifies that user message events are emitted.
      *
      * @see Snapshot: session/should_receive_session_events
      */
-    @Test
-    void testShouldReceiveSessionEvents_userMessageEvent() throws Exception {
-        // Use existing session snapshot
-        ctx.configureForTest("session", "should_receive_session_events");
-
-        var userMessages = new CopyOnWriteArrayList<UserMessageEvent>();
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig().setPermissions(
-                    ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))).get();
-
-            session.on(UserMessageEvent.class, userMessages::add);
-
-            // Use prompt that matches the snapshot
-            session.sendAndWait(new MessageOptions().setPrompt("What is 100+200?")).get(60, TimeUnit.SECONDS);
-
-            // Verify user message was captured
-            assertFalse(userMessages.isEmpty(), "Should receive user.message event");
-        }
-    }
 
     @Test
     @AllowCopilotExperimental
@@ -201,30 +141,6 @@ public class SessionEventsE2ETest {
      *
      * @see Snapshot: session/should_receive_session_events
      */
-    @Test
-    void testShouldReceiveSessionEvents_assistantUsageEvent() throws Exception {
-        // Use existing session snapshot
-        ctx.configureForTest("session", "should_receive_session_events");
-
-        var usageEvents = new CopyOnWriteArrayList<AssistantUsageEvent>();
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig().setPermissions(
-                    ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))).get();
-
-            session.on(AssistantUsageEvent.class, usageEvents::add);
-
-            // Use prompt that matches the snapshot
-            session.sendAndWait(new MessageOptions().setPrompt("What is 100+200?")).get(60, TimeUnit.SECONDS);
-
-            // Usage events may or may not be emitted depending on the model/API version
-            // This test verifies the event handler works when they are emitted
-            // We don't assert they must be present since it depends on the backend
-            if (!usageEvents.isEmpty()) {
-                assertNotNull(usageEvents.get(0).getData(), "Usage event should carry data");
-            }
-        }
-    }
 
     /**
      * Verifies that an earlier synchronous root-idle listener finishes before

@@ -275,17 +275,11 @@ async def test_memory_store_callback_self_cancellation_is_a_failure(cancel_style
     }
 
 
-class _HostAbort(BaseException):
-    """A host-defined BaseException that is not an Exception, like pytest's ``Failed``."""
-
-
-@pytest.mark.parametrize("shape", ["custom-base-exception", "pytest-fail"])
 @pytest.mark.asyncio
-async def test_memory_store_callback_raising_base_exception_is_a_failure(shape: str) -> None:
+async def test_memory_store_callback_raising_base_exception_is_a_failure() -> None:
     async def store(memory: StoredMemory) -> None:
-        if shape == "pytest-fail":
-            pytest.fail("store assertion failed")
-        raise _HostAbort("store assertion failed")
+        # pytest's Failed is a BaseException that is not an Exception.
+        pytest.fail("store assertion failed")
 
     client = CopilotClient(
         mode="coding-agent", runtime=RuntimeConnection.for_tcp("localhost", 1234)

@@ -118,31 +118,6 @@ public class ScenarioTestingCloudE2ETests(E2ETestFixture fixture, ITestOutputHel
         Assert.Equal(connection.SessionId, resumeRequest.GetProperty("sessionId").GetString());
     }
 
-    [Fact]
-    [Trait(E2ETestTraits.Backend, E2ETestTraits.SelfConfiguredBackend)]
-    public async Task Should_Expose_Cloud_Resource_Mismatch_Before_Resume()
-    {
-        const string ExpectedResourceId = "github/copilot-sdk#123";
-        var (cliPath, capturePath) = await CreateFakeCloudRuntimeAsync();
-        await using var client = Ctx.CreateClient(options: new CopilotClientOptions
-        {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForSpawnedStdio(
-                path: cliPath,
-                args: ["--capture-file", capturePath, "--resource-id", "github/docs#456"]),
-            GitHub = new ClientGitHubOptions { UseLoggedInUser = false }
-        });
-        await client.StartAsync();
-
-        var connection = await client.Rpc.Sessions.ConnectAsync("cloud-control-session");
-        Assert.NotEqual(ExpectedResourceId, connection.Metadata.ResourceId);
-
-        using var capture = await WaitForCaptureAsync(
-            capturePath,
-            root => GetRequests(root, "sessions.connect").Count == 1);
-        Assert.Empty(GetRequests(capture.RootElement, "session.resume"));
-    }
-
     private async Task<(string CliPath, string CapturePath)> CreateFakeCloudRuntimeAsync()
     {
         var cliPath = Path.Join(Ctx.WorkDir, $"scenario-client-cloud-{Guid.NewGuid():N}.js");

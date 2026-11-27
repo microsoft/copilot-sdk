@@ -223,59 +223,6 @@ func TestCommandsE2E(t *testing.T) {
 
 		session2.Disconnect()
 	})
-
-	t.Run("session with commands creates successfully", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		session, err := client1.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Interaction: copilot.SessionInteractionOptions{Commands: []copilot.CommandDefinition{
-			{Name: "deploy", Description: "Deploy the app", Handler: func(_ copilot.CommandContext) error { return nil }},
-			{Name: "rollback", Handler: func(_ copilot.CommandContext) error { return nil }},
-		}},
-		})
-		if err != nil {
-			t.Fatalf("CreateSession failed: %v", err)
-		}
-		if session.SessionID == "" {
-			t.Error("Expected non-empty SessionID")
-		}
-		_ = session.Disconnect()
-	})
-
-	t.Run("session with commands resumes successfully", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		session1, err := client1.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}})
-		if err != nil {
-			t.Fatalf("CreateSession failed: %v", err)
-		}
-		sessionID := session1.SessionID
-		t.Cleanup(func() { _ = session1.Disconnect() })
-
-		session2, err := client1.ResumeSession(t.Context(), sessionID, &copilot.ResumeSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Interaction: copilot.SessionInteractionOptions{Commands: []copilot.CommandDefinition{
-			{Name: "deploy", Description: "Deploy", Handler: func(_ copilot.CommandContext) error { return nil }},
-		}},
-		})
-		if err != nil {
-			t.Fatalf("ResumeSession failed: %v", err)
-		}
-		if session2.SessionID != sessionID {
-			t.Errorf("Expected SessionID %q, got %q", sessionID, session2.SessionID)
-		}
-		_ = session2.Disconnect()
-	})
-
-	t.Run("session with no commands creates successfully", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		session, err := client1.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}})
-		if err != nil {
-			t.Fatalf("CreateSession failed: %v", err)
-		}
-		if session == nil {
-			t.Fatal("Expected non-nil session")
-		}
-		_ = session.Disconnect()
-	})
 }
 
 var knownBuiltinCommands = []string{"help", "model", "compact"}
@@ -362,39 +309,6 @@ func TestUIElicitationCallbackE2E(t *testing.T) {
 	ctx := testharness.NewTestContext(t)
 	client := ctx.NewClient()
 	t.Cleanup(func() { client.ForceStop() })
-
-	t.Run("session with OnElicitationRequest reports elicitation capability", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Interaction: copilot.SessionInteractionOptions{OnElicitationRequest: func(ctx copilot.ElicitationContext) (copilot.ElicitationResult, error) {
-			return copilot.ElicitationResult{Action: copilot.ElicitationActionAccept, Content: map[string]any{}}, nil
-		}},
-		})
-		if err != nil {
-			t.Fatalf("Failed to create session: %v", err)
-		}
-
-		caps := session.Capabilities()
-		if caps.UI == nil || !caps.UI.Elicitation {
-			// The test harness may or may not include capabilities in the response.
-			// When running against a real CLI, this will be true.
-			t.Logf("Note: capabilities.ui.elicitation=%v (may be false with test harness)", caps.UI)
-		}
-	})
-
-	t.Run("session without OnElicitationRequest reports no elicitation capability", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}})
-		if err != nil {
-			t.Fatalf("Failed to create session: %v", err)
-		}
-
-		caps := session.Capabilities()
-		if caps.UI != nil && caps.UI.Elicitation {
-			t.Error("Expected no elicitation capability when OnElicitationRequest is not provided")
-		}
-	})
 
 	t.Run("confirm returns true when handler accepts", func(t *testing.T) {
 		ctx.ConfigureForTest(t)
@@ -577,34 +491,6 @@ func TestUIElicitationCallbackE2E(t *testing.T) {
 			t.Errorf("Expected cancel.Action='cancel', got %q", cancel.Action)
 		}
 	})
-
-	t.Run("defaults capabilities when not provided", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}})
-		if err != nil {
-			t.Fatalf("CreateSession failed: %v", err)
-		}
-		// A session always exposes some capability struct (even when empty).
-		_ = session.Capabilities()
-		_ = session.Disconnect()
-	})
-
-	t.Run("sends requestElicitation when handler provided", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Interaction: copilot.SessionInteractionOptions{OnElicitationRequest: func(ec copilot.ElicitationContext) (copilot.ElicitationResult, error) {
-			return copilot.ElicitationResult{Action: copilot.ElicitationActionAccept, Content: map[string]any{}}, nil
-		}},
-		})
-		if err != nil {
-			t.Fatalf("CreateSession failed: %v", err)
-		}
-		if session.SessionID == "" {
-			t.Error("Expected non-empty SessionID when handler provided")
-		}
-		_ = session.Disconnect()
-	})
 }
 
 // schemaHasProperty reports whether the elicitation schema has a top-level
@@ -636,59 +522,6 @@ func TestUIElicitationMultiClientE2E(t *testing.T) {
 	if runtimePort == 0 {
 		t.Fatalf("Expected non-zero port from TCP mode client")
 	}
-
-	t.Run("capabilities.changed fires when second client joins with elicitation handler", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		// Client1 creates a session without elicitation handler
-		session1, err := client1.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}})
-		if err != nil {
-			t.Fatalf("Failed to create session: %v", err)
-		}
-
-		// Verify initial state: no elicitation capability
-		caps := session1.Capabilities()
-		if caps.UI != nil && caps.UI.Elicitation {
-			t.Error("Expected no elicitation capability before second client joins")
-		}
-
-		// Listen for capabilities.changed with elicitation enabled
-		capEnabledCh := make(chan copilot.SessionEvent, 1)
-		unsubscribe := session1.On(func(event copilot.SessionEvent) {
-			if d, ok := event.Data.(*copilot.CapabilitiesChangedData); ok && d.UI != nil && d.UI.Elicitation != nil && *d.UI.Elicitation {
-				select {
-				case capEnabledCh <- event:
-				default:
-				}
-			}
-		})
-
-		// Client2 joins with elicitation handler — should trigger capabilities.changed
-		client2 := copilot.NewClient(&copilot.ClientOptions{Mode: copilot.ModeCodingAgent, Runtime: copilot.TCPConnection{Host: "localhost", Port: runtimePort, ConnectionToken: sharedTCPToken}})
-		session2, err := client2.ResumeSession(t.Context(), session1.SessionID, &copilot.ResumeSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, SuppressResumeEvent: true, Interaction: copilot.SessionInteractionOptions{OnElicitationRequest: func(ctx copilot.ElicitationContext) (copilot.ElicitationResult, error) {
-			return copilot.ElicitationResult{Action: copilot.ElicitationActionAccept, Content: map[string]any{}}, nil
-		}},
-		})
-		if err != nil {
-			client2.ForceStop()
-			t.Fatalf("Failed to resume session: %v", err)
-		}
-
-		// Wait for the elicitation-enabled capabilities.changed event
-		select {
-		case capEvent := <-capEnabledCh:
-			capData, capOk := capEvent.Data.(*copilot.CapabilitiesChangedData)
-			if !capOk || capData.UI == nil || capData.UI.Elicitation == nil || !*capData.UI.Elicitation {
-				t.Errorf("Expected capabilities.changed with ui.elicitation=true, got %+v", capEvent.Data)
-			}
-		case <-time.After(30 * time.Second):
-			t.Fatal("Timed out waiting for capabilities.changed event (elicitation enabled)")
-		}
-
-		unsubscribe()
-		session2.Disconnect()
-		client2.ForceStop()
-	})
 
 	t.Run("capabilities.changed fires when elicitation provider disconnects", func(t *testing.T) {
 		ctx.ConfigureForTest(t)

@@ -242,42 +242,6 @@ public class MultiClientE2ETests : IClassFixture<MultiClientTestFixture>, IAsync
     }
 
     [Fact]
-    public async Task Two_Clients_Register_Different_Tools_And_Agent_Uses_Both()
-    {
-        var toolA = AIFunctionFactory.Create(CityLookup, "city_lookup");
-        var toolB = AIFunctionFactory.Create(CurrencyLookup, "currency_lookup");
-
-        var session1 = await Ctx.CreateSessionAsync(Client1, new CreateSessionOptions
-        { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll }, Tools = new SessionToolOptions { Definitions = [toolA] } });
-
-        var session2 = await Ctx.ResumeSessionAsync(Client2, session1.SessionId, new ResumeSessionOptions
-        { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll }, Tools = new SessionToolOptions { Definitions = [toolB] } });
-
-        // Send prompts sequentially to avoid nondeterministic tool_call ordering
-        var response1 = await session1.SendAndWaitAsync(new MessageOptions
-        {
-            Prompt = "Use the city_lookup tool with countryCode 'US' and tell me the result.",
-        });
-        Assert.NotNull(response1);
-        Assert.Contains("CITY_FOR_US", response1!.Data.Content ?? string.Empty);
-
-        var response2 = await session1.SendAndWaitAsync(new MessageOptions
-        {
-            Prompt = "Now use the currency_lookup tool with countryCode 'US' and tell me the result.",
-        });
-        Assert.NotNull(response2);
-        Assert.Contains("CURRENCY_FOR_US", response2!.Data.Content ?? string.Empty);
-
-        await session2.DisposeAsync();
-
-        [Description("Returns a city name for a given country code")]
-        static string CityLookup([Description("A two-letter country code")] string countryCode) => $"CITY_FOR_{countryCode}";
-
-        [Description("Returns a currency for a given country code")]
-        static string CurrencyLookup([Description("A two-letter country code")] string countryCode) => $"CURRENCY_FOR_{countryCode}";
-    }
-
-    [Fact]
     public async Task Disconnecting_Client_Removes_Its_Tools()
     {
         var toolA = AIFunctionFactory.Create(StableTool, "stable_tool");

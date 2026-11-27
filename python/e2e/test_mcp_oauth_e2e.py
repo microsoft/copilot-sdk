@@ -160,65 +160,6 @@ class TestMcpOAuth:
         finally:
             await _stop_process(process)
 
-    async def test_should_satisfy_mcp_oauth_using_host_provided_token(self, ctx: E2ETestContext):
-        url, process = await _start_oauth_mcp_server()
-        server_name = "oauth-protected-mcp"
-        observed_request = None
-
-        def on_mcp_auth_request(request, _invocation):
-            nonlocal observed_request
-            observed_request = request
-            return {
-                "kind": "token",
-                "accessToken": EXPECTED_TOKEN,
-                "tokenType": "Bearer",
-                "expiresIn": 3600,
-            }
-
-        try:
-            mcp_servers: dict[str, MCPServerConfig] = {
-                server_name: {
-                    "type": "http",
-                    "url": f"{url}/mcp",
-                    "tools": ["*"],
-                }
-            }
-            async with await ctx.client.create_session(
-                permissions={"on_request": PermissionHandler.approve_all},
-                mcp={"on_auth_request": on_mcp_auth_request, "servers": mcp_servers},
-            ) as session:
-                await session.rpc.mcp.reload()
-                await _wait_for_mcp_server_status(session, server_name)
-
-                tools = await session.rpc.mcp.list_tools(
-                    MCPListToolsRequest(server_name=server_name)
-                )
-                assert [tool.name for tool in tools.tools] == ["whoami"]
-
-            assert observed_request is not None
-            assert observed_request["serverName"] == server_name
-            assert observed_request["serverUrl"] == f"{url}/mcp"
-            assert observed_request["reason"] == "initial"
-            assert observed_request["wwwAuthenticateParams"] == {
-                "resourceMetadataUrl": f"{url}/.well-known/oauth-protected-resource",
-                "scope": "mcp.read",
-                "error": "invalid_token",
-            }
-            assert json.loads(observed_request["resourceMetadata"]) == {
-                "resource": f"{url}/mcp",
-                "authorization_servers": [url],
-                "scopes_supported": ["mcp.read"],
-                "bearer_methods_supported": ["header"],
-            }
-
-            requests = await _requests(url)
-            assert any(request["authorization"] is None for request in requests)
-            assert any(
-                request["authorization"] == f"Bearer {EXPECTED_TOKEN}" for request in requests
-            )
-        finally:
-            await _stop_process(process)
-
     async def test_should_request_replacement_tokens_across_mcp_oauth_lifecycle(
         self, ctx: E2ETestContext
     ):
@@ -245,7 +186,12 @@ class TestMcpOAuth:
                 return {"kind": "token", "accessToken": UPSCOPE_TOKEN}
             if request["reason"] == "reauth":
                 return {"kind": "token", "accessToken": REAUTH_TOKEN}
-            return {"kind": "token", "accessToken": EXPECTED_TOKEN}
+            return {
+                "kind": "token",
+                "accessToken": EXPECTED_TOKEN,
+                "tokenType": "Bearer",
+                "expiresIn": 3600,
+            }
 
         try:
             mcp_servers: dict[str, MCPServerConfig] = {
@@ -268,6 +214,10 @@ class TestMcpOAuth:
                 # racing the initial challenge emitted during session.create.
                 await session.rpc.mcp.reload()
                 await _wait_for_mcp_server_status(session, server_name)
+                tools = await session.rpc.mcp.list_tools(
+                    MCPListToolsRequest(server_name=server_name)
+                )
+                assert [tool.name for tool in tools.tools] == ["whoami"]
                 refresh_count = 0
 
                 for scenario in ("refresh", "upscope", "reauth"):
@@ -281,6 +231,22 @@ class TestMcpOAuth:
                     )
                     assert result["content"] == [{"type": "text", "text": "oauth-test-user"}]
 
+            initial = next(
+                request for request in observed_requests if request["reason"] == "initial"
+            )
+            assert initial["serverName"] == server_name
+            assert initial["serverUrl"] == f"{url}/mcp"
+            assert initial["wwwAuthenticateParams"] == {
+                "resourceMetadataUrl": f"{url}/.well-known/oauth-protected-resource",
+                "scope": "mcp.read",
+                "error": "invalid_token",
+            }
+            assert json.loads(initial["resourceMetadata"]) == {
+                "resource": f"{url}/mcp",
+                "authorization_servers": [url],
+                "scopes_supported": ["mcp.read"],
+                "bearer_methods_supported": ["header"],
+            }
             assert [
                 request["reason"] for request in observed_requests if request["reason"] != "initial"
             ] == [
@@ -290,6 +256,10 @@ class TestMcpOAuth:
                 "reauth",
             ]
             requests = await _requests(url)
+            assert any(request["authorization"] is None for request in requests)
+            assert any(
+                request["authorization"] == f"Bearer {EXPECTED_TOKEN}" for request in requests
+            )
             assert any(
                 request["authorization"] == f"Bearer {REFRESH_TOKEN}" for request in requests
             )

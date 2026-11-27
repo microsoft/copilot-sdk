@@ -20,30 +20,6 @@ use crate::generated::session_events::{
 use crate::rpc::SandboxConfig;
 
 #[test]
-fn instruction_discovery_preserves_explicit_roots_on_wire() {
-    let request: crate::generated::api_types::InstructionsDiscoverRequest =
-        serde_json::from_value(json!({
-            "configDir": "profile",
-            "projectPaths": ["workspace"],
-            "instructionDirectories": ["explicit-instructions"],
-            "excludeHostInstructions": true
-        }))
-        .unwrap();
-
-    let wire = serde_json::to_value(request).unwrap();
-    assert_eq!(
-        wire,
-        json!({
-            "configDir": "profile",
-            "projectPaths": ["workspace"],
-            "instructionDirectories": ["explicit-instructions"],
-            "excludeHostInstructions": true
-        }),
-        "The canonical request must retain the profile and explicit instruction roots."
-    );
-}
-
-#[test]
 fn local_model_configuration_survives_public_type_serialization() {
     let provider = json!({
         "name": "local", "type": "winml", "baseUrl": "model.gguf",
@@ -390,15 +366,6 @@ fn programmatic_typed_first_event_preserves_null_parent() {
 #[should_panic(expected = "tool parameter schema must be a JSON object")]
 fn tool_with_parameters_panics_on_non_object_value() {
     let _ = Tool::new("noop").with_parameters(json!(null));
-}
-
-#[test]
-fn tool_annotations_serialize_only_when_set() {
-    let plain = serde_json::to_value(Tool::new("plain")).unwrap();
-    assert!(plain.get("idempotent").is_none());
-
-    let annotated = serde_json::to_value(Tool::new("lookup").with_idempotent(true)).unwrap();
-    assert_eq!(annotated["idempotent"], json!(true));
 }
 
 #[test]

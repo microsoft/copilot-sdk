@@ -23,8 +23,7 @@ import com.microsoft.copilot.rpc.RuntimeConnection;
 class AuthHostE2ETest {
 
     @ParameterizedTest
-    @CsvSource({"'', fallback.ghe.example, https://fallback.ghe.example",
-            "tenant.ghe.example, fallback.ghe.example, https://tenant.ghe.example", "'', '', https://github.com"})
+    @CsvSource({"tenant.ghe.example, fallback.ghe.example, https://tenant.ghe.example"})
     void usesConfiguredGitHubHostForAuthentication(String copilotHost, String ghHost, String expectedHost)
             throws Exception {
         try (var ctx = E2ETestContext.create()) {

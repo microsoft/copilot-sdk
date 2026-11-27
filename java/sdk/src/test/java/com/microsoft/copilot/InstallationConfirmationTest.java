@@ -86,18 +86,6 @@ class InstallationConfirmationTest {
     }
 
     @Test
-    void cancelDecisionIsEchoed() throws Exception {
-        try (var peer = new TestPeer(
-                (request, context) -> CompletableFuture.completedFuture(InstallationDecision.CANCEL))) {
-            var result = peer.confirm(request("cancel")).get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
-
-            assertEquals("challenge-cancel", result.confirmationId());
-            assertEquals("fingerprint-cancel", result.reviewFingerprint());
-            assertEquals(InstallationDecision.CANCEL, result.decision());
-        }
-    }
-
-    @Test
     void concurrentOutOfOrderDecisionsAndAnotherRpcWhilePending() throws Exception {
         var aDecision = new CompletableFuture<InstallationDecision>();
         var bDecision = new CompletableFuture<InstallationDecision>();

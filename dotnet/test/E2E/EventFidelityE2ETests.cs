@@ -19,41 +19,6 @@ public class EventFidelityE2ETests(E2ETestFixture fixture, ITestOutputHelper out
     : E2ETestBase(fixture, "event_fidelity", output)
 {
     [Fact]
-    public async Task Should_Emit_Events_In_Correct_Order_For_Tool_Using_Conversation()
-    {
-        await File.WriteAllTextAsync(Path.Join(Ctx.WorkDir, "hello.txt"), "Hello World");
-
-        var session = await CreateSessionAsync();
-        var events = new List<SessionEvent>();
-        session.On<SessionEvent>(evt => { lock (events) { events.Add(evt); } });
-
-        await session.SendAndWaitAsync(new MessageOptions
-        {
-            Prompt = "Read the file 'hello.txt' and tell me its contents.",
-        });
-
-        List<string> types;
-        lock (events) { types = events.Select(e => e.Type).ToList(); }
-
-        Assert.Contains("user.message", types);
-        Assert.Contains("assistant.message", types);
-
-        // user.message should come before the last assistant.message
-        var userIdx = types.IndexOf("user.message");
-        var assistantIdx = types.LastIndexOf("assistant.message");
-        Assert.True(userIdx < assistantIdx, $"Expected user.message ({userIdx}) before last assistant.message ({assistantIdx})");
-
-        // session.idle should complete the conversational turn. Post-turn
-        // metadata events may arrive after it on slower target frameworks.
-        var idleIdx = types.LastIndexOf("session.idle");
-        Assert.True(
-            assistantIdx < idleIdx,
-            $"Expected last assistant.message ({assistantIdx}) before session.idle ({idleIdx}): {string.Join(", ", types)}");
-
-        await session.DisposeAsync();
-    }
-
-    [Fact]
     public async Task Should_Include_Valid_Fields_On_All_Events()
     {
         var session = await CreateSessionAsync();
@@ -159,63 +124,6 @@ public class EventFidelityE2ETests(E2ETestFixture fixture, ITestOutputHelper out
         Assert.NotNull(pendingEvent);
         Assert.NotNull(answer);
         Assert.Contains("18", answer!.Data.Content);
-
-        await session.DisposeAsync();
-    }
-
-    [Fact]
-    public async Task Should_Emit_Tool_Execution_Events_With_Correct_Fields()
-    {
-        await File.WriteAllTextAsync(Path.Join(Ctx.WorkDir, "data.txt"), "test data");
-
-        var session = await CreateSessionAsync();
-        var events = new List<SessionEvent>();
-        session.On<SessionEvent>(evt => { lock (events) { events.Add(evt); } });
-
-        await session.SendAndWaitAsync(new MessageOptions
-        {
-            Prompt = "Read the file 'data.txt'.",
-        });
-
-        List<SessionEvent> snapshot;
-        lock (events) { snapshot = [.. events]; }
-
-        var toolStarts = snapshot.OfType<ToolExecutionStartEvent>().ToList();
-        var toolCompletes = snapshot.OfType<ToolExecutionCompleteEvent>().ToList();
-
-        Assert.NotEmpty(toolStarts);
-        Assert.NotEmpty(toolCompletes);
-
-        var firstStart = toolStarts[0];
-        Assert.False(string.IsNullOrEmpty(firstStart.Data.ToolCallId));
-        Assert.False(string.IsNullOrEmpty(firstStart.Data.ToolName));
-
-        var firstComplete = toolCompletes[0];
-        Assert.False(string.IsNullOrEmpty(firstComplete.Data.ToolCallId));
-
-        await session.DisposeAsync();
-    }
-
-    [Fact]
-    public async Task Should_Emit_Assistant_Message_With_MessageId()
-    {
-        var session = await CreateSessionAsync();
-        var events = new List<SessionEvent>();
-        session.On<SessionEvent>(evt => { lock (events) { events.Add(evt); } });
-
-        await session.SendAndWaitAsync(new MessageOptions
-        {
-            Prompt = "Say 'pong'.",
-        });
-
-        List<AssistantMessageEvent> assistantEvents;
-        lock (events) { assistantEvents = events.OfType<AssistantMessageEvent>().ToList(); }
-
-        Assert.NotEmpty(assistantEvents);
-
-        var msg = assistantEvents[0];
-        Assert.False(string.IsNullOrEmpty(msg.Data.MessageId));
-        Assert.Contains("pong", msg.Data.Content);
 
         await session.DisposeAsync();
     }

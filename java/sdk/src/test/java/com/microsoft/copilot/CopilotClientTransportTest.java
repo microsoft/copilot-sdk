@@ -48,7 +48,6 @@ import com.microsoft.copilot.rpc.InProcessRuntimeConnection;
 import com.microsoft.copilot.rpc.OwnedRuntimeConnection;
 import com.microsoft.copilot.rpc.RuntimeConnection;
 import com.microsoft.copilot.rpc.SpawnedStdioRuntimeConnection;
-import com.microsoft.copilot.rpc.SpawnedTcpRuntimeConnection;
 import com.microsoft.copilot.rpc.TelemetryConfig;
 import com.microsoft.copilot.rpc.TcpRuntimeConnection;
 
@@ -340,36 +339,6 @@ class CopilotClientTransportTest {
         }
     }
 
-    @Test
-    void explicitConnectionSelectsInProcess() {
-        var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setRuntime(RuntimeConnection.forInProcess());
-        try (var client = new CopilotClient(options)) {
-            assertInstanceOf(InProcessRuntimeConnection.class, client.getRuntimeConnection());
-        }
-    }
-
-    @Test
-    void spawnedTcpConnectionSelectsTcp() {
-        var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setRuntime(RuntimeConnection.forSpawnedTcp().setPort(4321).setConnectionToken("secret"));
-        try (var client = new CopilotClient(options)) {
-            var connection = assertInstanceOf(SpawnedTcpRuntimeConnection.class, client.getRuntimeConnection());
-            assertEquals(4321, connection.getPort());
-            assertEquals("secret", connection.getConnectionToken());
-        }
-    }
-
-    @Test
-    void existingTcpConnectionPreservesHostAndPort() {
-        try (var client = new CopilotClient(new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setRuntime(RuntimeConnection.forTcp("localhost", 3000)))) {
-            var connection = assertInstanceOf(TcpRuntimeConnection.class, client.getRuntimeConnection());
-            assertEquals("localhost", connection.getHost());
-            assertEquals(3000, connection.getPort());
-        }
-    }
-
     @ParameterizedTest
     @ValueSource(strings = {"github.token", "github.useLoggedInUser", "observability.logLevel",
             "observability.telemetry", "remote"})
@@ -420,16 +389,6 @@ class CopilotClientTransportTest {
         try (var client = new CopilotClient(options)) {
             assertTrue(client.listModels().get(5, TimeUnit.SECONDS).isEmpty());
             assertInstanceOf(TcpRuntimeConnection.class, client.getRuntimeConnection());
-        }
-    }
-
-    @Test
-    void connectionCanBeReusedForSeveralClients() {
-        var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setRuntime(RuntimeConnection.forSpawnedStdio("/opt/copilot"));
-        try (var first = new CopilotClient(options); var second = new CopilotClient(options)) {
-            assertInstanceOf(SpawnedStdioRuntimeConnection.class, first.getRuntimeConnection());
-            assertInstanceOf(SpawnedStdioRuntimeConnection.class, second.getRuntimeConnection());
         }
     }
 

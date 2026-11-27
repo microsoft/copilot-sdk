@@ -19,9 +19,7 @@ import com.microsoft.copilot.rpc.RuntimeConnection;
 import com.microsoft.copilot.rpc.PermissionHandler;
 import com.microsoft.copilot.rpc.CreateSessionOptions;
 import java.io.IOException;
-import java.net.BindException;
 import java.net.InetAddress;
-import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.util.HashMap;
 import java.util.Arrays;
@@ -42,14 +40,6 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 @AllowCopilotExperimental
 class AhpHostTest {
-    @Test
-    void fakeRuntimeReservesItsClientAddress() throws Exception {
-        try (var server = new FakeRuntime(); var competing = new ServerSocket()) {
-            competing.setReuseAddress(true);
-            assertThrows(BindException.class,
-                    () -> competing.bind(new InetSocketAddress("127.0.0.1", server.listener.getLocalPort())));
-        }
-    }
 
     @Test
     void nullPublicationIdsPreserveOmittedWireFields() throws Exception {

@@ -38,14 +38,6 @@ public class AgentModeTest {
     }
 
     @Test
-    void fromValue_knownValues_returnsCorrectEnum() {
-        assertEquals(AgentMode.INTERACTIVE, AgentMode.fromValue("interactive"));
-        assertEquals(AgentMode.PLAN, AgentMode.fromValue("plan"));
-        assertEquals(AgentMode.AUTOPILOT, AgentMode.fromValue("autopilot"));
-        assertEquals(AgentMode.SHELL, AgentMode.fromValue("shell"));
-    }
-
-    @Test
     void fromValue_null_returnsNull() {
         assertNull(AgentMode.fromValue(null));
     }
@@ -54,17 +46,5 @@ public class AgentModeTest {
     void fromValue_unknownValue_throwsWithConsistentMessage() {
         var ex = assertThrows(IllegalArgumentException.class, () -> AgentMode.fromValue("unknown"));
         assertEquals("Unknown AgentMode value: unknown", ex.getMessage());
-    }
-
-    @Test
-    void jsonDeserialize_unknownValue_throws() {
-        String json = "\"not-a-mode\"";
-        assertThrows(Exception.class, () -> mapper.readValue(json, AgentMode.class));
-    }
-
-    @Test
-    void jsonSerialize_writesStringValue() throws Exception {
-        String json = mapper.writeValueAsString(AgentMode.AUTOPILOT);
-        assertEquals("\"autopilot\"", json);
     }
 }

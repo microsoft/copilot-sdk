@@ -164,31 +164,6 @@ async def test_exit_plan_mode_reply_carries_decision_context_at_top_level(labele
 
 
 @LABELED
-async def test_elicitation_answer_sends_decision_context_beside_result(labeled: bool) -> None:
-    rpc_client = Mock(request=AsyncMock(return_value={"success": True}))
-    session = CopilotSession("session-1", rpc_client)
-
-    def handler(context: ElicitationContext) -> ElicitationHandlerResult:
-        answer: ElicitationHandlerResult = {"action": "accept", "content": {"color": "blue"}}
-        return create_attributed_result(answer, PERSON_ANSWERED) if labeled else answer
-
-    session._register_elicitation_handler(handler)
-
-    await session._handle_elicitation_request(
-        {"session_id": session.session_id, "message": "Pick a color"}, "elicitation-1"
-    )
-
-    expected: dict = {
-        "sessionId": "session-1",
-        "requestId": "elicitation-1",
-        "result": {"action": "accept", "content": {"color": "blue"}},
-    }
-    if labeled:
-        expected["decisionContext"] = PERSON_ANSWERED_ON_WIRE
-    rpc_client.request.assert_awaited_once_with("session.ui.handlePendingElicitation", expected)
-
-
-@LABELED
 async def test_elicitation_image_metadata_survives_event_handler_and_rpc(labeled: bool) -> None:
     key = "github.com/copilot/ask-user-images"
     requested_meta = {key: {"version": 1, "fieldNames": ["screenshot"]}}

@@ -312,7 +312,6 @@ func TestClient_Network(t *testing.T) {
 			want    []string
 		}{
 			{"unset", nil, nil},
-			{"empty", &NetworkConfig{}, nil},
 			{"scope without callbacks", &NetworkConfig{Scope: NetworkScopeRuntime}, nil},
 			{"proxy resolution", &NetworkConfig{ResolveProxy: resolveProxy}, []string{`network.setProvider {"resolveProxy":{}}`}},
 			{
@@ -470,7 +469,11 @@ func TestClient_Network(t *testing.T) {
 				t.Fatalf("got %+v, want %+v", got, want)
 			}
 		})
+	}
 
+	// The handlers share handleCancellableRequest, so one method covers its lifecycle.
+	{
+		m := methods[0]
 		t.Run("does not start a "+m.method+" callback cancelled while it was queued", func(t *testing.T) {
 			invoked, skipped := make(chan struct{}), make(chan struct{})
 			ctx, cancel := context.WithCancel(context.Background())

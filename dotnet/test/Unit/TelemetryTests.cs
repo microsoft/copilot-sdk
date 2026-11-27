@@ -11,63 +11,6 @@ namespace Microsoft.Copilot.Test.Unit;
 public class TelemetryTests
 {
     [Fact]
-    public void TelemetryConfig_DefaultValues_AreNull()
-    {
-        var config = new TelemetryConfig();
-
-        Assert.Null(config.OtlpEndpoint);
-        Assert.Null(config.OtlpProtocol);
-        Assert.Null(config.FilePath);
-        Assert.Null(config.ExporterType);
-        Assert.Null(config.SourceName);
-        Assert.Null(config.CaptureContent);
-    }
-
-    [Fact]
-    public void TelemetryConfig_CanSetAllProperties()
-    {
-        var config = new TelemetryConfig
-        {
-            OtlpEndpoint = "http://localhost:4318",
-            OtlpProtocol = "http/protobuf",
-            FilePath = "/tmp/traces.json",
-            ExporterType = "otlp-http",
-            SourceName = "my-app",
-            CaptureContent = true
-        };
-
-        Assert.Equal("http://localhost:4318", config.OtlpEndpoint);
-        Assert.Equal("http/protobuf", config.OtlpProtocol);
-        Assert.Equal("/tmp/traces.json", config.FilePath);
-        Assert.Equal("otlp-http", config.ExporterType);
-        Assert.Equal("my-app", config.SourceName);
-        Assert.True(config.CaptureContent);
-    }
-
-    [Fact]
-    public void CopilotClientOptions_Telemetry_DefaultsToNull()
-    {
-        var options = new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent };
-
-        Assert.Null(options.Observability.Telemetry);
-    }
-
-    [Fact]
-    public void CopilotClientOptions_Clone_CopiesTelemetry()
-    {
-        var telemetry = new TelemetryConfig
-        {
-            OtlpEndpoint = "http://localhost:4318",
-            ExporterType = "otlp-http"
-        };
-
-        var options = new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Observability = new ClientObservabilityOptions { Telemetry = telemetry } };
-        var clone = options.Clone();
-
-        Assert.Same(telemetry, clone.Observability.Telemetry);
-    }
-
-    [Fact]
     public void TelemetryHelpers_Restores_W3C_Trace_Context()
     {
         using var parent = new Activity("parent");

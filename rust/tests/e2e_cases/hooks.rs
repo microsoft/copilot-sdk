@@ -10,48 +10,6 @@ use tokio::sync::mpsc;
 use super::support::recv_with_timeout;
 
 #[tokio::test]
-async fn should_invoke_posttooluse_hook_after_model_runs_a_tool() {
-    super::support::with_shared_e2e_context(
-        &E2E,
-        "hooks",
-        "should_invoke_posttooluse_hook_after_model_runs_a_tool",
-        |ctx| {
-            Box::pin(async move {
-                ctx.set_default_copilot_user();
-                std::fs::write(ctx.work_dir().join("world.txt"), "World from the test!")
-                    .expect("write world");
-                let (post_tx, mut post_rx) = mpsc::unbounded_channel();
-                let client = ctx.start_client().await;
-                let session = client
-                    .create_session(ctx.approve_all_session_config().with_hooks(|group| {
-                        group.with_handlers(Arc::new(RecordingHooks {
-                            pre_tx: None,
-                            post_tx: Some(post_tx),
-                            deny: false,
-                        }))
-                    }))
-                    .await
-                    .expect("create session");
-
-                session
-                    .send_and_wait("Read the contents of world.txt and tell me what it says")
-                    .await
-                    .expect("send");
-
-                let input = recv_with_timeout(&mut post_rx, "postToolUse hook").await;
-                assert_eq!(input.0, *session.id());
-                assert!(!input.1.is_empty());
-                assert!(input.2);
-
-                session.disconnect().await.expect("disconnect session");
-                client.stop().await.expect("stop client");
-            })
-        },
-    )
-    .await;
-}
-
-#[tokio::test]
 async fn should_invoke_both_pretooluse_and_posttooluse_hooks_for_single_tool_call() {
     super::support::with_shared_e2e_context(&E2E,
         "hooks",
@@ -84,15 +42,19 @@ async fn should_invoke_both_pretooluse_and_posttooluse_hooks_for_single_tool_cal
                 let post = recv_with_timeout(&mut post_rx, "postToolUse hook").await;
                 assert_eq!(pre.0, *session.id());
                 assert_eq!(post.0, *session.id());
+                let mut post_has_result = post.2;
+                assert!(!post.1.is_empty());
 
                 let mut pre_tools: HashSet<String> = HashSet::from([pre.1]);
                 while let Ok((_, tool_name)) = pre_rx.try_recv() {
                     pre_tools.insert(tool_name);
                 }
                 let mut post_tools: HashSet<String> = HashSet::from([post.1]);
-                while let Ok((_, tool_name, _)) = post_rx.try_recv() {
+                while let Ok((_, tool_name, has_result)) = post_rx.try_recv() {
                     post_tools.insert(tool_name);
+                    post_has_result |= has_result;
                 }
+                assert!(post_has_result, "expected a postToolUse input with a tool result");
                 assert!(
                     pre_tools.intersection(&post_tools).next().is_some(),
                     "expected a tool to appear in both pre and post hooks, got pre={pre_tools:?} post={post_tools:?}"
@@ -188,4 +150,4 @@ impl SessionHooks for RecordingHooks {
         None
     }
 }
-static E2E: super::support::SharedE2eGroup = super::support::SharedE2eGroup::standard("hooks", 3);
+static E2E: super::support::SharedE2eGroup = super::support::SharedE2eGroup::standard("hooks", 2);

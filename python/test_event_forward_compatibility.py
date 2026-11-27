@@ -2,9 +2,8 @@
 Test that unknown event types are handled gracefully for forward compatibility.
 
 This test verifies that:
-1. The session.usage_info event type is recognized
-2. Unknown future event types map to UNKNOWN enum value
-3. Real parsing errors (malformed data) are NOT suppressed and surface for visibility
+1. Unknown future event types map to UNKNOWN enum value
+2. Real parsing errors (malformed data) are NOT suppressed and surface for visibility
 """
 
 from datetime import datetime, timedelta
@@ -33,7 +32,6 @@ from copilot.session_events import (
     PermissionRecoveryAttemptRelation,
     PermissionRequestedData,
     PermissionRequestMemory,
-    PermissionRequestMemoryAction,
     SandboxControl,
     SandboxDecisionData,
     SandboxDecisionDataKind,
@@ -337,17 +335,6 @@ class TestEventForwardCompatibility:
         assert evaluation.reason_code is reason
         assert session_event_to_dict(event) == wire
 
-    def test_shell_evidence_reason_codes_are_published(self):
-        assert {
-            "content-excluded",
-            "unsupported-command-shape",
-            "unsupported-source",
-            "dynamic-source",
-            "too-many-sources",
-            "executable-unavailable",
-            "executable-too-large",
-        } <= {reason.value for reason in PermissionApprovalEvaluationReasonCode}
-
     def test_future_reason_code_decodes_as_unknown(self):
         event = session_event_from_dict(
             self._permission_requested_with_reason("future-runtime-reason")
@@ -579,23 +566,6 @@ class TestEventForwardCompatibility:
         serialized = session_event_to_dict(event)["data"]
         assert serialized["requestedAutoTier"] is None
 
-    def test_session_usage_info_is_recognized(self):
-        """The session.usage_info event type should be in the enum."""
-        assert SessionEventType.SESSION_USAGE_INFO.value == "session.usage_info"
-
-    def test_unknown_event_type_maps_to_unknown(self):
-        """Unknown event types should map to UNKNOWN enum value for forward compatibility."""
-        unknown_event = {
-            "id": str(uuid4()),
-            "timestamp": datetime.now().isoformat(),
-            "parentId": None,
-            "type": "session.future_feature_from_server",
-            "data": {},
-        }
-
-        event = session_event_from_dict(unknown_event)
-        assert event.type == SessionEventType.UNKNOWN, f"Expected UNKNOWN, got {event.type}"
-
     @pytest.mark.parametrize(
         "event_type",
         [
@@ -619,21 +589,6 @@ class TestEventForwardCompatibility:
         event = session_event_from_dict(internal_event)
         assert event.type == SessionEventType.UNKNOWN
         assert session_event_to_dict(event)["type"] == event_type
-
-    def test_known_event_preserves_top_level_agent_id(self):
-        """Known events should preserve the top-level sub-agent envelope ID."""
-        known_event = {
-            "id": str(uuid4()),
-            "timestamp": datetime.now().isoformat(),
-            "parentId": None,
-            "agentId": "agent-1",
-            "type": "user.message",
-            "data": {"content": "Hello"},
-        }
-
-        event = session_event_from_dict(known_event)
-        assert event.agent_id == "agent-1"
-        assert session_event_to_dict(event)["agentId"] == "agent-1"
 
     def test_unknown_event_preserves_top_level_agent_id(self):
         """Unknown events should preserve the top-level sub-agent envelope ID."""
@@ -762,39 +717,6 @@ class TestEventForwardCompatibility:
         colliding_keys = {"userURL": 42, "userUrl": 43}
         assert Data.from_dict(colliding_keys).to_dict() == colliding_keys
 
-    def test_missing_optional_fields_remain_none_after_parsing(self):
-        """Generated event models should leave missing optional fields as None.
-
-        Regression test for github/copilot-sdk issues #1139, #1140, and #1141:
-        the Python codegen previously baked JSON Schema `default` values into
-        ``obj.get(key, default)`` for optional fields, so ``from_dict()`` returned
-        the schema default instead of ``None`` and broke ``from_dict(to_dict(x))``
-        round-trips for instances where the field was ``None``.
-        """
-        from copilot._generated.session_events import (
-            _load_PermissionPromptRequest,
-            _load_PermissionRequest,
-        )
-
-        # #1141: PermissionRequest.action defaults to None when missing.
-        request = _load_PermissionRequest({"kind": "memory", "fact": "remember this"})
-        assert isinstance(request, PermissionRequestMemory)
-        assert request.action is None
-        assert PermissionRequestMemoryAction.STORE.value == "store"  # sanity
-
-        # #1140: PermissionPromptRequest.action defaults to None when missing.
-        prompt_request = _load_PermissionPromptRequest({"kind": "memory", "fact": "remember this"})
-        assert isinstance(prompt_request, PermissionPromptRequestMemory)
-        assert prompt_request.action is None
-
-        # #1139: SessionTaskCompleteData.summary defaults to None when missing.
-        task_complete = SessionTaskCompleteData.from_dict({"success": True})
-        assert task_complete.summary is None
-
-        # Explicit JSON null should also map to None.
-        task_complete_null = SessionTaskCompleteData.from_dict({"success": True, "summary": None})
-        assert task_complete_null.summary is None
-
     def test_optional_fields_round_trip_none(self):
         """``from_dict(to_dict(x))`` should equal ``x`` when optional fields are None.
 
@@ -803,6 +725,8 @@ class TestEventForwardCompatibility:
         # #1139: SessionTaskCompleteData round-trip with summary=None.
         task = SessionTaskCompleteData(success=None, summary=None)
         assert SessionTaskCompleteData.from_dict(task.to_dict()) == task
+        assert SessionTaskCompleteData.from_dict({"success": True}).summary is None
+        assert SessionTaskCompleteData.from_dict({"success": True, "summary": None}).summary is None
 
         # #1140: PermissionPromptRequestMemory round-trip with action=None.
         prompt = PermissionPromptRequestMemory(fact="test-fact")

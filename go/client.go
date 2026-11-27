@@ -294,7 +294,7 @@ func NewClient(options *ClientOptions) *Client {
 		state:                stateDisconnected,
 		sessions:             make(map[string]*Session),
 		gitHubTokenProviders: make(map[string]GitHubTokenProvider),
-		actualHost:           "localhost",
+		actualHost:           "127.0.0.1",
 		isExternalServer:     false,
 		useStdio:             true,
 	}
@@ -323,6 +323,21 @@ func NewClient(options *ClientOptions) *Client {
 		client.cliPath = conn.Path
 		if len(conn.Args) > 0 {
 			client.cliArgs = append([]string{}, conn.Args...)
+		}
+		for index := 0; index < len(conn.Args); index++ {
+			arg := conn.Args[index]
+			if arg == "--host" && index+1 < len(conn.Args) {
+				index++
+				client.actualHost = conn.Args[index]
+			} else if strings.HasPrefix(arg, "--host=") {
+				client.actualHost = strings.TrimPrefix(arg, "--host=")
+			}
+		}
+		if bindAddress, err := netip.ParseAddr(client.actualHost); err == nil && bindAddress.IsUnspecified() {
+			client.actualHost = "127.0.0.1"
+			if bindAddress.Is6() {
+				client.actualHost = "::1"
+			}
 		}
 		client.port = conn.Port
 		client.tcpConnectionToken = conn.ConnectionToken

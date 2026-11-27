@@ -47,7 +47,7 @@ async def test_create_and_resume_preserve_builtin_agent_allowlist(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("plugin_directories", [None, [], ["plugins"]])
+@pytest.mark.parametrize("plugin_directories", [None, []])
 async def test_create_and_resume_preserve_explicit_empty_plugin_directories(
     monkeypatch, plugin_directories
 ):

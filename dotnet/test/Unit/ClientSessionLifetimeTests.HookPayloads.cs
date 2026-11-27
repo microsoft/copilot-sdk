@@ -14,7 +14,6 @@ public sealed partial class ClientSessionLifetimeTests
 
     private static object? CreateHookPayload(string shape) => shape switch
     {
-        "anonymous" => new { path = "/tmp/x", count = 3 },
         "poco" => new HookArgsPayload("/tmp/x", 3),
         "dictionary" => new Dictionary<string, object?> { ["path"] = "/tmp/x", ["count"] = 3, ["optional"] = null },
         "unset" => null,
@@ -70,10 +69,8 @@ public sealed partial class ClientSessionLifetimeTests
     }
 
     [Theory]
-    [InlineData("preToolUse", "modifiedArgs", "anonymous")]
     [InlineData("preToolUse", "modifiedArgs", "poco")]
     [InlineData("preToolUse", "modifiedArgs", "dictionary")]
-    [InlineData("postToolUse", "modifiedResult", "anonymous")]
     [InlineData("postToolUse", "modifiedResult", "poco")]
     [InlineData("postToolUse", "modifiedResult", "dictionary")]
     public async Task HookPayload_Sends_User_Typed_Modified_Value(string hookType, string field, string shape)

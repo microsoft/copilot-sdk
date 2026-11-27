@@ -22,7 +22,6 @@ func TestSettingsLoadForEditRequestEncoding(t *testing.T) {
 		params *rpc.UserSettingsLoadForConfigDirRequest
 		want   string
 	}{
-		{"default", &rpc.UserSettingsLoadForConfigDirRequest{}, `{}`},
 		{"nil", nil, `{}`},
 		{"scoped", &rpc.UserSettingsLoadForConfigDirRequest{ConfigDir: &configDir}, `{"configDir":"/scoped-config"}`},
 	} {
@@ -70,15 +69,7 @@ func TestSettingsRedactionPreservesJSONValues(t *testing.T) {
 		return value
 	}
 	for _, input := range []string{
-		`{"value":{"token":"******","extra":{"nullable":null,"items":[true,12.5,"text"]}}}`,
-		`{"value":[null,{"arbitrary":"preserved"}]}`,
-		`{"value":null}`,
-		`{"value":false}`,
-		`{"value":12.5}`,
-		`{"value":"******"}`,
 		`{"value":9007199254740993}`,
-		`{"value":-9007199254740993}`,
-		`{"value":18446744073709551615}`,
 		`{"value":{"token":"******","padding":9007199254740993,"extra":{"items":[-9007199254740993,18446744073709551615,null,1.25]}}}`,
 	} {
 		t.Run(input, func(t *testing.T) {

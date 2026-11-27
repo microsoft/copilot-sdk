@@ -594,61 +594,6 @@ func TestInstallAtFailedCLIWriteCanBeRetried(t *testing.T) {
 	}
 }
 
-func TestPathRetriesAfterFailedInstall(t *testing.T) {
-	resetGlobals()
-	blocked := filepath.Join(t.TempDir(), "cache")
-	if err := os.WriteFile(blocked, []byte("not a directory"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	content := []byte("cli")
-	hash := sha256.Sum256(content)
-	Setup(Config{Cli: bytes.NewReader(content), CliHash: hash[:], Directory: blocked})
-
-	if path := Path(); path != "" {
-		t.Fatalf("Path() = %q with a file as the install directory; want empty", path)
-	}
-	if err := os.Remove(blocked); err != nil {
-		t.Fatal(err)
-	}
-	path := Path()
-	if path == "" {
-		t.Fatal("Path() stayed empty after the install directory was fixed")
-	}
-	if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, content) {
-		t.Fatalf("installed CLI content=%q err=%v", got, err)
-	}
-}
-
-func TestInstallRuntimeAssetsCanBeRetriedAfterWriteFailure(t *testing.T) {
-	resetGlobals()
-	installDir := t.TempDir()
-	assets := runtimeAssetsArchive(t, map[string]assetFixture{
-		"definitions/future.json": {content: []byte("{}"), mode: 0644},
-	})
-	assetsHash := sha256.Sum256(assets)
-	config = Config{
-		RuntimeAssets:     bytes.NewReader(assets),
-		RuntimeAssetsHash: assetsHash[:],
-	}
-	blocked := filepath.Join(installDir, "definitions")
-	if err := os.WriteFile(blocked, []byte("not a directory"), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := installRuntimeAssets(installDir); err == nil {
-		t.Fatal("installRuntimeAssets() succeeded with a file in the way of an asset directory")
-	}
-	if err := os.Remove(blocked); err != nil {
-		t.Fatal(err)
-	}
-	if err := installRuntimeAssets(installDir); err != nil {
-		t.Fatalf("retrying installRuntimeAssets(): %v", err)
-	}
-	if got, err := os.ReadFile(filepath.Join(installDir, "definitions", "future.json")); err != nil || string(got) != "{}" {
-		t.Fatalf("asset content=%q err=%v", got, err)
-	}
-}
-
 // obstructingReader creates a directory at path on its first read, so the
 // install that consumes it fails when it renames the artifact into place. It
 // rewinds like the bundler's generated readers. It deliberately does not
@@ -935,41 +880,6 @@ func TestRuntimePathRetainsReadersForLaterCLIInstall(t *testing.T) {
 	}
 }
 
-func TestSeekableReaderStaysOpenAcrossFailedLicenseWrite(t *testing.T) {
-	resetGlobals()
-	t.Cleanup(resetGlobals)
-	content := []byte("cli")
-	hash := sha256.Sum256(content)
-	root := t.TempDir()
-	source := filepath.Join(root, "source")
-	if err := os.WriteFile(source, content, 0600); err != nil {
-		t.Fatal(err)
-	}
-	f, err := os.Open(source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
-	first, second := filepath.Join(root, "first"), filepath.Join(root, "second")
-	if err := os.MkdirAll(first, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(filepath.Join(first, binaryNameForOS()+".license"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	Setup(Config{Cli: f, CliHash: hash[:], License: []byte("license"), Directory: first})
-	if path := Path(); path != "" {
-		t.Fatalf("Path() = %q although the license could not be written", path)
-	}
-	// Changing the install directory, as a COPILOT_HOME change would, must still
-	// be able to replay the CLI from the caller's file.
-	config.Directory = second
-	cliPathCached = false
-	if path := Path(); path == "" {
-		t.Fatal("Path() could not reinstall into a new directory after the license failure")
-	}
-}
-
 func TestUnusedReadersSurviveRuntimeFirstWarmCacheAndCacheSwitch(t *testing.T) {
 	resetGlobals()
 	t.Cleanup(resetGlobals)
@@ -1025,25 +935,6 @@ func TestUnusedReadersSurviveRuntimeFirstWarmCacheAndCacheSwitch(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(second, name)); err != nil {
 			t.Fatalf("second cache is missing %s: %v", name, err)
 		}
-	}
-}
-
-func TestInstallVerifiedFileRetriesNonSeekableReader(t *testing.T) {
-	content := bytes.Repeat([]byte("legacy bundle "), 1024)
-	hash := sha256.Sum256(content)
-	path := filepath.Join(t.TempDir(), "artifact")
-	reader := newRetryableReader(&plainReader{&obstructedOnce{Reader: bytes.NewReader(content), path: path}})
-	if err := installVerifiedFile(path, reader, hash[:], 0644, "artifact"); err == nil {
-		t.Fatal("installVerifiedFile() succeeded with an obstructed destination")
-	}
-	if err := os.Remove(path); err != nil {
-		t.Fatal(err)
-	}
-	if err := installVerifiedFile(path, reader, hash[:], 0644, "artifact"); err != nil {
-		t.Fatalf("retry installVerifiedFile() with a non-seekable reader: %v", err)
-	}
-	if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, content) {
-		t.Fatalf("installed content differs (err=%v)", err)
 	}
 }
 

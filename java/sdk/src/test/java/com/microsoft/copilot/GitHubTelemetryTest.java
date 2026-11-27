@@ -201,6 +201,8 @@ class GitHubTelemetryTest {
             assertFalse(connectParams.has("enableGitHubTelemetryForwarding"),
                     "connect request should omit the flag when no handler is registered");
             assertEquals("[\"agent\",\"client\",\"shell\"]", connectParams.path("supportedTaskKinds").toString());
+            assertFalse(connectParams.has("clientInfo"),
+                    "connect request should omit clientInfo when none was declared");
 
             client.createSession(new CreateSessionOptions()
                     .setPermissions(new SessionPermissionOptions().setOnRequest(PermissionHandler.APPROVE_ALL)))
@@ -261,38 +263,6 @@ class GitHubTelemetryTest {
                 assertEquals("TestHost", entra.path("matsAppName").asText());
                 assertEquals("host-native-descriptor", entra.path("oneAuthApplicationId").asText());
             }
-        }
-    }
-
-    @Test
-    void connectOmitsClientInfoWhenUnset() throws Exception {
-        try (var server = new FakeRuntimeServer();
-                var client = new CopilotClient(new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                        .setRuntime(RuntimeConnection.forTcp("127.0.0.1", server.port())))) {
-
-            client.start().get(15, TimeUnit.SECONDS);
-
-            JsonNode connectParams = server.awaitConnect();
-            assertFalse(connectParams.has("clientInfo"),
-                    "connect request should omit clientInfo when none was declared");
-        }
-    }
-
-    @Test
-    void connectOmitsEmptyClientInfoFields() throws Exception {
-        try (var server = new FakeRuntimeServer();
-                var client = new CopilotClient(new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                        .setClientInfo(new ClientInfo().setApplicationName("example-app"))
-                        .setRuntime(RuntimeConnection.forTcp("127.0.0.1", server.port())))) {
-
-            client.start().get(15, TimeUnit.SECONDS);
-
-            JsonNode connectParams = server.awaitConnect();
-            JsonNode clientInfo = connectParams.path("clientInfo");
-            assertEquals("example-app", clientInfo.path("editorName").asText());
-            assertFalse(clientInfo.has("editorVersion"), "unset editorVersion should be omitted");
-            assertFalse(clientInfo.has("extensionName"), "unset extensionName should be omitted");
-            assertFalse(clientInfo.has("extensionVersion"), "unset extensionVersion should be omitted");
         }
     }
 

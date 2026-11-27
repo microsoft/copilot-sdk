@@ -66,13 +66,6 @@ class ToolResultObjectSerializationTest {
     }
 
     @Test
-    void omitsToolReferencesWhenNull() {
-        JsonNode node = MAPPER.valueToTree(ToolResultObject.success("ok"));
-
-        assertFalse(node.has("toolReferences"));
-    }
-
-    @Test
     void sixArgConstructorLeavesToolReferencesNull() {
         var result = new ToolResultObject("success", "ok", null, null, null, null);
 

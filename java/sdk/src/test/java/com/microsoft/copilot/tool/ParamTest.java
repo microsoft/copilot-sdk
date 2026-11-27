@@ -11,15 +11,13 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 /**
  * Unit tests for {@link Param} runtime parameter metadata.
  */
 public class ParamTest {
-
-    // ------------------------------------------------------------------
-    // Factory method: of(type, name, description)
-    // ------------------------------------------------------------------
 
     @Test
     void ofCreatesRequiredParamWithNoDefault() {
@@ -30,62 +28,21 @@ public class ParamTest {
         assertTrue(p.required());
         assertEquals("", p.defaultValue());
         assertFalse(p.hasDefaultValue());
+        assertEquals("", p.schema());
     }
 
-    @Test
-    void ofFullFactoryCreatesOptionalParamWithDefault() {
-        Param<Integer> p = Param.of(Integer.class, "limit", "Max results", false, "10");
-        assertEquals(Integer.class, p.type());
-        assertEquals("limit", p.name());
-        assertEquals("Max results", p.description());
-        assertFalse(p.required());
-        assertEquals("10", p.defaultValue());
-        assertTrue(p.hasDefaultValue());
+    @ParameterizedTest
+    @CsvSource(value = {"NULL,desc,name", "'  ',desc,name", "n,NULL,description",
+            "n,'',description"}, nullValues = "NULL")
+    void rejectsNullOrBlankNameAndDescription(String name, String description, String field) {
+        var ex = assertThrows(IllegalArgumentException.class, () -> Param.of(String.class, name, description));
+        assertTrue(ex.getMessage().contains(field));
     }
-
-    // ------------------------------------------------------------------
-    // Validation: blank name/description rejected
-    // ------------------------------------------------------------------
-
-    @Test
-    void rejectsNullName() {
-        var ex = assertThrows(IllegalArgumentException.class, () -> Param.of(String.class, null, "desc"));
-        assertTrue(ex.getMessage().contains("name"));
-    }
-
-    @Test
-    void rejectsBlankName() {
-        var ex = assertThrows(IllegalArgumentException.class, () -> Param.of(String.class, "  ", "desc"));
-        assertTrue(ex.getMessage().contains("name"));
-    }
-
-    @Test
-    void rejectsNullDescription() {
-        var ex = assertThrows(IllegalArgumentException.class, () -> Param.of(String.class, "n", null));
-        assertTrue(ex.getMessage().contains("description"));
-    }
-
-    @Test
-    void rejectsBlankDescription() {
-        var ex = assertThrows(IllegalArgumentException.class, () -> Param.of(String.class, "n", ""));
-        assertTrue(ex.getMessage().contains("description"));
-    }
-
-    // ------------------------------------------------------------------
-    // Validation: required=true with non-empty default rejected
-    // ------------------------------------------------------------------
 
     @Test
     void rejectsRequiredWithNonEmptyDefault() {
         var ex = assertThrows(IllegalArgumentException.class, () -> Param.of(String.class, "x", "desc", true, "val"));
         assertTrue(ex.getMessage().contains("required=true"));
-    }
-
-    @Test
-    void allowsRequiredWithEmptyDefault() {
-        Param<String> p = Param.of(String.class, "x", "desc", true, "");
-        assertTrue(p.required());
-        assertFalse(p.hasDefaultValue());
     }
 
     @Test
@@ -95,77 +52,14 @@ public class ParamTest {
         assertEquals("", p.defaultValue());
     }
 
-    // ------------------------------------------------------------------
-    // Validation: default value type checking
-    // ------------------------------------------------------------------
-
-    @Test
-    void validatesIntegerDefault() {
-        // valid
-        Param<Integer> p = Param.of(Integer.class, "n", "num", false, "42");
-        assertEquals("42", p.defaultValue());
-
-        // invalid
-        assertThrows(IllegalArgumentException.class, () -> Param.of(Integer.class, "n", "num", false, "abc"));
-    }
-
-    @Test
-    void validatesLongDefault() {
-        Param<Long> p = Param.of(Long.class, "n", "num", false, "999999999999");
-        assertEquals("999999999999", p.defaultValue());
-
-        assertThrows(IllegalArgumentException.class, () -> Param.of(Long.class, "n", "num", false, "notlong"));
-    }
-
-    @Test
-    void validatesDoubleDefault() {
-        Param<Double> p = Param.of(Double.class, "d", "decimal", false, "3.14");
-        assertEquals("3.14", p.defaultValue());
-
-        assertThrows(IllegalArgumentException.class, () -> Param.of(Double.class, "d", "decimal", false, "xyz"));
-    }
-
-    @Test
-    void validatesFloatDefault() {
-        Param<Float> p = Param.of(Float.class, "f", "float val", false, "1.5");
-        assertEquals("1.5", p.defaultValue());
-
-        assertThrows(IllegalArgumentException.class, () -> Param.of(Float.class, "f", "float val", false, "notfloat"));
-    }
-
-    @Test
-    void validatesShortDefault() {
-        Param<Short> p = Param.of(Short.class, "s", "short val", false, "100");
-        assertEquals("100", p.defaultValue());
-
-        assertThrows(IllegalArgumentException.class, () -> Param.of(Short.class, "s", "short val", false, "99999"));
-    }
-
-    @Test
-    void validatesByteDefault() {
-        Param<Byte> p = Param.of(Byte.class, "b", "byte val", false, "127");
-        assertEquals("127", p.defaultValue());
-
-        assertThrows(IllegalArgumentException.class, () -> Param.of(Byte.class, "b", "byte val", false, "999"));
-    }
-
-    @Test
-    void validatesBooleanDefault() {
-        Param<Boolean> p1 = Param.of(Boolean.class, "b", "flag", false, "true");
-        assertEquals("true", p1.defaultValue());
-
-        Param<Boolean> p2 = Param.of(Boolean.class, "b", "flag", false, "FALSE");
-        assertEquals("FALSE", p2.defaultValue());
-
-        assertThrows(IllegalArgumentException.class, () -> Param.of(Boolean.class, "b", "flag", false, "yes"));
-    }
-
-    @Test
-    void validatesEnumDefault() {
-        Param<TestEnum> p = Param.of(TestEnum.class, "e", "enum val", false, "ALPHA");
-        assertEquals("ALPHA", p.defaultValue());
-
-        assertThrows(IllegalArgumentException.class, () -> Param.of(TestEnum.class, "e", "enum val", false, "INVALID"));
+    @ParameterizedTest
+    @CsvSource({"java.lang.Integer,42,abc", "java.lang.Long,999999999999,notlong", "java.lang.Double,3.14,xyz",
+            "java.lang.Float,1.5,notfloat", "java.lang.Short,100,99999", "java.lang.Byte,127,999",
+            "java.lang.Boolean,true,yes", "java.lang.Boolean,FALSE,yes",
+            "com.microsoft.copilot.tool.ParamTest$TestEnum,ALPHA,INVALID"})
+    void validatesDefaultForEachSupportedType(Class<?> type, String valid, String invalid) {
+        assertEquals(valid, Param.of(type, "v", "value", false, valid).defaultValue());
+        assertThrows(IllegalArgumentException.class, () -> Param.of(type, "v", "value", false, invalid));
     }
 
     @Test
@@ -174,37 +68,19 @@ public class ParamTest {
     }
 
     @Test
-    void allowsStringDefault() {
-        Param<String> p = Param.of(String.class, "s", "string", false, "hello");
-        assertEquals("hello", p.defaultValue());
-    }
-
-    // ------------------------------------------------------------------
-    // Fluent mutators return new instances
-    // ------------------------------------------------------------------
-
-    @Test
-    void nameMutatorReturnsNewInstance() {
-        Param<String> original = Param.of(String.class, "a", "desc");
-        Param<String> renamed = original.name("b");
-        assertEquals("a", original.name());
-        assertEquals("b", renamed.name());
-    }
-
-    @Test
-    void descriptionMutatorReturnsNewInstance() {
+    void fluentCopiesLeaveOriginalUnchangedAndPreserveSchema() {
         Param<String> original = Param.of(String.class, "a", "desc1");
-        Param<String> updated = original.description("desc2");
+        assertEquals("b", original.name("b").name());
+        assertEquals("desc2", original.description("desc2").description());
+        assertFalse(original.required(false).required());
+        assertEquals("a", original.name());
         assertEquals("desc1", original.description());
-        assertEquals("desc2", updated.description());
-    }
-
-    @Test
-    void requiredMutatorReturnsNewInstance() {
-        Param<String> original = Param.of(String.class, "a", "desc");
-        Param<String> optional = original.required(false);
         assertTrue(original.required());
-        assertFalse(optional.required());
+
+        Param<String> base = original.schema("{\"type\":\"string\"}");
+        assertEquals("{\"type\":\"string\"}", base.name("y").schema());
+        assertEquals("{\"type\":\"string\"}", base.description("other").schema());
+        assertEquals("{\"type\":\"string\"}", base.required(false).schema());
     }
 
     @Test
@@ -217,35 +93,14 @@ public class ParamTest {
         assertTrue(withDefault.hasDefaultValue());
     }
 
-    // ------------------------------------------------------------------
-    // equals / hashCode / toString
-    // ------------------------------------------------------------------
-
     @Test
-    void equalParamsAreEqual() {
+    void equalityUsesAllMetadata() {
         Param<String> a = Param.of(String.class, "x", "desc");
         Param<String> b = Param.of(String.class, "x", "desc");
         assertEquals(a, b);
         assertEquals(a.hashCode(), b.hashCode());
+        assertNotEquals(a, Param.of(String.class, "y", "desc"));
     }
-
-    @Test
-    void differentParamsAreNotEqual() {
-        Param<String> a = Param.of(String.class, "x", "desc");
-        Param<String> b = Param.of(String.class, "y", "desc");
-        assertNotEquals(a, b);
-    }
-
-    @Test
-    void toStringContainsName() {
-        Param<String> p = Param.of(String.class, "query", "Search");
-        assertTrue(p.toString().contains("query"));
-        assertTrue(p.toString().contains("String"));
-    }
-
-    // ------------------------------------------------------------------
-    // Schema override validation
-    // ------------------------------------------------------------------
 
     @Test
     void rejectsSchemaWithDefaultValue() {
@@ -255,17 +110,10 @@ public class ParamTest {
         assertTrue(ex.getMessage().contains("defaultValue"));
     }
 
-    @Test
-    void rejectsSchemaNotStartingWithBrace() {
-        var ex = assertThrows(IllegalArgumentException.class,
-                () -> Param.of(String.class, "x", "desc").schema("not json"));
-        assertTrue(ex.getMessage().contains("schema"));
-    }
-
-    @Test
-    void rejectsSchemaNotEndingWithBrace() {
-        var ex = assertThrows(IllegalArgumentException.class,
-                () -> Param.of(String.class, "x", "desc").schema("{\"type\":\"string\""));
+    @ParameterizedTest
+    @CsvSource(value = {"not json", "{\"type\":\"string\""}, delimiter = '|')
+    void rejectsSchemaThatIsNotAJsonObjectString(String schema) {
+        var ex = assertThrows(IllegalArgumentException.class, () -> Param.of(String.class, "x", "desc").schema(schema));
         assertTrue(ex.getMessage().contains("schema"));
     }
 
@@ -276,31 +124,9 @@ public class ParamTest {
     }
 
     @Test
-    void acceptsEmptySchema() {
-        Param<String> p = Param.of(String.class, "x", "desc");
-        assertEquals("", p.schema());
-    }
-
-    @Test
-    void schemaPreservedAcrossFluentCopies() {
-        Param<String> base = Param.of(String.class, "x", "desc").schema("{\"type\":\"string\"}");
-        assertEquals("{\"type\":\"string\"}", base.name("y").schema());
-        assertEquals("{\"type\":\"string\"}", base.description("other").schema());
-        assertEquals("{\"type\":\"string\"}", base.required(false).schema());
-    }
-
-    // ------------------------------------------------------------------
-    // Null type rejected
-    // ------------------------------------------------------------------
-
-    @Test
     void rejectsNullType() {
         assertThrows(NullPointerException.class, () -> Param.of(null, "n", "desc"));
     }
-
-    // ------------------------------------------------------------------
-    // Test enum for validation tests
-    // ------------------------------------------------------------------
 
     enum TestEnum {
         ALPHA, BETA

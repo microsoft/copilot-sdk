@@ -10,7 +10,13 @@ fn notification_peer() -> (Client, tokio::io::DuplexStream, tempfile::TempDir) {
     let cwd = tempfile::tempdir().unwrap();
     let (client, server) = tokio::io::duplex(4096);
     let (reader, writer) = tokio::io::split(client);
-    let client = Client::from_streams(reader, writer, cwd.path().to_path_buf()).unwrap();
+    let client = Client::from_streams(
+        crate::ClientMode::CodingAgent,
+        reader,
+        writer,
+        cwd.path().to_path_buf(),
+    )
+    .unwrap();
     (client, server, cwd)
 }
 

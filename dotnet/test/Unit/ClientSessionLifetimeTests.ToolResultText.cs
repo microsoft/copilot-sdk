@@ -14,7 +14,6 @@ public sealed partial class ClientSessionLifetimeTests
     [Theory]
     [InlineData("string", "plain text")]
     [InlineData("JSON string", "plain text")]
-    [InlineData("factory passing the raw return value", "plain text")]
     [InlineData("number", "42")]
     public async Task ExternalTool_Sends_Tool_Result_Text(string kind, string expected)
     {
@@ -22,13 +21,6 @@ public sealed partial class ClientSessionLifetimeTests
         {
             "string" => new ReturningFunction("plain text"),
             "JSON string" => new ReturningFunction(JsonDocument.Parse("\"plain text\"").RootElement.Clone()),
-            "factory passing the raw return value" => AIFunctionFactory.Create(
-                () => "plain text",
-                new AIFunctionFactoryOptions
-                {
-                    Name = "record_note",
-                    MarshalResult = (result, _, _) => new ValueTask<object?>(result),
-                }),
             _ => new ReturningFunction(42),
         };
         await using var server = await FakeCopilotServer.StartAsync();

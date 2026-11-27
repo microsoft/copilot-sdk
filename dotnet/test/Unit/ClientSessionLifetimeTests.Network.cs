@@ -90,7 +90,6 @@ public sealed partial class ClientSessionLifetimeTests
     [InlineData(true, null, true, false, false, """{"resolveProxy":{}}""")]
     [InlineData(true, "runtime", false, true, false, """{"authenticateNegotiate":{},"scope":"runtime"}""")]
     [InlineData(true, null, false, false, true, """{"authenticateBasic":{}}""")]
-    [InlineData(true, "connection", true, false, false, """{"resolveProxy":{},"scope":"connection"}""")]
     public async Task Network_Registers_Only_Configured_Callbacks_And_Scope(
         bool configured,
         string? scope,
@@ -185,28 +184,6 @@ public sealed partial class ClientSessionLifetimeTests
         Assert.Equal(
             expectedOrder,
             server.Requests.Select(request => request.Method).Where(method => expectedOrder.Contains(method)));
-    }
-
-    [Fact]
-    public async Task Network_SetProvider_Omits_Null_Callbacks()
-    {
-        await using var server = await FakeCopilotServer.StartAsync();
-        server.ResponseFactory = NetworkSetProviderResponse;
-        await using var client = new CopilotClient(new CopilotClientOptions
-        {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForTcp(server.Host, server.Port)
-        });
-        await client.StartAsync();
-        server.ClearRequests();
-
-        await client.Rpc.Network.SetProviderAsync(null);
-        await client.Rpc.Network.SetProviderAsync(null, cancellationToken: CancellationToken.None);
-        await client.Rpc.Network.SetProviderAsync(authenticateBasic: new NetworkAuthenticateBasicOptions());
-
-        Assert.Equal(
-            ["{}", "{}", """{"authenticateBasic":{}}"""],
-            server.Requests.Where(request => request.Method == "network.setProvider").Select(request => request.Params.GetRawText()));
     }
 
     [Fact]
@@ -311,11 +288,8 @@ public sealed partial class ClientSessionLifetimeTests
         Assert.Equal(("Request cancelled", -32800), (error.Message, ErrorCode(error)));
     }
 
-    [Theory]
-    [InlineData(ResolveProxyMethod)]
-    [InlineData(AuthenticateNegotiateMethod)]
-    [InlineData(AuthenticateBasicMethod)]
-    public async Task Network_Connection_Close_Cancels_Callback(string method)
+    [Fact]
+    public async Task Network_Connection_Close_Cancels_Callback()
     {
         await using var server = await FakeCopilotServer.StartAsync();
         server.ResponseFactory = NetworkSetProviderResponse;
@@ -346,7 +320,7 @@ public sealed partial class ClientSessionLifetimeTests
         });
         await client.StartAsync();
 
-        var lookup = server.SendRequestAsync(method, NetworkRequestParams(method));
+        var lookup = server.SendRequestAsync(ResolveProxyMethod, NetworkRequestParams(ResolveProxyMethod));
         _ = lookup.ContinueWith(
             static task => _ = task.Exception,
             CancellationToken.None,

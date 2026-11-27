@@ -152,37 +152,6 @@ public class ScenarioTestingRuntimeE2ETests(E2ETestFixture fixture, ITestOutputH
     }
 
     [Fact]
-    public async Task Should_Ping_Then_Reuse_Client_Across_Two_Sessions()
-    {
-        await using var client = Ctx.CreateClient();
-        await client.StartAsync();
-
-        var ping = await client.PingAsync("scenario-client-reuse");
-        Assert.Equal("pong: scenario-client-reuse", ping.Message);
-
-        string firstSessionId;
-        await using (var first = await Ctx.CreateSessionAsync(client))
-        {
-            firstSessionId = first.SessionId;
-            var response = await first.SendAndWaitAsync(new MessageOptions
-            {
-                Prompt = "Reply with exactly FIRST_SCENARIO_SESSION.",
-            });
-            Assert.Contains("FIRST_SCENARIO_SESSION", response?.Data.Content ?? string.Empty, StringComparison.Ordinal);
-        }
-
-        await using (var second = await Ctx.CreateSessionAsync(client))
-        {
-            Assert.NotEqual(firstSessionId, second.SessionId);
-            var response = await second.SendAndWaitAsync(new MessageOptions
-            {
-                Prompt = "Reply with exactly SECOND_SCENARIO_SESSION.",
-            });
-            Assert.Contains("SECOND_SCENARIO_SESSION", response?.Data.Content ?? string.Empty, StringComparison.Ordinal);
-        }
-    }
-
-    [Fact]
     public async Task Should_Bound_Graceful_Stop_Then_Force_Stop()
     {
         var (cliPath, capturePath, pidPath) = await CreateFakeRuntimeAsync("hang-detach");

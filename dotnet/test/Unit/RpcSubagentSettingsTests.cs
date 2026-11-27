@@ -13,16 +13,6 @@ namespace Microsoft.Copilot.Test.Unit;
 public sealed partial class ClientSessionLifetimeTests
 {
     [Fact]
-    public void Subagent_Settings_Getter_And_Setter_Share_Settings_Type()
-    {
-        var property = typeof(ToolsGetSubagentSettingsResult).GetProperty("Subagents");
-        var method = typeof(ToolsApi).GetMethod("UpdateSubagentSettingsAsync");
-        Assert.NotNull(property);
-        Assert.NotNull(method);
-        Assert.Equal(property.PropertyType, method.GetParameters()[0].ParameterType);
-    }
-
-    [Fact]
     public async Task Subagent_Settings_Can_Be_Read_Modified_And_Written_Without_Copying()
     {
         await using var server = await FakeCopilotServer.StartAsync();

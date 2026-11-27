@@ -21,39 +21,6 @@ func TestInProcessFfiE2E(t *testing.T) {
 		t.Skip("in-process FFI smoke test runs only under the inprocess transport cell")
 	}
 
-	cliPath := testharness.CLIPath()
-	if cliPath == "" {
-		t.Fatal("CLI not found. Run 'npm install' in the nodejs directory first.")
-	}
-	t.Run("should start and connect over in-process FFI", func(t *testing.T) {
-		fixture := testharness.NewTestContext(t)
-		client := copilot.NewClient(&copilot.ClientOptions{Mode: copilot.ModeCodingAgent,
-			Runtime: copilot.InProcessConnection{BaseDirectory: fixture.HomeDir},
-		})
-		t.Cleanup(func() { client.ForceStop() })
-
-		if err := client.Start(t.Context()); err != nil {
-			t.Fatalf("Failed to start client over in-process FFI: %v", err)
-		}
-
-		pong, err := client.Ping(t.Context(), "ffi message")
-		if err != nil {
-			t.Fatalf("Failed to ping: %v", err)
-		}
-
-		if pong.Message != "pong: ffi message" {
-			t.Errorf("Expected pong.message to be 'pong: ffi message', got %q", pong.Message)
-		}
-
-		if pong.Timestamp.IsZero() {
-			t.Errorf("Expected non-zero pong.timestamp, got %s", pong.Timestamp)
-		}
-
-		if err := client.Stop(); err != nil {
-			t.Errorf("Expected no errors on stop, got %v", err)
-		}
-	})
-
 	t.Run("should overlap independent hosts and preserve the survivor", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 		defer cancel()

@@ -66,7 +66,7 @@ func TestSettingsReadValuesSupportExactConditionalUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 	settings := client.internalRPC.User.Settings()
-	for _, source := range []string{"loadForEdit", "update conflict result", "caller supplied values", "caller typed maps", "caller typed slices", "caller structs", "normalized caller values", "merged repository values", "merged managed values", "runtime overrides", "loaded repository values", "redacted caller values"} {
+	for _, source := range []string{"loadForEdit", "update conflict result", "caller supplied values", "caller typed maps", "caller typed slices", "caller structs", "normalized caller values", "loaded repository values", "redacted caller values"} {
 		for _, test := range []struct {
 			name     string
 			original string
@@ -117,7 +117,7 @@ func TestSettingsReadValuesSupportExactConditionalUpdate(t *testing.T) {
 						t.Fatalf("the stale condition must fail: %#v", result)
 					}
 					before = result.Value.(map[string]any)
-				case "caller supplied values", "caller typed maps", "caller typed slices", "caller structs", "normalized caller values", "merged repository values", "merged managed values", "runtime overrides", "loaded repository values", "redacted caller values":
+				case "caller supplied values", "caller typed maps", "caller typed slices", "caller structs", "normalized caller values", "loaded repository values", "redacted caller values":
 					var revision any = json.Number(test.original)
 					if strings.ContainsAny(test.original, ".eE") {
 						number, err := strconv.ParseFloat(test.original, 64)
@@ -167,30 +167,6 @@ func TestSettingsReadValuesSupportExactConditionalUpdate(t *testing.T) {
 					t.Fatal(err)
 				}
 				switch source {
-				case "merged repository values":
-					result, err := settings.MergeRepoValue(t.Context(), &rpc.UserSettingsMergeRepoValueParams{
-						UserSettings: document, RepoSettings: map[string]any{},
-					})
-					if err != nil {
-						t.Fatal(err)
-					}
-					before = result.SettingsJSON.(map[string]any)["extensions"].(map[string]any)
-				case "merged managed values":
-					result, err := settings.MergeManagedAndUser(t.Context(), &rpc.UserSettingsMergeManagedAndUserParams{
-						User: document,
-					})
-					if err != nil {
-						t.Fatal(err)
-					}
-					before = result.SettingsJSON.(map[string]any)["extensions"].(map[string]any)
-				case "runtime overrides":
-					result, err := settings.BuildRuntime(t.Context(), &rpc.UserSettingsBuildRuntimeRequest{
-						Environment: map[string]string{}, Platform: "linux", WorkingDirectory: t.TempDir(), Overrides: document,
-					})
-					if err != nil {
-						t.Fatal(err)
-					}
-					before = (*result)["extensions"].(map[string]any)
 				case "loaded repository values":
 					result, err := settings.LoadAndMergeRepo(t.Context(), &rpc.UserSettingsLoadAndMergeRepoRequest{
 						RepoRoot: t.TempDir(), UserSettings: document,

@@ -5,7 +5,6 @@
 package com.microsoft.copilot;
 
 import com.microsoft.copilot.rpc.CopilotClientMode;
-import com.microsoft.copilot.rpc.CreateSessionInstructionOptions;
 import com.microsoft.copilot.rpc.SessionPermissionOptions;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -40,8 +39,7 @@ class CreateSessionReKeyEntryTest {
 
     /**
      * A connected socket pair where the server replies to "session.create" with a
-     * configurable sessionId and then replies to "session.options.update" with
-     * success or failure.
+     * configurable sessionId and replies to every other request with success.
      */
     private static final class ReKeyServer implements AutoCloseable {
 
@@ -53,12 +51,9 @@ class CreateSessionReKeyEntryTest {
 
         /** The sessionId to return in the session.create response. */
         private final String returnedSessionId;
-        /** If true, the session.options.update call will fail. */
-        private final boolean failOptionsUpdate;
 
-        ReKeyServer(String returnedSessionId, boolean failOptionsUpdate) throws Exception {
+        ReKeyServer(String returnedSessionId) throws Exception {
             this.returnedSessionId = returnedSessionId;
-            this.failOptionsUpdate = failOptionsUpdate;
 
             var loopback = InetAddress.getLoopbackAddress();
             try (var ss = new ServerSocket(0, 1, loopback)) {
@@ -103,22 +98,6 @@ class CreateSessionReKeyEntryTest {
                             String response = MAPPER.writeValueAsString(MAPPER.createObjectNode().put("jsonrpc", "2.0")
                                     .put("id", id).set("result", result));
                             sendRpcMessage(out, response);
-                        } else if ("session.options.update".equals(method)) {
-                            if (failOptionsUpdate) {
-                                // Send an error response
-                                ObjectNode error = MAPPER.createObjectNode();
-                                error.put("code", -32000);
-                                error.put("message", "simulated options update failure");
-                                String response = MAPPER.writeValueAsString(MAPPER.createObjectNode()
-                                        .put("jsonrpc", "2.0").put("id", id).set("error", error));
-                                sendRpcMessage(out, response);
-                            } else {
-                                // Send a success response
-                                String response = MAPPER.writeValueAsString(
-                                        MAPPER.createObjectNode().put("jsonrpc", "2.0").put("id", id).set("result",
-                                                MAPPER.createObjectNode().put("success", true)));
-                                sendRpcMessage(out, response);
-                            }
                         } else {
                             // Generic success for anything else
                             String response = MAPPER.writeValueAsString(MAPPER.createObjectNode().put("jsonrpc", "2.0")
@@ -188,7 +167,7 @@ class CreateSessionReKeyEntryTest {
         String clientSessionId = "client-supplied-id";
         String serverSessionId = "server-returned-id";
 
-        try (var server = new ReKeyServer(serverSessionId, false)) {
+        try (var server = new ReKeyServer(serverSessionId)) {
             var client = new CopilotClient(
                     new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT).setAutoStart(false));
             injectConnection(client, server.rpcClient);
@@ -215,40 +194,10 @@ class CreateSessionReKeyEntryTest {
     }
 
     @Test
-    void createSession_serverReturnsDifferentSessionIdWithSkipCustomInstructions_throwsAndCleansUp() throws Exception {
-        String clientSessionId = "client-supplied-id";
-        String serverSessionId = "server-returned-id";
-
-        try (var server = new ReKeyServer(serverSessionId, true)) {
-            var client = new CopilotClient(
-                    new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT).setAutoStart(false));
-            injectConnection(client, server.rpcClient);
-
-            // Even when skipCustomInstructions would trigger session.options.update,
-            // the sessionId-mismatch error fires first and short-circuits the flow.
-            var config = new CreateSessionOptions().setSessionId(clientSessionId)
-                    .setPermissions(new SessionPermissionOptions().setOnRequest(PermissionHandler.APPROVE_ALL))
-                    .setInstructions(new CreateSessionInstructionOptions().setSkipCustomInstructions(true));
-
-            ExecutionException ex = assertThrows(ExecutionException.class, () -> client.createSession(config).get());
-            assertNotNull(ex.getCause());
-
-            Map<String, CopilotSession> sessions = getSessionsMap(client);
-            assertNull(sessions.get(clientSessionId),
-                    "Pre-registered client-supplied sessionId should be removed on failure");
-            assertNull(sessions.get(serverSessionId),
-                    "Server-returned sessionId should never be registered on failure");
-            assertTrue(sessions.isEmpty(), "Sessions map should be empty after failed create");
-
-            client.close();
-        }
-    }
-
-    @Test
     void createSession_serverReturnsSameSessionId_sessionKeptUnderClientId() throws Exception {
         String sessionId = "same-id-for-both";
 
-        try (var server = new ReKeyServer(sessionId, false)) {
+        try (var server = new ReKeyServer(sessionId)) {
             var client = new CopilotClient(
                     new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT).setAutoStart(false));
             injectConnection(client, server.rpcClient);

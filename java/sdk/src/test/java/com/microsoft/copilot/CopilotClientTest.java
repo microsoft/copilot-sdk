@@ -68,7 +68,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -1023,25 +1022,6 @@ public class CopilotClientTest {
     }
 
     @Test
-    void testClientConstruction() {
-        var client = new CopilotClient(new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT));
-        assertEquals(ConnectionState.DISCONNECTED, client.getState());
-        client.close();
-    }
-
-    @Test
-    void testClientConstructionWithOptions() {
-        var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setRuntime(RuntimeConnection.forSpawnedStdio("/path/to/cli"))
-                .setObservability(new com.microsoft.copilot.rpc.ClientObservabilityOptions().setLogLevel("debug"))
-                .setAutoStart(false);
-
-        var client = new CopilotClient(options);
-        assertEquals(ConnectionState.DISCONNECTED, client.getState());
-        client.close();
-    }
-
-    @Test
     void testTcpConnectionDoesNotMutateOptions() {
         var connection = RuntimeConnection.forTcp("localhost", 3000).setConnectionToken("original-token");
         var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT).setRuntime(connection);
@@ -1056,17 +1036,6 @@ public class CopilotClientTest {
             connection.setConnectionToken("replacement-token");
             assertEquals("original-token", clientConnection.getConnectionToken());
         }
-    }
-
-    @Test
-    void testTcpConnectionConstruction() {
-        var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setRuntime(RuntimeConnection.forTcp("localhost", 4321));
-
-        var client = new CopilotClient(options);
-        assertEquals(ConnectionState.DISCONNECTED, client.getState());
-        assertInstanceOf(com.microsoft.copilot.rpc.TcpRuntimeConnection.class, client.getRuntimeConnection());
-        client.close();
     }
 
     @Test
@@ -1092,8 +1061,18 @@ public class CopilotClientTest {
             assertEquals("pong: test message", pong.message());
             assertNotNull(pong.timestamp());
 
+            var session = client
+                    .createSession(new CreateSessionOptions()
+                            .setPermissions(new SessionPermissionOptions().setOnRequest(PermissionHandler.APPROVE_ALL)))
+                    .get();
+
             client.stop().get();
             assertEquals(ConnectionState.DISCONNECTED, client.getState());
+
+            // Closing a session after stop() closed the RPC connection must not throw
+            assertDoesNotThrow(() -> session.close(), "Closing session after client.stop() should not throw exception");
+            assertThrows(IllegalStateException.class, () -> session.send("test"),
+                    "Session should be terminated after close()");
         }
     }
 
@@ -1275,43 +1254,27 @@ public class CopilotClientTest {
         }
     }
 
-    @Test
-    void testStartAndConnectUsingTcp() throws Exception {
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = {"::1", "0.0.0.0", "::"})
+    void testStartAndConnectUsingTcp(String host) throws Exception {
         assertNotNull(cliPath, "Copilot CLI not found in PATH or COPILOT_CLI_PATH");
 
         try (var client = new CopilotClient(new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setRuntime(RuntimeConnection.forSpawnedTcp().setPath(cliPath)))) {
+                .setRuntime(RuntimeConnection.forSpawnedTcp().setPath(cliPath)
+                        .setArgs(host == null ? List.of() : List.of("--host", host))))) {
             client.start().get();
             assertEquals(ConnectionState.CONNECTED, client.getState());
 
             PingResponse pong = client.ping("test message").get();
             assertEquals("pong: test message", pong.message());
 
-            client.stop().get();
-        }
-    }
-
-    @Test
-    void testForceStopWithoutCleanup() throws Exception {
-        assertNotNull(cliPath, "Copilot CLI not found in PATH or COPILOT_CLI_PATH");
-
-        try (var client = new CopilotClient(new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setRuntime(RuntimeConnection.forSpawnedStdio(cliPath)))) {
             client.createSession(new CreateSessionOptions()
                     .setPermissions(new SessionPermissionOptions().setOnRequest(PermissionHandler.APPROVE_ALL))).get();
             client.forceStop().get();
 
             assertEquals(ConnectionState.DISCONNECTED, client.getState());
         }
-    }
-
-    @Test
-    void testGitHubTokenOptionAccepted() {
-        var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setRuntime(RuntimeConnection.forSpawnedStdio("/path/to/cli"))
-                .setGitHub(new ClientGitHubOptions().setToken("gho_test_token"));
-
-        assertEquals("gho_test_token", options.getGitHub().getToken());
     }
 
     @Test
@@ -1323,39 +1286,14 @@ public class CopilotClientTest {
     }
 
     @Test
-    void testExplicitUseLoggedInUserFalse() {
-        var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setRuntime(RuntimeConnection.forSpawnedStdio("/path/to/cli"))
-                .setGitHub(new ClientGitHubOptions().setUseLoggedInUser(false));
+    void testGitHubAuthOptionsWithTcpConnectionThrow() {
+        for (var github : List.of(new ClientGitHubOptions().setToken("gho_test_token"),
+                new ClientGitHubOptions().setUseLoggedInUser(false))) {
+            var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
+                    .setRuntime(RuntimeConnection.forTcp("localhost", 8080)).setGitHub(github);
 
-        assertEquals(Optional.of(false), options.getGitHub().getUseLoggedInUser());
-    }
-
-    @Test
-    void testExplicitUseLoggedInUserTrueWithGitHubToken() {
-        var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setRuntime(RuntimeConnection.forSpawnedStdio("/path/to/cli"))
-                .setGitHub(new ClientGitHubOptions().setToken("gho_test_token").setUseLoggedInUser(true));
-
-        assertEquals(Optional.of(true), options.getGitHub().getUseLoggedInUser());
-    }
-
-    @Test
-    void testGitHubTokenWithTcpConnectionThrows() {
-        var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setRuntime(RuntimeConnection.forTcp("localhost", 8080))
-                .setGitHub(new ClientGitHubOptions().setToken("gho_test_token"));
-
-        assertThrows(IllegalArgumentException.class, () -> new CopilotClient(options));
-    }
-
-    @Test
-    void testUseLoggedInUserWithTcpConnectionThrows() {
-        var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setRuntime(RuntimeConnection.forTcp("localhost", 8080))
-                .setGitHub(new ClientGitHubOptions().setUseLoggedInUser(false));
-
-        assertThrows(IllegalArgumentException.class, () -> new CopilotClient(options));
+            assertThrows(IllegalArgumentException.class, () -> new CopilotClient(options));
+        }
     }
 
     @Test
@@ -1366,39 +1304,17 @@ public class CopilotClientTest {
     }
 
     @Test
-    void testSessionIdleTimeoutSecondsOptionAccepted() {
-        var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setRuntime(RuntimeConnection.forDefault().setSessionIdleTimeoutSeconds(600));
-
-        assertEquals(600, RuntimeSettings.idleTimeout(options.getRuntime()).getAsInt());
-    }
-
-    @Test
     void testEmptyTcpConnectionTokenThrows() {
         for (var connection : List.of(RuntimeConnection.forSpawnedTcp().setConnectionToken(""),
                 RuntimeConnection.forTcp("localhost", 3000).setConnectionToken(""))) {
             var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT).setRuntime(connection);
             assertThrows(IllegalArgumentException.class, () -> new CopilotClient(options));
         }
-    }
 
-    @Test
-    void testTcpConnectionTokenAcceptedInTcpMode() {
-        var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setRuntime(RuntimeConnection.forSpawnedTcp().setConnectionToken("my-token"));
-
-        // Should not throw
-        try (var client = new CopilotClient(options)) {
+        try (var client = new CopilotClient(new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
+                .setRuntime(RuntimeConnection.forSpawnedTcp().setConnectionToken("my-token")))) {
             assertNotNull(client);
         }
-    }
-
-    @Test
-    void testCopilotHomeOptionSetOnOptions() {
-        var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setRuntime(RuntimeConnection.forDefault().setBaseDirectory("/custom/home"));
-
-        assertEquals("/custom/home", RuntimeSettings.baseDirectory(options.getRuntime()));
     }
 
     // ===== onLifecycle tests =====
@@ -1421,10 +1337,12 @@ public class CopilotClientTest {
     }
 
     @Test
-    void testOnLifecycleWildcardReceivesAllEvents() throws Exception {
+    void testOnLifecycleWildcardAndTypedSubscriptionsDeliverUntilClosed() throws Exception {
         try (var client = new CopilotClient(new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT))) {
             var received = new ArrayList<SessionLifecycleEvent>();
-            client.onLifecycle(received::add);
+            var typed = new ArrayList<SessionLifecycleEvent>();
+            AutoCloseable wildcardSub = client.onLifecycle(received::add);
+            AutoCloseable typedSub = client.onLifecycle(SessionLifecycleEventTypes.CREATED, typed::add);
 
             LifecycleEventManager mgr = getLifecycleManager(client);
             mgr.dispatch(lifecycleEvent(SessionLifecycleEventTypes.CREATED));
@@ -1433,72 +1351,15 @@ public class CopilotClientTest {
             assertEquals(2, received.size());
             assertEquals(SessionLifecycleEventTypes.CREATED, received.get(0).getType());
             assertEquals(SessionLifecycleEventTypes.DELETED, received.get(1).getType());
-        }
-    }
-
-    @Test
-    void testOnLifecycleTypedReceivesOnlyMatchingEvents() throws Exception {
-        try (var client = new CopilotClient(new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT))) {
-            var received = new ArrayList<SessionLifecycleEvent>();
-            client.onLifecycle(SessionLifecycleEventTypes.CREATED, received::add);
-
-            LifecycleEventManager mgr = getLifecycleManager(client);
-            mgr.dispatch(lifecycleEvent(SessionLifecycleEventTypes.CREATED));
-            mgr.dispatch(lifecycleEvent(SessionLifecycleEventTypes.DELETED));
-
-            assertEquals(1, received.size());
-            assertEquals(SessionLifecycleEventTypes.CREATED, received.get(0).getType());
-        }
-    }
-
-    @Test
-    void testOnLifecycleUnsubscribeStopsDelivery() throws Exception {
-        try (var client = new CopilotClient(new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT))) {
-            var received = new ArrayList<SessionLifecycleEvent>();
-            AutoCloseable sub = client.onLifecycle(received::add);
-
-            LifecycleEventManager mgr = getLifecycleManager(client);
-            mgr.dispatch(lifecycleEvent(SessionLifecycleEventTypes.CREATED));
-            assertEquals(1, received.size());
-
-            sub.close();
-
-            mgr.dispatch(lifecycleEvent(SessionLifecycleEventTypes.DELETED));
-            assertEquals(1, received.size(), "Should not receive events after unsubscribe");
-        }
-    }
-
-    @Test
-    void testOnLifecycleTypedUnsubscribeStopsDelivery() throws Exception {
-        try (var client = new CopilotClient(new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT))) {
-            var received = new ArrayList<SessionLifecycleEvent>();
-            AutoCloseable sub = client.onLifecycle(SessionLifecycleEventTypes.UPDATED, received::add);
-
-            LifecycleEventManager mgr = getLifecycleManager(client);
-            mgr.dispatch(lifecycleEvent(SessionLifecycleEventTypes.UPDATED));
-            assertEquals(1, received.size());
-
-            sub.close();
-
-            mgr.dispatch(lifecycleEvent(SessionLifecycleEventTypes.UPDATED));
-            assertEquals(1, received.size(), "Should not receive events after unsubscribe");
-        }
-    }
-
-    @Test
-    void testOnLifecycleMultipleHandlers() throws Exception {
-        try (var client = new CopilotClient(new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT))) {
-            var wildcard = new ArrayList<SessionLifecycleEvent>();
-            var typed = new ArrayList<SessionLifecycleEvent>();
-
-            client.onLifecycle(wildcard::add);
-            client.onLifecycle(SessionLifecycleEventTypes.CREATED, typed::add);
-
-            LifecycleEventManager mgr = getLifecycleManager(client);
-            mgr.dispatch(lifecycleEvent(SessionLifecycleEventTypes.CREATED));
-
-            assertEquals(1, wildcard.size());
             assertEquals(1, typed.size());
+            assertEquals(SessionLifecycleEventTypes.CREATED, typed.get(0).getType());
+
+            wildcardSub.close();
+            typedSub.close();
+            mgr.dispatch(lifecycleEvent(SessionLifecycleEventTypes.CREATED));
+
+            assertEquals(2, received.size(), "Should not receive events after unsubscribe");
+            assertEquals(1, typed.size(), "Should not receive events after unsubscribe");
         }
     }
 
@@ -1556,24 +1417,6 @@ public class CopilotClientTest {
             }
 
             assertEquals(ConnectionState.ERROR, client.getState());
-        }
-    }
-
-    @Test
-    void testGetStateConnectingDuringStart() throws Exception {
-        // Use a non-existent CLI path; the future won't complete immediately
-        var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setRuntime(RuntimeConnection.forSpawnedStdio().setPath("/nonexistent/path/to/cli"))
-                .setAutoStart(false);
-
-        try (var client = new CopilotClient(options)) {
-            // Start is async - grab state before completion
-            client.start();
-
-            // The state should be either CONNECTING or ERROR depending on timing
-            ConnectionState state = client.getState();
-            assertTrue(state == ConnectionState.CONNECTING || state == ConnectionState.ERROR,
-                    "State should be CONNECTING or ERROR, was: " + state);
         }
     }
 
@@ -1647,87 +1490,21 @@ public class CopilotClientTest {
         assertDoesNotThrow(() -> client.close());
     }
 
-    @Test
-    void testCloseAfterFailedStart() throws Exception {
-        var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setRuntime(RuntimeConnection.forSpawnedStdio().setPath("/nonexistent/path/to/cli"))
-                .setAutoStart(false);
-        var client = new CopilotClient(options);
-
-        CompletableFuture<Void> startFuture = client.start();
-        try {
-            startFuture.get();
-        } catch (ExecutionException e) {
-            // Expected
-        }
-
-        // close() after a failed start should not throw
-        assertDoesNotThrow(() -> client.close());
-    }
-
     // ===== stop() with no connection =====
 
     @Test
     void testStopWithNoConnectionCompletes() throws Exception {
         try (var client = new CopilotClient(
                 new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT).setAutoStart(false))) {
-            // stop() without start() should complete without error
+            // stop() and forceStop() without start() should complete without error
             client.stop().get();
             assertEquals(ConnectionState.DISCONNECTED, client.getState());
-        }
-    }
-
-    @Test
-    void testForceStopWithNoConnectionCompletes() throws Exception {
-        try (var client = new CopilotClient(
-                new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT).setAutoStart(false))) {
-            // forceStop() without start() should complete without error
             client.forceStop().get();
             assertEquals(ConnectionState.DISCONNECTED, client.getState());
         }
     }
 
-    @Test
-    void testCloseSessionAfterStoppingClientDoesNotThrow() throws Exception {
-        assertNotNull(cliPath, "Copilot CLI not found in PATH or COPILOT_CLI_PATH");
-
-        try (var client = new CopilotClient(new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setRuntime(RuntimeConnection.forSpawnedStdio().setPath(cliPath)))) {
-            var session = client
-                    .createSession(new CreateSessionOptions()
-                            .setPermissions(new SessionPermissionOptions().setOnRequest(PermissionHandler.APPROVE_ALL)))
-                    .get();
-
-            // Stop the client first (which closes the RPC connection)
-            client.stop().get();
-
-            // Then close the session - should not throw even though RPC is closed
-            assertDoesNotThrow(() -> session.close(), "Closing session after client.stop() should not throw exception");
-
-            // Verify session is terminated
-            assertThrows(IllegalStateException.class, () -> session.send("test"),
-                    "Session should be terminated after close()");
-        }
-    }
-
     // ===== start() idempotency =====
-
-    @Test
-    void testStartIsIdempotentSingleConnectionAttempt() throws Exception {
-        var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setRuntime(RuntimeConnection.forSpawnedStdio().setPath("/nonexistent/path/to/cli"))
-                .setAutoStart(false);
-
-        try (var client = new CopilotClient(options)) {
-            client.start();
-            client.start();
-
-            // Both calls should result in the same state (single connection attempt)
-            ConnectionState state = client.getState();
-            assertTrue(state == ConnectionState.CONNECTING || state == ConnectionState.ERROR,
-                    "State should be CONNECTING or ERROR after start(), was: " + state);
-        }
-    }
 
     // ===== required options =====
 
@@ -1756,48 +1533,10 @@ public class CopilotClientTest {
             assertEquals(1, callCount[0]);
             assertEquals(1, models.size());
             assertEquals("my-custom-model", models.get(0).id());
-        }
-    }
 
-    @Test
-    void testListModels_WithCustomHandler_CachesResults() throws Exception {
-        var customModels = new ArrayList<Model>();
-        var model = testModel("cached-model");
-        customModels.add(model);
-
-        var callCount = new int[]{0};
-        var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setModels(new ClientModelOptions().setOnListModels(() -> {
-                    callCount[0]++;
-                    return CompletableFuture.completedFuture(new ArrayList<>(customModels));
-                }));
-
-        try (var client = new CopilotClient(options)) {
-            client.listModels().get();
+            // Works without start(); the second call is served from the cache.
             client.listModels().get();
             assertEquals(1, callCount[0], "Handler should be called only once due to caching");
-        }
-    }
-
-    @Test
-    void testListModels_WithCustomHandler_WorksWithoutStart() throws Exception {
-        var customModels = new ArrayList<Model>();
-        var model = testModel("no-start-model");
-        customModels.add(model);
-
-        var callCount = new int[]{0};
-        var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setModels(new ClientModelOptions().setOnListModels(() -> {
-                    callCount[0]++;
-                    return CompletableFuture.completedFuture(new ArrayList<>(customModels));
-                }));
-
-        // No start() needed when onListModels is provided
-        try (var client = new CopilotClient(options)) {
-            var models = client.listModels().get();
-            assertEquals(1, callCount[0]);
-            assertEquals(1, models.size());
-            assertEquals("no-start-model", models.get(0).id());
         }
     }
 

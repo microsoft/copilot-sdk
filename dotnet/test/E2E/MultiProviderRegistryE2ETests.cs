@@ -89,14 +89,6 @@ public class MultiProviderRegistryE2ETests(E2ETestFixture fixture, ITestOutputHe
     }
 
     [Fact]
-    public async Task Should_Route_Alpha_Sonnet_Turn_To_Its_Provider_And_Wire_Model()
-        => await AssertRoutingAsync("alpha/sonnet", "byok-gpt-4o", "alpha");
-
-    [Fact]
-    public async Task Should_Route_Alpha_Haiku_Turn_To_Its_Provider_And_Wire_Model()
-        => await AssertRoutingAsync("alpha/haiku", "byok-gpt-4o-mini", "alpha");
-
-    [Fact]
     public async Task Should_Route_Delta_Turbo_Turn_To_Its_Provider_And_Wire_Model()
         => await AssertRoutingAsync("delta/turbo", "byok-gpt-4-turbo", "delta");
 

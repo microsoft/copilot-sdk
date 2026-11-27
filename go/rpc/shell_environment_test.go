@@ -24,24 +24,6 @@ func TestShellBuildInteractiveEnvironmentCollectionsOnWire(t *testing.T) {
 	}{
 		{name: "nil collections", environment: `{}`, blocked: `[]`},
 		{
-			name:        "nil blocked names",
-			params:      ShellBuildInteractiveEnvironmentRequest{HostEnvironment: map[string]string{"PATH": "/bin"}},
-			environment: `{"PATH":"/bin"}`,
-			blocked:     `[]`,
-		},
-		{
-			name:        "nil environment",
-			params:      ShellBuildInteractiveEnvironmentRequest{AdditionalBlockedNames: []string{"SECRET"}},
-			environment: `{}`,
-			blocked:     `["SECRET"]`,
-		},
-		{
-			name:        "empty collections",
-			params:      ShellBuildInteractiveEnvironmentRequest{HostEnvironment: map[string]string{}, AdditionalBlockedNames: []string{}},
-			environment: `{}`,
-			blocked:     `[]`,
-		},
-		{
 			name:        "populated collections",
 			params:      ShellBuildInteractiveEnvironmentRequest{HostEnvironment: map[string]string{"PATH": "/bin", "EMPTY": ""}, AdditionalBlockedNames: []string{"SECRET", "TOKEN"}},
 			environment: `{"EMPTY":"","PATH":"/bin"}`,

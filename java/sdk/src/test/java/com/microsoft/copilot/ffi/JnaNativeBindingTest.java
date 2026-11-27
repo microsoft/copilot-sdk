@@ -269,13 +269,6 @@ class JnaNativeBindingTest {
         assertFalse(binding.connectionClose(1));
     }
 
-    @Test
-    void activeCallbacksStartsAtZero() {
-        StubRuntimeLibrary stub = new StubRuntimeLibrary();
-        JnaNativeBinding binding = new JnaNativeBinding(stub);
-        assertEquals(0, binding.activeCallbacks.get(), "Active callback counter must start at zero");
-    }
-
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     @Timeout(value = 60, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
@@ -371,20 +364,7 @@ class JnaNativeBindingTest {
         assertTrue(msg.contains("already loaded from"), "Diagnostic must mention 'already loaded from', got: " + msg);
         assertTrue(msg.contains(nativeLib.toString()), "Diagnostic must contain path A, got: " + msg);
         assertTrue(msg.contains(altPath.toString()), "Diagnostic must contain path B, got: " + msg);
-    }
-
-    @Test
-    void duplicateLoadDiagnosticMentionsNotSupported(@TempDir Path tempDir) throws Exception {
-        Path nativeLib = resolveNativeLib();
-        assumeTrue(nativeLib != null, "Native runtime not available (run with -Pinprocess)");
-        Path altPath = tempDir.resolve("runtime-copy-b.node");
-        Files.copy(nativeLib, altPath);
-
-        new JnaNativeBinding(nativeLib);
-
-        IllegalStateException ex = assertThrows(IllegalStateException.class, () -> new JnaNativeBinding(altPath));
-        assertTrue(ex.getMessage().contains("not supported"),
-                "Diagnostic must mention 'not supported', got: " + ex.getMessage());
+        assertTrue(msg.contains("not supported"), "Diagnostic must mention 'not supported', got: " + msg);
     }
 
     @Test

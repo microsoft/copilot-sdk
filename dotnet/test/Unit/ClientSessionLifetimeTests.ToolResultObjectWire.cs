@@ -134,31 +134,19 @@ public sealed partial class ClientSessionLifetimeTests
     }
 
     [Theory]
-    [InlineData("tool handler result", null)]
-    [InlineData("tool handler result", false)]
-    [InlineData("tool handler result", true)]
-    [InlineData("postToolUse modifiedResult", null)]
-    [InlineData("postToolUse modifiedResult", false)]
-    [InlineData("postToolUse modifiedResult", true)]
-    [InlineData("canvas action result", null)]
-    [InlineData("canvas action result", false)]
-    [InlineData("canvas action result", true)]
-    public async Task Tool_Result_Object_Preserves_Large_Output_Policy(string path, bool? skip)
+    [InlineData("tool handler result")]
+    [InlineData("postToolUse modifiedResult")]
+    [InlineData("canvas action result")]
+    public async Task Tool_Result_Object_Preserves_Explicit_False_Large_Output_Policy(string path)
     {
+        // Unset (omitted) and true are covered by the "text only" and "every member set" shapes above.
         var sent = await SendToolResultObjectAsync(path, new ToolResultObject
         {
             TextResultForLlm = "large output",
-            SkipLargeOutputProcessing = skip,
+            SkipLargeOutputProcessing = false,
         });
 
-        if (skip is bool value)
-        {
-            Assert.Equal(value, sent.GetProperty("skipLargeOutputProcessing").GetBoolean());
-        }
-        else
-        {
-            Assert.False(sent.TryGetProperty("skipLargeOutputProcessing", out _));
-        }
+        Assert.False(sent.GetProperty("skipLargeOutputProcessing").GetBoolean());
     }
 
     private sealed class ActionResultCanvasHandler(object? result) : CanvasHandlerBase

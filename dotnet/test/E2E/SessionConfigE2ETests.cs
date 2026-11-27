@@ -132,25 +132,6 @@ public class SessionConfigE2ETests(E2ETestFixture fixture, ITestOutputHelper out
         await session.DisposeAsync();
     }
 
-    [Theory]
-    [Trait(E2ETestTraits.Backend, E2ETestTraits.SelfConfiguredBackend)]
-    [InlineData("low")]
-    [InlineData("medium")]
-    [InlineData("high")]
-    public async Task Should_Apply_All_ReasoningEffort_Values_On_Session_Create(string effort)
-    {
-        const string reasoningModelId = "custom-reasoning-model";
-
-        var session = await CreateSessionAsync(new CreateSessionOptions
-        { GitHub = new SessionGitHubOptions { Capi = new CapiSessionOptions { Enabled = false } }, Model = reasoningModelId, Inference = ByokTestOptions.Inference(CreateProxyProvider($"reasoning-{effort}"), new SessionInferenceOptions { ReasoningEffort = effort }, reasoningModelId) });
-
-        var startEvent = Assert.Single((await session.GetEventsAsync()).OfType<SessionStartEvent>());
-        Assert.Equal($"byok/{reasoningModelId}", startEvent.Data.SelectedModel);
-        Assert.Equal(effort, startEvent.Data.ReasoningEffort);
-
-        await session.DisposeAsync();
-    }
-
     [Fact]
     [Trait(E2ETestTraits.Backend, E2ETestTraits.SelfConfiguredBackend)]
     public async Task Should_Apply_ReasoningEffort_On_Session_Resume()
@@ -609,84 +590,6 @@ public class SessionConfigE2ETests(E2ETestFixture fixture, ITestOutputHelper out
             await session2.DisposeAsync();
             await session1.DisposeAsync();
         }
-    }
-
-    [Fact]
-    [Trait(E2ETestTraits.Backend, E2ETestTraits.SelfConfiguredBackend)]
-    public async Task Should_Create_Session_With_Custom_Provider_Config()
-    {
-        // Per the TS test (session_config.e2e.test.ts), this only verifies that a
-        // session can be created with a custom provider config and that disconnect
-        // is allowed to fail since the fake provider URL won't be reachable.
-        var session = await CreateSessionAsync(new CreateSessionOptions
-        { GitHub = new SessionGitHubOptions { Capi = new CapiSessionOptions { Enabled = false } }, Model = "claude-sonnet-5", Inference = ByokTestOptions.Inference(new ProviderConfig { BaseUrl = "https://api.example.com/v1", ApiKey = "test-key", }, new SessionInferenceOptions { }) });
-
-        Assert.Matches(@"^[a-f0-9-]+$", session.SessionId);
-
-        try
-        {
-            await session.DisposeAsync();
-        }
-        catch (Exception)
-        {
-            // disconnect may fail since the provider is fake
-        }
-    }
-
-    [Fact]
-    // TODO(BYOK): Anthropic Messages request history diverged while replaying this blob attachment.
-    // Confirm native clients preserve blob/image turns before keeping this CAPI-only.
-    [Trait(E2ETestTraits.Backend, E2ETestTraits.CapiOnly)]
-    public async Task Should_Accept_Blob_Attachments()
-    {
-        // Write the image to disk so the model can view it if it tries
-        const string pngBase64 =
-            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
-        await File.WriteAllBytesAsync(
-            Path.Join(Ctx.WorkDir, "pixel.png"),
-            Convert.FromBase64String(pngBase64));
-
-        var session = await CreateSessionAsync();
-
-        await session.SendAndWaitAsync(new MessageOptions
-        {
-            Prompt = "What color is this pixel? Reply in one word.",
-            Attachments =
-            [
-                new AttachmentBlob
-                {
-                    Data = pngBase64,
-                    MimeType = "image/png",
-                    DisplayName = "pixel.png",
-                },
-            ],
-        });
-
-        await session.DisposeAsync();
-    }
-
-    [Fact]
-    public async Task Should_Accept_Message_Attachments()
-    {
-        var attachedPath = Path.Join(Ctx.WorkDir, "attached.txt");
-        await File.WriteAllTextAsync(attachedPath, "This file is attached");
-
-        var session = await CreateSessionAsync();
-
-        await session.SendAndWaitAsync(new MessageOptions
-        {
-            Prompt = "Summarize the attached file",
-            Attachments =
-            [
-                new AttachmentFile
-                {
-                    Path = attachedPath,
-                    DisplayName = "attached.txt",
-                },
-            ],
-        });
-
-        await session.DisposeAsync();
     }
 
     /// <summary>

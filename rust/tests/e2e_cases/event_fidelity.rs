@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use async_trait::async_trait;
 use copilot_sdk::session_events::{
     AssistantMessageData, AssistantUsageData, SessionEventType, SessionUsageInfoData,
-    ToolExecutionCompleteData, ToolExecutionStartData, UserMessageData, UserMessageDelivery,
+    UserMessageData, UserMessageDelivery,
 };
 use copilot_sdk::tool::ToolHandler;
 use copilot_sdk::{
@@ -53,52 +53,6 @@ async fn should_include_valid_fields_on_all_events() {
                     .expect("assistant.message");
                 assert!(!assistant.message_id.is_empty());
                 assert!(!assistant.content.is_empty());
-
-                session.disconnect().await.expect("disconnect session");
-                client.stop().await.expect("stop client");
-            })
-        },
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn should_emit_tool_execution_events_with_correct_fields() {
-    super::support::with_shared_e2e_context(
-        &E2E,
-        "event_fidelity",
-        "should_emit_tool_execution_events_with_correct_fields",
-        |ctx| {
-            Box::pin(async move {
-                ctx.set_default_copilot_user();
-                std::fs::write(ctx.work_dir().join("data.txt"), "test data")
-                    .expect("write data file");
-                let client = ctx.start_client().await;
-                let session = client
-                    .create_session(ctx.approve_all_session_config())
-                    .await
-                    .expect("create session");
-                let events = session.subscribe();
-
-                session
-                    .send_and_wait("Read the file 'data.txt'.")
-                    .await
-                    .expect("send");
-
-                let observed = collect_until_idle(events).await;
-                let start = observed
-                    .iter()
-                    .find(|event| event.parsed_type() == SessionEventType::ToolExecutionStart)
-                    .and_then(|event| event.typed_data::<ToolExecutionStartData>())
-                    .expect("tool.execution_start");
-                assert!(!start.tool_call_id.is_empty());
-                assert!(!start.tool_name.is_empty());
-                let complete = observed
-                    .iter()
-                    .find(|event| event.parsed_type() == SessionEventType::ToolExecutionComplete)
-                    .and_then(|event| event.typed_data::<ToolExecutionCompleteData>())
-                    .expect("tool.execution_complete");
-                assert!(!complete.tool_call_id.is_empty());
 
                 session.disconnect().await.expect("disconnect session");
                 client.stop().await.expect("stop client");
@@ -221,54 +175,6 @@ async fn should_emit_pending_messages_modified_event_when_message_queue_changes(
                     .and_then(|event| event.typed_data::<AssistantMessageData>())
                     .expect("assistant.message");
                 assert!(answer.content.contains("18"));
-
-                session.disconnect().await.expect("disconnect session");
-                client.stop().await.expect("stop client");
-            })
-        },
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn should_emit_events_in_correct_order_for_tool_using_conversation() {
-    super::support::with_shared_e2e_context(
-        &E2E,
-        "event_fidelity",
-        "should_emit_events_in_correct_order_for_tool_using_conversation",
-        |ctx| {
-            Box::pin(async move {
-                ctx.set_default_copilot_user();
-                std::fs::write(ctx.work_dir().join("hello.txt"), "Hello World")
-                    .expect("write hello file");
-                let client = ctx.start_client().await;
-                let session = client
-                    .create_session(ctx.approve_all_session_config())
-                    .await
-                    .expect("create session");
-                let events = session.subscribe();
-
-                session
-                    .send_and_wait("Read the file 'hello.txt' and tell me its contents.")
-                    .await
-                    .expect("send");
-
-                let observed = collect_until_idle(events).await;
-                let types = event_types(&observed);
-                let user = types
-                    .iter()
-                    .position(|event_type| *event_type == "user.message")
-                    .expect("user.message");
-                let assistant = types
-                    .iter()
-                    .rposition(|event_type| *event_type == "assistant.message")
-                    .expect("assistant.message");
-                let idle = types
-                    .iter()
-                    .rposition(|event_type| *event_type == "session.idle")
-                    .expect("session.idle");
-                assert!(user < assistant);
-                assert_eq!(idle, types.len() - 1);
 
                 session.disconnect().await.expect("disconnect session");
                 client.stop().await.expect("stop client");
@@ -537,4 +443,4 @@ impl ToolHandler for SequencedBlockingTool {
     }
 }
 static E2E: super::support::SharedE2eGroup =
-    super::support::SharedE2eGroup::standard("event_fidelity", 7);
+    super::support::SharedE2eGroup::standard("event_fidelity", 5);

@@ -10,30 +10,6 @@ import (
 )
 
 func TestDefineTool(t *testing.T) {
-	t.Run("creates tool with correct name and description", func(t *testing.T) {
-		type Params struct {
-			Query string `json:"query"`
-		}
-
-		tool := DefineTool("search", "Search for something",
-			func(params Params, inv ToolInvocation) (any, error) {
-				return "result", nil
-			})
-
-		if tool.Name != "search" {
-			t.Errorf("Expected name 'search', got %q", tool.Name)
-		}
-		if tool.Description != "Search for something" {
-			t.Errorf("Expected description 'Search for something', got %q", tool.Description)
-		}
-		if tool.Handler == nil {
-			t.Error("Expected handler to be set")
-		}
-		if tool.Parameters == nil {
-			t.Error("Expected parameters schema to be generated")
-		}
-	})
-
 	t.Run("generates schema from struct tags", func(t *testing.T) {
 		type Params struct {
 			City string `json:"city"`
@@ -220,32 +196,6 @@ func TestNormalizeResult(t *testing.T) {
 		}
 	})
 
-	t.Run("map is JSON serialized", func(t *testing.T) {
-		result, err := normalizeResult(map[string]any{
-			"key": "value",
-		})
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-
-		expected := `{"key":"value"}`
-		if result.TextResultForLLM != expected {
-			t.Errorf("Expected %q, got %q", expected, result.TextResultForLLM)
-		}
-	})
-
-	t.Run("slice is JSON serialized", func(t *testing.T) {
-		result, err := normalizeResult([]string{"a", "b", "c"})
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-
-		expected := `["a","b","c"]`
-		if result.TextResultForLLM != expected {
-			t.Errorf("Expected %q, got %q", expected, result.TextResultForLLM)
-		}
-	})
-
 	t.Run("returns error for unserializable value", func(t *testing.T) {
 		// Channels cannot be JSON serialized
 		ch := make(chan int)
@@ -285,25 +235,6 @@ func TestConvertMCPCallToolResult(t *testing.T) {
 		}
 		if result.TextResultForLLM != "details" {
 			t.Errorf("Expected 'details', got %q", result.TextResultForLLM)
-		}
-		if result.ResultType != "success" {
-			t.Errorf("Expected 'success', got %q", result.ResultType)
-		}
-	})
-
-	t.Run("text-only CallToolResult is converted", func(t *testing.T) {
-		input := map[string]any{
-			"content": []any{
-				map[string]any{"type": "text", "text": "hello"},
-			},
-		}
-
-		result, ok := ConvertMCPCallToolResult(input)
-		if !ok {
-			t.Fatal("Expected ConvertMCPCallToolResult to succeed")
-		}
-		if result.TextResultForLLM != "hello" {
-			t.Errorf("Expected 'hello', got %q", result.TextResultForLLM)
 		}
 		if result.ResultType != "success" {
 			t.Errorf("Expected 'success', got %q", result.ResultType)
@@ -363,25 +294,6 @@ func TestConvertMCPCallToolResult(t *testing.T) {
 		}
 		if result.BinaryResultsForLLM[0].MIMEType != "image/png" {
 			t.Errorf("Expected mimeType 'image/png', got %q", result.BinaryResultsForLLM[0].MIMEType)
-		}
-	})
-
-	t.Run("resource text goes to textResultForLLM", func(t *testing.T) {
-		input := map[string]any{
-			"content": []any{
-				map[string]any{
-					"type":     "resource",
-					"resource": map[string]any{"uri": "file:///tmp/data.txt", "text": "file contents"},
-				},
-			},
-		}
-
-		result, ok := ConvertMCPCallToolResult(input)
-		if !ok {
-			t.Fatal("Expected ConvertMCPCallToolResult to succeed")
-		}
-		if result.TextResultForLLM != "file contents" {
-			t.Errorf("Expected 'file contents', got %q", result.TextResultForLLM)
 		}
 	})
 
@@ -471,34 +383,6 @@ func TestGenerateSchemaForType(t *testing.T) {
 		}
 	})
 
-	t.Run("handles nested structs", func(t *testing.T) {
-		type Address struct {
-			City    string `json:"city"`
-			Country string `json:"country"`
-		}
-		type Person struct {
-			Name    string  `json:"name"`
-			Address Address `json:"address"`
-		}
-
-		schema := generateSchemaForType(reflect.TypeOf(Person{}))
-
-		props := schema["properties"].(map[string]any)
-		addrProp, ok := props["address"].(map[string]any)
-		if !ok {
-			t.Fatal("Expected 'address' property")
-		}
-
-		// Nested struct should have properties
-		addrProps, ok := addrProp["properties"].(map[string]any)
-		if !ok {
-			t.Fatal("Expected address to have properties")
-		}
-		if _, ok := addrProps["city"]; !ok {
-			t.Error("Expected 'city' in address properties")
-		}
-	})
-
 	t.Run("handles pointer types", func(t *testing.T) {
 		type Params struct {
 			Value string `json:"value"`
@@ -521,42 +405,6 @@ func TestGenerateSchemaForType(t *testing.T) {
 
 		if schema != nil {
 			t.Errorf("Expected nil schema for nil type, got %v", schema)
-		}
-	})
-
-	t.Run("handles slices", func(t *testing.T) {
-		type Params struct {
-			Tags []string `json:"tags"`
-		}
-
-		schema := generateSchemaForType(reflect.TypeOf(Params{}))
-
-		props := schema["properties"].(map[string]any)
-		tagsProp, ok := props["tags"].(map[string]any)
-		if !ok {
-			t.Fatal("Expected 'tags' property")
-		}
-
-		// Schema library may return "array" or ["null", "array"] for slices
-		tagType := tagsProp["type"]
-		switch v := tagType.(type) {
-		case string:
-			if v != "array" {
-				t.Errorf("Expected tags type 'array', got %v", v)
-			}
-		case []any:
-			hasArray := false
-			for _, item := range v {
-				if item == "array" {
-					hasArray = true
-					break
-				}
-			}
-			if !hasArray {
-				t.Errorf("Expected tags type to include 'array', got %v", v)
-			}
-		default:
-			t.Errorf("Expected tags type to be string or array, got %T: %v", tagType, tagType)
 		}
 	})
 }

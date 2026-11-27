@@ -7,7 +7,6 @@ package e2e
 import (
 	"net/http"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -21,12 +20,10 @@ import (
 // so they only need to be syntactically valid, non-resolving URLs. Distinct
 // hosts let the per-provider test assert routing by host.
 const (
-	byokPrimaryHost    = "byok-endpoint.invalid"
-	byokPrimaryBaseURL = "https://" + byokPrimaryHost + "/v1"
-	byokRedHost        = "byok-red.invalid"
-	byokRedBaseURL     = "https://" + byokRedHost + "/v1"
-	byokBlueHost       = "byok-blue.invalid"
-	byokBlueBaseURL    = "https://" + byokBlueHost + "/v1"
+	byokRedHost     = "byok-red.invalid"
+	byokRedBaseURL  = "https://" + byokRedHost + "/v1"
+	byokBlueHost    = "byok-blue.invalid"
+	byokBlueBaseURL = "https://" + byokBlueHost + "/v1"
 )
 
 // capturedBYOKRequest records the host and Authorization header of one outbound
@@ -64,19 +61,6 @@ func (rt *byokCapturingRoundTripper) RoundTrip(req *http.Request) (*http.Respons
 	return buildNonInferenceResponse(req.URL.String()), nil
 }
 
-// authHeaders returns the captured Authorization headers in arrival order.
-func (rt *byokCapturingRoundTripper) authHeaders() []string {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	headers := make([]string, 0, len(rt.captures))
-	for _, c := range rt.captures {
-		if c.authorization != "" {
-			headers = append(headers, c.authorization)
-		}
-	}
-	return headers
-}
-
 // authHeaderForHost returns the Authorization header captured for requests aimed
 // at host, if any.
 func (rt *byokCapturingRoundTripper) authHeaderForHost(host string) string {
@@ -106,11 +90,11 @@ func (rt *byokCapturingRoundTripper) reset() {
 // Rather than standing up a real HTTP listener, the test installs a capturing
 // RoundTripper that intercepts the runtime's outbound model request in-process,
 // captures the `Authorization` header, and returns a synthetic response. It
-// validates, against a real runtime:
-//  1. the callback's token reaches the model request as `Authorization: Bearer <token>`;
-//  2. the runtime re-acquires a token per request (no runtime-side caching);
-//  3. per-provider dispatch routes each provider's turn to its own callback, and
-//     the resulting token reaches that provider's endpoint.
+// validates the Go callback binding against a real runtime: per-provider
+// dispatch routes each provider's turn to its own callback with the forwarded
+// provider name and session id, and the resulting token reaches that
+// provider's endpoint. Runtime per-request re-acquisition is owned by the
+// Node.js E2E.
 func TestBYOKBearerTokenProvider(t *testing.T) {
 	t.Parallel()
 	testharness.SkipIfInProcess(t, "an LLM inference provider is process-global in-process")
@@ -135,87 +119,6 @@ func TestBYOKBearerTokenProvider(t *testing.T) {
 		_, _ = session.SendAndWait(t.Context(), copilot.MessageOptions{Prompt: prompt})
 		_ = session.Disconnect()
 	}
-
-	t.Run("applies the callback's token as the Authorization header", func(t *testing.T) {
-		rt.reset()
-		const sentinel = "sentinel-bearer-token-abc123"
-		var mu sync.Mutex
-		calls := 0
-		getBearerToken := func(args copilot.ProviderTokenArgs) (string, error) {
-			mu.Lock()
-			calls++
-			mu.Unlock()
-			return sentinel, nil
-		}
-
-		providers := []copilot.NamedProviderConfig{{
-			Name:                "mi",
-			Type:                "openai",
-			WireAPI:             "completions",
-			BaseURL:             byokPrimaryBaseURL,
-			BearerTokenProvider: getBearerToken,
-		}}
-		models := []copilot.ProviderModelConfig{{ID: "default", Provider: "mi", WireModel: "byok-gpt-4o"}}
-
-		runTurn(providers, models, "mi/default", "What is 5+5?")
-
-		// The runtime acquired a token via the callback and applied it verbatim
-		// as the bearer credential on the outbound model request.
-		if !slices.Contains(rt.authHeaders(), "Bearer "+sentinel) {
-			t.Fatalf("Expected captured Authorization headers to contain %q, got %v", "Bearer "+sentinel, rt.authHeaders())
-		}
-		mu.Lock()
-		gotCalls := calls
-		mu.Unlock()
-		if gotCalls < 1 {
-			t.Fatalf("Expected the callback to be invoked at least once, got %d", gotCalls)
-		}
-	})
-
-	t.Run("re-acquires a fresh token for each request (no runtime caching)", func(t *testing.T) {
-		rt.reset()
-		var mu sync.Mutex
-		calls := 0
-		getBearerToken := func(args copilot.ProviderTokenArgs) (string, error) {
-			mu.Lock()
-			calls++
-			token := "rotating-token-" + strconv.Itoa(calls)
-			mu.Unlock()
-			// A distinct token per acquisition proves the runtime re-invokes the
-			// callback per request rather than caching a previous token.
-			return token, nil
-		}
-
-		providers := []copilot.NamedProviderConfig{{
-			Name:                "mi",
-			Type:                "openai",
-			WireAPI:             "completions",
-			BaseURL:             byokPrimaryBaseURL,
-			BearerTokenProvider: getBearerToken,
-		}}
-		models := []copilot.ProviderModelConfig{{ID: "default", Provider: "mi", WireModel: "byok-gpt-4o"}}
-
-		runTurn(providers, models, "mi/default", "What is 1+1?")
-		runTurn(providers, models, "mi/default", "What is 2+2?")
-
-		// Each outbound request carries a freshly-acquired, distinct token.
-		auths := rt.authHeaders()
-		if len(auths) < 2 {
-			t.Fatalf("Expected at least 2 captured Authorization headers, got %d: %v", len(auths), auths)
-		}
-		if !strings.HasPrefix(auths[0], "Bearer rotating-token-") || !strings.HasPrefix(auths[1], "Bearer rotating-token-") {
-			t.Fatalf("Expected rotating-token bearer headers, got %v", auths)
-		}
-		if auths[0] == auths[1] {
-			t.Fatalf("Expected distinct tokens per request, both were %q", auths[0])
-		}
-		mu.Lock()
-		gotCalls := calls
-		mu.Unlock()
-		if gotCalls < 2 {
-			t.Fatalf("Expected the callback to be invoked at least twice, got %d", gotCalls)
-		}
-	})
 
 	t.Run("dispatches token acquisition per provider", func(t *testing.T) {
 		rt.reset()

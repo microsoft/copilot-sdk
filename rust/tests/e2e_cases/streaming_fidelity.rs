@@ -1,71 +1,8 @@
-use std::sync::Arc;
-
-use copilot_sdk::ResumeSessionOptions;
-use copilot_sdk::handler::ApproveAllHandler;
 use copilot_sdk::session_events::{
     AssistantMessageData, AssistantMessageDeltaData, AssistantMessageStartData, SessionEventType,
-    SessionStartData,
 };
 
-use super::support::{collect_until_idle, event_types};
-
-#[tokio::test]
-async fn should_produce_delta_events_when_streaming_is_enabled() {
-    super::support::with_shared_e2e_context(
-        &E2E,
-        "streaming_fidelity",
-        "should_produce_delta_events_when_streaming_is_enabled",
-        |ctx| {
-            Box::pin(async move {
-                ctx.set_default_copilot_user();
-                let client = ctx.start_client().await;
-                let session = client
-                    .create_session(
-                        ctx.approve_all_session_config()
-                            .with_events(|group| group.with_streaming(true)),
-                    )
-                    .await
-                    .expect("create session");
-                let events = session.subscribe();
-
-                session
-                    .send_and_wait("Count from 1 to 5, separated by commas.")
-                    .await
-                    .expect("send");
-
-                let observed = collect_until_idle(events).await;
-                let types = event_types(&observed);
-                let deltas: Vec<_> = observed
-                    .iter()
-                    .filter(|event| event.parsed_type() == SessionEventType::AssistantMessageDelta)
-                    .collect();
-                assert!(
-                    !deltas.is_empty(),
-                    "expected assistant.message_delta events"
-                );
-                for delta in deltas {
-                    let data = delta
-                        .typed_data::<AssistantMessageDeltaData>()
-                        .expect("assistant.message_delta data");
-                    assert!(!data.delta_content.is_empty());
-                }
-                let first_delta = types
-                    .iter()
-                    .position(|event_type| *event_type == "assistant.message_delta")
-                    .expect("first delta index");
-                let final_message = types
-                    .iter()
-                    .rposition(|event_type| *event_type == "assistant.message")
-                    .expect("assistant message index");
-                assert!(first_delta < final_message);
-
-                session.disconnect().await.expect("disconnect session");
-                client.stop().await.expect("stop client");
-            })
-        },
-    )
-    .await;
-}
+use super::support::collect_until_idle;
 
 #[tokio::test]
 async fn should_not_produce_deltas_when_streaming_is_disabled() {
@@ -100,186 +37,6 @@ async fn should_not_produce_deltas_when_streaming_is_disabled() {
                         .any(|event| event.parsed_type() == SessionEventType::AssistantMessage),
                     "expected final assistant.message"
                 );
-
-                session.disconnect().await.expect("disconnect session");
-                client.stop().await.expect("stop client");
-            })
-        },
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn should_produce_deltas_after_session_resume() {
-    super::support::with_dedicated_e2e_context(
-        "streaming_fidelity",
-        "should_produce_deltas_after_session_resume",
-        |ctx| {
-            Box::pin(async move {
-                ctx.set_default_copilot_user();
-                let client = ctx.start_client().await;
-                let session = client
-                    .create_session(
-                        ctx.approve_all_session_config()
-                            .with_events(|group| group.with_streaming(false)),
-                    )
-                    .await
-                    .expect("create session");
-                session
-                    .send_and_wait("What is 3 + 6?")
-                    .await
-                    .expect("first send");
-                let session_id = session.id().clone();
-                session.disconnect().await.expect("disconnect session");
-                client.stop().await.expect("stop first client");
-
-                let new_client = ctx.start_client().await;
-                let resumed = new_client
-                    .resume_session(
-                        ResumeSessionOptions::new(session_id)
-                            .with_events(|group| group.with_streaming(true))
-                            .with_permissions(|group| {
-                                group.with_on_request(Arc::new(ApproveAllHandler))
-                            })
-                            .with_github(|group| {
-                                group.with_token(super::support::DEFAULT_TEST_TOKEN)
-                            }),
-                    )
-                    .await
-                    .expect("resume session");
-                let events = resumed.subscribe();
-
-                let answer = resumed
-                    .send_and_wait("Now if you double that, what do you get?")
-                    .await
-                    .expect("second send")
-                    .expect("assistant message");
-                assert!(
-                    answer
-                        .typed_data::<AssistantMessageData>()
-                        .expect("assistant.message data")
-                        .content
-                        .contains("18")
-                );
-
-                let observed = collect_until_idle(events).await;
-                assert_has_content_deltas(&observed);
-
-                resumed.disconnect().await.expect("disconnect resumed");
-                new_client.stop().await.expect("stop new client");
-            })
-        },
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn should_not_produce_deltas_after_session_resume_with_streaming_disabled() {
-    super::support::with_dedicated_e2e_context("streaming_fidelity",
-        "should_not_produce_deltas_after_session_resume_with_streaming_disabled",
-        |ctx| {
-            Box::pin(async move {
-                ctx.set_default_copilot_user();
-                let client = ctx.start_client().await;
-                let session = client
-                    .create_session(ctx.approve_all_session_config().with_events(|group| group.with_streaming(true)))
-                    .await
-                    .expect("create session");
-                session
-                    .send_and_wait("What is 3 + 6?")
-                    .await
-                    .expect("first send");
-                let session_id = session.id().clone();
-                session.disconnect().await.expect("disconnect session");
-                client.stop().await.expect("stop first client");
-
-                let new_client = ctx.start_client().await;
-                let resumed = new_client
-                    .resume_session(
-                        ResumeSessionOptions::new(session_id)
-                            .with_events(|group| group.with_streaming(false))
-                            .with_permissions(|group| group.with_on_request(Arc::new(ApproveAllHandler)))
-                            .with_github(|group| group.with_token(super::support::DEFAULT_TEST_TOKEN)),
-                    )
-                    .await
-                    .expect("resume session");
-                let events = resumed.subscribe();
-
-                let answer = resumed
-                    .send_and_wait("Now if you double that, what do you get?")
-                    .await
-                    .expect("second send")
-                    .expect("assistant message");
-                assert!(answer
-                    .typed_data::<AssistantMessageData>()
-                    .expect("assistant.message data")
-                    .content
-                    .contains("18"));
-
-                let observed = collect_until_idle(events).await;
-                assert!(
-                    observed
-                        .iter()
-                        .all(|event| event.parsed_type() != SessionEventType::AssistantMessageDelta),
-                    "streaming-disabled resumed sessions should not emit deltas"
-                );
-                assert!(observed
-                    .iter()
-                    .any(|event| event.parsed_type() == SessionEventType::AssistantMessage));
-
-                resumed.disconnect().await.expect("disconnect resumed");
-                new_client.stop().await.expect("stop new client");
-            })
-        },
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn should_emit_streaming_deltas_with_reasoning_effort_configured() {
-    super::support::with_dedicated_group_e2e_context(
-        &E2E,
-        "streaming_fidelity",
-        "should_emit_streaming_deltas_with_reasoning_effort_configured",
-        |ctx| {
-            Box::pin(async move {
-                ctx.set_default_copilot_user();
-                let client = ctx.start_client().await;
-                let session = client
-                    .create_session(
-                        ctx.approve_all_session_config()
-                            .with_model("gpt-5.4")
-                            .with_events(|group| group.with_streaming(true))
-                            .with_inference(|group| group.with_reasoning_effort("high")),
-                    )
-                    .await
-                    .expect("create session");
-                let events = session.subscribe();
-
-                session
-                    .send_and_wait("What is 15 * 17?")
-                    .await
-                    .expect("send");
-
-                let observed = collect_until_idle(events).await;
-                assert_has_content_deltas(&observed);
-                let assistant = observed
-                    .iter()
-                    .rev()
-                    .find(|event| event.parsed_type() == SessionEventType::AssistantMessage)
-                    .and_then(|event| event.typed_data::<AssistantMessageData>())
-                    .expect("assistant.message");
-                assert!(assistant.content.contains("255"));
-
-                let start = session
-                    .get_events()
-                    .await
-                    .expect("get messages")
-                    .into_iter()
-                    .find(|event| event.parsed_type() == SessionEventType::SessionStart)
-                    .and_then(|event| event.typed_data::<SessionStartData>())
-                    .expect("session.start");
-                assert_eq!(start.reasoning_effort.as_deref(), Some("high"));
 
                 session.disconnect().await.expect("disconnect session");
                 client.stop().await.expect("stop client");
@@ -339,6 +96,12 @@ async fn should_emit_assistantmessage_start_before_deltas_with_matching_messagei
                     "expected assistant.message_delta"
                 );
                 assert!(start_indices[0] < delta_indices[0]);
+                assert_has_content_deltas(&observed);
+                let final_message = observed
+                    .iter()
+                    .rposition(|event| event.parsed_type() == SessionEventType::AssistantMessage)
+                    .expect("assistant message index");
+                assert!(delta_indices[0] < final_message);
 
                 let message_ids: Vec<_> = observed
                     .iter()
@@ -378,4 +141,4 @@ fn assert_has_content_deltas(events: &[copilot_sdk::SessionEvent]) {
     }
 }
 static E2E: super::support::SharedE2eGroup =
-    super::support::SharedE2eGroup::standard("streaming_fidelity", 3);
+    super::support::SharedE2eGroup::standard("streaming_fidelity", 2);

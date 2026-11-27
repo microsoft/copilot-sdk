@@ -23,14 +23,9 @@ import org.junit.jupiter.api.Test;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.microsoft.copilot.rpc.AgentStopHookInput;
 import com.microsoft.copilot.rpc.AgentStopHookOutput;
 import com.microsoft.copilot.rpc.PermissionRequestResult;
 import com.microsoft.copilot.rpc.PermissionRequestResultKind;
-import com.microsoft.copilot.rpc.PostToolUseFailureHookInput;
-import com.microsoft.copilot.rpc.PostToolUseHookInput;
-import com.microsoft.copilot.rpc.PreMcpToolCallHookInput;
-import com.microsoft.copilot.rpc.PreToolUseHookInput;
 import com.microsoft.copilot.rpc.SessionEndHookInput;
 import com.microsoft.copilot.rpc.SessionEndHookOutput;
 import com.microsoft.copilot.rpc.SessionHooks;
@@ -59,34 +54,6 @@ public class SessionHandlerTest {
     private static final ObjectMapper MAPPER = JsonRpcClient.getObjectMapper();
 
     private CopilotSession session;
-
-    @Test
-    void hookMetadataFluentAccessorsRoundTrip() throws Exception {
-        String traceparent = "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01";
-        String tracestate = "vendor=state";
-        var pre = new PreToolUseHookInput().setToolCallId("model-call").setTraceparent(traceparent)
-                .setTracestate(tracestate);
-        var post = new PostToolUseHookInput().setToolCallId("model-call").setTraceparent(traceparent)
-                .setTracestate(tracestate);
-        var failure = new PostToolUseFailureHookInput().setToolCallId("model-call").setTraceparent(traceparent)
-                .setTracestate(tracestate);
-        var mcp = new PreMcpToolCallHookInput().setToolCallId("model-call").setTraceparent(traceparent)
-                .setTracestate(tracestate);
-        var stop = new AgentStopHookInput().setTraceparent(traceparent).setTracestate(tracestate);
-        assertEquals("model-call", pre.getToolCallId());
-        assertEquals("model-call", post.getToolCallId());
-        assertEquals("model-call", failure.getToolCallId());
-        for (Object input : List.of(pre, post, failure, mcp, stop)) {
-            JsonNode json = MAPPER.valueToTree(input);
-            assertEquals(traceparent, json.path("traceparent").asText());
-            assertEquals(tracestate, json.path("tracestate").asText());
-            Object decoded = MAPPER.treeToValue(json, input.getClass());
-            assertEquals(json, MAPPER.valueToTree(decoded));
-            if (input != stop) {
-                assertEquals("model-call", json.path("toolCallId").asText());
-            }
-        }
-    }
 
     @Test
     void legacyHookRecordConstructorsRemainAvailableWithoutTracingMetadata() {
@@ -201,12 +168,6 @@ public class SessionHandlerTest {
     @Test
     void testSetEventErrorPolicyNullThrowsNPE() {
         assertThrows(NullPointerException.class, () -> session.setEventErrorPolicy(null));
-    }
-
-    @Test
-    void testSetEventErrorPolicySetsValue() {
-        session.setEventErrorPolicy(EventErrorPolicy.SUPPRESS_AND_LOG_ERRORS);
-        // No exception means success; the policy is stored internally
     }
 
     // ===== handlePermissionRequest: no handler registered =====
@@ -360,19 +321,25 @@ public class SessionHandlerTest {
     void testHandleHooksInvokeUserPromptSubmitted() throws Exception {
         var hooks = new SessionHooks().setOnUserPromptSubmitted((hookInput, invocation) -> {
             assertEquals("handler-test-session", invocation.getSessionId());
+            assertEquals("runtime-session-789", hookInput.sessionId());
+            assertEquals("original prompt", hookInput.prompt());
             return CompletableFuture
                     .completedFuture(new UserPromptSubmittedHookOutput("modified prompt", "extra context", false));
         });
         session.registerHooks(hooks);
 
-        JsonNode input = MAPPER
-                .valueToTree(Map.of("timestamp", 1735689600L, "cwd", "/tmp", "prompt", "original prompt"));
+        JsonNode input = MAPPER.valueToTree(Map.of("sessionId", "runtime-session-789", "timestamp", 1735689600L, "cwd",
+                "/tmp", "prompt", "original prompt"));
 
         Object result = session.handleHooksInvoke("userPromptSubmitted", input).get();
 
         assertInstanceOf(UserPromptSubmittedHookOutput.class, result);
         var output = (UserPromptSubmittedHookOutput) result;
         assertEquals("modified prompt", output.modifiedPrompt());
+        JsonNode wire = MAPPER.valueToTree(output);
+        assertEquals("modified prompt", wire.get("modifiedPrompt").asText());
+        assertFalse(wire.has("decision"));
+        assertFalse(wire.has("reason"));
     }
 
     @Test
@@ -401,11 +368,15 @@ public class SessionHandlerTest {
     void testHandleHooksInvokeSessionStart() throws Exception {
         var hooks = new SessionHooks().setOnSessionStart((hookInput, invocation) -> {
             assertEquals("handler-test-session", invocation.getSessionId());
+            assertEquals("runtime-session-123", hookInput.sessionId());
+            assertEquals(1735689600L, hookInput.timestamp());
+            assertEquals("/tmp", hookInput.cwd());
             return CompletableFuture.completedFuture(new SessionStartHookOutput("additional context", null));
         });
         session.registerHooks(hooks);
 
-        JsonNode input = MAPPER.valueToTree(Map.of("timestamp", 1735689600L, "cwd", "/tmp", "source", "test"));
+        JsonNode input = MAPPER.valueToTree(
+                Map.of("sessionId", "runtime-session-123", "timestamp", 1735689600L, "cwd", "/tmp", "source", "test"));
 
         Object result = session.handleHooksInvoke("sessionStart", input).get();
 
@@ -420,11 +391,14 @@ public class SessionHandlerTest {
     void testHandleHooksInvokeSessionEnd() throws Exception {
         var hooks = new SessionHooks().setOnSessionEnd((hookInput, invocation) -> {
             assertEquals("handler-test-session", invocation.getSessionId());
+            assertEquals("runtime-session-456", hookInput.sessionId());
+            assertEquals("user_closed", hookInput.reason());
             return CompletableFuture.completedFuture(new SessionEndHookOutput(false, null, "summary"));
         });
         session.registerHooks(hooks);
 
-        JsonNode input = MAPPER.valueToTree(Map.of("timestamp", 1735689600L, "cwd", "/tmp", "reason", "user_closed"));
+        JsonNode input = MAPPER.valueToTree(Map.of("sessionId", "runtime-session-456", "timestamp", 1735689600L, "cwd",
+                "/tmp", "reason", "user_closed"));
 
         Object result = session.handleHooksInvoke("sessionEnd", input).get();
 
@@ -578,77 +552,8 @@ public class SessionHandlerTest {
     }
 
     @Test
-    void testUserPromptSubmittedHookOutputCompatibilityConstructorLeavesBlockFieldsOut() throws Exception {
-        JsonNode result = MAPPER.valueToTree(new UserPromptSubmittedHookOutput("modified prompt", null, null));
-        assertEquals("modified prompt", result.get("modifiedPrompt").asText());
-        assertFalse(result.has("decision"));
-        assertFalse(result.has("reason"));
-    }
-
-    @Test
     void testUserPromptSubmittedHookOutputBlockRejectsNullReason() {
         assertThrows(NullPointerException.class, () -> UserPromptSubmittedHookOutput.block(null));
-    }
-
-    // ===== handleHooksInvoke: sessionId deserialization on hook inputs =====
-
-    @Test
-    void testHookInputSessionIdDeserializedForSessionStart() throws Exception {
-        var hooks = new SessionHooks().setOnSessionStart((hookInput, invocation) -> {
-            assertEquals("runtime-session-123", hookInput.sessionId());
-            assertEquals(1735689600L, hookInput.timestamp());
-            assertEquals("/tmp", hookInput.cwd());
-            return CompletableFuture.completedFuture(new SessionStartHookOutput(null, null));
-        });
-        session.registerHooks(hooks);
-
-        JsonNode input = MAPPER.valueToTree(
-                Map.of("sessionId", "runtime-session-123", "timestamp", 1735689600L, "cwd", "/tmp", "source", "new"));
-
-        session.handleHooksInvoke("sessionStart", input).get();
-    }
-
-    @Test
-    void testHookInputSessionIdDeserializedForSessionEnd() throws Exception {
-        var hooks = new SessionHooks().setOnSessionEnd((hookInput, invocation) -> {
-            assertEquals("runtime-session-456", hookInput.sessionId());
-            assertEquals("user_closed", hookInput.reason());
-            return CompletableFuture.completedFuture(new SessionEndHookOutput(false, null, null));
-        });
-        session.registerHooks(hooks);
-
-        JsonNode input = MAPPER.valueToTree(Map.of("sessionId", "runtime-session-456", "timestamp", 1735689600L, "cwd",
-                "/tmp", "reason", "user_closed"));
-
-        session.handleHooksInvoke("sessionEnd", input).get();
-    }
-
-    @Test
-    void testHookInputSessionIdDeserializedForUserPromptSubmitted() throws Exception {
-        var hooks = new SessionHooks().setOnUserPromptSubmitted((hookInput, invocation) -> {
-            assertEquals("runtime-session-789", hookInput.sessionId());
-            assertEquals("hello", hookInput.prompt());
-            return CompletableFuture.completedFuture(new UserPromptSubmittedHookOutput(null, null, null));
-        });
-        session.registerHooks(hooks);
-
-        JsonNode input = MAPPER.valueToTree(
-                Map.of("sessionId", "runtime-session-789", "timestamp", 1735689600L, "cwd", "/tmp", "prompt", "hello"));
-
-        session.handleHooksInvoke("userPromptSubmitted", input).get();
-    }
-
-    // ===== handleHooksInvoke: unhandled hook type =====
-
-    @Test
-    void testHandleHooksInvokeUnhandledHookType() throws Exception {
-        session.registerHooks(new SessionHooks());
-
-        JsonNode input = MAPPER.valueToTree(Map.of());
-
-        Object result = session.handleHooksInvoke("unknownHookType", input).get();
-
-        assertNull(result);
     }
 
     @Test

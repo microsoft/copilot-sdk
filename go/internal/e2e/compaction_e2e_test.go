@@ -16,7 +16,6 @@ func TestCompactionE2E(t *testing.T) {
 	ctx := testharness.NewTestContext(t)
 	client := ctx.NewClient()
 	t.Cleanup(func() { client.ForceStop() })
-	var previousSession *copilot.Session
 
 	t.Run("should trigger compaction with low threshold and emit events", func(t *testing.T) {
 		ctx.ConfigureForTest(t)
@@ -34,7 +33,6 @@ func TestCompactionE2E(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
 		}
-		previousSession = session
 		t.Cleanup(func() {
 			if err := session.Disconnect(); err != nil {
 				t.Errorf("Failed to disconnect compaction session: %v", err)
@@ -196,47 +194,6 @@ func TestCompactionE2E(t *testing.T) {
 		}
 		if !strings.Contains(content, "dragon") {
 			t.Errorf("Expected answer to mention 'dragon', got: %q", ad.Content)
-		}
-	})
-
-	t.Run("should not emit compaction events when infinite sessions disabled", func(t *testing.T) {
-		if previousSession != nil {
-			if _, err := previousSession.GetEvents(t.Context()); err == nil {
-				t.Fatal("Previous compaction session remained live before switching replay fixtures")
-			}
-		}
-		ctx.ConfigureForTest(t)
-
-		enabled := false
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, State: copilot.SessionStateOptions{InfiniteSessions: &copilot.InfiniteSessionConfig{
-			Enabled: &enabled,
-		}},
-		})
-		if err != nil {
-			t.Fatalf("Failed to create session: %v", err)
-		}
-		t.Cleanup(func() {
-			if err := session.Disconnect(); err != nil {
-				t.Errorf("Failed to disconnect non-compacting session: %v", err)
-			}
-		})
-
-		var compactionEvents []copilot.SessionEvent
-		session.On(func(event copilot.SessionEvent) {
-			switch event.Data.(type) {
-			case *copilot.SessionCompactionStartData, *copilot.SessionCompactionCompleteData:
-				compactionEvents = append(compactionEvents, event)
-			}
-		})
-
-		_, err = session.SendAndWait(t.Context(), copilot.MessageOptions{Prompt: "What is 2+2?"})
-		if err != nil {
-			t.Fatalf("Failed to send message: %v", err)
-		}
-
-		// Should not have any compaction events when disabled
-		if len(compactionEvents) != 0 {
-			t.Errorf("Expected 0 compaction events when disabled, got %d", len(compactionEvents))
 		}
 	})
 

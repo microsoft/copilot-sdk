@@ -8,7 +8,6 @@ import pytest
 from pydantic import BaseModel, ConfigDict, Field, RootModel, create_model, field_validator
 
 from copilot import define_tool
-from copilot.rpc import ExternalToolTextResultForLlm
 from copilot.tools import (
     ToolBinaryResult,
     ToolInvocation,
@@ -41,19 +40,6 @@ class TestDefineTool:
         assert result.result_type == "success", result.error
         assert calls == [(patch, patch)]
 
-    def test_creates_tool_with_correct_name_and_description(self):
-        class Params(BaseModel):
-            query: str
-
-        @define_tool("search", description="Search for something")
-        def search(params: Params, invocation: ToolInvocation) -> str:
-            return "result"
-
-        assert search.name == "search"
-        assert search.description == "Search for something"
-        assert search.handler is not None
-        assert search.parameters is not None
-
     def test_infers_name_from_function(self):
         class Params(BaseModel):
             query: str
@@ -73,6 +59,9 @@ class TestDefineTool:
         def get_weather(params: Params, invocation: ToolInvocation) -> str:
             return "sunny"
 
+        assert get_weather.name == "get_weather"
+        assert get_weather.description == "Get weather"
+        assert get_weather.handler is not None
         schema = get_weather.parameters
         assert schema is not None
         assert schema["type"] == "object"
@@ -86,16 +75,18 @@ class TestDefineTool:
             count: int
 
         received_params = None
+        received_inv = None
 
         @define_tool("test", description="Test tool")
         def test_tool(params: Params, invocation: ToolInvocation) -> str:
-            nonlocal received_params
+            nonlocal received_params, received_inv
             received_params = params
+            received_inv = invocation
             return "ok"
 
         invocation = ToolInvocation(
-            session_id="session-1",
-            tool_call_id="call-1",
+            session_id="session-123",
+            tool_call_id="call-456",
             tool_name="test",
             arguments={"name": "Alice", "count": 42},
         )
@@ -105,28 +96,6 @@ class TestDefineTool:
         assert received_params is not None
         assert received_params.name == "Alice"
         assert received_params.count == 42
-
-    async def test_handler_receives_invocation(self):
-        class Params(BaseModel):
-            pass
-
-        received_inv = None
-
-        @define_tool("test", description="Test tool")
-        def test_tool(params: Params, invocation: ToolInvocation) -> str:
-            nonlocal received_inv
-            received_inv = invocation
-            return "ok"
-
-        invocation = ToolInvocation(
-            session_id="session-123",
-            tool_call_id="call-456",
-            tool_name="test",
-            arguments={},
-        )
-
-        await test_tool.handler(invocation)
-
         assert received_inv.session_id == "session-123"
         assert received_inv.tool_call_id == "call-456"
 
@@ -478,30 +447,12 @@ class TestNormalizeResult:
             text_result_for_llm="custom",
             result_type="failure",
             error="some error",
+            tool_references=["get_weather", "check_status"],
         )
         result = _normalize_result(input_result)
         assert result.text_result_for_llm == "custom"
         assert result.result_type == "failure"
-
-    def test_dict_is_json_serialized(self):
-        result = _normalize_result({"key": "value", "num": 42})
-        parsed = json.loads(result.text_result_for_llm)
-        assert parsed == {"key": "value", "num": 42}
-        assert result.result_type == "success"
-
-    def test_list_is_json_serialized(self):
-        result = _normalize_result(["a", "b", "c"])
-        assert result.text_result_for_llm == '["a", "b", "c"]'
-        assert result.result_type == "success"
-
-    def test_pydantic_model_is_serialized(self):
-        class Response(BaseModel):
-            status: str
-            count: int
-
-        result = _normalize_result(Response(status="ok", count=5))
-        parsed = json.loads(result.text_result_for_llm)
-        assert parsed == {"status": "ok", "count": 5}
+        assert result.tool_references == ["get_weather", "check_status"]
 
     def test_list_of_pydantic_models_is_serialized(self):
         class Item(BaseModel):
@@ -713,43 +664,6 @@ class TestConvertMcpCallToolResult:
         assert parsed == {"content": [{"type": "text", "text": "hello"}]}
 
 
-class TestToolReferences:
-    def test_tool_references_pass_through_normalize(self):
-        input_result = ToolResult(
-            text_result_for_llm="found 2 tools",
-            result_type="success",
-            tool_references=["get_weather", "check_status"],
-        )
-        result = _normalize_result(input_result)
-        assert result.tool_references == ["get_weather", "check_status"]
-
-    def test_tool_references_serialized_to_wire(self):
-        wire = ExternalToolTextResultForLlm(
-            text_result_for_llm="found 2 tools",
-            result_type="success",
-            tool_references=["get_weather", "check_status"],
-        )
-        data = wire.to_dict()
-        assert data["toolReferences"] == ["get_weather", "check_status"]
-
-    def test_tool_references_omitted_when_none(self):
-        wire = ExternalToolTextResultForLlm(
-            text_result_for_llm="ok",
-            result_type="success",
-        )
-        assert "toolReferences" not in wire.to_dict()
-
-    def test_tool_references_round_trip_from_wire(self):
-        wire = ExternalToolTextResultForLlm.from_dict(
-            {
-                "textResultForLlm": "found tools",
-                "resultType": "success",
-                "toolReferences": ["alpha", "beta"],
-            }
-        )
-        assert wire.tool_references == ["alpha", "beta"]
-
-
 class TestToolResultToExternalToolTextResultForLlm:
     def test_forwards_binary_results_and_session_log(self):
         tool_result = ToolResult(
@@ -764,6 +678,7 @@ class TestToolResultToExternalToolTextResultForLlm:
             ],
             session_log="tool execution details",
             tool_telemetry={"duration_ms": 42},
+            tool_references=["get_weather", "check_status"],
         )
 
         rpc_result = tool_result_to_external_tool_text_result_for_llm(tool_result)
@@ -771,6 +686,7 @@ class TestToolResultToExternalToolTextResultForLlm:
         assert rpc_result.text_result_for_llm == "screenshot captured"
         assert rpc_result.session_log == "tool execution details"
         assert rpc_result.tool_telemetry == {"duration_ms": 42}
+        assert rpc_result.tool_references == ["get_weather", "check_status"]
         assert rpc_result.binary_results_for_llm is not None
         assert len(rpc_result.binary_results_for_llm) == 1
         assert rpc_result.binary_results_for_llm[0].data == "base64data"
@@ -783,12 +699,3 @@ class TestToolResultToExternalToolTextResultForLlm:
         rpc_result = tool_result_to_external_tool_text_result_for_llm(tool_result)
         assert rpc_result.binary_results_for_llm is None
         assert rpc_result.session_log is None
-
-    def test_forwards_tool_references(self):
-        tool_result = ToolResult(
-            text_result_for_llm="found tools",
-            result_type="success",
-            tool_references=["get_weather", "check_status"],
-        )
-        rpc_result = tool_result_to_external_tool_text_result_for_llm(tool_result)
-        assert rpc_result.tool_references == ["get_weather", "check_status"]

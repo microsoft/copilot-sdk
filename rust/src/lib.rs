@@ -1270,6 +1270,27 @@ fn validate_session_fs_config(cfg: &SessionFsConfig) -> Result<()> {
     Ok(())
 }
 
+#[cfg(any(feature = "runtime", test))]
+fn spawned_tcp_host(args: &[OsString]) -> String {
+    let mut host = "127.0.0.1".to_string();
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        if arg == "--host" {
+            if let Some(value) = args.next() {
+                host = value.to_string_lossy().into_owned();
+            }
+        } else if let Some(value) = arg.to_string_lossy().strip_prefix("--host=") {
+            host = value.to_string();
+        }
+    }
+    // Winsock rejects wildcard destinations, unlike wildcard bind addresses.
+    match host.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(address)) if address.is_unspecified() => "127.0.0.1".to_string(),
+        Ok(std::net::IpAddr::V6(address)) if address.is_unspecified() => "::1".to_string(),
+        _ => host,
+    }
+}
+
 /// Generate a fresh CSPRNG-backed token for authenticating an SDK-spawned
 /// loopback CLI server. 128 bits of entropy, lowercase-hex encoded — not
 /// a UUID (the schema-shaped IDs in this crate stay `String` per the
@@ -2266,6 +2287,7 @@ impl Client {
                 port,
                 connection_token: _,
             } => {
+                let host = spawned_tcp_host(&process.args);
                 let (process, actual_port, spawn_elapsed, port_wait_elapsed) = Self::spawn_tcp(
                     program
                         .as_deref()
@@ -2279,7 +2301,7 @@ impl Client {
                 timings.process_spawn_ms = Some(StartupTimings::millis(spawn_elapsed));
                 timings.port_wait_ms = Some(StartupTimings::millis(port_wait_elapsed));
                 let connect_start = Instant::now();
-                let stream = TcpStream::connect(("127.0.0.1", actual_port)).await?;
+                let stream = TcpStream::connect((host.as_str(), actual_port)).await?;
                 debug!(
                     elapsed_ms = connect_start.elapsed().as_millis(),
                     port = actual_port,

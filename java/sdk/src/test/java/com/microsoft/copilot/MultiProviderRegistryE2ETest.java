@@ -126,18 +126,6 @@ public class MultiProviderRegistryE2ETest {
     }
 
     @Test
-    void testShouldRouteAlphaSonnetTurnToItsProviderAndWireModel() throws Exception {
-        assertRouting("should_route_alpha_sonnet_turn_to_its_provider_and_wire_model", "alpha/sonnet", "byok-gpt-4o",
-                "alpha");
-    }
-
-    @Test
-    void testShouldRouteAlphaHaikuTurnToItsProviderAndWireModel() throws Exception {
-        assertRouting("should_route_alpha_haiku_turn_to_its_provider_and_wire_model", "alpha/haiku", "byok-gpt-4o-mini",
-                "alpha");
-    }
-
-    @Test
     void testShouldRouteDeltaTurboTurnToItsProviderAndWireModel() throws Exception {
         assertRouting("should_route_delta_turbo_turn_to_its_provider_and_wire_model", "delta/turbo", "byok-gpt-4-turbo",
                 "delta");

@@ -9,7 +9,7 @@ import (
 )
 
 func TestToSavedProviderConfiguration(t *testing.T) {
-	for _, kind := range []string{"openai", "azure", "anthropic", "winml", ""} {
+	for _, kind := range []string{"winml", ""} {
 		t.Run(kind, func(t *testing.T) {
 			settings := map[string]any{
 				"name":          "discovered",

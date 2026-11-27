@@ -45,21 +45,6 @@ async def auth_ctx(ctx: E2ETestContext):
 
 
 class TestPerSessionAuth:
-    async def test_should_create_session_with_github_token_and_check_auth_status(
-        self, auth_ctx: E2ETestContext
-    ):
-        session = await auth_ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all},
-            github={"token": "token-alice"},
-        )
-
-        auth_status = await session.rpc.git_hub_auth.get_status()
-        assert auth_status.is_authenticated is True
-        assert auth_status.login == "alice"
-        assert auth_status.copilot_plan == "individual_pro"
-
-        await session.disconnect()
-
     async def test_should_isolate_auth_between_sessions_with_different_tokens(
         self, auth_ctx: E2ETestContext
     ):

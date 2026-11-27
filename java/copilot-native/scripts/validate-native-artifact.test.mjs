@@ -43,117 +43,6 @@ test("accepts a matching, complete Windows classifier", (t) => {
   );
 });
 
-test("accepts a matching, complete Windows ARM64 classifier", (t) => {
-  const fixture = createFixture(t);
-  const windowsArm64Classifier = "win32-arm64";
-  const windowsArm64ArtifactName =
-    "copilot-sdk-runtime-1.2.3-win32-arm64.jar";
-  const windowsArm64JarPath = path.join(
-    fixture.root,
-    windowsArm64ArtifactName,
-  );
-  createNativeClassifierTestFixture({
-    classifier: windowsArm64Classifier,
-    outputPath: windowsArm64JarPath,
-    repoRoot: fixture.repoRoot,
-  });
-
-  assert.deepEqual(
-    validateNativeClassifierJar({
-      classifier: windowsArm64Classifier,
-      jarPath: windowsArm64JarPath,
-      expectedFilename: windowsArm64ArtifactName,
-      repoRoot: fixture.repoRoot,
-    }),
-    {
-      classifier: windowsArm64Classifier,
-      nativeVersion: "9.8.7",
-      sha256: undefined,
-    },
-  );
-});
-
-test("accepts a matching, complete Darwin classifier", (t) => {
-  const fixture = createFixture(t);
-  const darwinClassifier = "darwin-arm64";
-  const darwinArtifactName =
-    "copilot-sdk-runtime-1.2.3-darwin-arm64.jar";
-  const darwinJarPath = path.join(fixture.root, darwinArtifactName);
-  createNativeClassifierTestFixture({
-    classifier: darwinClassifier,
-    outputPath: darwinJarPath,
-    repoRoot: fixture.repoRoot,
-  });
-
-  assert.deepEqual(
-    validateNativeClassifierJar({
-      classifier: darwinClassifier,
-      jarPath: darwinJarPath,
-      expectedFilename: darwinArtifactName,
-      repoRoot: fixture.repoRoot,
-    }),
-    {
-      classifier: darwinClassifier,
-      nativeVersion: "9.8.7",
-      sha256: undefined,
-    },
-  );
-});
-
-test("accepts a matching, complete Darwin x64 classifier", (t) => {
-  const fixture = createFixture(t);
-  const darwinClassifier = "darwin-x64";
-  const darwinArtifactName =
-    "copilot-sdk-runtime-1.2.3-darwin-x64.jar";
-  const darwinJarPath = path.join(fixture.root, darwinArtifactName);
-  createNativeClassifierTestFixture({
-    classifier: darwinClassifier,
-    outputPath: darwinJarPath,
-    repoRoot: fixture.repoRoot,
-  });
-
-  assert.deepEqual(
-    validateNativeClassifierJar({
-      classifier: darwinClassifier,
-      jarPath: darwinJarPath,
-      expectedFilename: darwinArtifactName,
-      repoRoot: fixture.repoRoot,
-    }),
-    {
-      classifier: darwinClassifier,
-      nativeVersion: "9.8.7",
-      sha256: undefined,
-    },
-  );
-});
-
-test("accepts a matching, complete Linux ARM64 classifier", (t) => {
-  const fixture = createFixture(t);
-  const linuxArm64Classifier = "linux-arm64";
-  const linuxArm64ArtifactName =
-    "copilot-sdk-runtime-1.2.3-linux-arm64.jar";
-  const linuxArm64JarPath = path.join(fixture.root, linuxArm64ArtifactName);
-  createNativeClassifierTestFixture({
-    classifier: linuxArm64Classifier,
-    outputPath: linuxArm64JarPath,
-    repoRoot: fixture.repoRoot,
-  });
-
-  assert.deepEqual(
-    validateNativeClassifierJar({
-      classifier: linuxArm64Classifier,
-      jarPath: linuxArm64JarPath,
-      expectedFilename: linuxArm64ArtifactName,
-      repoRoot: fixture.repoRoot,
-    }),
-    {
-      classifier: linuxArm64Classifier,
-      nativeVersion: "9.8.7",
-      sha256: undefined,
-    },
-  );
-});
-
 test("rejects a wrong external filename before attachment", (t) => {
   const fixture = createFixture(t);
   const wrongName = path.join(fixture.root, "arbitrary.jar");
@@ -294,26 +183,16 @@ test("rejects Windows resources in a Linux classifier", (t) => {
 
 test("rejects native resources in the placeholder JAR", (t) => {
   const fixture = createFixture(t);
-  writeStoredZip(fixture.jarPath, [
-    ["native/win32-x64/runtime.node", "runtime"],
-  ]);
+  for (const classifier of ["win32-x64", "darwin-arm64"]) {
+    writeStoredZip(fixture.jarPath, [
+      [`native/${classifier}/runtime.node`, "runtime"],
+    ]);
 
-  assert.throws(
-    () => validatePlaceholderJar(fixture.jarPath),
-    /must not contain/,
-  );
-});
-
-test("rejects Darwin native resources in the placeholder JAR", (t) => {
-  const fixture = createFixture(t);
-  writeStoredZip(fixture.jarPath, [
-    ["native/darwin-arm64/runtime.node", "runtime"],
-  ]);
-
-  assert.throws(
-    () => validatePlaceholderJar(fixture.jarPath),
-    /must not contain/,
-  );
+    assert.throws(
+      () => validatePlaceholderJar(fixture.jarPath),
+      /must not contain/,
+    );
+  }
 });
 
 test("accepts a native-free placeholder JAR", (t) => {
@@ -379,7 +258,11 @@ for (const artifactId of ["copilot-sdk-runtime", "copilot-sdk"]) {
       );
     });
   }
+}
 
+// POM validation does not depend on the artifact; use the fixture without classifier JARs.
+{
+  const artifactId = "copilot-sdk";
   for (const { name, from, to, error } of [
     {
       name: "unresolved revision",

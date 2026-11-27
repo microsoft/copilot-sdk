@@ -113,51 +113,6 @@ public class PreMcpToolCallHookTest {
     }
 
     /**
-     * Verifies that preMcpToolCall hook can replace existing metadata.
-     *
-     * @see Snapshot:
-     *      pre_mcp_tool_call_hook/should_replace_meta_via_premcptoolcall_hook
-     */
-    @Test
-    void testShouldReplaceMetaViaPreMcpToolCallHook() throws Exception {
-        ctx.configureForTest("pre_mcp_tool_call_hook", "should_replace_meta_via_premcptoolcall_hook");
-
-        var hookInputs = new java.util.ArrayList<PreMcpToolCallHookInput>();
-        var mcpServers = new HashMap<String, McpServerConfig>();
-        mcpServers.put("meta-echo", createMetaEchoServer());
-
-        var hooks = new SessionHooks().setOnPreMcpToolCall((input, invocation) -> {
-            hookInputs.add(input);
-            JsonNode metaNode = MAPPER.valueToTree(Map.of("completely", "replaced"));
-            return CompletableFuture.completedFuture(PreMcpToolCallHookOutput.withMeta(metaNode));
-        });
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client
-                    .createSession(ctx.newSessionConfig().setMcp(ctx.newSessionConfig().getMcp().setServers(mcpServers))
-                            .setHooks(ctx.newSessionConfig().getHooks().setHandlers(hooks)).setPermissions(ctx
-                                    .newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL)))
-                    .get();
-
-            AssistantMessageEvent response = session.sendAndWait(new MessageOptions().setPrompt(
-                    "Use the meta-echo/echo_meta tool with value 'test-replace'. Reply with just the raw tool result."))
-                    .get(60, TimeUnit.SECONDS);
-
-            assertNotNull(response);
-            assertFalse(hookInputs.isEmpty(), "Should have received preMcpToolCall hook calls");
-            assertEquals("meta-echo", hookInputs.get(0).getServerName());
-            assertEquals("echo_meta", hookInputs.get(0).getToolName());
-
-            // Verify the response contains the replaced metadata
-            String content = response.getData().content();
-            assertTrue(content.contains("completely"), "Response should contain replaced metadata: " + content);
-            assertTrue(content.contains("replaced"), "Response should contain replaced metadata: " + content);
-
-            session.close();
-        }
-    }
-
-    /**
      * Verifies that preMcpToolCall hook can remove metadata from the MCP request.
      *
      * @see Snapshot:

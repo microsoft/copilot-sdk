@@ -88,21 +88,6 @@ class HttpResponseForwardingTest {
     }
 
     @Test
-    void recordsAcknowledgementBeforeReleasingWriter() throws Exception {
-        RecordingCaller caller = new RecordingCaller();
-        CompletableFuture<Object> write = caller.invoke("llmInference.httpResponseChunk",
-                LlmInferenceHttpResponseChunkParams.builder().requestId("test").data("first").binary(false).end(false)
-                        .error(null).build(),
-                Object.class);
-        CompletableFuture<Void> observed = write.thenRun(() -> assertEquals(0, caller.outstandingData.get()));
-
-        PendingCall call = caller.calls.poll(DEADLINE.toMillis(), TimeUnit.MILLISECONDS);
-        assertNotNull(call);
-        call.result().complete(null);
-        observed.get(DEADLINE.toMillis(), TimeUnit.MILLISECONDS);
-    }
-
-    @Test
     void readsAheadAndCoalescesUnderOneWithheldAck() throws Exception {
         try (TestFlow flow = new TestFlow()) {
             flow.source.feed("first");

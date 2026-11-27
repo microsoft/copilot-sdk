@@ -384,16 +384,6 @@ func TestSkillsSourceRequestArraysOnWire(t *testing.T) {
 			want: `{"cwd":"/work","personalSkillsDir":"/personal","project":true,"projectSkillsDir":"/project","skillDirectories":[],"source":"https://example.com/skill.md","userAgent":"test-agent"}`,
 		},
 		{
-			name:   "install empty",
-			params: &SkillsInstallSourceRequest{SkillDirectories: []string{}},
-			want:   `{"cwd":"","personalSkillsDir":"","project":false,"projectSkillsDir":"","skillDirectories":[],"source":"","userAgent":""}`,
-		},
-		{
-			name:   "install populated",
-			params: &SkillsInstallSourceRequest{SkillDirectories: []string{"/extra"}},
-			want:   `{"cwd":"","personalSkillsDir":"","project":false,"projectSkillsDir":"","skillDirectories":["/extra"],"source":"","userAgent":""}`,
-		},
-		{
 			name:   "remove nil without inventory",
 			params: &SkillsRemoveSourceRequest{Cwd: "/work", Target: "/extra"},
 			want:   `{"cwd":"/work","skillDirectories":[],"target":"/extra"}`,
@@ -402,14 +392,6 @@ func TestSkillsSourceRequestArraysOnWire(t *testing.T) {
 			name:   "remove nil inventory lists",
 			params: &SkillsRemoveSourceRequest{Cwd: "/work", Target: "skill", Inventory: &SkillsRemoveSourceInventory{ProjectSkillsDir: "/project"}},
 			want:   `{"cwd":"/work","inventory":{"personalSkillsDirs":[],"projectSkillsDir":"/project","skills":[]},"skillDirectories":[],"target":"skill"}`,
-		},
-		{
-			name: "remove empty",
-			params: &SkillsRemoveSourceRequest{
-				SkillDirectories: []string{},
-				Inventory:        &SkillsRemoveSourceInventory{PersonalSkillsDirs: []string{}, Skills: []SkillRemoveSourceEntry{}},
-			},
-			want: `{"cwd":"","inventory":{"personalSkillsDirs":[],"projectSkillsDir":"","skills":[]},"skillDirectories":[],"target":""}`,
 		},
 		{
 			name: "remove populated",

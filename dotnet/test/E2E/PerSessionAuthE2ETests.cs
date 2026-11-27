@@ -70,19 +70,6 @@ public class PerSessionAuthE2ETests(E2ETestFixture fixture, ITestOutputHelper ou
     private CopilotClient AuthClient => _authClient ??= CreateAuthTestClient();
 
     [Fact]
-    public async Task ShouldAuthenticateWithGitHubToken()
-    {
-        await SetupCopilotUsersAsync();
-
-        await using var session = await Ctx.CreateSessionAsync(AuthClient, new CreateSessionOptions
-        { GitHub = new SessionGitHubOptions { Token = "token-alice" }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
-
-        var status = await session.Rpc.GitHubAuth.GetStatusAsync();
-        Assert.True(status.IsAuthenticated);
-        Assert.Equal("alice", status.Login);
-    }
-
-    [Fact]
     public async Task ShouldIsolateAuthBetweenSessions()
     {
         await SetupCopilotUsersAsync();

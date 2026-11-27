@@ -271,6 +271,7 @@ def _sdk_profile(profile, features):
         tests.append(("lib", "src/lib.rs"))
     for test, source in tests:
         needs_fixtures = test in ["e2e", "extension_launch_provider_runtime_test"]
+        private_host_test = profile == "lean-local-runtime" and test == "lib"
         copilot_rust_test(
             name = name + "_" + test,
             srcs = native.glob(["src/**/*.rs", "tests/**/*.rs", "build_support/**/*.rs"]) + ["build.rs", "build_tests.rs"],
@@ -278,7 +279,8 @@ def _sdk_profile(profile, features):
             crate_features = features,
             crate_name = (name + "_" + test).replace("-", "_"),
             crate_root = source,
-            data = fixtures if needs_fixtures else [],
+            data = (fixtures if needs_fixtures else []) + (["//src/native/runtime"] if private_host_test else []),
+            env = {"COPILOT_RUNTIME_CDYLIB": "$(rootpath //src/native/runtime)"} if private_host_test else {},
             edition = "2024",
             proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
             rustc_env = dict({
@@ -288,7 +290,7 @@ def _sdk_profile(profile, features):
                 "CARGO_MANIFEST_DIR": "src/sdk/rust",
             }, **(fixture_env if needs_fixtures else {})),
             rustc_cpu = 2 if test == "lib" else 0,
-            rustc_flags = flags,
+            rustc_flags = flags + (["--cfg=copilot_cli_host"] if private_host_test else []),
             tags = ["manual"],
             deps = ([":" + name] if test != "lib" else [":" + name + "_build_script"]) + all_crate_deps(normal = True, normal_dev = True),
         )

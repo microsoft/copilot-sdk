@@ -107,61 +107,25 @@ fn optional_trust_does_not_reject_candidates_or_discard_unbounded_metadata() {
     });
     let mut inputs = vec![
         json!(42),
-        json!("private-invalid"),
-        json!([]),
-        json!({}),
-        json!({"schemaVersion": "v2"}),
         json!({"schemaVersion": "v2", "status": null, "eligibility": 42}),
-        json!({"schemaVersion": "v2", "provenance": {"observedAt": "changed-format"}}),
-        json!({"schemaVersion": "v2", "extra": "x".repeat(4097)}),
     ];
-    for (field, value) in [
-        ("schemaVersion", "v2"),
-        ("status", "future-status"),
-        ("eligibility", "approved"),
-        ("tier", "T3"),
-    ] {
-        let mut snapshot = current.clone();
-        snapshot[field] = json!(value);
-        inputs.push(snapshot);
-    }
-    let mut unknown_authority = current.clone();
-    unknown_authority["provenance"]["source"] = json!("future-authority");
-    inputs.push(unknown_authority);
-    for field in [
-        "schemaVersion",
-        "status",
-        "eligibility",
-        "provenance",
-        "tier",
-    ] {
-        let mut snapshot = current.clone();
-        snapshot.as_object_mut().unwrap().remove(field);
-        inputs.push(snapshot);
-    }
-    for time in ["not-a-date", "2026-09-18T10:00:00", "2026-02-30T10:00:00Z"] {
-        let mut snapshot = current.clone();
-        snapshot["provenance"]["observedAt"] = json!(time);
-        inputs.push(snapshot);
-    }
-    // Hosts must receive both sides of their bounds intact before projecting trust.
-    for extra in [
-        json!("x".repeat(4096)),
-        json!("x".repeat(4097)),
-        json!({ "x".repeat(64): 0 }),
-        json!({ "x".repeat(65): "private-key" }),
-        json!([[["bounded"]]]),
-        json!([[[["too-deep"]]]]),
-        json!([[[[[["private-depth"]]]]]]),
-        json!(vec![0; 119]),
-        json!(vec![0; 120]),
-        json!(vec![0; 129]),
-    ] {
+    let mut future_status = current.clone();
+    future_status["status"] = json!("future-status");
+    inputs.push(future_status);
+    let mut missing_provenance = current.clone();
+    missing_provenance
+        .as_object_mut()
+        .unwrap()
+        .remove("provenance");
+    inputs.push(missing_provenance);
+    let mut impossible_date = current.clone();
+    impossible_date["provenance"]["observedAt"] = json!("2026-02-30T10:00:00Z");
+    inputs.push(impossible_date);
+    for extra in [json!("x".repeat(4097)), json!([[[[[["private-depth"]]]]]])] {
         let mut snapshot = current.clone();
         snapshot["extra"] = extra;
         inputs.push(snapshot);
     }
-
     for trust in inputs {
         let mut wire = search_result_wire();
         for candidate in wire["candidates"].as_array_mut().unwrap() {

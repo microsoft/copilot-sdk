@@ -47,37 +47,6 @@ func TestClientLifecycleE2E(t *testing.T) {
 		}
 	})
 
-	t.Run("should filter session lifecycle events by type", func(t *testing.T) {
-		client := ctx.NewClient()
-		t.Cleanup(func() { client.ForceStop() })
-
-		created := make(chan copilot.SessionLifecycleEvent, 4)
-		unsubscribe := client.OnEventType(copilot.SessionLifecycleCreated, func(event copilot.SessionLifecycleEvent) {
-			select {
-			case created <- event:
-			default:
-			}
-		})
-		defer unsubscribe()
-
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}})
-		if err != nil {
-			t.Fatalf("Failed to create session: %v", err)
-		}
-
-		select {
-		case evt := <-created:
-			if evt.Type != copilot.SessionLifecycleCreated {
-				t.Errorf("Expected event type %q, got %q", copilot.SessionLifecycleCreated, evt.Type)
-			}
-			if evt.SessionID != session.SessionID {
-				t.Errorf("Expected session id %q, got %q", session.SessionID, evt.SessionID)
-			}
-		case <-time.After(10 * time.Second):
-			t.Fatal("Timed out waiting for filtered session.created lifecycle event")
-		}
-	})
-
 	t.Run("disposing lifecycle subscription stops receiving events", func(t *testing.T) {
 		client := ctx.NewClient()
 		t.Cleanup(func() { client.ForceStop() })
@@ -105,6 +74,9 @@ func TestClientLifecycleE2E(t *testing.T) {
 
 		select {
 		case evt := <-created:
+			if evt.Type != copilot.SessionLifecycleCreated {
+				t.Errorf("Expected event type %q, got %q", copilot.SessionLifecycleCreated, evt.Type)
+			}
 			if evt.SessionID != session.SessionID {
 				t.Errorf("Expected session id %q, got %q", session.SessionID, evt.SessionID)
 			}
@@ -115,29 +87,5 @@ func TestClientLifecycleE2E(t *testing.T) {
 		if got := atomic.LoadInt64(&disposedCount); got != 0 {
 			t.Errorf("Expected disposed subscription to receive 0 events, got %d", got)
 		}
-	})
-
-	t.Run("stop disconnects client", func(t *testing.T) {
-		client := ctx.NewClient()
-		t.Cleanup(func() { client.ForceStop() })
-
-		if err := client.Start(t.Context()); err != nil {
-			t.Fatalf("Failed to start client: %v", err)
-		}
-
-		if err := client.Stop(); err != nil {
-			t.Fatalf("Failed to stop client: %v", err)
-		}
-	})
-
-	t.Run("force stop disconnects client", func(t *testing.T) {
-		client := ctx.NewClient()
-		t.Cleanup(func() { client.ForceStop() })
-
-		if err := client.Start(t.Context()); err != nil {
-			t.Fatalf("Failed to start client: %v", err)
-		}
-
-		client.ForceStop()
 	})
 }

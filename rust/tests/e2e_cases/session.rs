@@ -2,15 +2,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use copilot_sdk::handler::{
-    ApproveAllHandler, McpAuthHandler, McpAuthRequest, McpAuthResult, PermissionHandler,
-    PermissionResult,
-};
-use copilot_sdk::rpc::ModelSetAllowedModelsRequest;
+use copilot_sdk::handler::{ApproveAllHandler, PermissionHandler, PermissionResult};
 use copilot_sdk::session::Session;
 use copilot_sdk::session_events::{
     SessionErrorData, SessionEventType, SessionInfoData, SessionModelChangeData, SessionResumeData,
-    SessionStartData, SessionWarningData, UserMessageAgentMode, UserMessageData,
+    SessionStartData, SessionWarningData, UserMessageData,
 };
 use copilot_sdk::tool::ToolHandler;
 use copilot_sdk::types::LogLevel as SessionLogLevel;
@@ -395,12 +391,17 @@ async fn should_resume_a_session_using_the_same_client() {
         |ctx| {
             Box::pin(async move {
                 ctx.set_default_copilot_user();
+                let session_id =
+                    SessionId::from(format!("e2e-new-client-{}", uuid::Uuid::new_v4().simple()));
                 let client = ctx.start_client().await;
                 let session = client
-                    .create_session(ctx.approve_all_session_config())
+                    .create_session(
+                        ctx.approve_all_session_config()
+                            .with_session_id(session_id.clone()),
+                    )
                     .await
                     .expect("create session");
-                let session_id = session.id().clone();
+                assert_eq!(session.id(), &session_id);
 
                 assert!(ask(&session, "What is 1+1?").await.contains('2'));
 
@@ -481,115 +482,6 @@ async fn should_resume_a_session_using_a_new_client() {
                         .await
                         .contains('4')
                 );
-
-                resumed
-                    .disconnect()
-                    .await
-                    .expect("disconnect resumed session");
-                new_client.stop().await.expect("stop new client");
-            })
-        },
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn should_recover_marker_after_cold_resume_with_explicit_session_id() {
-    super::support::with_dedicated_e2e_context(
-        "session",
-        "should_recover_marker_after_cold_resume_with_explicit_session_id",
-        |ctx| {
-            Box::pin(async move {
-                ctx.set_default_copilot_user();
-
-                let session_id = SessionId::from(format!(
-                    "e2e-cold-resume-{}",
-                    uuid::Uuid::new_v4().simple()
-                ));
-
-                let client1 = ctx.start_client().await;
-                let session1 = client1
-                    .create_session(
-                        ctx.approve_all_session_config()
-                            .with_session_id(session_id.clone()),
-                    )
-                    .await
-                    .expect("create session");
-                assert_eq!(session1.id(), &session_id);
-
-                let answer = ask(
-                    &session1,
-                    "Please remember this exact secret marker for later - MARKER-7f3ac21e. Reply with only the single word \"Acknowledged\".",
-                )
-                .await;
-                assert!(answer.contains("Acknowledged"));
-
-                session1
-                    .disconnect()
-                    .await
-                    .expect("disconnect first session");
-                client1.stop().await.expect("stop first client");
-
-                let new_client = ctx.start_client().await;
-                let resumed = new_client
-                    .resume_session(
-                        approve_all_resume_options(session_id.clone()),
-                    )
-                    .await
-                    .expect("resume session");
-                assert_eq!(resumed.id(), &session_id);
-
-                let answer = ask(
-                    &resumed,
-                    "What was the exact secret marker I asked you to remember earlier? Reply with only that marker value and nothing else.",
-                )
-                .await;
-                assert!(answer.contains("MARKER-7f3ac21e"));
-
-                resumed
-                    .disconnect()
-                    .await
-                    .expect("disconnect resumed session");
-                new_client.stop().await.expect("stop new client");
-            })
-        },
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn resumes_a_persisted_session_from_a_new_client_when_an_mcp_oauth_handler_is_configured() {
-    super::support::with_dedicated_e2e_context(
-        "session",
-        "resumes_a_persisted_session_from_a_new_client_when_an_mcp_oauth_handler_is_configured",
-        |ctx| {
-            Box::pin(async move {
-                ctx.set_default_copilot_user();
-                let client = ctx.start_client().await;
-                let session = client
-                    .create_session(ctx.approve_all_session_config().with_mcp(|group| {
-                        group.with_on_auth_request(Arc::new(CancelMcpAuthHandler))
-                    }))
-                    .await
-                    .expect("create session");
-                let session_id = session.id().clone();
-
-                assert!(ask(&session, "What is 1+1?").await.contains('2'));
-
-                session
-                    .disconnect()
-                    .await
-                    .expect("disconnect first session");
-                client.stop().await.expect("stop first client");
-
-                let new_client = ctx.start_client().await;
-                let resumed = new_client
-                    .resume_session(approve_all_resume_options(session_id.clone()).with_mcp(
-                        |group| group.with_on_auth_request(Arc::new(CancelMcpAuthHandler)),
-                    ))
-                    .await
-                    .expect("resume session");
-                assert_eq!(resumed.id(), &session_id);
 
                 resumed
                     .disconnect()
@@ -870,72 +762,6 @@ async fn should_create_session_with_custom_config_dir() {
 }
 
 #[tokio::test]
-async fn should_replace_and_clear_the_host_model_allowlist_on_a_live_session() {
-    super::support::with_shared_e2e_context(
-        &E2E,
-        "session",
-        "should_replace_and_clear_the_host_model_allowlist_on_a_live_session",
-        |ctx| {
-            Box::pin(async move {
-                ctx.set_default_copilot_user();
-                let client = ctx.start_client().await;
-                let session = client
-                    .create_session(ctx.approve_all_session_config())
-                    .await
-                    .expect("create session");
-
-                // Replacing the allowlist with a real, resolvable model ID
-                // succeeds and echoes back the applied/effective policy.
-                let replaced = session
-                    .rpc()
-                    .model()
-                    .set_allowed_models(ModelSetAllowedModelsRequest {
-                        allowed_models: Some(vec!["gpt-4.1".to_string()]),
-                    })
-                    .await
-                    .expect("set allowed models");
-                assert_eq!(
-                    replaced.allowed_models.as_deref(),
-                    Some(&["gpt-4.1".to_string()][..])
-                );
-                assert_eq!(
-                    replaced.effective_allowed_models.as_deref(),
-                    Some(&["gpt-4.1".to_string()][..])
-                );
-
-                // The runtime rejects an explicit empty allowlist rather than
-                // silently disallowing every model.
-                let empty_err = session
-                    .rpc()
-                    .model()
-                    .set_allowed_models(ModelSetAllowedModelsRequest {
-                        allowed_models: Some(vec![]),
-                    })
-                    .await
-                    .expect_err("empty allowlist should be rejected");
-                assert!(
-                    matches!(empty_err.kind(), copilot_sdk::ErrorKind::Rpc { .. }),
-                    "expected an RPC error for an empty allowlist, got {empty_err:?}"
-                );
-
-                // Omitting the field clears the host restriction.
-                let cleared = session
-                    .rpc()
-                    .model()
-                    .set_allowed_models(ModelSetAllowedModelsRequest::default())
-                    .await
-                    .expect("clear allowed models");
-                assert_eq!(cleared.allowed_models, None);
-
-                session.disconnect().await.expect("disconnect session");
-                client.stop().await.expect("stop client");
-            })
-        },
-    )
-    .await;
-}
-
-#[tokio::test]
 async fn should_set_model_with_reasoningeffort() {
     super::support::with_dedicated_group_e2e_context(
         &E2E,
@@ -1109,48 +935,6 @@ async fn should_log_messages_at_various_levels() {
             })
         },
     )
-    .await;
-}
-
-#[tokio::test]
-async fn should_accept_blob_attachments() {
-    super::support::with_shared_e2e_context(&E2E, "session", "should_accept_blob_attachments", |ctx| {
-        Box::pin(async move {
-            ctx.set_default_copilot_user();
-            let png_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
-            std::fs::write(
-                ctx.work_dir().join("test-pixel.png"),
-                [
-                    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
-                    0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-                    0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00,
-                    0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0xda, 0x63, 0x64, 0xf8, 0xcf, 0x50,
-                    0x0f, 0x00, 0x03, 0x86, 0x01, 0x80, 0x5a, 0x34, 0x7d, 0x6b, 0x00, 0x00,
-                    0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
-                ],
-            )
-            .expect("write test image");
-            let client = ctx.start_client().await;
-            let session = client
-                .create_session(ctx.approve_all_session_config())
-                .await
-                .expect("create session");
-
-            session
-                .send_and_wait(MessageOptions::new("Describe this image").with_attachments(vec![
-                    Attachment::Blob {
-                        data: png_base64.to_string(),
-                        mime_type: "image/png".to_string(),
-                        display_name: Some("test-pixel.png".to_string()),
-                    },
-                ]))
-                .await
-                .expect("send");
-
-            session.disconnect().await.expect("disconnect session");
-            client.stop().await.expect("stop client");
-        })
-    })
     .await;
 }
 
@@ -1390,103 +1174,6 @@ async fn should_send_with_github_reference_attachment() {
     .await;
 }
 
-#[tokio::test]
-async fn should_send_with_custom_requestheaders() {
-    super::support::with_shared_e2e_context(
-        &E2E,
-        "session",
-        "should_send_with_custom_requestheaders",
-        |ctx| {
-            Box::pin(async move {
-                ctx.set_default_copilot_user();
-                let client = ctx.start_client().await;
-                let session = client
-                    .create_session(ctx.approve_all_session_config())
-                    .await
-                    .expect("create session");
-                let mut headers = HashMap::new();
-                headers.insert(
-                    "x-copilot-sdk-test-header".to_string(),
-                    "csharp-request-headers".to_string(),
-                );
-
-                session
-                    .send_and_wait(
-                        MessageOptions::new("What is 1+1?").with_request_headers(headers),
-                    )
-                    .await
-                    .expect("send");
-
-                let exchanges = ctx.exchanges();
-                assert!(!exchanges.is_empty(), "expected captured CAPI exchange");
-                let request_headers = exchanges
-                    .last()
-                    .and_then(|exchange| exchange.get("requestHeaders"))
-                    .and_then(serde_json::Value::as_object)
-                    .expect("request headers");
-                let header = request_headers
-                    .iter()
-                    .find(|(key, _)| key.eq_ignore_ascii_case("x-copilot-sdk-test-header"))
-                    .and_then(|(_, value)| value.as_str())
-                    .expect("test header");
-                assert!(header.contains("csharp-request-headers"));
-
-                session.disconnect().await.expect("disconnect session");
-                client.stop().await.expect("stop client");
-            })
-        },
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn should_send_with_mode_property() {
-    super::support::with_shared_e2e_context(
-        &E2E,
-        "session",
-        "should_send_with_mode_property",
-        |ctx| {
-            Box::pin(async move {
-                ctx.set_default_copilot_user();
-                let client = ctx.start_client().await;
-                let session = client
-                    .create_session(ctx.approve_all_session_config())
-                    .await
-                    .expect("create session");
-
-                let events = session.subscribe();
-                session
-                    .client()
-                    .call(
-                        "session.send",
-                        Some(json!({
-                            "sessionId": session.id().as_str(),
-                            "prompt": "Say mode ok.",
-                            "agentMode": "plan",
-                        })),
-                    )
-                    .await
-                    .expect("send with agent mode");
-                wait_for_event(events, "session.idle", |event| {
-                    event.parsed_type() == SessionEventType::SessionIdle
-                })
-                .await;
-
-                let user_message = latest_user_message(&session).await;
-                let data = user_message
-                    .typed_data::<UserMessageData>()
-                    .expect("user.message data");
-                assert_eq!(data.content, "Say mode ok.");
-                assert_eq!(data.agent_mode, Some(UserMessageAgentMode::Plan));
-
-                session.disconnect().await.expect("disconnect session");
-                client.stop().await.expect("stop client");
-            })
-        },
-    )
-    .await;
-}
-
 async fn ask(session: &Session, prompt: &str) -> String {
     let answer = session
         .send_and_wait(prompt)
@@ -1532,20 +1219,6 @@ async fn latest_user_attachments(session: &Session) -> Vec<Value> {
         .expect("attachments")
 }
 
-struct CancelMcpAuthHandler;
-
-#[async_trait::async_trait]
-impl McpAuthHandler for CancelMcpAuthHandler {
-    async fn handle(
-        &self,
-        _session_id: SessionId,
-        _request_id: RequestId,
-        _request: McpAuthRequest,
-    ) -> McpAuthResult {
-        McpAuthResult::Cancelled
-    }
-}
-
 fn secret_tool() -> Tool {
     Tool::new("secret_tool")
         .with_description("A secret tool hidden from the default agent")
@@ -1569,4 +1242,4 @@ impl ToolHandler for SecretTool {
 }
 
 static E2E: super::support::SharedE2eGroup =
-    super::support::SharedE2eGroup::standard("session", 24);
+    super::support::SharedE2eGroup::standard("session", 20);

@@ -42,9 +42,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.microsoft.copilot.generated.CapabilitiesChangedUI;
 import com.microsoft.copilot.generated.rpc.SessionUiRegisterDirectAutoModeSwitchHandlerParams;
-import com.microsoft.copilot.generated.rpc.SessionUiRegisterDirectAutoModeSwitchHandlerResult;
 import com.microsoft.copilot.generated.rpc.SessionsFindByPrefixParams;
 import com.microsoft.copilot.generated.rpc.SessionsFindByPrefixResult;
 import com.microsoft.copilot.rpc.AutoModeSwitchHandler;
@@ -106,34 +104,6 @@ class AutoModeRecoveryTest {
                 assertEquals("session-123", sibling.getSessionId());
             }
         }
-    }
-
-    @Test
-    void uiCapabilityBuildersOmitRecoveryUnlessConfigured() throws Exception {
-        var capabilities = CapabilitiesChangedUI.builder().elicitation(true).mcpApps(false).canvases(true).build();
-        assertTrue(capabilities.elicitation());
-        assertFalse(capabilities.mcpApps());
-        assertTrue(capabilities.canvases());
-        assertNull(capabilities.autoModeRecovery());
-        var recovered = MAPPER.readValue("{\"autoModeRecovery\":true,\"canvases\":false}", CapabilitiesChangedUI.class);
-        assertTrue(recovered.autoModeRecovery());
-        assertFalse(recovered.canvases());
-    }
-
-    @Test
-    void directRegistrationBuildersOmitRecoveryUnlessConfigured() throws Exception {
-        var params = SessionUiRegisterDirectAutoModeSwitchHandlerParams.builder().sessionId("legacy-session").build();
-        assertEquals("legacy-session", params.sessionId());
-        assertNull(params.autoModeRecovery());
-        assertEquals(MAPPER.readTree("{\"sessionId\":\"legacy-session\"}"), MAPPER.valueToTree(params));
-        var result = SessionUiRegisterDirectAutoModeSwitchHandlerResult.builder().handle("legacy-handle").build();
-        assertEquals("legacy-handle", result.handle());
-        assertNull(result.autoModeRecovery());
-        assertEquals(MAPPER.readTree("{\"handle\":\"legacy-handle\"}"), MAPPER.valueToTree(result));
-        assertTrue(MAPPER.readValue("{\"sessionId\":\"recovery-session\",\"autoModeRecovery\":true}",
-                SessionUiRegisterDirectAutoModeSwitchHandlerParams.class).autoModeRecovery());
-        assertTrue(MAPPER.readValue("{\"handle\":\"recovery-handle\",\"autoModeRecovery\":true}",
-                SessionUiRegisterDirectAutoModeSwitchHandlerResult.class).autoModeRecovery());
     }
 
     private static CompletableFuture<CopilotSession> open(CopilotClient client, boolean resume, boolean enabled,

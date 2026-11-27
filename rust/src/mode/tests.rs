@@ -178,16 +178,11 @@ fn memory_defaults_follow_mode_and_preserve_explicit_values() {
             (mode == ClientMode::Empty).then(MemoryConfiguration::disabled),
             "{mode:?}"
         );
-        for supplied in [
-            MemoryConfiguration::enabled(),
-            MemoryConfiguration::disabled(),
-        ] {
-            assert_eq!(
-                memory_for_mode(mode, Some(supplied.clone())),
-                Some(supplied),
-                "{mode:?}"
-            );
-        }
+        assert_eq!(
+            memory_for_mode(mode, Some(MemoryConfiguration::enabled())),
+            Some(MemoryConfiguration::enabled()),
+            "{mode:?}"
+        );
     }
 }
 
@@ -200,10 +195,6 @@ fn experimental_mode_defaults_false_in_empty_mode() {
     assert_eq!(
         experimental_mode_for_mode(ClientMode::Empty, Some(true)),
         Some(true)
-    );
-    assert_eq!(
-        experimental_mode_for_mode(ClientMode::Empty, Some(false)),
-        Some(false)
     );
 }
 

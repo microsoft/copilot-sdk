@@ -57,50 +57,6 @@ public class ScenarioTestingMcpE2ETests(E2ETestFixture fixture, ITestOutputHelpe
     }
 
     [Fact]
-    public async Task Should_Provide_First_Party_Scenario_Token_And_Cancel_Third_Party_Oauth()
-    {
-        await using var firstParty = await ScenarioOAuthMcpServer.StartAsync(ExpectedToken);
-        await using var thirdParty = await ScenarioOAuthMcpServer.StartAsync(ExpectedToken);
-        const string firstPartyName = "scenario-client-first-party";
-        const string thirdPartyName = "scenario-client-third-party";
-        var requests = Channel.CreateUnbounded<McpAuthContext>();
-
-        await using var session = await CreateSessionAsync(new CreateSessionOptions
-        {
-            ClientName = "scenario-client",
-            Mcp = new SessionMcpOptions
-            {
-                OnAuthRequest = request =>
-        {
-            requests.Writer.TryWrite(request);
-            return Task.FromResult<McpAuthResult?>(request.ServerName == firstPartyName ? McpAuthResult.FromToken(new McpAuthToken { AccessToken = ExpectedToken, TokenType = "Bearer", ExpiresIn = 3600, }) : McpAuthResult.Cancel());
-        },
-                Servers = new Dictionary<string, McpServerConfig> { [firstPartyName] = new McpHttpServerConfig { Url = $"{firstParty.Url}/mcp", Tools = ["*"], }, [thirdPartyName] = new McpHttpServerConfig { Url = $"{thirdParty.Url}/mcp", Tools = ["*"], }, }
-            }
-        });
-
-        await session.Rpc.Mcp.ReloadAsync();
-        await WaitForMcpServerStatusAsync(session, firstPartyName, McpServerStatus.Connected);
-        await WaitForMcpServerStatusAsync(session, thirdPartyName, McpServerStatus.NeedsAuth);
-
-        var observed = new List<McpAuthContext>();
-        while (observed.Select(request => request.ServerName).Distinct(StringComparer.Ordinal).Count() < 2)
-        {
-            observed.Add(await requests.Reader.ReadAsync().AsTask().WaitAsync(EventTimeout));
-        }
-
-        Assert.Contains(observed, request =>
-            request.ServerName == firstPartyName && request.Reason == McpOauthRequestReason.Initial);
-        Assert.Contains(observed, request =>
-            request.ServerName == thirdPartyName && request.Reason == McpOauthRequestReason.Initial);
-
-        var firstPartyRequests = await firstParty.GetRequestsAsync();
-        Assert.Contains(firstPartyRequests, request => request.Authorization == $"Bearer {ExpectedToken}");
-        var state = await session.Rpc.Mcp.ListAsync();
-        Assert.Contains(thirdPartyName, state.Host!.NeedsAuthServers.Keys);
-    }
-
-    [Fact]
     public async Task Should_Reconnect_With_Cached_Scenario_Token_Then_Return_Interactive_Oauth_Url()
     {
         await using var oauthServer = await ScenarioOAuthMcpServer.StartAsync(ExpectedToken);

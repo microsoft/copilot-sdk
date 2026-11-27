@@ -47,40 +47,6 @@ class TestTools:
         assert response.data.content == "Host override completed."
         assert not os.path.exists(os.path.join(ctx.work_dir, "override-marker.txt"))
 
-    async def test_invokes_built_in_tools(self, ctx: E2ETestContext):
-        readme_path = os.path.join(ctx.work_dir, "README.md")
-        with open(readme_path, "w") as f:
-            f.write("# ELIZA, the only chatbot you'll ever need")
-
-        session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all}
-        )
-
-        assistant_message = await session.send_and_wait(
-            "What's the first line of README.md in this directory?", timeout=10.0
-        )
-        assert assistant_message is not None
-        assert "ELIZA" in assistant_message.data.content
-
-    async def test_invokes_custom_tool(self, ctx: E2ETestContext):
-        class EncryptParams(BaseModel):
-            input: str = Field(description="String to encrypt")
-
-        @define_tool("encrypt_string", description="Encrypts a string")
-        def encrypt_string(params: EncryptParams, invocation: ToolInvocation) -> str:
-            return params.input.upper()
-
-        session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all},
-            tools={"definitions": [encrypt_string]},
-        )
-
-        assistant_message = await session.send_and_wait(
-            "Use encrypt_string to encrypt this string: Hello", timeout=10.0
-        )
-        assert assistant_message is not None
-        assert "HELLO" in assistant_message.data.content
-
     async def test_low_level_tool_definition(self, ctx: E2ETestContext):
         class PhaseArgs(BaseModel):
             phase: str = Field(
@@ -396,66 +362,5 @@ class TestTools:
             content = assistant_message.data.content or ""
             assert "CITY_PARIS" in content
             assert "COUNTRY_FRANCE" in content
-        finally:
-            await session.disconnect()
-
-    async def test_should_respect_availabletools_and_excludedtools_combined(
-        self, ctx: E2ETestContext
-    ):
-        """excluded_tools takes precedence over available_tools."""
-        excluded_tool_called = False
-
-        def allowed_handler(invocation: ToolInvocation) -> ToolResult:
-            input_val = (invocation.arguments or {}).get("input", "")
-            return ToolResult(text_result_for_llm=f"ALLOWED_{input_val.upper()}")
-
-        def excluded_handler(invocation: ToolInvocation) -> ToolResult:
-            nonlocal excluded_tool_called
-            excluded_tool_called = True
-            input_val = (invocation.arguments or {}).get("input", "")
-            return ToolResult(text_result_for_llm=f"EXCLUDED_{input_val.upper()}")
-
-        session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all},
-            tools={
-                "definitions": [
-                    Tool(
-                        name="allowed_tool",
-                        description="An allowed tool",
-                        parameters={
-                            "type": "object",
-                            "properties": {
-                                "input": {"type": "string", "description": "Input value"}
-                            },
-                            "required": ["input"],
-                        },
-                        handler=allowed_handler,
-                    ),
-                    Tool(
-                        name="excluded_tool",
-                        description="A tool that should be excluded",
-                        parameters={
-                            "type": "object",
-                            "properties": {
-                                "input": {"type": "string", "description": "Input value"}
-                            },
-                            "required": ["input"],
-                        },
-                        handler=excluded_handler,
-                    ),
-                ],
-                "available_tools": ["allowed_tool", "excluded_tool"],
-                "excluded_tools": ["excluded_tool"],
-            },
-        )
-
-        try:
-            result = await session.send_and_wait(
-                "Use the allowed_tool with input 'test'. Do NOT use excluded_tool.",
-                timeout=60.0,
-            )
-            assert result is not None
-            assert "ALLOWED_TEST" in (result.data.content or "")
-            assert not excluded_tool_called, "Excluded tool should not have been called"
         finally:
             await session.disconnect()

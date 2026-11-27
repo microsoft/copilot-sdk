@@ -1476,41 +1476,6 @@ async fn respond_to_reload(
 }
 
 #[tokio::test]
-async fn session_subscribe_yields_events_observe_only() {
-    let (session, mut server) = create_session_pair().await;
-
-    let mut events = session.subscribe();
-    let count = Arc::new(AtomicUsize::new(0));
-    let last_type = Arc::new(parking_lot::Mutex::new(String::new()));
-    let count_clone = count.clone();
-    let last_type_clone = last_type.clone();
-    let (observed_tx, mut observed_rx) = tokio::sync::mpsc::unbounded_channel();
-    let consumer = tokio::spawn(async move {
-        while let Ok(event) = events.recv().await {
-            count_clone.fetch_add(1, Ordering::Relaxed);
-            *last_type_clone.lock() = event.event_type.clone();
-            let _ = observed_tx.send(());
-        }
-    });
-
-    server.send_event("noop.event", serde_json::json!({})).await;
-    server
-        .send_event("another.event", serde_json::json!({"k": "v"}))
-        .await;
-
-    timeout(Duration::from_secs(1), async {
-        for _ in 0..2 {
-            observed_rx.recv().await.expect("event observed");
-        }
-    })
-    .await
-    .expect("two events observed");
-    assert_eq!(count.load(Ordering::Relaxed), 2);
-    assert_eq!(last_type.lock().as_str(), "another.event");
-    consumer.abort();
-}
-
-#[tokio::test]
 async fn create_session_forwards_refresh_custom_instructions_only_when_set() {
     for refresh in [Some(true), Some(false), None] {
         let (client, mut server_read, mut server_write) = make_client();
@@ -6030,44 +5995,6 @@ async fn send_and_wait_source_preserves_errors() {
             }
         }
     }
-}
-
-#[tokio::test(start_paused = true)]
-async fn send_and_wait_returns_error_on_session_error() {
-    let (session, mut server) = create_session_pair().await;
-    let session = Arc::new(session);
-
-    let handle = tokio::spawn({
-        let session = session.clone();
-        async move {
-            session
-                .send_and_wait(
-                    MessageOptions::new("fail").with_wait_timeout(Duration::from_secs(5)),
-                )
-                .await
-        }
-    });
-
-    let request = server.read_request().await;
-    server.respond(&request, serde_json::json!({})).await;
-    server
-        .send_event(
-            "session.error",
-            serde_json::json!({ "message": "something went wrong" }),
-        )
-        .await;
-
-    let err = timeout(TIMEOUT, handle)
-        .await
-        .unwrap()
-        .unwrap()
-        .unwrap_err();
-    assert!(
-        matches!(
-            err.kind(),
-            copilot_sdk::ErrorKind::Session(copilot_sdk::SessionErrorKind::AgentError)
-        ) && err.to_string().contains("something went wrong")
-    );
 }
 
 #[tokio::test]

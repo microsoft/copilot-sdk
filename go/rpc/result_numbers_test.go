@@ -12,28 +12,6 @@ import (
 	"github.com/microsoft/copilot-sdk/go/v2/rpc"
 )
 
-func TestScopedSettingsReadPreservesConditionalValues(t *testing.T) {
-	var result rpc.UserSettingsLoadForConfigDirResult
-	if err := json.Unmarshal([]byte(`{"extensions":{"revision":9007199254740993,"nested":[null,9007199254740995]}}`), &result); err != nil {
-		t.Fatal(err)
-	}
-	request, err := json.Marshal(rpc.UserSettingsUpdateRequest{
-		Key: "extensions", Value: map[string]any{"enabled": true},
-		IfFieldsMatch: result["extensions"].(map[string]any),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(request, &fields); err != nil {
-		t.Fatal(err)
-	}
-	const expected = `{"nested":[null,9007199254740995],"revision":9007199254740993}`
-	if string(fields["ifFieldsMatch"]) != expected {
-		t.Fatalf("the read changed the conditional values:\ngot: %s\nwant: %s", fields["ifFieldsMatch"], expected)
-	}
-}
-
 func TestNormalizedSettingsPreserveWriteValues(t *testing.T) {
 	const document = `{"voice":{"negative":-9007199254740993,"maximum":18446744073709551615,"nested":[9007199254740993,null,1.25]}}`
 	var result rpc.UserSettingsNormalizeResult

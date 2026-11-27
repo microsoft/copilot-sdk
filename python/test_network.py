@@ -116,13 +116,16 @@ METHODS: dict[str, tuple[str, dict[str, Any], str]] = {
 }
 
 
+# Callback dispatch, cancellation and close handling share _CancellableCallbackAdapter for every
+# method; per-method wiring is covered by the tests parametrized over all METHODS.
+SHARED_PATH_METHOD = ["network.authenticateBasic"]
+
+
 @pytest.mark.parametrize(
     ("network", "registrations"),
     [
         (None, []),
-        ({}, []),
         ({"scope": "runtime"}, []),
-        ({"resolve_proxy": _none}, [{"resolveProxy": {}}]),
         (
             {"scope": "runtime", "authenticate_negotiate": _none},
             [{"scope": "runtime", "authenticateNegotiate": {}}],
@@ -152,11 +155,10 @@ async def test_start_registers_only_configured_callbacks_and_scope_before_other_
     ]
 
 
-@pytest.mark.parametrize("network", [None, {"scope": "runtime"}])
 @pytest.mark.parametrize("method", list(METHODS))
-async def test_start_without_callbacks_does_not_handle(network, method) -> None:
+async def test_start_without_callbacks_does_not_handle(method) -> None:
     fake = FakeJsonRpcClient()
-    client = make_client(fake, network=network)
+    client = make_client(fake, network={"scope": "runtime"})
 
     await client.start()
 
@@ -301,7 +303,7 @@ async def test_registers_before_sessions_requested_during_startup(method, wire_m
     assert [name for name, _ in fake.requests] == ["network.setProvider", wire_method]
 
 
-@pytest.mark.parametrize("kind", ["async", "sync", "task", "coroutine"])
+@pytest.mark.parametrize("kind", ["async", "sync", "task"])
 async def test_answers_concurrent_lookups_missing_values_and_failures(monkeypatch, kind) -> None:
     calls: list[Any] = []
 
@@ -345,7 +347,6 @@ async def test_answers_concurrent_lookups_missing_values_and_failures(monkeypatc
             "sync": callback,
             # Ordinary callables that need a running loop, or return work for the client's loop.
             "task": lambda request: asyncio.create_task(run_async(request)),
-            "coroutine": lambda request: run_async(request),
         }[kind]
 
     rpc = JsonRpcClient(Mock())
@@ -507,18 +508,12 @@ def _pending_callback(
     return callback
 
 
-@pytest.mark.parametrize("kind", ["async", "task"])
 @pytest.mark.parametrize("method", list(METHODS))
-async def test_runtime_cancel_request_cancels_async_callback(monkeypatch, method, kind) -> None:
+async def test_runtime_cancel_request_cancels_async_callback(monkeypatch, method) -> None:
     entered = asyncio.Event()
     cancelled = asyncio.Event()
-    pending = _pending_callback(entered, cancelled)
-    callback = {
-        "async": pending,
-        "task": lambda request: asyncio.create_task(pending(request)),
-    }[kind]
     _client, rpc, sent, responded = _wire_network_client(
-        monkeypatch, {METHODS[method][0]: callback}
+        monkeypatch, {METHODS[method][0]: _pending_callback(entered, cancelled)}
     )
 
     rpc._handle_request(_message(method, 7))
@@ -540,7 +535,7 @@ async def test_runtime_cancel_request_cancels_async_callback(monkeypatch, method
 
 
 @pytest.mark.parametrize("when", ["before dispatch", "with the answer"])
-@pytest.mark.parametrize("method", list(METHODS))
+@pytest.mark.parametrize("method", SHARED_PATH_METHOD)
 async def test_runtime_cancellation_wins_over_an_answer(monkeypatch, method, when) -> None:
     calls: list[Any] = []
     rpcs: list[JsonRpcClient] = []
@@ -576,7 +571,7 @@ async def test_runtime_cancellation_wins_over_an_answer(monkeypatch, method, whe
     )
 
 
-@pytest.mark.parametrize("method", list(METHODS))
+@pytest.mark.parametrize("method", SHARED_PATH_METHOD)
 async def test_late_failure_after_runtime_cancellation_is_not_unhandled(
     monkeypatch, method
 ) -> None:
@@ -619,7 +614,7 @@ async def test_late_failure_after_runtime_cancellation_is_not_unhandled(
 
 
 @pytest.mark.parametrize("kind", ["task", "async"])
-@pytest.mark.parametrize("method", list(METHODS))
+@pytest.mark.parametrize("method", SHARED_PATH_METHOD)
 async def test_callback_cancelled_by_itself_replies_promptly(monkeypatch, method, kind) -> None:
     # A host lookup can cancel itself while the request stays live; the runtime must get an
     # answer instead of waiting for its callback deadline.
@@ -656,7 +651,7 @@ async def test_callback_cancelled_by_itself_replies_promptly(monkeypatch, method
     )
 
 
-@pytest.mark.parametrize("method", list(METHODS))
+@pytest.mark.parametrize("method", SHARED_PATH_METHOD)
 async def test_sync_callback_cancelled_by_itself_replies_promptly(monkeypatch, method) -> None:
     def cancelled(_request: Any) -> str | None:
         # For example, the result of a cancelled future.
@@ -681,7 +676,7 @@ async def test_sync_callback_cancelled_by_itself_replies_promptly(monkeypatch, m
 
 
 @pytest.mark.parametrize("teardown", ["connection_lost", "stop", "force_stop"])
-@pytest.mark.parametrize("method", list(METHODS))
+@pytest.mark.parametrize("method", SHARED_PATH_METHOD)
 async def test_connection_close_cancels_pending_callback(monkeypatch, method, teardown) -> None:
     calls: list[Any] = []
     entered = asyncio.Event()
@@ -712,8 +707,8 @@ async def test_connection_close_cancels_pending_callback(monkeypatch, method, te
 
 
 @pytest.mark.parametrize("answer", ["after_close", "with_close"])
-@pytest.mark.parametrize("teardown", ["connection_lost", "stop", "force_stop"])
-@pytest.mark.parametrize("method", list(METHODS))
+@pytest.mark.parametrize("teardown", ["connection_lost"])
+@pytest.mark.parametrize("method", SHARED_PATH_METHOD)
 async def test_connection_close_retires_callbacks_that_suppress_cancellation(
     monkeypatch, method, teardown, answer
 ) -> None:

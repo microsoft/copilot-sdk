@@ -15,6 +15,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import com.microsoft.copilot.generated.rpc.MemoryMode;
 import com.microsoft.copilot.rpc.CapiSessionOptions;
@@ -42,93 +43,15 @@ class JsonIncludeNonNullTest {
 
     // --- Annotation presence checks ---
 
-    @Test
-    void copilotClientOptionsHasNonNullAnnotation() {
-        assertHasNonNullInclude(CopilotClientOptions.class);
-    }
-
-    @Test
-    void sessionConfigHasNonNullAnnotation() {
-        assertHasNonNullInclude(CreateSessionOptions.class);
-    }
-
-    @Test
-    void resumeSessionConfigHasNonNullAnnotation() {
-        assertHasNonNullInclude(ResumeSessionOptions.class);
-    }
-
-    @Test
-    void infiniteSessionConfigHasNonNullAnnotation() {
-        assertHasNonNullInclude(InfiniteSessionConfig.class);
-    }
-
-    @Test
-    void memoryConfigurationHasNonNullAnnotation() {
-        assertHasNonNullInclude(MemoryConfiguration.class);
-    }
-
-    @Test
-    void inputOptionsHasNonNullAnnotation() {
-        assertHasNonNullInclude(InputOptions.class);
-    }
-
-    @Test
-    void modelCapabilitiesOverrideHasNonNullAnnotation() {
-        assertHasNonNullInclude(ModelCapabilitiesOverride.class);
-    }
-
-    @Test
-    void providerConfigHasNonNullAnnotation() {
-        assertHasNonNullInclude(ProviderConfig.class);
-    }
-
-    @Test
-    void capiSessionOptionsHasNonNullAnnotation() {
-        assertHasNonNullInclude(CapiSessionOptions.class);
-    }
-
-    @Test
-    void telemetryConfigHasNonNullAnnotation() {
-        assertHasNonNullInclude(TelemetryConfig.class);
-    }
-
-    @Test
-    void sessionUiCapabilitiesHasNonNullAnnotation() {
-        assertHasNonNullInclude(SessionUiCapabilities.class);
-    }
-
-    @Test
-    void customAgentConfigHasNonNullAnnotation() {
-        assertHasNonNullInclude(CustomAgentConfig.class);
-    }
-
-    @Test
-    void userInputRequestHasNonNullAnnotation() {
-        assertHasNonNullInclude(UserInputRequest.class);
+    @ParameterizedTest
+    @ValueSource(classes = {CopilotClientOptions.class, CreateSessionOptions.class, ResumeSessionOptions.class,
+            InfiniteSessionConfig.class, MemoryConfiguration.class, ModelCapabilitiesOverride.class,
+            ProviderConfig.class, CapiSessionOptions.class, CustomAgentConfig.class})
+    void wireOptionTypesOmitNullFields(Class<?> clazz) {
+        assertHasNonNullInclude(clazz);
     }
 
     // --- Serialization tests: null fields are omitted ---
-
-    @Test
-    void inputOptionsOmitsNullFieldsInJson() throws JsonProcessingException {
-        var opts = new InputOptions();
-        String json = MAPPER.writeValueAsString(opts);
-        assertEquals("{}", json, "All-null InputOptions should serialize to empty JSON");
-    }
-
-    @Test
-    void telemetryConfigOmitsNullFieldsInJson() throws JsonProcessingException {
-        var config = new TelemetryConfig();
-        String json = MAPPER.writeValueAsString(config);
-        assertEquals("{}", json, "All-null TelemetryConfig should serialize to empty JSON");
-    }
-
-    @Test
-    void sessionUiCapabilitiesOmitsNullFieldsInJson() throws JsonProcessingException {
-        var caps = new SessionUiCapabilities();
-        String json = MAPPER.writeValueAsString(caps);
-        assertEquals("{}", json, "All-null SessionUiCapabilities should serialize to empty JSON");
-    }
 
     @Test
     void userInputRequestOmitsNullFieldsInJson() throws JsonProcessingException {
@@ -138,32 +61,28 @@ class JsonIncludeNonNullTest {
     }
 
     @Test
-    void inputOptionsIncludesSetFieldsInJson() throws JsonProcessingException {
+    void inputOptionsSerializesOnlySetFields() throws JsonProcessingException {
+        assertEquals("{}", MAPPER.writeValueAsString(new InputOptions()));
         var opts = new InputOptions();
         opts.setMinLength(5);
         opts.setMaxLength(100);
-        String json = MAPPER.writeValueAsString(opts);
-        assertTrue(json.contains("\"minLength\":5"), "Set minLength should appear in JSON");
-        assertTrue(json.contains("\"maxLength\":100"), "Set maxLength should appear in JSON");
-        assertFalse(json.contains("\"title\""), "Unset title should be omitted from JSON");
+        assertEquals(MAPPER.readTree("{\"minLength\":5,\"maxLength\":100}"), MAPPER.valueToTree(opts));
     }
 
     @Test
-    void telemetryConfigIncludesSetFieldsInJson() throws JsonProcessingException {
+    void telemetryConfigSerializesOnlySetFields() throws JsonProcessingException {
+        assertEquals("{}", MAPPER.writeValueAsString(new TelemetryConfig()));
         var config = new TelemetryConfig();
         config.setOtlpEndpoint("http://localhost:4318");
-        String json = MAPPER.writeValueAsString(config);
-        assertTrue(json.contains("\"otlpEndpoint\":\"http://localhost:4318\""),
-                "Set otlpEndpoint should appear in JSON");
-        assertFalse(json.contains("\"filePath\""), "Unset filePath should be omitted from JSON");
+        assertEquals(MAPPER.readTree("{\"otlpEndpoint\":\"http://localhost:4318\"}"), MAPPER.valueToTree(config));
     }
 
     @Test
-    void sessionUiCapabilitiesIncludesSetFieldsInJson() throws JsonProcessingException {
+    void sessionUiCapabilitiesSerializesOnlySetFields() throws JsonProcessingException {
+        assertEquals("{}", MAPPER.writeValueAsString(new SessionUiCapabilities()));
         var caps = new SessionUiCapabilities();
         caps.setElicitation(true);
-        String json = MAPPER.writeValueAsString(caps);
-        assertTrue(json.contains("\"elicitation\":true"), "Set elicitation should appear in JSON");
+        assertEquals(MAPPER.readTree("{\"elicitation\":true}"), MAPPER.valueToTree(caps));
     }
 
     @Test

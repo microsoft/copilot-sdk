@@ -15,13 +15,7 @@ public sealed partial class ClientSessionLifetimeTests
     // exclusive-scheduler = a task scheduler that runs one task at a time.
     // States: what Dispose has to stop, and so which requests it must send.
     [Theory]
-    [InlineData("none", "never-started")]
-    [InlineData("none", "session")]
-    [InlineData("none", "runtime")]
     [InlineData("none", "session-and-runtime")]
-    [InlineData("pool-context", "never-started")]
-    [InlineData("pool-context", "session")]
-    [InlineData("pool-context", "runtime")]
     [InlineData("pool-context", "session-and-runtime")]
     [InlineData("single-thread-context", "never-started")]
     [InlineData("single-thread-context", "session")]

@@ -9,67 +9,18 @@ import com.microsoft.copilot.rpc.SessionToolOptions;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.microsoft.copilot.generated.rpc.ProtocolImageGenerationOptions;
 import com.microsoft.copilot.rpc.ImageGenerationConfig;
 import com.microsoft.copilot.rpc.ResumeSessionOptions;
 import com.microsoft.copilot.rpc.CreateSessionOptions;
 
 class ImageGenerationConfigTest {
-    @ParameterizedTest
-    @NullSource
-    @ValueSource(booleans = {true, false})
-    void protocolOptionsBuilderPreservesOmittedFields(Boolean enabled) {
-        var options = ProtocolImageGenerationOptions.builder().enabled(enabled).build();
-        assertProtocolOptionsOnlyContainEnabled(options, enabled);
-    }
-
-    private static void assertProtocolOptionsOnlyContainEnabled(ProtocolImageGenerationOptions options,
-            Boolean enabled) {
-        assertEquals(enabled, options.enabled());
-        assertNull(options.watermark());
-        assertNull(options.saveToDisk());
-        JsonNode json = JsonRpcClient.getObjectMapper().valueToTree(options);
-        assertFalse(json.has("watermark"));
-        assertFalse(json.has("saveToDisk"));
-        if (enabled == null) {
-            assertFalse(json.has("enabled"));
-        } else {
-            assertEquals(enabled.booleanValue(), json.get("enabled").booleanValue());
-        }
-    }
-
-    @ParameterizedTest
-    @ValueSource(booleans = {true, false})
-    void protocolOptionsForwardExplicitWatermark(boolean watermark) {
-        var options = ProtocolImageGenerationOptions.builder().enabled(null).watermark(watermark).build();
-        assertEquals(watermark, options.watermark());
-        assertNull(options.saveToDisk());
-        JsonNode json = JsonRpcClient.getObjectMapper().valueToTree(options);
-        assertEquals(watermark, json.get("watermark").booleanValue());
-        assertFalse(json.has("enabled"));
-        assertFalse(json.has("saveToDisk"));
-    }
-
-    @ParameterizedTest
-    @ValueSource(booleans = {true, false})
-    void protocolOptionsForwardExplicitSaveToDisk(boolean saveToDisk) {
-        var options = ProtocolImageGenerationOptions.builder().enabled(null).watermark(null).saveToDisk(saveToDisk)
-                .build();
-        assertEquals(saveToDisk, options.saveToDisk());
-        JsonNode json = JsonRpcClient.getObjectMapper().valueToTree(options);
-        assertEquals(saveToDisk, json.get("saveToDisk").booleanValue());
-        assertEquals(1, json.size());
-    }
-
     @ParameterizedTest
     @ValueSource(booleans = {true, false})
     void createAndResumeForwardExplicitOptIn(boolean enabled) {

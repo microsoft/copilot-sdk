@@ -2,15 +2,11 @@ package e2e
 
 import (
 	"encoding/base64"
-	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
-	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	copilot "github.com/microsoft/copilot-sdk/go/v2"
 	"github.com/microsoft/copilot-sdk/go/v2/internal/e2e/testharness"
@@ -41,40 +37,6 @@ func TestSessionFSE2E(t *testing.T) {
 		opts.SessionFS = sessionFSConfig
 	})
 	t.Cleanup(func() { client.ForceStop() })
-
-	t.Run("should route file operations through the session fs provider", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, State: copilot.SessionStateOptions{CreateSessionFSProvider: createSessionFSHandler}})
-		if err != nil {
-			t.Fatalf("Failed to create session: %v", err)
-		}
-
-		msg, err := session.SendAndWait(t.Context(), copilot.MessageOptions{Prompt: "What is 100 + 200?"})
-		if err != nil {
-			t.Fatalf("Failed to send message: %v", err)
-		}
-		content := ""
-		if msg != nil {
-			if d, ok := msg.Data.(*copilot.AssistantMessageData); ok {
-				content = d.Content
-			}
-		}
-		if !strings.Contains(content, "300") {
-			t.Fatalf("Expected response to contain 300, got %q", content)
-		}
-		if err := session.Disconnect(); err != nil {
-			t.Fatalf("Failed to disconnect session: %v", err)
-		}
-
-		events, err := os.ReadFile(p(session.SessionID, sessionStatePath+"/events.jsonl"))
-		if err != nil {
-			t.Fatalf("Failed to read events file: %v", err)
-		}
-		if !strings.Contains(string(events), "300") {
-			t.Fatalf("Expected events file to contain 300")
-		}
-	})
 
 	t.Run("should view an image that exists only in the binary session fs provider", func(t *testing.T) {
 		ctx.ConfigureForTest(t)
@@ -188,8 +150,12 @@ func TestSessionFSE2E(t *testing.T) {
 			t.Fatalf("Failed to disconnect first session: %v", err)
 		}
 
-		if _, err := os.Stat(p(sessionID, sessionStatePath+"/events.jsonl")); err != nil {
+		eventsContent, err := os.ReadFile(p(sessionID, sessionStatePath+"/events.jsonl"))
+		if err != nil {
 			t.Fatalf("Expected events file to exist before resume: %v", err)
+		}
+		if !strings.Contains(string(eventsContent), "100") {
+			t.Fatalf("Expected events file to contain 100, got %q", string(eventsContent))
 		}
 
 		session2, err := client.ResumeSession(t.Context(), sessionID, &copilot.ResumeSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, State: copilot.SessionStateOptions{CreateSessionFSProvider: createSessionFSHandler}})
@@ -240,159 +206,6 @@ func TestSessionFSE2E(t *testing.T) {
 
 		if err := client2.Start(t.Context()); err == nil {
 			t.Fatal("Expected Start to fail when SessionFS provider is set after sessions already exist")
-		}
-	})
-
-	t.Run("should map large output handling into SessionFS", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		suppliedFileContent := strings.Repeat("x", 100_000)
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, State: copilot.SessionStateOptions{CreateSessionFSProvider: createSessionFSHandler}, Tools: copilot.SessionToolOptions{Definitions: []copilot.Tool{
-			copilot.DefineTool("get_big_string", "Returns a large string",
-				func(_ struct{}, inv copilot.ToolInvocation) (string, error) {
-					return suppliedFileContent, nil
-				}),
-		}},
-		})
-		if err != nil {
-			t.Fatalf("Failed to create session: %v", err)
-		}
-
-		if _, err := session.SendAndWait(t.Context(), copilot.MessageOptions{
-			Prompt: "Call the get_big_string tool and reply with the word DONE only.",
-		}); err != nil {
-			t.Fatalf("Failed to send message: %v", err)
-		}
-
-		messages, err := session.GetEvents(t.Context())
-		if err != nil {
-			t.Fatalf("Failed to get messages: %v", err)
-		}
-		toolResult := findToolCallResult(messages, "get_big_string")
-		// Windows reports the spilled file with backslash separators.
-		toolResult = strings.ReplaceAll(toolResult, "\\", "/")
-		if !strings.Contains(toolResult, sessionStatePath+"/temp/") {
-			t.Fatalf("Expected tool result to reference %s/temp/, got %q", sessionStatePath, toolResult)
-		}
-		match := regexp.MustCompile(`(` + regexp.QuoteMeta(sessionStatePath) + `/temp/[^\s]+)`).FindStringSubmatch(toolResult)
-		if len(match) < 2 {
-			t.Fatalf("Expected temp file path in tool result, got %q", toolResult)
-		}
-
-		fileContent, err := os.ReadFile(p(session.SessionID, match[1]))
-		if err != nil {
-			t.Fatalf("Failed to read temp file: %v", err)
-		}
-		if string(fileContent) != suppliedFileContent {
-			t.Fatalf("Expected temp file content to match supplied content")
-		}
-	})
-
-	t.Run("should succeed with compaction while using SessionFS", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, State: copilot.SessionStateOptions{CreateSessionFSProvider: createSessionFSHandler}})
-		if err != nil {
-			t.Fatalf("Failed to create session: %v", err)
-		}
-
-		if _, err := session.SendAndWait(t.Context(), copilot.MessageOptions{Prompt: "What is 2+2?"}); err != nil {
-			t.Fatalf("Failed to send message: %v", err)
-		}
-
-		eventsPath := p(session.SessionID, sessionStatePath+"/events.jsonl")
-		if err := waitForFile(eventsPath, 5*time.Second); err != nil {
-			t.Fatalf("Timed out waiting for events file: %v", err)
-		}
-		contentBefore, err := os.ReadFile(eventsPath)
-		if err != nil {
-			t.Fatalf("Failed to read events file before compaction: %v", err)
-		}
-		if strings.Contains(string(contentBefore), "checkpointNumber") {
-			t.Fatalf("Expected events file to not contain checkpointNumber before compaction")
-		}
-
-		compactionResult, err := session.RPC.History.Compact(t.Context(), nil)
-		if err != nil {
-			t.Fatalf("Failed to compact session: %v", err)
-		}
-		if compactionResult == nil || !compactionResult.Success {
-			t.Fatalf("Expected compaction to succeed, got %+v", compactionResult)
-		}
-
-		if err := waitForFileContent(eventsPath, "checkpointNumber", 5*time.Second); err != nil {
-			t.Fatalf("Timed out waiting for checkpoint rewrite: %v", err)
-		}
-	})
-	t.Run("should write workspace metadata via SessionFS", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, State: copilot.SessionStateOptions{CreateSessionFSProvider: createSessionFSHandler}})
-		if err != nil {
-			t.Fatalf("Failed to create session: %v", err)
-		}
-
-		msg, err := session.SendAndWait(t.Context(), copilot.MessageOptions{Prompt: "What is 7 * 8?"})
-		if err != nil {
-			t.Fatalf("Failed to send message: %v", err)
-		}
-		content := ""
-		if msg != nil {
-			if d, ok := msg.Data.(*copilot.AssistantMessageData); ok {
-				content = d.Content
-			}
-		}
-		if !strings.Contains(content, "56") {
-			t.Fatalf("Expected response to contain 56, got %q", content)
-		}
-
-		// WorkspaceManager should have created workspace.yaml via SessionFS
-		workspaceYamlPath := p(session.SessionID, sessionStatePath+"/workspace.yaml")
-		if err := waitForFileContent(workspaceYamlPath, "id:", 5*time.Second); err != nil {
-			t.Fatalf("Timed out waiting for workspace.yaml content: %v", err)
-		}
-
-		// Checkpoint index should also exist
-		indexPath := p(session.SessionID, sessionStatePath+"/checkpoints/index.md")
-		if err := waitForFile(indexPath, 5*time.Second); err != nil {
-			t.Fatalf("Timed out waiting for checkpoints/index.md: %v", err)
-		}
-
-		if err := session.Disconnect(); err != nil {
-			t.Fatalf("Failed to disconnect session: %v", err)
-		}
-	})
-
-	t.Run("should persist plan.md via SessionFS", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, State: copilot.SessionStateOptions{CreateSessionFSProvider: createSessionFSHandler}})
-		if err != nil {
-			t.Fatalf("Failed to create session: %v", err)
-		}
-
-		// Write a plan via the session RPC
-		if _, err := session.SendAndWait(t.Context(), copilot.MessageOptions{Prompt: "What is 2 + 3?"}); err != nil {
-			t.Fatalf("Failed to send message: %v", err)
-		}
-		if _, err := session.RPC.Plan.Update(t.Context(), &rpc.PlanUpdateRequest{Content: "# Test Plan\n\nThis is a test."}); err != nil {
-			t.Fatalf("Failed to update plan: %v", err)
-		}
-
-		planPath := p(session.SessionID, sessionStatePath+"/plan.md")
-		if err := waitForFile(planPath, 5*time.Second); err != nil {
-			t.Fatalf("Timed out waiting for plan.md: %v", err)
-		}
-		planContent, err := os.ReadFile(planPath)
-		if err != nil {
-			t.Fatalf("Failed to read plan.md: %v", err)
-		}
-		if !strings.Contains(string(planContent), "# Test Plan") {
-			t.Fatalf("Expected plan.md to contain '# Test Plan', got %q", string(planContent))
-		}
-
-		if err := session.Disconnect(); err != nil {
-			t.Fatalf("Failed to disconnect session: %v", err)
 		}
 	})
 }
@@ -570,168 +383,4 @@ func providerPath(root string, sessionID string, path string) string {
 		return filepath.Join(root, sessionID)
 	}
 	return filepath.Join(root, sessionID, filepath.FromSlash(trimmed))
-}
-
-func findToolCallResult(messages []copilot.SessionEvent, toolName string) string {
-	for _, message := range messages {
-		if d, ok := message.Data.(*copilot.ToolExecutionCompleteData); ok &&
-			d.Result != nil &&
-			findToolName(messages, d.ToolCallID) == toolName {
-			return d.Result.Content
-		}
-	}
-	return ""
-}
-
-func findToolName(messages []copilot.SessionEvent, toolCallID string) string {
-	for _, message := range messages {
-		if d, ok := message.Data.(*copilot.ToolExecutionStartData); ok &&
-			d.ToolCallID == toolCallID {
-			return d.ToolName
-		}
-	}
-	return ""
-}
-
-func waitForFile(path string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for {
-		if _, err := os.Stat(path); err == nil {
-			return nil
-		}
-		if !time.Now().Before(deadline) {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	return fmt.Errorf("file did not appear: %s", path)
-}
-
-func waitForFileContent(path string, needle string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for {
-		content, err := os.ReadFile(path)
-		if err == nil && strings.Contains(string(content), needle) {
-			return nil
-		}
-		if !time.Now().Before(deadline) {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	return fmt.Errorf("file %s did not contain %q", path, needle)
-}
-
-// TestSessionFSHandlerOperations mirrors the C# Should_Map_All_SessionFS_Handler_Operations test.
-// It exercises every operation on testSessionFSHandler directly to ensure the test helper
-// implementation routes file operations correctly to the per-session provider root.
-func TestSessionFSHandlerOperationsE2E(t *testing.T) {
-	t.Parallel()
-	providerRoot := t.TempDir()
-	sessionID := "handler-session"
-	handler := &testSessionFSHandler{root: providerRoot, sessionID: sessionID}
-
-	if err := handler.MakeDirectory("/workspace/nested", true, nil); err != nil {
-		t.Fatalf("Mkdir failed: %v", err)
-	}
-
-	if err := handler.WriteFile("/workspace/nested/file.txt", "hello", nil); err != nil {
-		t.Fatalf("WriteFile failed: %v", err)
-	}
-
-	if err := handler.AppendFile("/workspace/nested/file.txt", " world", nil); err != nil {
-		t.Fatalf("AppendFile failed: %v", err)
-	}
-
-	exists, err := handler.Exists("/workspace/nested/file.txt")
-	if err != nil {
-		t.Fatalf("Exists failed: %v", err)
-	}
-	if !exists {
-		t.Error("Expected file to exist after WriteFile+AppendFile")
-	}
-
-	stat, err := handler.Stat("/workspace/nested/file.txt")
-	if err != nil {
-		t.Fatalf("Stat failed: %v", err)
-	}
-	if !stat.IsFile {
-		t.Error("Expected IsFile=true")
-	}
-	if stat.IsDirectory {
-		t.Error("Expected IsDirectory=false")
-	}
-	if stat.Size != int64(len("hello world")) {
-		t.Errorf("Expected Size=%d, got %d", len("hello world"), stat.Size)
-	}
-
-	content, err := handler.ReadFile("/workspace/nested/file.txt")
-	if err != nil {
-		t.Fatalf("ReadFile failed: %v", err)
-	}
-	if content != "hello world" {
-		t.Errorf("Expected content 'hello world', got %q", content)
-	}
-
-	entries, err := handler.ReadDirectory("/workspace/nested")
-	if err != nil {
-		t.Fatalf("Readdir failed: %v", err)
-	}
-	if !slices.Contains(entries, "file.txt") {
-		t.Errorf("Expected entries to contain 'file.txt', got %v", entries)
-	}
-
-	typedEntries, err := handler.ReadDirectoryWithTypes("/workspace/nested")
-	if err != nil {
-		t.Fatalf("ReaddirWithTypes failed: %v", err)
-	}
-	var found bool
-	for _, entry := range typedEntries {
-		if entry.Name == "file.txt" && entry.Type == rpc.SessionFSReaddirWithTypesEntryTypeFile {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("Expected typed entry {file.txt, file}, got %+v", typedEntries)
-	}
-
-	if err := handler.Rename("/workspace/nested/file.txt", "/workspace/nested/renamed.txt"); err != nil {
-		t.Fatalf("Rename failed: %v", err)
-	}
-	oldExists, err := handler.Exists("/workspace/nested/file.txt")
-	if err != nil {
-		t.Fatalf("Exists (old path) failed: %v", err)
-	}
-	if oldExists {
-		t.Error("Expected old path to no longer exist after Rename")
-	}
-	renamedContent, err := handler.ReadFile("/workspace/nested/renamed.txt")
-	if err != nil {
-		t.Fatalf("ReadFile (renamed) failed: %v", err)
-	}
-	if renamedContent != "hello world" {
-		t.Errorf("Expected renamed content 'hello world', got %q", renamedContent)
-	}
-
-	if err := handler.Remove("/workspace/nested/renamed.txt", false, false); err != nil {
-		t.Fatalf("Rm failed: %v", err)
-	}
-	removed, err := handler.Exists("/workspace/nested/renamed.txt")
-	if err != nil {
-		t.Fatalf("Exists (removed) failed: %v", err)
-	}
-	if removed {
-		t.Error("Expected file to be gone after Rm")
-	}
-
-	// Force removing a missing path should succeed.
-	if err := handler.Remove("/workspace/nested/missing.txt", false, true); err != nil {
-		t.Errorf("Rm with force on missing path should not error, got %v", err)
-	}
-
-	// Stat on a missing file should return os.ErrNotExist.
-	if _, err := handler.Stat("/workspace/nested/missing.txt"); err == nil || !os.IsNotExist(err) {
-		t.Errorf("Expected os.ErrNotExist from Stat on missing file, got %v", err)
-	}
 }

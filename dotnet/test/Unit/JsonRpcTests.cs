@@ -185,12 +185,10 @@ public class JsonRpcTests
             ValueTask.FromResult(new SingleObjectResponse { Value = request.Value });
     }
 
-    [Theory]
-    [InlineData(0)]
-    [InlineData(100_000)]
-    public async Task JsonRpc_Sends_One_Complete_Frame_With_Utf8_Byte_Length(int paddingLength)
+    [Fact]
+    public async Task JsonRpc_Sends_One_Complete_Frame_With_Utf8_Byte_Length()
     {
-        var json = "\"" + new string('x', paddingLength) + "\u00e9\u6f22\ud83d\ude00\"";
+        var json = "\"" + new string('x', 100_000) + "\u00e9\u6f22\ud83d\ude00\"";
         using var sendStream = new GatedSendStream();
         sendStream.Unblock();
         using var receiveStream = new MemoryStream(CreateResponseFrame(1, "ok"));

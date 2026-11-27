@@ -999,7 +999,7 @@ export class CopilotClient {
     private connectionEpoch = 0;
     private socket: Socket | null = null;
     private runtimePort: number | null = null;
-    private actualHost: string = "localhost";
+    private actualHost: string = "127.0.0.1";
     private state: "disconnected" | "connecting" | "connected" | "error" = "disconnected";
     /** Shared in-flight start; concurrent callers await the same runtime startup. */
     private startPromise: Promise<void> | null = null;
@@ -1360,6 +1360,22 @@ export class CopilotClient {
         const connArgs: readonly string[] =
             conn.kind === "spawned-stdio" || conn.kind === "spawned-tcp" ? (conn.args ?? []) : [];
         this.connectionExtraArgs = [...connArgs];
+        if (conn.kind === "spawned-tcp") {
+            for (let index = 0; index < connArgs.length; index++) {
+                const arg = connArgs[index];
+                if (arg === "--host" && index + 1 < connArgs.length) {
+                    this.actualHost = connArgs[++index];
+                } else if (arg.startsWith("--host=")) {
+                    this.actualHost = arg.slice("--host=".length);
+                }
+            }
+            // Wildcards bind listeners; clients dial the same family's loopback address.
+            if (this.actualHost === "0.0.0.0") {
+                this.actualHost = "127.0.0.1";
+            } else if (isIPv6(this.actualHost) && /^[0:]+$/.test(this.actualHost)) {
+                this.actualHost = "::1";
+            }
+        }
 
         this.#githubClientSecret = clientSecret;
         this.options = {
@@ -1725,7 +1741,8 @@ export class CopilotClient {
             signal.throwIfAborted();
             this.state = "connected";
         } catch (error) {
-            const startupError = this.processTransportError ?? error;
+            const startupError =
+                this.processTransportError ?? (signal.aborted ? signal.reason : error);
             if (!signal.aborted) {
                 this.invalidateSessionInitializations();
             }
@@ -1796,6 +1813,7 @@ export class CopilotClient {
                 RUNTIME_SHUTDOWN_TIMEOUT_MS
             );
         });
+        // Independent detaches must not consume each other's share of the deadline.
         const sessionErrors = await Promise.all(
             activeSessions.map(async (session) => {
                 const sessionId = session.sessionId;
@@ -1846,10 +1864,10 @@ export class CopilotClient {
                         `Failed to disconnect session ${sessionId} after ${attempts} ${attempts === 1 ? "attempt" : "attempts"}: ${lastError.message}`
                     );
                 }
-                return null;
+                return undefined;
             })
         );
-        errors.push(...sessionErrors.filter((error) => error !== null));
+        errors.push(...sessionErrors.filter((error): error is Error => error !== undefined));
         clearTimeout(sessionCleanupDeadlineTimer);
         for (const session of new Set([...activeSessions, ...this.sessions.values()])) {
             session._markDisconnected();

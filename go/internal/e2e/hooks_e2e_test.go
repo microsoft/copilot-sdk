@@ -16,143 +16,26 @@ func TestHooksE2E(t *testing.T) {
 	client := ctx.NewClient()
 	t.Cleanup(func() { client.ForceStop() })
 
-	t.Run("should invoke preToolUse hook when model runs a tool", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		var preToolUseInputs []copilot.PreToolUseHookInput
-		var mu sync.Mutex
-
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Hooks: copilot.SessionHookOptions{Handlers: &copilot.SessionHooks{
-			OnPreToolUse: func(input copilot.PreToolUseHookInput, invocation copilot.HookInvocation) (*copilot.PreToolUseHookOutput, error) {
-				mu.Lock()
-				preToolUseInputs = append(preToolUseInputs, input)
-				mu.Unlock()
-
-				if invocation.SessionID == "" {
-					t.Error("Expected non-empty session ID in invocation")
-				}
-
-				return &copilot.PreToolUseHookOutput{PermissionDecision: "allow"}, nil
-			},
-		}},
-		})
-		if err != nil {
-			t.Fatalf("Failed to create session: %v", err)
-		}
-
-		// Create a file for the model to read
-		testFile := filepath.Join(ctx.WorkDir, "hello.txt")
-		err = os.WriteFile(testFile, []byte("Hello from the test!"), 0644)
-		if err != nil {
-			t.Fatalf("Failed to write test file: %v", err)
-		}
-
-		_, err = session.SendAndWait(t.Context(), copilot.MessageOptions{
-			Prompt: "Read the contents of hello.txt and tell me what it says",
-		})
-		if err != nil {
-			t.Fatalf("Failed to send message: %v", err)
-		}
-
-		mu.Lock()
-		defer mu.Unlock()
-
-		if len(preToolUseInputs) == 0 {
-			t.Error("Expected at least one preToolUse hook call")
-		}
-
-		hasToolName := false
-		for _, input := range preToolUseInputs {
-			if input.ToolName != "" {
-				hasToolName = true
-				break
-			}
-		}
-		if !hasToolName {
-			t.Error("Expected at least one input with a tool name")
-		}
-	})
-
-	t.Run("should invoke postToolUse hook after model runs a tool", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		var postToolUseInputs []copilot.PostToolUseHookInput
-		var mu sync.Mutex
-
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Hooks: copilot.SessionHookOptions{Handlers: &copilot.SessionHooks{
-			OnPostToolUse: func(input copilot.PostToolUseHookInput, invocation copilot.HookInvocation) (*copilot.PostToolUseHookOutput, error) {
-				mu.Lock()
-				postToolUseInputs = append(postToolUseInputs, input)
-				mu.Unlock()
-
-				if invocation.SessionID == "" {
-					t.Error("Expected non-empty session ID in invocation")
-				}
-
-				return nil, nil
-			},
-		}},
-		})
-		if err != nil {
-			t.Fatalf("Failed to create session: %v", err)
-		}
-
-		// Create a file for the model to read
-		testFile := filepath.Join(ctx.WorkDir, "world.txt")
-		err = os.WriteFile(testFile, []byte("World from the test!"), 0644)
-		if err != nil {
-			t.Fatalf("Failed to write test file: %v", err)
-		}
-
-		_, err = session.SendAndWait(t.Context(), copilot.MessageOptions{
-			Prompt: "Read the contents of world.txt and tell me what it says",
-		})
-		if err != nil {
-			t.Fatalf("Failed to send message: %v", err)
-		}
-
-		mu.Lock()
-		defer mu.Unlock()
-
-		if len(postToolUseInputs) == 0 {
-			t.Error("Expected at least one postToolUse hook call")
-		}
-
-		hasToolName := false
-		hasResult := false
-		for _, input := range postToolUseInputs {
-			if input.ToolName != "" {
-				hasToolName = true
-			}
-			if input.ToolResult != nil {
-				hasResult = true
-			}
-		}
-		if !hasToolName {
-			t.Error("Expected at least one input with a tool name")
-		}
-		if !hasResult {
-			t.Error("Expected at least one input with a tool result")
-		}
-	})
-
 	t.Run("should invoke both preToolUse and postToolUse hooks for a single tool call", func(t *testing.T) {
 		ctx.ConfigureForTest(t)
 
 		var preToolUseInputs []copilot.PreToolUseHookInput
 		var postToolUseInputs []copilot.PostToolUseHookInput
+		var invocationSessionIDs []string
 		var mu sync.Mutex
 
 		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Hooks: copilot.SessionHookOptions{Handlers: &copilot.SessionHooks{
 			OnPreToolUse: func(input copilot.PreToolUseHookInput, invocation copilot.HookInvocation) (*copilot.PreToolUseHookOutput, error) {
 				mu.Lock()
 				preToolUseInputs = append(preToolUseInputs, input)
+				invocationSessionIDs = append(invocationSessionIDs, invocation.SessionID)
 				mu.Unlock()
 				return &copilot.PreToolUseHookOutput{PermissionDecision: "allow"}, nil
 			},
 			OnPostToolUse: func(input copilot.PostToolUseHookInput, invocation copilot.HookInvocation) (*copilot.PostToolUseHookOutput, error) {
 				mu.Lock()
 				postToolUseInputs = append(postToolUseInputs, input)
+				invocationSessionIDs = append(invocationSessionIDs, invocation.SessionID)
 				mu.Unlock()
 				return nil, nil
 			},
@@ -184,7 +67,20 @@ func TestHooksE2E(t *testing.T) {
 		if len(postToolUseInputs) == 0 {
 			t.Error("Expected at least one postToolUse hook call")
 		}
-
+		for _, id := range invocationSessionIDs {
+			if id != session.SessionID {
+				t.Errorf("Expected invocation session ID %q, got %q", session.SessionID, id)
+			}
+		}
+		hasResult := false
+		for _, input := range postToolUseInputs {
+			if input.ToolResult != nil {
+				hasResult = true
+			}
+		}
+		if !hasResult {
+			t.Error("Expected at least one input with a tool result")
+		}
 		// Check that the same tool appears in both
 		preToolNames := make(map[string]bool)
 		for _, input := range preToolUseInputs {

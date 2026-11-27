@@ -33,27 +33,6 @@ func TestPerSessionAuthE2E(t *testing.T) {
 		t.Fatalf("Failed to set copilot user for bob: %v", err)
 	}
 
-	t.Run("should authenticate with per-session token", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, GitHub: copilot.SessionGitHubOptions{Token: "token-alice"}})
-		if err != nil {
-			t.Fatalf("Failed to create session: %v", err)
-		}
-
-		authStatus, err := session.RPC.GitHubAuth.GetStatus(t.Context())
-		if err != nil {
-			t.Fatalf("Failed to get auth status: %v", err)
-		}
-
-		if !authStatus.IsAuthenticated {
-			t.Errorf("Expected session to be authenticated")
-		}
-		if authStatus.Login == nil || *authStatus.Login != "alice" {
-			t.Errorf("Expected login to be 'alice', got %v", authStatus.Login)
-		}
-	})
-
 	t.Run("should isolate auth between sessions", func(t *testing.T) {
 		ctx.ConfigureForTest(t)
 
@@ -77,6 +56,9 @@ func TestPerSessionAuthE2E(t *testing.T) {
 			t.Fatalf("Failed to get auth status for session B: %v", err)
 		}
 
+		if !statusA.IsAuthenticated {
+			t.Errorf("Expected session A to be authenticated")
+		}
 		if statusA.Login == nil || *statusA.Login != "alice" {
 			t.Errorf("Expected session A login to be 'alice', got %v", statusA.Login)
 		}
@@ -107,16 +89,6 @@ func TestPerSessionAuthE2E(t *testing.T) {
 		if authStatus.Login != nil && *authStatus.Login != "" {
 			t.Errorf("Expected no per-session login without token, got %q", *authStatus.Login)
 		}
-	})
-
-	t.Run("should fail with invalid token", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		_, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, GitHub: copilot.SessionGitHubOptions{Token: "invalid-token"}})
-		if err == nil {
-			t.Fatal("Expected session creation to fail with invalid token")
-		}
-		t.Logf("Got expected error: %v", err)
 	})
 }
 

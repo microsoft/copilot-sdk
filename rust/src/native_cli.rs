@@ -137,6 +137,179 @@ pub fn subscribe_notifications(
 mod session_events;
 pub use session_events::{SessionEvents, subscribe_session, subscribe_session_bounded};
 
+/// Immutable inputs for an OTel attachment to the native CLI's original engine.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OtelHostConfiguration<'a> {
+    pub service_version: &'a str,
+    pub local_telemetry: Option<&'a serde_json::Value>,
+    pub environment: &'a [(String, String)],
+}
+
+/// Policy operations on the original engine's native telemetry owner.
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(
+    tag = "operation",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum OtelSessionAdmission {
+    Prepare {
+        resume: bool,
+        params: serde_json::Value,
+    },
+    Bind {
+        preparation_id: Option<String>,
+        session_id: String,
+        traceparent: Option<String>,
+        tracestate: Option<String>,
+        owned: bool,
+    },
+    Commit {
+        preparation_id: String,
+    },
+    Rollback {
+        preparation_id: String,
+        session_id: Option<String>,
+    },
+    ReloadLocal {
+        settings: Option<serde_json::Value>,
+    },
+}
+
+/// Prepare, bind, or settle policy without a TypeScript telemetry owner.
+///
+/// Dropping an unfinished preparation rolls back its reservation, including
+/// when the native reply arrives before the SDK caller accepts it.
+pub async fn admit_otel_session(
+    client: &Client,
+    admission: &OtelSessionAdmission,
+) -> Result<serde_json::Value, Error> {
+    let mut params = serde_json::to_value(admission)
+        .map_err(|error| Error::with_message(ErrorKind::InvalidConfig, error.to_string()))?;
+    let method = match admission {
+        OtelSessionAdmission::Prepare { .. } => "host.telemetry.prepare",
+        OtelSessionAdmission::Bind { .. } => "host.telemetry.bind",
+        OtelSessionAdmission::Commit { .. } => "host.telemetry.commit",
+        OtelSessionAdmission::Rollback { .. } => "host.telemetry.rollback",
+        OtelSessionAdmission::ReloadLocal { .. } => "host.telemetry.reloadLocal",
+    };
+    params
+        .as_object_mut()
+        .expect("an admission is an object")
+        .remove("operation");
+    if matches!(admission, OtelSessionAdmission::Prepare { .. }) {
+        let mut delivery = PreparationDelivery {
+            client: Arc::downgrade(&client.inner),
+            state: Arc::new(Mutex::new(PreparationDeliveryState::Waiting)),
+            accepted: false,
+        };
+        let state = delivery.state.clone();
+        let owner = delivery.client.clone();
+        let result = client
+            .call_with_inline_callback(
+                method,
+                Some(params),
+                Some(Box::new(move |response| {
+                    if let Some(id) = response
+                        .result
+                        .as_ref()
+                        .and_then(|result| result.get("preparationId"))
+                        .and_then(Value::as_str)
+                    {
+                        let abandoned = {
+                            let mut state = state.lock();
+                            if matches!(*state, PreparationDeliveryState::Abandoned) {
+                                true
+                            } else {
+                                *state = PreparationDeliveryState::Prepared(id.to_owned());
+                                false
+                            }
+                        };
+                        if abandoned {
+                            PreparationDelivery::rollback(&owner, id.to_owned());
+                        }
+                    }
+                    Ok(())
+                })),
+            )
+            .await;
+        delivery.accepted = result.is_ok();
+        return result;
+    }
+    client.call(method, Some(params)).await
+}
+
+enum PreparationDeliveryState {
+    Waiting,
+    Prepared(String),
+    Abandoned,
+}
+
+struct PreparationDelivery {
+    client: Weak<crate::ClientInner>,
+    state: Arc<Mutex<PreparationDeliveryState>>,
+    accepted: bool,
+}
+
+impl PreparationDelivery {
+    fn rollback(owner: &Weak<crate::ClientInner>, preparation_id: String) {
+        let Some(inner) = owner.upgrade() else {
+            // Connection teardown rolls back reservations when no client remains.
+            return;
+        };
+        let request = Client::from_inner(inner).begin_call(
+            "host.telemetry.rollback",
+            Some(serde_json::json!({ "preparationId": preparation_id })),
+        );
+        match request {
+            Ok(request) => {
+                tokio::spawn(async move {
+                    if let Err(error) = request.await {
+                        tracing::warn!(%error, "Failed to roll back abandoned telemetry preparation");
+                    }
+                });
+            }
+            Err(error) => {
+                tracing::warn!(%error, "Failed to submit abandoned telemetry preparation rollback");
+            }
+        }
+    }
+}
+
+impl Drop for PreparationDelivery {
+    fn drop(&mut self) {
+        if !self.accepted {
+            let previous =
+                std::mem::replace(&mut *self.state.lock(), PreparationDeliveryState::Abandoned);
+            if let PreparationDeliveryState::Prepared(id) = previous {
+                Self::rollback(&self.client, id);
+            }
+        }
+    }
+}
+
+/// Attach native OTel policy and event tracking without starting another engine.
+pub async fn initialize_otel(
+    client: &Client,
+    configuration: &OtelHostConfiguration<'_>,
+) -> Result<bool, Error> {
+    let configuration = serde_json::to_value(configuration)
+        .map_err(|error| Error::with_message(ErrorKind::InvalidConfig, error.to_string()))?;
+    client
+        .call("host.telemetry.initialize", Some(configuration))
+        .await?
+        .as_bool()
+        .ok_or_else(|| {
+            Error::with_message(ErrorKind::InvalidConfig, "Invalid OTel attachment result")
+        })
+}
+
+/// Join final OTel export before the original SDK connection closes.
+pub async fn shutdown_otel(client: &Client) -> Result<(), Error> {
+    client.call("host.telemetry.shutdown", None).await.map(drop)
+}
+
 /// Install an owner-scoped timing consumer during the native CLI's connection setup.
 ///
 /// The consumer performs only in-memory initialization; release admission and endpoint

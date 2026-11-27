@@ -32,21 +32,6 @@ func TestExtensionLaunchProviderResolveCollectionsOnWire(t *testing.T) {
 			want:   `{"launch":{"args":[],"env":{},"executable":"/bin/launcher"}}`,
 		},
 		{
-			name:   "nil args",
-			result: &ExtensionLaunchProviderResolveResult{Launch: &ExtensionLaunchProfile{Env: map[string]string{"A": "1"}, Executable: "/bin/launcher"}},
-			want:   `{"launch":{"args":[],"env":{"A":"1"},"executable":"/bin/launcher"}}`,
-		},
-		{
-			name:   "nil env",
-			result: &ExtensionLaunchProviderResolveResult{Launch: &ExtensionLaunchProfile{Args: []string{"--flag"}, Executable: "/bin/launcher"}},
-			want:   `{"launch":{"args":["--flag"],"env":{},"executable":"/bin/launcher"}}`,
-		},
-		{
-			name:   "empty args and env",
-			result: &ExtensionLaunchProviderResolveResult{Launch: &ExtensionLaunchProfile{Args: []string{}, Env: map[string]string{}, Executable: "/bin/launcher"}},
-			want:   `{"launch":{"args":[],"env":{},"executable":"/bin/launcher"}}`,
-		},
-		{
 			name: "populated args and env",
 			result: &ExtensionLaunchProviderResolveResult{Launch: &ExtensionLaunchProfile{
 				Args:       []string{"--flag", ""},

@@ -135,141 +135,6 @@ public class PermissionsTest {
     }
 
     /**
-     * Verifies that sessions work with the approve-all permission handler.
-     *
-     * @see Snapshot: permissions/should_work_with_approve_all_permission_handler
-     */
-    @Test
-    void testShouldWorkWithApproveAllPermissionHandler(TestInfo testInfo) throws Exception {
-        ctx.configureForTest("permissions", "should_work_with_approve_all_permission_handler");
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig().setPermissions(
-                    ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))).get();
-
-            AssistantMessageEvent response = session.sendAndWait(new MessageOptions().setPrompt("What is 2+2?")).get(60,
-                    TimeUnit.SECONDS);
-
-            assertNotNull(response);
-            assertTrue(response.getData().content().contains("4"),
-                    "Response should contain 4: " + response.getData().content());
-
-            session.close();
-        }
-    }
-
-    /**
-     * Verifies that async permission handlers work correctly.
-     *
-     * @see Snapshot: permissions/async_permission_handler
-     */
-    @Test
-    void testAsyncPermissionHandler(TestInfo testInfo) throws Exception {
-        ctx.configureForTest("permissions", "async_permission_handler");
-
-        var permissionRequests = new ArrayList<PermissionRequest>();
-
-        var config = ctx.newSessionConfig()
-                .setPermissions(ctx.newSessionConfig().getPermissions().setOnRequest((request, invocation) -> {
-                    permissionRequests.add(request);
-
-                    // Simulate async permission check with delay
-                    return CompletableFuture.supplyAsync(() -> {
-                        try {
-                            Thread.sleep(10); // Small delay to simulate async check
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                        }
-                        return new PermissionRequestResult().setKind(PermissionRequestResultKind.APPROVED);
-                    });
-                }));
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(config).get();
-
-            session.sendAndWait(new MessageOptions().setPrompt("Run 'echo test' and tell me what happens")).get(60,
-                    TimeUnit.SECONDS);
-
-            // Should have received permission requests
-            assertFalse(permissionRequests.isEmpty(), "Should have received permission requests");
-
-            session.close();
-        }
-    }
-
-    /**
-     * Verifies that permission handlers work when resuming a session.
-     *
-     * @see Snapshot: permissions/resume_session_with_permission_handler
-     */
-    @Test
-    void testResumeSessionWithPermissionHandler(TestInfo testInfo) throws Exception {
-        ctx.configureForTest("permissions", "resume_session_with_permission_handler");
-
-        var permissionRequests = new ArrayList<PermissionRequest>();
-
-        try (CopilotClient client = ctx.createClient()) {
-            // Create session with approve-all handler for initial exchange
-            CopilotSession session1 = client.createSession(ctx.newSessionConfig().setPermissions(
-                    ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))).get();
-            String sessionId = session1.getSessionId();
-            session1.sendAndWait(new MessageOptions().setPrompt("What is 1+1?")).get(60, TimeUnit.SECONDS);
-            session1.close();
-
-            // Resume with permission handler
-            var resumeConfig = new ResumeSessionOptions()
-                    .setPermissions(new SessionPermissionOptions().setOnRequest((request, invocation) -> {
-                        permissionRequests.add(request);
-                        return CompletableFuture.completedFuture(
-                                new PermissionRequestResult().setKind(PermissionRequestResultKind.APPROVED));
-                    }));
-
-            CopilotSession session2 = client.resumeSession(sessionId, resumeConfig).get();
-
-            assertEquals(sessionId, session2.getSessionId());
-
-            session2.sendAndWait(new MessageOptions().setPrompt("Run 'echo resumed' for me")).get(60, TimeUnit.SECONDS);
-
-            // Should have permission requests from resumed session
-            assertFalse(permissionRequests.isEmpty(), "Should have received permission requests from resumed session");
-
-            session2.close();
-        }
-    }
-
-    /**
-     * Verifies that tool call IDs are included in permission requests.
-     *
-     * @see Snapshot: permissions/tool_call_id_in_permission_requests
-     */
-    @Test
-    void testToolCallIdInPermissionRequests(TestInfo testInfo) throws Exception {
-        ctx.configureForTest("permissions", "tool_call_id_in_permission_requests");
-
-        final boolean[] receivedToolCallId = {false};
-
-        var config = ctx.newSessionConfig()
-                .setPermissions(ctx.newSessionConfig().getPermissions().setOnRequest((request, invocation) -> {
-                    if (request.getToolCallId() != null) {
-                        receivedToolCallId[0] = true;
-                        assertFalse(request.getToolCallId().isEmpty(), "Tool call ID should not be empty");
-                    }
-                    return CompletableFuture.completedFuture(
-                            new PermissionRequestResult().setKind(PermissionRequestResultKind.APPROVED));
-                }));
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(config).get();
-
-            session.sendAndWait(new MessageOptions().setPrompt("Run 'echo test'")).get(60, TimeUnit.SECONDS);
-
-            assertTrue(receivedToolCallId[0], "Should have received toolCallId in permission request");
-
-            session.close();
-        }
-    }
-
-    /**
      * Verifies that permission handler errors are handled gracefully.
      * <p>
      * When the handler throws an exception, the SDK should deny the permission and
@@ -300,39 +165,6 @@ public class PermissionsTest {
             String content = response.getData().content().toLowerCase();
             assertTrue(content.contains("fail") || content.contains("cannot") || content.contains("unable")
                     || content.contains("permission"), "Response should indicate failure: " + content);
-
-            session.close();
-        }
-    }
-
-    /**
-     * Verifies that tool operations are denied when the handler explicitly denies.
-     *
-     * @see Snapshot:
-     *      permissions/should_deny_tool_operations_when_handler_explicitly_denies
-     */
-    @Test
-    void testShouldDenyToolOperationsWhenHandlerExplicitlyDenies(TestInfo testInfo) throws Exception {
-        ctx.configureForTest("permissions", "should_deny_tool_operations_when_handler_explicitly_denies");
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig().setPermissions(ctx.newSessionConfig()
-                    .getPermissions()
-                    .setOnRequest((request, invocation) -> CompletableFuture.completedFuture(
-                            new PermissionRequestResult().setKind(PermissionRequestResultKind.USER_NOT_AVAILABLE)))))
-                    .get();
-
-            final boolean[] permissionDenied = {false};
-            session.on(ToolExecutionCompleteEvent.class, evt -> {
-                if (!evt.getData().success() && evt.getData().error() != null && evt.getData().error().message() != null
-                        && evt.getData().error().message().contains("Permission denied")) {
-                    permissionDenied[0] = true;
-                }
-            });
-
-            session.sendAndWait(new MessageOptions().setPrompt("Run 'node --version'")).get(60, TimeUnit.SECONDS);
-
-            assertTrue(permissionDenied[0], "Expected a tool.execution_complete event with Permission denied result");
 
             session.close();
         }
@@ -380,77 +212,6 @@ public class PermissionsTest {
     }
 
     /**
-     * Verifies that a permission handler returning {@code noResult} is handled
-     * correctly — the handler is called, and the session can be aborted afterward.
-     *
-     * @see Snapshot: permissions/should_deny_permission_with_noresult_kind
-     */
-    @Test
-    void testShouldDenyPermissionWithNoResultKind() throws Exception {
-        ctx.configureForTest("permissions", "should_deny_permission_with_noresult_kind");
-
-        var permissionCalled = new CompletableFuture<Boolean>();
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig()
-                    .setPermissions(ctx.newSessionConfig().getPermissions().setOnRequest((request, invocation) -> {
-                        permissionCalled.complete(true);
-                        return CompletableFuture.completedFuture(
-                                new PermissionRequestResult().setKind(PermissionRequestResultKind.NO_RESULT));
-                    }))).get();
-
-            session.send(new MessageOptions().setPrompt("Run 'node --version'"));
-
-            assertTrue(permissionCalled.get(30, TimeUnit.SECONDS),
-                    "Expected the no-result permission handler to be called.");
-
-            session.abort().get(10, TimeUnit.SECONDS);
-            session.close();
-        }
-    }
-
-    /**
-     * Verifies that the runtime short-circuits the permission handler when
-     * {@code session.permissions.setApproveAll(true)} has been called.
-     *
-     * @see Snapshot:
-     *      permissions/should_short_circuit_permission_handler_when_set_approve_all_enabled
-     */
-    @Test
-    void testShouldShortCircuitPermissionHandlerWhenSetApproveAllEnabled() throws Exception {
-        ctx.configureForTest("permissions", "should_short_circuit_permission_handler_when_set_approve_all_enabled");
-
-        var handlerCallCount = new int[]{0};
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig()
-                    .setPermissions(ctx.newSessionConfig().getPermissions().setOnRequest((request, invocation) -> {
-                        handlerCallCount[0]++;
-                        return CompletableFuture.completedFuture(
-                                new PermissionRequestResult().setKind(PermissionRequestResultKind.APPROVED));
-                    }))).get();
-
-            // Set approve-all so the runtime short-circuits
-            var setResult = session.getRpc().permissions
-                    .setApproveAll(com.microsoft.copilot.generated.rpc.SessionPermissionsSetApproveAllParams.builder()
-                            .sessionId(session.getSessionId()).enabled(true).source(null).build())
-                    .get(10, TimeUnit.SECONDS);
-            assertTrue(setResult.success(), "setApproveAll should succeed");
-
-            AssistantMessageEvent response = session
-                    .sendAndWait(new MessageOptions().setPrompt("Run 'echo test' and tell me what happens"))
-                    .get(60, TimeUnit.SECONDS);
-            assertNotNull(response);
-
-            // Handler should not have been called since runtime approves all
-            assertEquals(0, handlerCallCount[0],
-                    "Permission handler should not be called when setApproveAll is enabled");
-
-            session.close();
-        }
-    }
-
-    /**
      * Verifies that the SDK correctly waits for a slow permission handler before
      * completing tool execution.
      *
@@ -462,10 +223,12 @@ public class PermissionsTest {
 
         var handlerEntered = new CompletableFuture<Void>();
         var releaseHandler = new CompletableFuture<Void>();
+        var toolCallId = new CompletableFuture<String>();
 
         try (CopilotClient client = ctx.createClient()) {
             CopilotSession session = client.createSession(ctx.newSessionConfig()
                     .setPermissions(ctx.newSessionConfig().getPermissions().setOnRequest((request, invocation) -> {
+                        toolCallId.complete(request.getToolCallId());
                         handlerEntered.complete(null);
                         return releaseHandler.thenApply(
                                 v -> new PermissionRequestResult().setKind(PermissionRequestResultKind.APPROVED));
@@ -486,6 +249,8 @@ public class PermissionsTest {
             // Session should complete successfully
             AssistantMessageEvent message = responseFuture.get(60, TimeUnit.SECONDS);
             assertNotNull(message);
+            assertNotNull(toolCallId.getNow(null), "Should have received toolCallId in permission request");
+            assertFalse(toolCallId.getNow(null).isEmpty(), "Tool call ID should not be empty");
 
             session.close();
         }

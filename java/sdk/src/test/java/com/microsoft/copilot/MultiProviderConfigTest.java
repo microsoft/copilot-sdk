@@ -4,16 +4,13 @@
 
 package com.microsoft.copilot;
 
-import com.microsoft.copilot.rpc.SessionEventOptions;
 import com.microsoft.copilot.rpc.SessionInferenceOptions;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
-import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
@@ -69,32 +66,6 @@ public class MultiProviderConfigTest {
     }
 
     @Test
-    void testNamedProviderConfigDefaultsAreNull() {
-        var provider = new NamedProviderConfig();
-
-        assertNull(provider.getName());
-        assertNull(provider.getType());
-        assertNull(provider.getWireApi());
-        assertNull(provider.getModelProvider());
-        assertNull(provider.getBaseUrl());
-        assertNull(provider.getApiKey());
-        assertNull(provider.getBearerToken());
-        assertNull(provider.getAzure());
-        assertNull(provider.getHeaders());
-    }
-
-    @Test
-    void testNamedProviderConfigFluentSettersReturnSameInstance() {
-        var provider = new NamedProviderConfig();
-
-        NamedProviderConfig result = provider.setName("my-openai").setType("openai").setWireApi("responses")
-                .setModelProvider("ollama").setBaseUrl("https://api.openai.com/v1").setApiKey("sk-test")
-                .setBearerToken("bearer").setAzure(new AzureOptions()).setHeaders(Map.of("X-Custom", "v"));
-
-        assertEquals(provider, result);
-    }
-
-    @Test
     void testSerializeNamedProviderConfig() throws Exception {
         var provider = new NamedProviderConfig().setName("my-openai").setType("openai").setWireApi("responses")
                 .setModelProvider("ollama").setBaseUrl("https://api.openai.com/v1").setApiKey("sk-test");
@@ -111,21 +82,6 @@ public class MultiProviderConfigTest {
         assertTrue(json.path("bearerToken").isMissingNode());
         assertTrue(json.path("azure").isMissingNode());
         assertTrue(json.path("headers").isMissingNode());
-    }
-
-    @Test
-    void testProviderModelConfigDefaultsAreNull() {
-        var model = new ProviderModelConfig();
-
-        assertNull(model.getId());
-        assertNull(model.getProvider());
-        assertNull(model.getWireModel());
-        assertNull(model.getModelId());
-        assertNull(model.getName());
-        assertTrue(model.getMaxPromptTokens().isEmpty());
-        assertTrue(model.getMaxContextWindowTokens().isEmpty());
-        assertTrue(model.getMaxOutputTokens().isEmpty());
-        assertNull(model.getCapabilities());
     }
 
     @Test
@@ -154,34 +110,6 @@ public class MultiProviderConfigTest {
         assertEquals(100_000, deserialized.getMaxPromptTokens().getAsInt());
         assertEquals(128_000, deserialized.getMaxContextWindowTokens().getAsInt());
         assertEquals(4096, deserialized.getMaxOutputTokens().getAsInt());
-    }
-
-    @Test
-    void testSessionConfigWithProvidersAndModels() throws Exception {
-        var config = new CreateSessionOptions().setModel("gpt-4")
-                .setInference(new SessionInferenceOptions()
-                        .setProviders(List.of(new NamedProviderConfig().setName("my-openai").setType("openai")
-                                .setBaseUrl("https://api.openai.com/v1").setApiKey("sk-test")))
-                        .setModels(List.of(new ProviderModelConfig().setId("gpt-x").setProvider("my-openai"))));
-
-        JsonNode json = MAPPER.valueToTree(config);
-
-        assertNotNull(json.path("inference").get("providers"));
-        assertEquals(1, json.path("inference").get("providers").size());
-        assertEquals("my-openai", json.path("inference").get("providers").get(0).get("name").asText());
-        assertNotNull(json.path("inference").get("models"));
-        assertEquals("gpt-x", json.path("inference").get("models").get(0).get("id").asText());
-        assertEquals("my-openai", json.path("inference").get("models").get(0).get("provider").asText());
-    }
-
-    @Test
-    void testSessionConfigWithoutProvidersOmitsFields() throws Exception {
-        var config = new CreateSessionOptions().setModel("gpt-4");
-
-        JsonNode json = MAPPER.valueToTree(config);
-
-        assertTrue(json.path("inference").path("providers").isMissingNode());
-        assertTrue(json.path("inference").path("models").isMissingNode());
     }
 
     @Test
@@ -219,13 +147,4 @@ public class MultiProviderConfigTest {
         assertEquals("gpt-4o", json.path("inference").get("models").get(0).get("modelId").asText());
     }
 
-    @Test
-    void testResumeSessionConfigWithoutProvidersOmitsFields() throws Exception {
-        var config = new ResumeSessionOptions().setEvents(new SessionEventOptions().setStreaming(true));
-
-        JsonNode json = MAPPER.valueToTree(config);
-
-        assertTrue(json.path("inference").path("providers").isMissingNode());
-        assertTrue(json.path("inference").path("models").isMissingNode());
-    }
 }

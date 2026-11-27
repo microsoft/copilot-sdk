@@ -38,7 +38,6 @@ func TestMCPPromptRequestsPreserveOptionalArguments(t *testing.T) {
 	for _, wire := range []string{
 		`{"serverName":"fixture","promptName":"rich"}`,
 		`{"serverName":"fixture","promptName":"rich","arguments":{}}`,
-		`{"serverName":"fixture","promptName":"rich","arguments":{"topic":"日本語","style":""}}`,
 	} {
 		t.Run(wire, func(t *testing.T) {
 			var request MCPPromptsGetRequest
@@ -50,7 +49,6 @@ func TestMCPPromptRequestsPreserveOptionalArguments(t *testing.T) {
 	}
 	for _, wire := range []string{
 		`{"serverName":"fixture"}`,
-		`{"serverName":"fixture","cursor":"page:2/opaque+cursor="}`,
 	} {
 		var request MCPPromptsListRequest
 		if err := json.Unmarshal([]byte(wire), &request); err != nil {

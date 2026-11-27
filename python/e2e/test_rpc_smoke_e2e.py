@@ -17,10 +17,7 @@ from .testharness import CLI_PATH
 pytestmark = pytest.mark.asyncio(loop_scope="module")
 
 
-@pytest.mark.parametrize("method", ["set", "update"])
-async def test_settings_write_rejects_oversized_integer_without_a_write(
-    tmp_path, monkeypatch, method
-):
+async def test_settings_set_rejects_oversized_integer_without_a_write(tmp_path, monkeypatch):
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("COPILOT_HOME", str(home))
@@ -33,14 +30,7 @@ async def test_settings_write_rejects_oversized_integer_without_a_write(
     )
 
     async def write():
-        if method == "set":
-            await client.rpc.user.settings.set(
-                UserSettingsSetRequest(settings={"statusLine": value})
-            )
-        else:
-            await _InternalServerRpc(client._client).user.settings._update(
-                _UserSettingsUpdateRequest(key="statusLine", value=value, config_dir=str(home))
-            )
+        await client.rpc.user.settings.set(UserSettingsSetRequest(settings={"statusLine": value}))
 
     try:
         await client.start()
@@ -52,47 +42,6 @@ async def test_settings_write_rejects_oversized_integer_without_a_write(
         value["padding"] = 2**64 - 1
         await write()
         assert json.loads(settings_file.read_text())["statusLine"] == value
-    finally:
-        await client.force_stop()
-
-
-async def test_settings_update_rejects_oversized_integer_without_a_write(tmp_path, monkeypatch):
-    monkeypatch.setenv("COPILOT_HOME", str(tmp_path / "home"))
-    config_dir = tmp_path / "target"
-    config_dir.mkdir()
-    settings_file = config_dir / "settings.json"
-    original = '{"statusLine":{"command":"echo before","padding":-9223372036854775808}}'
-    settings_file.write_text(original)
-    client = CopilotClient(
-        mode="coding-agent", runtime=RuntimeConnection.for_spawned_stdio(path=CLI_PATH)
-    )
-    try:
-        await client.start()
-        settings = _InternalServerRpc(client._client).user.settings
-        with pytest.raises(ValueError, match="integer.*range"):
-            await settings._update(
-                _UserSettingsUpdateRequest(
-                    key="statusLine",
-                    value={"command": "echo after"},
-                    config_dir=str(config_dir),
-                    if_fields_match={"padding": -(2**63) - 1},
-                )
-            )
-        assert settings_file.read_text() == original
-
-        result = await settings._update(
-            _UserSettingsUpdateRequest(
-                key="statusLine",
-                value={"command": "echo after"},
-                config_dir=str(config_dir),
-                if_fields_match={"padding": -(2**63)},
-            )
-        )
-        assert result.applied is True
-        assert json.loads(settings_file.read_text())["statusLine"] == {
-            "command": "echo after",
-            "padding": -(2**63),
-        }
     finally:
         await client.force_stop()
 

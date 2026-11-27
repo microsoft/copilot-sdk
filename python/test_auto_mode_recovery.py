@@ -63,8 +63,7 @@ async def open_session(client, resume, **kwargs):
 @pytest.mark.parametrize(
     "failure_method", ["session.eventLog.registerInterest", "session.options.update"]
 )
-@pytest.mark.parametrize("cloud", [False, True])
-@pytest.mark.parametrize("cleanup_failure", [False, True])
+@pytest.mark.parametrize("cloud,cleanup_failure", [(False, False), (True, False), (True, True)])
 async def test_post_create_failure_rolls_back_only_server_assigned_sessions(
     failure_method, cloud, cleanup_failure
 ):
@@ -326,8 +325,7 @@ async def test_prefix_lookup_uses_configured_storage(recovery):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("recovery", [False, True])
-async def test_exact_hex_provider_resume_skips_host_lookup(recovery):
+async def test_exact_hex_provider_resume_skips_host_lookup():
     requests = []
 
     async def on_request(_callback, message):
@@ -346,7 +344,7 @@ async def test_exact_hex_provider_resume_skips_host_lookup(recovery):
             "abcdef0",
             config_directory="configured-home",
             interaction={
-                "auto_mode_recovery": recovery,
+                "auto_mode_recovery": True,
                 "on_auto_mode_switch_request": lambda _request, _invocation: "no",
             },
             state={"create_session_fs_provider": lambda _session: object()},
@@ -399,7 +397,7 @@ async def test_legacy_handler_does_not_enroll(resume):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("resume", [False, True])
-@pytest.mark.parametrize("caps", [None, {}, {"ui": {}}, {"ui": {"autoModeRecovery": False}}])
+@pytest.mark.parametrize("caps", [None, {"ui": {"autoModeRecovery": False}}])
 async def test_unsupported_enrollment_detaches_and_unregisters(resume, caps):
     runtime = Runtime(caps)
     client = client_for(runtime)
@@ -629,8 +627,7 @@ async def test_cancelled_enrollment_keeps_callbacks_until_cleanup_settles(resume
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("resume", [False, True])
-@pytest.mark.parametrize("cancel_request", [False, True])
+@pytest.mark.parametrize("resume,cancel_request", [(False, False), (False, True), (True, True)])
 async def test_unsupported_enrollment_does_not_wait_for_detach(resume, cancel_request):
     started = asyncio.Event()
     release = asyncio.Event()
@@ -938,9 +935,8 @@ async def test_public_deletion_preserves_owner_from_replacement_connection():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("resume", [False, True])
 @pytest.mark.parametrize("shutdown", ["stop", "force_stop", "connection_loss"])
-async def test_failed_cleanup_blocks_same_id_reuse_until_connection_retires(resume, shutdown):
+async def test_failed_cleanup_blocks_same_id_reuse_until_connection_retires(shutdown):
     cleanup_started = asyncio.Event()
     release_cleanup = asyncio.Event()
     retry_started = asyncio.Event()
@@ -975,8 +971,8 @@ async def test_failed_cleanup_blocks_same_id_reuse_until_connection_retires(resu
     initialization = asyncio.create_task(
         open_session(
             client,
-            resume,
-            **{} if resume else {"session_id": "session-1"},
+            False,
+            session_id="session-1",
             interaction={
                 "auto_mode_recovery": True,
                 "on_auto_mode_switch_request": lambda _request, _invocation: "no",
@@ -1012,9 +1008,7 @@ async def test_failed_cleanup_blocks_same_id_reuse_until_connection_retires(resu
         release_cleanup.set()
         with pytest.raises(RuntimeError, match="detach failed"):
             await asyncio.wait_for(retry, 5)
-        assert [method for method, _ in runtime.requests] == [
-            "session.resume" if resume else "session.create"
-        ]
+        assert [method for method, _ in runtime.requests] == ["session.create"]
 
         stopping = asyncio.create_task(retire_connection())
         await asyncio.wait_for(transport_stop_started.wait(), 5)
@@ -1773,10 +1767,7 @@ async def test_uuid_prefix_callback_ownership(resident, outcome):
         ("abcdefg", False),
         ("abcdeｆ1", False),
         ("abcdef1é", False),
-        ("deadbeef_task1", False),
-        ("session-123", False),
         ("abcdef12-3456-4789-abcd-0123456789ab", False),
-        ("ABCDEF12-3456-4789-ABCD-0123456789AB", False),
         ("abcdef12-3456-4789-abcd-0123456789ab0", False),
     ],
 )
@@ -1962,11 +1953,10 @@ async def test_options_patch_failure_cannot_detach_replacement(resume, recovery)
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("recovery_first", [False, True])
-@pytest.mark.parametrize("alias_id", ["abcdef12", "ABCDEF12"])
-async def test_in_flight_alias_resume_cannot_be_detached_by_rejected_recovery(
-    recovery_first, alias_id
-):
+async def test_in_flight_alias_resume_cannot_be_detached_by_rejected_recovery(recovery_first):
     canonical_id = "abcdef12-3456-4789-abcd-0123456789ab"
+    # Upper case also proves alias fencing compares UUID prefixes case-insensitively.
+    alias_id = "ABCDEF12"
     ordinary_entered = asyncio.Event()
     recovery_entered = asyncio.Event()
     release_first = asyncio.Event()

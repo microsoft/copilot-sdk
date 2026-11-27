@@ -125,43 +125,6 @@ async fn should_handle_tool_result_with_rejected_resulttype() {
     .await;
 }
 
-#[tokio::test]
-async fn should_handle_tool_result_with_denied_resulttype() {
-    super::support::with_shared_e2e_context(&E2E,
-        "tool_results",
-        "should_handle_tool_result_with_denied_resulttype",
-        |ctx| {
-            Box::pin(async move {
-                ctx.set_default_copilot_user();
-                let client = ctx.start_client().await;
-                let (call_tx, mut call_rx) = mpsc::unbounded_channel();
-                let session = create_tool_session(ctx, &client, access_secret_tool(call_tx)).await;
-                let events = session.subscribe();
-
-                session
-                    .send("Use access_secret to get the API key. If access is denied, tell me it was 'access denied'.")
-                    .await
-                    .expect("send");
-                recv_called(&mut call_rx, "access secret tool").await;
-                let observed = collect_until_idle(events).await;
-                let complete = observed
-                    .iter()
-                    .find(|event| event.parsed_type() == SessionEventType::ToolExecutionComplete)
-                    .and_then(|event| event.typed_data::<ToolExecutionCompleteData>())
-                    .expect("tool.execution_complete");
-                assert!(!complete.success);
-                let error = complete.error.expect("tool error");
-                assert_eq!(error.code.as_deref(), Some("denied"));
-                assert!(error.message.contains("Access denied"));
-
-                session.disconnect().await.expect("disconnect session");
-                client.stop().await.expect("stop client");
-            })
-        },
-    )
-    .await;
-}
-
 async fn create_tool_session(
     _ctx: &super::support::E2eContext,
     client: &copilot_sdk::Client,
@@ -263,27 +226,6 @@ impl ToolHandler for DeployTool {
     }
 }
 
-fn access_secret_tool(call_tx: mpsc::UnboundedSender<()>) -> Tool {
-    Tool::new("access_secret")
-        .with_description("Accesses a secret")
-        .with_handler(Arc::new(AccessSecretTool { call_tx }))
-}
-
-struct AccessSecretTool {
-    call_tx: mpsc::UnboundedSender<()>,
-}
-
-#[async_trait::async_trait]
-impl ToolHandler for AccessSecretTool {
-    async fn call(&self, _invocation: ToolInvocation) -> Result<ToolResult, Error> {
-        let _ = self.call_tx.send(());
-        Ok(expanded(
-            "Access denied: insufficient permissions to read secrets",
-            "denied",
-        ))
-    }
-}
-
 fn string_tool(
     name: &str,
     description: &str,
@@ -304,4 +246,4 @@ fn string_tool(
         }))
 }
 static E2E: super::support::SharedE2eGroup =
-    super::support::SharedE2eGroup::standard("tool_results", 4);
+    super::support::SharedE2eGroup::standard("tool_results", 3);

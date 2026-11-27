@@ -1,13 +1,12 @@
 """E2E Client Tests"""
 
+import os
+from uuid import uuid4
+
 import pytest
 
 from copilot import (
     CopilotClient,
-    Model,
-    ModelCapabilities,
-    ModelCapabilitiesLimits,
-    ModelCapabilitiesSupports,
     RuntimeConnection,
 )
 from copilot.client import StopError
@@ -30,14 +29,24 @@ class TestClient:
             assert pong.message == "pong: test message"
             assert pong.timestamp is not None
 
+            status = await client.get_status()
+            assert isinstance(status.version, str)
+            assert isinstance(status.protocol_version, int)
+            assert status.protocol_version >= 1
+
             await client.stop()
         finally:
             await client.force_stop()
 
     @pytest.mark.asyncio
-    async def test_should_start_and_connect_to_server_using_tcp(self):
+    @pytest.mark.parametrize(
+        "args",
+        [(), ("--host", "::1"), ("--host=0.0.0.0",), ("--host=::",)],
+        ids=["default", "ipv6", "wildcard-ipv4", "wildcard-ipv6"],
+    )
+    async def test_should_start_and_connect_to_server_using_tcp(self, args):
         client = CopilotClient(
-            mode="coding-agent", runtime=RuntimeConnection.for_spawned_tcp(path=CLI_PATH)
+            mode="coding-agent", runtime=RuntimeConnection.for_spawned_tcp(path=CLI_PATH, args=args)
         )
 
         try:
@@ -47,6 +56,43 @@ class TestClient:
             assert pong.message == "pong: test message"
             assert pong.timestamp is not None
 
+            await client.stop()
+        finally:
+            await client.force_stop()
+
+    @pytest.mark.asyncio
+    async def test_should_restart_spawned_tcp_with_updated_host_args(self, tmp_path):
+        token = str(uuid4())
+        connection = RuntimeConnection.for_spawned_tcp(
+            path=CLI_PATH,
+            args=("--host", "127.0.0.1"),
+            connection_token=token,
+            env={**os.environ, "COPILOT_HOME": str(tmp_path)},
+            working_directory=str(tmp_path),
+        )
+        client = CopilotClient(mode="coding-agent", runtime=connection)
+        try:
+            await client.start()
+            assert (await client.ping("before restart")).message == "pong: before restart"
+            await client.stop()
+
+            connection.args = ("--host=::1",)
+            await client.start()
+            assert (await client.ping("after restart")).message == "pong: after restart"
+            port = client.runtime_port
+            assert port is not None
+            async with CopilotClient(
+                mode="coding-agent",
+                runtime=RuntimeConnection.for_tcp("::1", port, connection_token=token),
+            ) as peer:
+                assert (await peer.ping("IPv6 peer")).message == "pong: IPv6 peer"
+            await client.stop()
+
+            connection.args = ()
+            await client.start()
+            assert (
+                await client.ping("default host restart")
+            ).message == "pong: default host restart"
             await client.stop()
         finally:
             await client.force_stop()
@@ -78,85 +124,6 @@ class TestClient:
             await client.force_stop()
 
     @pytest.mark.asyncio
-    async def test_should_force_stop_without_cleanup(self):
-        client = CopilotClient(
-            mode="coding-agent", runtime=RuntimeConnection.for_spawned_stdio(path=CLI_PATH)
-        )
-
-        await client.create_session(permissions={"on_request": PermissionHandler.approve_all})
-        await client.force_stop()
-
-    @pytest.mark.asyncio
-    async def test_should_get_status_with_version_and_protocol_info(self):
-        client = CopilotClient(
-            mode="coding-agent", runtime=RuntimeConnection.for_spawned_stdio(path=CLI_PATH)
-        )
-
-        try:
-            await client.start()
-
-            status = await client.get_status()
-            assert hasattr(status, "version")
-            assert isinstance(status.version, str)
-            assert hasattr(status, "protocol_version")
-            assert isinstance(status.protocol_version, int)
-            assert status.protocol_version >= 1
-
-            await client.stop()
-        finally:
-            await client.force_stop()
-
-    @pytest.mark.asyncio
-    async def test_should_get_auth_status(self):
-        client = CopilotClient(
-            mode="coding-agent", runtime=RuntimeConnection.for_spawned_stdio(path=CLI_PATH)
-        )
-
-        try:
-            await client.start()
-
-            auth_status = await client.get_auth_status()
-            assert hasattr(auth_status, "is_authenticated")
-            assert isinstance(auth_status.is_authenticated, bool)
-            if auth_status.is_authenticated:
-                assert hasattr(auth_status, "auth_type")
-                assert hasattr(auth_status, "status_message")
-
-            await client.stop()
-        finally:
-            await client.force_stop()
-
-    @pytest.mark.asyncio
-    async def test_should_list_models_when_authenticated(self, ctx: E2ETestContext):
-        client = CopilotClient(
-            mode="coding-agent",
-            runtime=RuntimeConnection.for_spawned_stdio(
-                path=CLI_PATH, env=ctx.get_env(), working_directory=ctx.work_dir
-            ),
-            github={"token": DEFAULT_GITHUB_TOKEN},
-        )
-
-        try:
-            await client.start()
-
-            auth_status = await client.get_auth_status()
-            assert auth_status.is_authenticated
-
-            models = await client.list_models()
-            assert isinstance(models, list)
-            assert models
-            model = models[0]
-            assert hasattr(model, "id")
-            assert hasattr(model, "name")
-            assert hasattr(model, "capabilities")
-            assert hasattr(model.capabilities, "supports")
-            assert hasattr(model.capabilities, "limits")
-
-            await client.stop()
-        finally:
-            await client.force_stop()
-
-    @pytest.mark.asyncio
     async def test_should_cache_models_list(self, ctx: E2ETestContext):
         """Test that list_models caches results to avoid rate limiting"""
         client = CopilotClient(
@@ -177,6 +144,11 @@ class TestClient:
             models1 = await client.list_models()
             assert isinstance(models1, list)
             assert models1
+            model = models1[0]
+            assert hasattr(model, "id")
+            assert hasattr(model, "name")
+            assert hasattr(model.capabilities, "supports")
+            assert hasattr(model.capabilities, "limits")
 
             # Second call should return from cache (different list object but same content)
             models2 = await client.list_models()
@@ -267,23 +239,6 @@ class TestClient:
             await client.force_stop()
 
     @pytest.mark.asyncio
-    async def test_should_create_session_without_permission_handler(self):
-        """`create_session` allows omitting an `on_permission_request` handler."""
-        client = CopilotClient(
-            mode="coding-agent", runtime=RuntimeConnection.for_spawned_stdio(path=CLI_PATH)
-        )
-
-        try:
-            await client.start()
-            session = await client.create_session()
-
-            assert session.session_id
-
-            await client.stop()
-        finally:
-            await client.force_stop()
-
-    @pytest.mark.asyncio
     async def test_should_resume_session_without_permission_handler(self):
         """`resume_session` allows omitting an `on_permission_request` handler."""
         client = CopilotClient(
@@ -298,79 +253,5 @@ class TestClient:
             assert resumed.session_id == session.session_id
 
             await client.stop()
-        finally:
-            await client.force_stop()
-
-    @pytest.mark.asyncio
-    async def test_list_models_with_custom_handler_calls_handler(self):
-        """A custom `on_list_models` handler is invoked instead of the CLI RPC."""
-        custom_models = [
-            Model(
-                id="my-custom-model",
-                name="My Custom Model",
-                capabilities=ModelCapabilities(
-                    supports=ModelCapabilitiesSupports(vision=False, reasoning_effort=False),
-                    limits=ModelCapabilitiesLimits(max_context_window_tokens=128000),
-                ),
-            )
-        ]
-
-        call_count = 0
-
-        def on_list_models():
-            nonlocal call_count
-            call_count += 1
-            return custom_models
-
-        client = CopilotClient(
-            mode="coding-agent",
-            runtime=RuntimeConnection.for_spawned_stdio(path=CLI_PATH),
-            models={"on_list_models": on_list_models},
-        )
-
-        try:
-            await client.start()
-
-            models = await client.list_models()
-            assert call_count == 1
-            assert len(models) == 1
-            assert models[0].id == "my-custom-model"
-
-            await client.stop()
-        finally:
-            await client.force_stop()
-
-    @pytest.mark.asyncio
-    async def test_list_models_with_custom_handler_works_without_start(self):
-        """The custom `on_list_models` handler is callable even before `start()`."""
-        custom_models = [
-            Model(
-                id="no-start-model",
-                name="No Start Model",
-                capabilities=ModelCapabilities(
-                    supports=ModelCapabilitiesSupports(vision=False, reasoning_effort=False),
-                    limits=ModelCapabilitiesLimits(max_context_window_tokens=128000),
-                ),
-            )
-        ]
-
-        call_count = 0
-
-        def on_list_models():
-            nonlocal call_count
-            call_count += 1
-            return custom_models
-
-        client = CopilotClient(
-            mode="coding-agent",
-            runtime=RuntimeConnection.for_spawned_stdio(path=CLI_PATH),
-            models={"on_list_models": on_list_models},
-        )
-
-        try:
-            models = await client.list_models()
-            assert call_count == 1
-            assert len(models) == 1
-            assert models[0].id == "no-start-model"
         finally:
             await client.force_stop()

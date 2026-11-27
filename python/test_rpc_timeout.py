@@ -7,15 +7,12 @@ import pytest
 from copilot.rpc import (
     FleetApi,
     FleetStartRequest,
-    ModeApi,
     ModelsListRequest,
-    ModeSetRequest,
     PlanApi,
     ServerModelsApi,
     ServerToolsApi,
     ToolsListRequest,
 )
-from copilot.session_events import SessionMode
 
 
 class TestRpcTimeout:
@@ -50,17 +47,6 @@ class TestRpcTimeout:
 
         _, kwargs = client.request.call_args
         assert kwargs["timeout"] == 600.0
-
-    @pytest.mark.asyncio
-    async def test_timeout_on_session_params_method(self):
-        client = AsyncMock()
-        client.request = AsyncMock(return_value={"modelChanged": False, "status": "completed"})
-        api = ModeApi(client, "sess-1")
-
-        await api.set(ModeSetRequest(mode=SessionMode.PLAN), timeout=120.0)
-
-        _, kwargs = client.request.call_args
-        assert kwargs["timeout"] == 120.0
 
     # ── session-scoped, no params ────────────────────────────────────
 

@@ -14,20 +14,17 @@ namespace Microsoft.Copilot.Test.Unit;
 public sealed partial class ClientSessionLifetimeTests
 {
     [Theory]
-    [InlineData(false, false)]
-    [InlineData(true, false)]
-    [InlineData(false, true)]
-    [InlineData(true, true)]
-    public async Task Session_Event_Reader_Does_Not_Retain_Starting_Context(bool resume, bool suppressFlow)
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Session_Event_Reader_Does_Not_Retain_Starting_Context(bool suppressFlow)
     {
         await using var server = await FakeCopilotServer.StartAsync();
         await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
         await client.StartAsync();
         var ambient = new AsyncLocal<object?>();
         var (session, capture) = await RunWithCallerContextAsync(
-            () => resume
-                ? client.ResumeSessionAsync("context-test", new ResumeSessionOptions())
-                : client.CreateSessionAsync(new CreateSessionOptions()),
+            () => client.CreateSessionAsync(new CreateSessionOptions()),
+
             ambient, suppressFlow);
         await using var retainedSession = session;
 

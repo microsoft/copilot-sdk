@@ -134,37 +134,6 @@ fn canvas_session_config(
 }
 
 #[tokio::test]
-async fn canvas_list_discovers_declared_canvases() {
-    super::support::with_shared_e2e_context(
-        &E2E,
-        "canvas",
-        "canvas_list_discovers_declared_canvases",
-        |ctx| {
-            Box::pin(async move {
-                ctx.set_default_copilot_user();
-                let client = ctx.start_client().await;
-                let handler = Arc::new(TestCanvasHandler::new());
-                let session = client
-                    .create_session(canvas_session_config(ctx, handler))
-                    .await
-                    .expect("create session");
-
-                let result = session.rpc().canvas().list().await.expect("list canvases");
-
-                assert_eq!(result.canvases.len(), 1);
-                assert_eq!(result.canvases[0].canvas_id, "counter");
-                assert_eq!(result.canvases[0].display_name, "Counter");
-                assert_eq!(result.canvases[0].description, "Tracks a counter value.");
-
-                session.disconnect().await.expect("disconnect session");
-                client.stop().await.expect("stop client");
-            })
-        },
-    )
-    .await;
-}
-
-#[tokio::test]
 async fn canvas_open_round_trip() {
     super::support::with_shared_e2e_context(&E2E, "canvas", "canvas_open_round_trip", |ctx| {
         Box::pin(async move {
@@ -177,7 +146,11 @@ async fn canvas_open_round_trip() {
                 .expect("create session");
 
             let canvas_list = session.rpc().canvas().list().await.expect("list canvases");
+            assert_eq!(canvas_list.canvases.len(), 1);
             let canvas = &canvas_list.canvases[0];
+            assert_eq!(canvas.canvas_id, "counter");
+            assert_eq!(canvas.display_name, "Counter");
+            assert_eq!(canvas.description, "Tracks a counter value.");
 
             let open_result = session
                 .rpc()
@@ -678,4 +651,4 @@ async fn resumed_canvas_reattaches_and_routes_all_callbacks() {
     )
     .await;
 }
-static E2E: super::support::SharedE2eGroup = super::support::SharedE2eGroup::standard("canvas", 4);
+static E2E: super::support::SharedE2eGroup = super::support::SharedE2eGroup::standard("canvas", 3);

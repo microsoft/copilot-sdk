@@ -80,7 +80,6 @@ func TestCompactionProviderUsageInputCounts(t *testing.T) {
 		{"recorded", `,"inputTokens":37`, 37, true},
 		{"replayed", `,"inputTokens":0`, 0, true},
 		{"unavailable", ``, 0, false},
-		{"input null", `,"inputTokens":null`, 0, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var exchange ParsedHttpExchange

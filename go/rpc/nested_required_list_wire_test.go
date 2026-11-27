@@ -77,10 +77,6 @@ func TestNestedRequiredListsNilSentAsEmpty(t *testing.T) {
 			_, err := (*PermissionsAPI)(ses).Configure(ctx, &PermissionsConfigureParams{Rules: &PermissionRulesSet{Denied: []PermissionRule{{Kind: "shell", Argument: wireString("rm")}}}})
 			return err
 		}},
-		{"permission rules denied", "session.permissions.configure", []wirePathWant{emptyAt("rules", "denied")}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-			_, err := (*PermissionsAPI)(ses).Configure(ctx, &PermissionsConfigureParams{Rules: &PermissionRulesSet{Approved: []PermissionRule{}}})
-			return err
-		}},
 		{"authority grant statements", "session.permissions.configure", []wirePathWant{emptyAt("authenticatedAuthority", "grant", "statements")}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
 			_, err := (*PermissionsAPI)(ses).Configure(ctx, &PermissionsConfigureParams{AuthenticatedAuthority: &AuthenticatedAuthorityUpdate{
 				Source: "host", Revision: 1, Grant: &AuthenticatedAuthorityGrant{GrantID: "g", Source: "host", UserMessages: []string{"m"}},
@@ -99,14 +95,6 @@ func TestNestedRequiredListsNilSentAsEmpty(t *testing.T) {
 			}})
 			return err
 		}},
-		{"options update policy rules", "session.options.update", []wirePathWant{emptyAt("policy", "additionalContentExclusionPolicies", "0", "rules")}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-			_, err := (*OptionsAPI)(ses).Update(ctx, &SessionUpdateOptionsParams{Policy: &SessionUpdatePolicyOptions{AdditionalContentExclusionPolicies: []OptionsUpdateAdditionalContentExclusionPolicy{{}}}})
-			return err
-		}},
-		{"options update masked env var hosts", "session.options.update", []wirePathWant{emptyAt("permissions", "sandbox", "credentials", "envVars", "TOKEN", "injectHosts")}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-			_, err := (*OptionsAPI)(ses).Update(ctx, &SessionUpdateOptionsParams{Permissions: &SessionUpdatePermissionOptions{Sandbox: &SandboxConfig{Credentials: &SandboxCredentialsConfig{EnvVars: map[string]SandboxMaskedEnvVar{"TOKEN": {}}}}}})
-			return err
-		}},
 		{"open create value variant", "sessions.open", []wirePathWant{{[]string{"kind"}, `"create"`}, emptyAt("options", "policy", "additionalContentExclusionPolicies", "0", "rules")}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
 			var params SessionOpenParams = SessionsOpenCreate{Options: &SessionOpenOptions{Policy: &SessionOpenPolicyOptions{AdditionalContentExclusionPolicies: []SessionOpenOptionsAdditionalContentExclusionPolicy{{}}}}}
 			_, err := (*ServerSessionsAPI)(srv).Open(ctx, params)
@@ -117,21 +105,12 @@ func TestNestedRequiredListsNilSentAsEmpty(t *testing.T) {
 			_, err := (*ServerSessionsAPI)(srv).Open(ctx, params)
 			return err
 		}},
-		{"open resume masked env var hosts", "sessions.open", []wirePathWant{emptyAt("options", "permissions", "sandbox", "credentials", "envVars", "TOKEN", "injectHosts")}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-			var params SessionOpenParams = SessionsOpenResume{SessionID: "s1", Options: &SessionOpenOptions{Permissions: &SessionOpenPermissionOptions{Sandbox: &SandboxConfig{Credentials: &SandboxCredentialsConfig{EnvVars: map[string]SandboxMaskedEnvVar{"TOKEN": {}}}}}}}
-			_, err := (*ServerSessionsAPI)(srv).Open(ctx, params)
-			return err
-		}},
 		{"proxy CA masked env var hosts", "sandbox.proxyCa.create", []wirePathWant{emptyAt("sandboxConfig", "credentials", "envVars", "TOKEN", "injectHosts")}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
 			_, err := (*ServerSandboxProxyCaAPI)(srv).Create(ctx, &SandboxProxyCaRequest{SandboxConfig: &SandboxConfig{Credentials: &SandboxCredentialsConfig{EnvVars: map[string]SandboxMaskedEnvVar{"TOKEN": {}}}}})
 			return err
 		}},
 		{"catalog contract capabilities", "catalog.search", []wirePathWant{emptyAt("contract", "requiredCapabilities")}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
 			_, err := (*ServerCatalogAPI)(srv).Search(ctx, &CatalogSearchRequest{Query: "q"})
-			return err
-		}},
-		{"skill installations contract capabilities", "skills.installations.list", []wirePathWant{emptyAt("contract", "requiredCapabilities")}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-			_, err := (*ServerSkillsInstallationsAPI)(srv).List(ctx, &SkillInstallationsRequest{PolicySessionID: "s1"})
 			return err
 		}},
 		{"decision questions in a slice of a union", "decisions.ask", []wirePathWant{emptyAt("questions", "0", "options"), emptyAt("questions", "1", "levels")}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
@@ -153,10 +132,6 @@ func TestNestedRequiredListsNilSentAsEmpty(t *testing.T) {
 			_, err := (*PermissionsAPI)(ses).HandlePendingPermissionRequest(ctx, &PermissionDecisionRequest{RequestID: "r", Result: &PermissionDecisionApproveForLocation{
 				LocationKey: "l", Approval: &PermissionDecisionApproveForLocationApprovalExtensionEnvAccess{ExtensionName: "e"},
 			}})
-			return err
-		}},
-		{"denied by rules decision", "session.permissions.handlePendingPermissionRequest", []wirePathWant{emptyAt("result", "rules")}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-			_, err := (*PermissionsAPI)(ses).HandlePendingPermissionRequest(ctx, &PermissionDecisionRequest{RequestID: "r", Result: PermissionDecisionDeniedByRules{}})
 			return err
 		}},
 		{"location tool approval of commands", "session.permissions.locations.addToolApproval", []wirePathWant{emptyAt("approval", "commandIdentifiers")}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {

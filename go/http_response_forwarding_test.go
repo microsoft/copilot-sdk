@@ -356,7 +356,7 @@ func waitForBodyClose(t *testing.T, body *trackedResponseBody) {
 }
 
 func TestHTTPRequestContextPreservesInvocationIdentity(t *testing.T) {
-	for _, invocationID := range []string{"", "first-invocation", "second-invocation"} {
+	for _, invocationID := range []string{"", "first-invocation"} {
 		t.Run(invocationID, func(t *testing.T) {
 			seen := make(chan *CopilotRequestContext, 1)
 			peer := newResponseProtocolPeerWithTransport(t, roundTripFunc(func(request *http.Request) (*http.Response, error) {

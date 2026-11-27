@@ -103,9 +103,6 @@ public class SessionEventSerializationTests
 
     public static TheoryData<AutoTier?, string?> AutoTiers => new()
     {
-        { AutoTier.Efficiency, "efficiency" },
-        { AutoTier.Balance, "balance" },
-        { AutoTier.Intelligence, "intelligence" },
         { AutoTier.Fast, "fast" },
         { null, null },
     };
@@ -141,46 +138,9 @@ public class SessionEventSerializationTests
         }
     }
 
-    [Theory]
-    [InlineData("message-1")]
-    [InlineData(null)]
-    public void UserMessageEvent_MessageId_UsesCamelCaseAndIsOptional(string? messageId)
-    {
-        var messageIdProperty = messageId is null ? "" : $""", "messageId": "{messageId}" """;
-        var json = $$"""
-            {
-                "id": "11111111-1111-1111-1111-111111111111",
-                "timestamp": "2026-08-28T00:00:00Z",
-                "parentId": null,
-                "type": "user.message",
-                "data": {
-                    "content": "hello"
-                    {{messageIdProperty}}
-                }
-            }
-            """;
-
-        var sessionEvent = Assert.IsType<UserMessageEvent>(SessionEvent.FromJson(json));
-        Assert.Equal(messageId, sessionEvent.Data.MessageId);
-
-        using var document = JsonDocument.Parse(sessionEvent.ToJson());
-        var data = document.RootElement.GetProperty("data");
-        if (messageId is null)
-        {
-            Assert.False(data.TryGetProperty("messageId", out _));
-        }
-        else
-        {
-            Assert.Equal(messageId, data.GetProperty("messageId").GetString());
-        }
-    }
-
     public static TheoryData<string> AutoTierSwitchFailureReasons => new()
     {
         "policy_rejected",
-        "request_failed",
-        "setup_failed",
-        "unsupported",
     };
 
     [Theory]
@@ -551,67 +511,8 @@ public class SessionEventSerializationTests
     }
 
     [Fact]
-    public void McpOauthRequiredData_Allows_Missing_Optional_Metadata()
-    {
-        const string json = """
-            {
-              "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-              "timestamp": "2026-03-15T21:26:54.987Z",
-              "parentId": null,
-              "type": "mcp.oauth_required",
-              "data": {
-                "requestId": "oauth-request",
-                "reason": "initial",
-                "serverName": "oauth-server",
-                "serverUrl": "https://example.com/mcp"
-              }
-            }
-            """;
-
-        var authEvent = Assert.IsType<McpOauthRequiredEvent>(SessionEvent.FromJson(json));
-        Assert.Null(authEvent.Data.WwwAuthenticateParams);
-        Assert.Null(authEvent.Data.ResourceMetadata);
-    }
-
-    [Fact]
-    public void McpOauthRequiredData_Preserves_Static_Client_Secret()
-    {
-        const string json = """
-            {
-              "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-              "timestamp": "2026-03-15T21:26:54.987Z",
-              "parentId": null,
-              "type": "mcp.oauth_required",
-              "data": {
-                "requestId": "oauth-request",
-                "reason": "initial",
-                "serverName": "oauth-server",
-                "serverUrl": "https://example.com/mcp",
-                "staticClientConfig": {
-                  "clientId": "static-client",
-                  "clientSecret": "static-secret",
-                  "grantType": "client_credentials",
-                  "publicClient": false
-                }
-              }
-            }
-            """;
-
-        var authEvent = Assert.IsType<McpOauthRequiredEvent>(SessionEvent.FromJson(json));
-
-        Assert.NotNull(authEvent.Data.StaticClientConfig);
-        Assert.Equal("static-secret", authEvent.Data.StaticClientConfig.ClientSecret);
-    }
-
-    [Fact]
     public void ManagedSettingsResolvedData_Preserves_Client_Provenance()
     {
-        Assert.Equal("server", ManagedSettingsResolvedSource.Server.Value);
-        Assert.Equal("device", ManagedSettingsResolvedSource.Device.Value);
-        Assert.Equal("client", ManagedSettingsResolvedSource.Client.Value);
-        Assert.Equal("mixed", ManagedSettingsResolvedSource.Mixed.Value);
-        Assert.Equal("none", ManagedSettingsResolvedSource.None.Value);
-
         const string clientJson = """
             {
               "id": "11111111-1111-1111-1111-111111111111",

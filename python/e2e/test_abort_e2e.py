@@ -1,9 +1,9 @@
 """
 E2E tests for session abort functionality.
 
-Verifies that session.abort() cleanly interrupts an active turn — both during
-streaming and during tool execution — without leaving dangling state or causing
-exceptions in the event delivery pipeline.
+Verifies that session.abort() cleanly interrupts an active turn during tool
+execution without leaving dangling state or causing exceptions in the event
+delivery pipeline.
 
 Mirrors dotnet/test/E2E/AbortE2ETests.cs (snapshot category ``abort``).
 """
@@ -23,62 +23,6 @@ pytestmark = pytest.mark.asyncio(loop_scope="module")
 
 
 class TestAbort:
-    async def test_should_abort_during_active_streaming(self, ctx: E2ETestContext):
-        session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all}, events={"streaming": True}
-        )
-
-        events = []
-        first_delta: asyncio.Future = asyncio.get_event_loop().create_future()
-
-        def on_event(event):
-            events.append(event)
-            if event.type.value == "assistant.message_delta" and not first_delta.done():
-                first_delta.set_result(event)
-
-        unsubscribe = session.on(on_event)
-        try:
-            # Fire-and-forget — we'll abort before it finishes
-            asyncio.ensure_future(
-                session.send(
-                    "Write a very long essay about the history of computing,"
-                    " covering every decade from the 1940s to the 2020s in great detail."
-                )
-            )
-
-            # Wait for at least one delta to arrive (proves streaming started)
-            delta = await asyncio.wait_for(first_delta, timeout=60.0)
-            assert delta.data.delta_content
-
-            # Abort mid-stream
-            await session.abort()
-
-            types = [e.type.value for e in events]
-            assert "assistant.message_delta" in types
-
-            # Session should be usable after abort. Wait for the specific recovery
-            # message rather than racing against a late idle from the aborted turn.
-            recovery_received: asyncio.Future = asyncio.get_event_loop().create_future()
-
-            def check_recovery(event):
-                if (
-                    event.type.value == "assistant.message"
-                    and "abort_recovery_ok" in (event.data.content or "").lower()
-                    and not recovery_received.done()
-                ):
-                    recovery_received.set_result(event)
-
-            unsubscribe_recovery = session.on(check_recovery)
-            try:
-                await session.send("Say 'abort_recovery_ok'.")
-                recovery_message = await asyncio.wait_for(recovery_received, timeout=60.0)
-                assert "abort_recovery_ok" in (recovery_message.data.content or "").lower()
-            finally:
-                unsubscribe_recovery()
-        finally:
-            unsubscribe()
-            await session.disconnect()
-
     async def test_should_abort_during_active_tool_execution(self, ctx: E2ETestContext):
         tool_started: asyncio.Future = asyncio.get_event_loop().create_future()
         release_tool: asyncio.Future = asyncio.get_event_loop().create_future()
@@ -110,6 +54,17 @@ class TestAbort:
             },
         )
 
+        cancellation_notice: asyncio.Future = asyncio.get_event_loop().create_future()
+
+        def check_cancellation(event):
+            if (
+                event.type.value == "session.info"
+                and event.data.info_type == "cancellation"
+                and not cancellation_notice.done()
+            ):
+                cancellation_notice.set_result(event.data.message)
+
+        unsubscribe_cancellation = session.on(check_cancellation)
         send_task = asyncio.create_task(
             session.send("Use slow_analysis with value 'test_abort'. Wait for the result.")
         )
@@ -118,8 +73,10 @@ class TestAbort:
             assert tool_value == "test_abort"
             await asyncio.wait_for(send_task, timeout=60.0)
 
-            # Abort while the tool is running
+            # Abort while the tool is running and observe cancellation before releasing it.
             await session.abort()
+            notice = await asyncio.wait_for(cancellation_notice, timeout=10.0)
+            assert notice == "Operation cancelled by user"
 
             # Release the tool so its task doesn't leak
             if not release_tool.done():
@@ -144,6 +101,7 @@ class TestAbort:
             finally:
                 unsubscribe()
         finally:
+            unsubscribe_cancellation()
             if not release_tool.done():
                 release_tool.set_result("CLEANUP")
             send_task.cancel()

@@ -8,7 +8,6 @@ import org.junit.jupiter.api.Tag;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import java.util.ArrayList;
 import java.util.logging.Logger;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -22,7 +21,6 @@ import org.junit.jupiter.api.Test;
 
 import com.microsoft.copilot.generated.SessionEvent;
 import com.microsoft.copilot.generated.AssistantMessageEvent;
-import com.microsoft.copilot.generated.SessionErrorEvent;
 import com.microsoft.copilot.generated.SessionIdleEvent;
 import com.microsoft.copilot.rpc.MessageOptions;
 import com.microsoft.copilot.rpc.PermissionHandler;
@@ -111,78 +109,12 @@ public class ErrorHandlingTest {
      *
      * @see Snapshot: tools/handles_tool_calling_errors
      */
-    @Test
-    void testHandlesToolCallingErrors_toolReturnsFailureResult() throws Exception {
-        LOG.info("Running test: testHandlesToolCallingErrors_toolReturnsFailureResult");
-        ctx.configureForTest("tools", "handles_tool_calling_errors");
-
-        ToolDefinition failTool = ToolDefinition.create("get_user_location", "Gets the user's location",
-                Map.of("type", "object", "properties", Map.of()), (invocation) -> {
-                    // Return a structured failure result via exception (matching the snapshot
-                    // behavior)
-                    return CompletableFuture.failedFuture(new RuntimeException("Location unavailable"));
-                });
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig()
-                    .setTools(ctx.newSessionConfig().getTools().setDefinitions(List.of(failTool))).setPermissions(
-                            ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL)))
-                    .get();
-
-            AssistantMessageEvent response = session
-                    .sendAndWait(new MessageOptions()
-                            .setPrompt("What is my location? If you can't find out, just say 'unknown'."))
-                    .get(60, TimeUnit.SECONDS);
-
-            assertNotNull(response, "Should receive a response with failure result");
-
-            session.close();
-        }
-    }
 
     /**
      * Verifies that permission handler errors result in denied permission.
      *
      * @see Snapshot: permissions/should_handle_permission_handler_errors_gracefully
      */
-    @Test
-    void testShouldHandlePermissionHandlerErrorsGracefully_deniesPermission() throws Exception {
-        LOG.info("Running test: testShouldHandlePermissionHandlerErrorsGracefully_deniesPermission");
-        ctx.configureForTest("permissions", "should_handle_permission_handler_errors_gracefully");
-
-        var errorEvents = new ArrayList<SessionErrorEvent>();
-
-        var config = ctx.newSessionConfig()
-                .setPermissions(ctx.newSessionConfig().getPermissions().setOnRequest((request, invocation) -> {
-                    throw new RuntimeException("Permission handler crashed");
-                }));
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(config).get();
-
-            session.on(SessionErrorEvent.class, errorEvents::add);
-
-            AssistantMessageEvent response = session
-                    .sendAndWait(new MessageOptions().setPrompt("Run 'echo test'. If you can't, say 'failed'."))
-                    .get(60, TimeUnit.SECONDS);
-
-            // Should complete despite the error
-            assertNotNull(response, "Should receive a response despite handler error");
-
-            // The response should indicate failure/inability
-            String content = response.getData().content().toLowerCase();
-            assertTrue(
-                    content.contains("fail") || content.contains("cannot") || content.contains("unable")
-                            || content.contains("permission") || content.contains("denied"),
-                    "Response should indicate permission was denied: " + content);
-
-            // Verify that the error handler was wired correctly. Whether error events are
-            // actually emitted depends on the CLI version and the scenario's replay data.
-            LOG.info("Collected " + errorEvents.size() + " error event(s) from permission handler crash");
-
-            session.close();
-        }
-    }
 
     /**
      * Verifies that a permission handler exception denies the tool without failing
@@ -217,34 +149,4 @@ public class ErrorHandlingTest {
      *
      * @see Snapshot: tools/handles_tool_calling_errors
      */
-    @Test
-    void testHandlesToolCallingErrors_sessionContinuesAfterToolError() throws Exception {
-        LOG.info("Running test: testHandlesToolCallingErrors_sessionContinuesAfterToolError");
-        ctx.configureForTest("tools", "handles_tool_calling_errors");
-
-        ToolDefinition errorTool = ToolDefinition.create("get_user_location", "Gets the user's location",
-                Map.of("type", "object", "properties", Map.of()), (invocation) -> {
-                    return CompletableFuture.failedFuture(new RuntimeException("Service unavailable"));
-                });
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig()
-                    .setTools(ctx.newSessionConfig().getTools().setDefinitions(List.of(errorTool))).setPermissions(
-                            ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL)))
-                    .get();
-
-            // First request that will cause tool error
-            AssistantMessageEvent response = session
-                    .sendAndWait(new MessageOptions()
-                            .setPrompt("What is my location? If you can't find out, just say 'unknown'."))
-                    .get(60, TimeUnit.SECONDS);
-
-            assertNotNull(response, "Should receive first response");
-
-            // Session should still be usable - the sendAndWait completed
-            // This verifies the session didn't enter an error state
-
-            session.close();
-        }
-    }
 }

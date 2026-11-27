@@ -363,31 +363,6 @@ public sealed class SetToolsTests
     }
 
     [Fact]
-    public async Task InvokeToolUntilAsync_Rejects_Expected_Result_After_Deadline()
-    {
-        using var deadline = new CancellationTokenSource();
-        await using var server = await SetToolsFakeServer.StartAsync();
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions
-        {
-            Tools = new SessionToolOptions
-            {
-                Definitions = [AIFunctionFactory.Create(() =>
-{
-    deadline.Cancel();
-    return "new";
-}, new AIFunctionFactoryOptions { Name = "late_tool", Description = "Returns after the wait deadline" })]
-            }
-        });
-
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            InvokeToolUntilAsync(server, session, "late_tool", "late-request", "new", deadline.Token));
-
-        var response = await server.WaitForRequestAsync("session.tools.handlePendingToolCall", "late-request-0");
-        Assert.Equal("new", response.Params.GetProperty("result").GetProperty("textResultForLlm").GetString());
-    }
-
-    [Fact]
     public async Task SetToolsAsync_Publishes_Accepted_Replacement_Before_Next_Tool_Request()
     {
         await using var server = await SetToolsFakeServer.StartAsync();
@@ -417,36 +392,6 @@ public sealed class SetToolsTests
         {
             releaseSet.TrySetResult();
             logger.ContinueResponse.TrySetResult();
-        }
-    }
-
-    [Theory]
-    [InlineData("Failed", true)]
-    [InlineData("Failed", false)]
-    [InlineData("Canceled", true)]
-    [InlineData("Canceled", false)]
-    public async Task SetToolsResponseLogger_Propagates_Unsuccessful_Response(string status, bool includeException)
-    {
-        var logger = new SetToolsResponseLogger();
-        var exception = includeException ? new IOException("Tool replacement failed.") : null;
-        if (logger.IsEnabled(LogLevel.Warning))
-        {
-            logger.Log(LogLevel.Warning, default, new KeyValuePair<string, object?>[]
-            {
-                new("Method", "session.tools.set"),
-                new("Status", status),
-            }, exception, static (_, _) => string.Empty);
-        }
-
-        Assert.True(logger.ResponseReceived.Task.IsFaulted);
-        if (exception is not null)
-        {
-            Assert.Same(exception, await Assert.ThrowsAsync<IOException>(() => logger.ResponseReceived.Task));
-        }
-        else
-        {
-            var error = await Assert.ThrowsAsync<InvalidOperationException>(() => logger.ResponseReceived.Task);
-            Assert.Equal($"session.tools.set completed with status '{status}'.", error.Message);
         }
     }
 

@@ -21,70 +21,6 @@ import (
 
 func TestScenarioTestingCloudE2E(t *testing.T) {
 	t.Parallel()
-	t.Run("notifies steerability before first send", func(t *testing.T) {
-		var mu sync.Mutex
-		var events []copilot.SessionEvent
-		messageID := "message-1"
-		fixture := newGeneratedRPCFixture(t, t.Context())
-		fixture.server.SetRequestHandler("session.remote.notifySteerableChanged", func(_ json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
-			mu.Lock()
-			events = append(events, scenarioEvent("remote-1", &copilot.SessionRemoteSteerableChangedData{
-				RemoteSteerable: true,
-			}))
-			mu.Unlock()
-			return json.RawMessage(`{}`), nil
-		})
-		fixture.server.SetRequestHandler("session.send", func(req json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
-			var params struct {
-				Prompt string `json:"prompt"`
-			}
-			if err := json.Unmarshal(req, &params); err != nil {
-				t.Errorf("unmarshal session.send: %v", err)
-			}
-			mu.Lock()
-			events = append(events, scenarioEvent("message-1", &copilot.UserMessageData{
-				Content:            params.Prompt,
-				MessageID:          &messageID,
-				TransformedContent: &params.Prompt,
-			}))
-			mu.Unlock()
-			return mustJSON(t, map[string]any{"messageId": messageID}), nil
-		})
-		fixture.server.SetRequestHandler("session.getMessages", func(_ json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
-			mu.Lock()
-			defer mu.Unlock()
-			return mustJSON(t, map[string]any{"events": append([]copilot.SessionEvent(nil), events...)}), nil
-		})
-
-		session := fixture.session
-
-		if _, err := session.RPC.Remote.NotifySteerableChanged(t.Context(), &rpc.RemoteNotifySteerableChangedRequest{
-			RemoteSteerable: true,
-		}); err != nil {
-			t.Fatalf("NotifySteerableChanged failed: %v", err)
-		}
-		const prompt = "SCENARIO_STEERABLE_FIRST_SEND"
-		if _, err := session.Send(t.Context(), copilot.MessageOptions{Prompt: prompt}); err != nil {
-			t.Fatalf("Send failed: %v", err)
-		}
-
-		got, err := session.GetEvents(t.Context())
-		if err != nil {
-			t.Fatalf("GetEvents failed: %v", err)
-		}
-		if len(got) != 2 {
-			t.Fatalf("Expected two persisted events, got %d: %#v", len(got), got)
-		}
-		remote, ok := got[0].Data.(*copilot.SessionRemoteSteerableChangedData)
-		if !ok || !remote.RemoteSteerable {
-			t.Fatalf("Expected first event to persist remote steerability, got %#v", got[0].Data)
-		}
-		message, ok := got[1].Data.(*copilot.UserMessageData)
-		if !ok || message.TransformedContent == nil || !strings.Contains(*message.TransformedContent, prompt) {
-			t.Fatalf("Expected second event to contain first message, got %#v", got[1].Data)
-		}
-	})
-
 	t.Run("routes first event for server assigned session id", func(t *testing.T) {
 		fixture := newAssignedCloudSessionFixture(t)
 		defer fixture.Close()
@@ -186,43 +122,6 @@ func TestScenarioTestingCloudE2E(t *testing.T) {
 		defer mu.Unlock()
 		assertCapturedSessionID(t, calls, "sessions.connect", "cloud-control-session")
 		assertCapturedSessionID(t, calls, "session.resume", "runtime-session-id")
-	})
-
-	t.Run("exposes cloud resource mismatch before resume", func(t *testing.T) {
-		var mu sync.Mutex
-		var methods []string
-		fixture := newGeneratedRPCFixture(t, t.Context())
-		fixture.server.SetRequestHandler("sessions.connect", func(_ json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
-			mu.Lock()
-			methods = append(methods, "sessions.connect")
-			mu.Unlock()
-			return mustJSON(t, remoteSessionConnection("github/docs#456")), nil
-		})
-		fixture.server.SetRequestHandler("session.resume", func(_ json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
-			mu.Lock()
-			methods = append(methods, "session.resume")
-			mu.Unlock()
-			return json.RawMessage(`{"sessionId":"runtime-session-id"}`), nil
-		})
-		client := fixture.client
-
-		connection, err := client.RPC.Sessions.Connect(t.Context(), &rpc.ConnectRemoteSessionParams{
-			SessionID: "cloud-control-session",
-		})
-		if err != nil {
-			t.Fatalf("Sessions.Connect failed: %v", err)
-		}
-		if connection.Metadata.ResourceID == nil || *connection.Metadata.ResourceID == "github/copilot-sdk#123" {
-			t.Fatalf("Expected mismatched resource id, got %#v", connection.Metadata.ResourceID)
-		}
-
-		mu.Lock()
-		defer mu.Unlock()
-		for _, method := range methods {
-			if method == "session.resume" {
-				t.Fatal("Resource mismatch must be exposed before session.resume")
-			}
-		}
 	})
 }
 

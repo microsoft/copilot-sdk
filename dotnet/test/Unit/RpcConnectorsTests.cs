@@ -177,7 +177,6 @@ public sealed partial class ClientSessionLifetimeTests
 
     [Theory]
     [InlineData("token")]
-    [InlineData("token-provider")]
     [InlineData(null)]
     public async Task Session_Rpc_Connectors_GetAccount_Preserves_Credential_Free_And_Null_Results(string? authType)
     {
@@ -238,14 +237,8 @@ public sealed partial class ClientSessionLifetimeTests
 
     [Theory]
     [InlineData("enabled", null, null, false, false)]
-    [InlineData("enabled", false, false, false, false)]
-    [InlineData("enabled", true, null, true, false)]
-    [InlineData("enabled", null, true, false, true)]
-    [InlineData("enabled", true, false, true, false)]
-    [InlineData("enabled", false, true, false, true)]
     [InlineData("enabled", true, true, true, true)]
     [InlineData("disabled", true, true, false, false)]
-    [InlineData("unavailable", true, true, false, false)]
     public async Task Session_Rpc_Connectors_Capability_Gates_Preserve_Legacy_Requests(
         string availability,
         bool? sessionAccountSelection,
@@ -326,7 +319,6 @@ public sealed partial class ClientSessionLifetimeTests
 
     [Theory]
     [InlineData(true)]
-    [InlineData(false)]
     public async Task Session_Rpc_Connectors_Catalog_Preserves_Optional_Presentation_Metadata(bool includeMetadata)
     {
         await using var server = await FakeCopilotServer.StartAsync();

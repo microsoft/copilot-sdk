@@ -7,10 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/microsoft/copilot-sdk/go/v2/internal/jsonrpc2"
 )
@@ -20,42 +18,8 @@ var _ interface {
 	ListConfigured(context.Context) (*MCPConfiguredServerList, error)
 } = (*MCPAPI)(nil)
 
-func TestMCPSecretSaveResultAcceptsCanonicalConsumer(t *testing.T) {
-	clientConn, serverConn := net.Pipe()
-	client := jsonrpc2.NewClient(clientConn, clientConn)
-	server := jsonrpc2.NewClient(serverConn, serverConn)
-	server.SetRequestHandler("mcp.secrets.save", func(params json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
-		return json.RawMessage(`{"usedKeychain":true}`), nil
-	})
-	client.Start()
-	server.Start()
-	t.Cleanup(func() {
-		client.Stop()
-		server.Stop()
-		_ = clientConn.Close()
-		_ = serverConn.Close()
-	})
-
-	result, err := NewServerRPC(client).MCP.Secrets().Save(t.Context(), &MCPSecretSaveRequest{
-		SecretID: "server/key",
-		Value:    "synthetic-mcp-credential",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	usesKeychain := func(saved *MCPSecretSaveResult) bool {
-		return saved.UsedKeychain
-	}
-	if !usesKeychain(result) {
-		t.Fatal("canonical consumer did not receive the decoded save result")
-	}
-	usesLegacyKeychain := func(saved *MCPSecretsSaveResult) bool {
-		return usesKeychain(saved)
-	}
-	if !usesLegacyKeychain(result) {
-		t.Fatal("existing result name lost canonical DTO compatibility")
-	}
-}
+// The legacy result name must stay assignable to the canonical save result.
+var _ *MCPSecretSaveResult = (*MCPSecretsSaveResult)(nil)
 
 func TestMCPSecretSaveDisplayRedactsWithoutChangingWire(t *testing.T) {
 	request := MCPSecretSaveRequest{SecretID: "server/key", Value: "synthetic-mcp-credential"}
@@ -75,39 +39,6 @@ func TestMCPSecretSaveDisplayRedactsWithoutChangingWire(t *testing.T) {
 	}
 	if wire["value"] != request.Value || wire["secretId"] != request.SecretID {
 		t.Fatalf("wire fields changed: %s", data)
-	}
-}
-
-func TestMCPDiscoverNilRequestSendsEmptyObject(t *testing.T) {
-	clientConn, serverConn := net.Pipe()
-	client := jsonrpc2.NewClient(clientConn, clientConn)
-	server := jsonrpc2.NewClient(serverConn, serverConn)
-	requests := make(chan json.RawMessage, 1)
-	server.SetRequestHandler("mcp.discover", func(params json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
-		requests <- append(json.RawMessage(nil), params...)
-		return json.RawMessage(`{"servers":[]}`), nil
-	})
-	client.Start()
-	server.Start()
-	t.Cleanup(func() {
-		client.Stop()
-		server.Stop()
-		_ = clientConn.Close()
-		_ = serverConn.Close()
-	})
-
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	if _, err := NewServerRPC(client).MCP.Discover(ctx, nil); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case params := <-requests:
-		if string(params) != "{}" {
-			t.Fatalf("nil discovery request sent %s, want {}", params)
-		}
-	case <-ctx.Done():
-		t.Fatal(ctx.Err())
 	}
 }
 

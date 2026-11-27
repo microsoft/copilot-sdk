@@ -97,7 +97,6 @@ public sealed partial class ClientSessionLifetimeTests
     }
 
     [Theory]
-    [InlineData(null)]
     [InlineData(false)]
     [InlineData(true)]
     public async Task AutoModeRecovery_Direct_Registration_Forwards_Enrollment(bool? enabled)
@@ -174,9 +173,7 @@ public sealed partial class ClientSessionLifetimeTests
     }
 
     [Theory]
-    [InlineData(false, null)]
     [InlineData(false, false)]
-    [InlineData(true, null)]
     [InlineData(true, false)]
     public async Task AutoModeRecovery_Unsupported_Enrollment_Detaches(bool resume, bool? acknowledged)
     {

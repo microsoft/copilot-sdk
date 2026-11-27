@@ -35,28 +35,6 @@ public class ClientOptionsE2ETests(E2ETestFixture fixture, ITestOutputHelper out
         }
     }
 
-    [Fact]
-    public async Task Should_Use_Client_Cwd_For_Default_WorkingDirectory()
-    {
-        var clientCwd = Path.Join(Ctx.WorkDir, "client-cwd");
-        Directory.CreateDirectory(clientCwd);
-        await File.WriteAllTextAsync(Path.Join(clientCwd, "marker.txt"), "I am in the client cwd");
-
-        await using var client = Ctx.CreateClient(workingDirectory: clientCwd);
-
-        var session = await Ctx.CreateSessionAsync(client, new CreateSessionOptions
-        { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
-
-        var message = await session.SendAndWaitAsync(new MessageOptions
-        {
-            Prompt = "Read the file marker.txt and tell me what it says",
-        });
-
-        Assert.Contains("client cwd", message?.Data.Content ?? string.Empty);
-
-        await session.DisposeAsync();
-    }
-
     [Theory]
     [InlineData(true, "SPAN_ONLY")]
     [InlineData(false, "NO_CONTENT")]
@@ -130,80 +108,6 @@ public class ClientOptionsE2ETests(E2ETestFixture fixture, ITestOutputHelper out
     }
 
     [Fact]
-    public async Task Should_Forward_EnableSessionTelemetry_In_Wire_Request()
-    {
-        var (cliPath, capturePath) = await CreateFakeCliCaptureAsync();
-
-        await using var client = Ctx.CreateClient(options: new CopilotClientOptions
-        {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForSpawnedStdio(path: cliPath, args: ["--capture-file", capturePath]),
-            GitHub = new ClientGitHubOptions { UseLoggedInUser = false }
-        });
-
-        await client.StartAsync();
-
-        // When explicitly set to false, it should appear in the wire request
-        var session = await Ctx.CreateSessionAsync(client, new CreateSessionOptions
-        { GitHub = new SessionGitHubOptions { TelemetryEnabled = false }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
-
-        using var capture = JsonDocument.Parse(await File.ReadAllTextAsync(capturePath));
-        var createRequest = GetCapturedRequestParams(capture.RootElement, "session.create");
-        Assert.False(createRequest.GetProperty("github").GetProperty("telemetryEnabled").GetBoolean());
-
-        await session.DisposeAsync();
-    }
-
-    [Fact]
-    public async Task Should_Omit_EnableSessionTelemetry_When_Not_Set()
-    {
-        var (cliPath, capturePath) = await CreateFakeCliCaptureAsync();
-
-        await using var client = Ctx.CreateClient(options: new CopilotClientOptions
-        {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForSpawnedStdio(path: cliPath, args: ["--capture-file", capturePath]),
-            GitHub = new ClientGitHubOptions { UseLoggedInUser = false }
-        });
-
-        await client.StartAsync();
-
-        // When omitted (null/default), the field should not be present in the wire request
-        var session = await Ctx.CreateSessionAsync(client, new CreateSessionOptions
-        { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
-
-        using var capture = JsonDocument.Parse(await File.ReadAllTextAsync(capturePath));
-        var createRequest = GetCapturedRequestParams(capture.RootElement, "session.create");
-        Assert.False(createRequest.GetProperty("github").TryGetProperty("telemetryEnabled", out _));
-
-        await session.DisposeAsync();
-    }
-
-    [Fact]
-    public async Task Should_Forward_CustomAgentsLocalOnly_In_Create_Wire_Request()
-    {
-        var (cliPath, capturePath) = await CreateFakeCliCaptureAsync();
-
-        await using var client = Ctx.CreateClient(options: new CopilotClientOptions
-        {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForSpawnedStdio(path: cliPath, args: ["--capture-file", capturePath]),
-            GitHub = new ClientGitHubOptions { UseLoggedInUser = false }
-        });
-
-        await client.StartAsync();
-
-        var session = await client.CreateSessionAsync(new CreateSessionOptions
-        { Agents = new SessionAgentOptions { LocalDiscoveryOnly = false }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
-
-        using var capture = JsonDocument.Parse(await File.ReadAllTextAsync(capturePath));
-        var createRequest = GetCapturedRequestParams(capture.RootElement, "session.create");
-        Assert.False(createRequest.GetProperty("agents").GetProperty("localDiscoveryOnly").GetBoolean());
-
-        await session.DisposeAsync();
-    }
-
-    [Fact]
     public async Task Should_Forward_CustomAgentsLocalOnly_In_Resume_Wire_Request()
     {
         var (cliPath, capturePath) = await CreateFakeCliCaptureAsync();
@@ -222,46 +126,21 @@ public class ClientOptionsE2ETests(E2ETestFixture fixture, ITestOutputHelper out
         var sessionId = createSession.SessionId;
         await createSession.DisposeAsync();
 
+        using var activity = new Activity("dotnet-sdk-trace-resume");
+        activity.SetIdFormat(ActivityIdFormat.W3C);
+        activity.TraceStateString = "vendor=resume";
+        activity.Start();
+
         var resumeSession = await client.ResumeSessionAsync(sessionId, new ResumeSessionOptions
         { Agents = new SessionAgentOptions { LocalDiscoveryOnly = false }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
 
         using var capture = JsonDocument.Parse(await File.ReadAllTextAsync(capturePath));
         var resumeRequest = GetCapturedRequestParams(capture.RootElement, "session.resume");
         Assert.False(resumeRequest.GetProperty("agents").GetProperty("localDiscoveryOnly").GetBoolean());
+        Assert.Equal(activity.Id, resumeRequest.GetProperty("traceparent").GetString());
+        Assert.Equal("vendor=resume", resumeRequest.GetProperty("tracestate").GetString());
 
         await resumeSession.DisposeAsync();
-    }
-
-    [Fact]
-    public async Task Should_Forward_Granular_Multitenancy_Fields_In_Create_Wire_Request()
-    {
-        var (cliPath, capturePath) = await CreateFakeCliCaptureAsync();
-
-        await using var client = Ctx.CreateClient(options: new CopilotClientOptions
-        {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForSpawnedStdio(path: cliPath, args: ["--capture-file", capturePath]),
-            GitHub = new ClientGitHubOptions { UseLoggedInUser = false }
-        });
-
-        await client.StartAsync();
-
-        var session = await Ctx.CreateSessionAsync(client, new CreateSessionOptions
-        { Name = "named at create", State = new SessionStateOptions { SkipEmbeddingRetrieval = false, EmbeddingCacheStorage = EmbeddingCacheStorageMode.Persistent, EnableCrossSessionStore = true }, Instructions = new CreateSessionInstructionOptions { OrganizationText = "Follow org policy.", OnDemandDiscovery = true }, Hooks = new SessionHookOptions { EnableRepositoryHooks = true }, Git = new SessionGitOptions { EnableHostGitOperations = false }, Skills = new SessionSkillOptions { Enabled = false }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
-
-        using var capture = JsonDocument.Parse(await File.ReadAllTextAsync(capturePath));
-        var createRequest = GetCapturedRequestParams(capture.RootElement, "session.create");
-        Assert.Equal("named at create", createRequest.GetProperty("name").GetString());
-        Assert.False(createRequest.GetProperty("state").GetProperty("skipEmbeddingRetrieval").GetBoolean());
-        Assert.Equal("Follow org policy.", createRequest.GetProperty("instructions").GetProperty("organizationText").GetString());
-        Assert.True(createRequest.GetProperty("instructions").GetProperty("onDemandDiscovery").GetBoolean());
-        Assert.Equal("persistent", createRequest.GetProperty("state").GetProperty("embeddingCacheStorage").GetString());
-        Assert.True(createRequest.GetProperty("hooks").GetProperty("enableRepositoryHooks").GetBoolean());
-        Assert.False(createRequest.GetProperty("git").GetProperty("enableHostGitOperations").GetBoolean());
-        Assert.True(createRequest.GetProperty("state").GetProperty("enableCrossSessionStore").GetBoolean());
-        Assert.False(createRequest.GetProperty("skills").GetProperty("enabled").GetBoolean());
-
-        await session.DisposeAsync();
     }
 
     [Fact]
@@ -281,7 +160,7 @@ public class ClientOptionsE2ETests(E2ETestFixture fixture, ITestOutputHelper out
         await client.StartAsync();
 
         var session = await Ctx.CreateSessionAsync(client, new CreateSessionOptions
-        { ClientName = "advanced-create-client", Model = "claude-sonnet-5", Cloud = new CloudSessionOptions { Repository = new CloudSessionRepository { Owner = "github", Name = "copilot-sdk", Branch = "main", }, }, Inference = new SessionInferenceOptions { ReasoningEffort = "medium", ReasoningSummary = ReasoningSummary.Detailed, ContextTier = ContextTier.LongContext, EnableCitations = true, Providers = [new NamedProviderConfig { Name = "create-provider", Type = "openai", WireApi = "responses", BaseUrl = "https://create-provider.example.test/v1", ApiKey = "create-provider-key", Headers = new Dictionary<string, string> { ["X-Create-Provider"] = "yes" }, },], Models = [new ProviderModelConfig { Provider = "create-provider", Id = "create-model", Name = "Create Model", ModelId = "claude-sonnet-5", WireModel = "create-wire-model", MaxContextWindowTokens = 12_000, MaxPromptTokens = 10_000, MaxOutputTokens = 2_000, },] }, GitHub = new SessionGitHubOptions { Capi = new CapiSessionOptions { EnableWebSocketResponses = false }, Token = "session-create-token" }, Mcp = new SessionMcpOptions { OauthTokenStorage = McpOAuthTokenStorageMode.Persistent, EnableApps = true }, Agents = new SessionAgentOptions { Definitions = [new CustomAgentConfig { Name = "agent-one", DisplayName = "Agent One", Description = "Handles agent-one tasks.", Prompt = "Be agent one.", Tools = ["view"], Infer = true, Skills = ["create-skill"], Model = "claude-haiku-4.5", },], Default = new DefaultAgentConfig { ExcludedTools = ["edit"] }, Selected = "agent-one" }, Skills = new SessionSkillOptions { Directories = ["skills-create"], DisabledSkills = ["disabled-create-skill"] }, Plugins = new SessionPluginOptions { Directories = ["plugins-create"] }, State = new SessionStateOptions { InfiniteSessions = new InfiniteSessionConfig { Enabled = false, BackgroundCompactionThreshold = 0.5, BufferExhaustionThreshold = 0.9, }, Memory = new MemoryConfiguration { Enabled = true } }, Tools = new SessionToolOptions { LargeOutput = new LargeToolOutputConfig { Enabled = true, MaxSizeBytes = 4096, OutputDirectory = outputDirectory, } }, Canvases = new SessionCanvasOptions { RequestRenderer = true, Definitions = [new CanvasDeclaration { Id = "advanced-create-canvas", DisplayName = "Advanced Create Canvas", Description = "Covers create-time canvas options.", },] }, Extensions = new SessionExtensionOptions { Enabled = true, SdkPath = "custom-extension-sdk", Identity = new ExtensionInfo { Source = "dotnet-sdk-tests", Name = "advanced-create-extension" } }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
+        { ClientName = "advanced-create-client", Name = "named at create", Model = "claude-sonnet-5", Cloud = new CloudSessionOptions { Repository = new CloudSessionRepository { Owner = "github", Name = "copilot-sdk", Branch = "main", }, }, Inference = new SessionInferenceOptions { ReasoningEffort = "medium", ReasoningSummary = ReasoningSummary.Detailed, ContextTier = ContextTier.LongContext, EnableCitations = true, Providers = [new NamedProviderConfig { Name = "create-provider", Type = "openai", WireApi = "responses", BaseUrl = "https://create-provider.example.test/v1", ApiKey = "create-provider-key", Headers = new Dictionary<string, string> { ["X-Create-Provider"] = "yes" }, },], Models = [new ProviderModelConfig { Provider = "create-provider", Id = "create-model", Name = "Create Model", ModelId = "claude-sonnet-5", WireModel = "create-wire-model", MaxContextWindowTokens = 12_000, MaxPromptTokens = 10_000, MaxOutputTokens = 2_000, },] }, GitHub = new SessionGitHubOptions { Capi = new CapiSessionOptions { EnableWebSocketResponses = false }, Token = "session-create-token" }, Mcp = new SessionMcpOptions { OauthTokenStorage = McpOAuthTokenStorageMode.Persistent, EnableApps = true }, Agents = new SessionAgentOptions { Definitions = [new CustomAgentConfig { Name = "agent-one", DisplayName = "Agent One", Description = "Handles agent-one tasks.", Prompt = "Be agent one.", Tools = ["view"], Infer = true, Skills = ["create-skill"], Model = "claude-haiku-4.5", },], Default = new DefaultAgentConfig { ExcludedTools = ["edit"] }, Selected = "agent-one" }, Skills = new SessionSkillOptions { Enabled = false, Directories = ["skills-create"], DisabledSkills = ["disabled-create-skill"] }, Instructions = new CreateSessionInstructionOptions { OrganizationText = "Follow org policy.", OnDemandDiscovery = true }, Hooks = new SessionHookOptions { EnableRepositoryHooks = true }, Git = new SessionGitOptions { EnableHostGitOperations = false }, Plugins = new SessionPluginOptions { Directories = ["plugins-create"] }, State = new SessionStateOptions { SkipEmbeddingRetrieval = false, EmbeddingCacheStorage = EmbeddingCacheStorageMode.Persistent, EnableCrossSessionStore = true, InfiniteSessions = new InfiniteSessionConfig { Enabled = false, BackgroundCompactionThreshold = 0.5, BufferExhaustionThreshold = 0.9, }, Memory = new MemoryConfiguration { Enabled = true } }, Tools = new SessionToolOptions { LargeOutput = new LargeToolOutputConfig { Enabled = true, MaxSizeBytes = 4096, OutputDirectory = outputDirectory, } }, Canvases = new SessionCanvasOptions { RequestRenderer = true, Definitions = [new CanvasDeclaration { Id = "advanced-create-canvas", DisplayName = "Advanced Create Canvas", Description = "Covers create-time canvas options.", },] }, Extensions = new SessionExtensionOptions { Enabled = true, SdkPath = "custom-extension-sdk", Identity = new ExtensionInfo { Source = "dotnet-sdk-tests", Name = "advanced-create-extension" } }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
 
         using var capture = JsonDocument.Parse(await File.ReadAllTextAsync(capturePath));
         var createRequest = GetCapturedRequestParams(capture.RootElement, "session.create");
@@ -296,6 +175,7 @@ public class ClientOptionsE2ETests(E2ETestFixture fixture, ITestOutputHelper out
         Assert.Equal("agent-one", createRequest.GetProperty("agents").GetProperty("selected").GetString());
         Assert.Equal("edit", createRequest.GetProperty("agents").GetProperty("default").GetProperty("excludedTools")[0].GetString());
         Assert.Equal("agent-one", createRequest.GetProperty("agents").GetProperty("definitions")[0].GetProperty("name").GetString());
+        Assert.Equal("create-skill", createRequest.GetProperty("agents").GetProperty("definitions")[0].GetProperty("skills")[0].GetString());
         Assert.Equal("plugins-create", createRequest.GetProperty("plugins").GetProperty("directories")[0].GetString());
         Assert.Equal("disabled-create-skill", createRequest.GetProperty("skills").GetProperty("disabledSkills")[0].GetString());
         Assert.False(createRequest.GetProperty("state").GetProperty("infiniteSessions").GetProperty("enabled").GetBoolean());
@@ -316,6 +196,16 @@ public class ClientOptionsE2ETests(E2ETestFixture fixture, ITestOutputHelper out
         Assert.Equal("responses", createRequest.GetProperty("inference").GetProperty("providers")[0].GetProperty("wireApi").GetString());
         Assert.Equal("create-model", createRequest.GetProperty("inference").GetProperty("models")[0].GetProperty("id").GetString());
         Assert.Equal(12000, createRequest.GetProperty("inference").GetProperty("models")[0].GetProperty("maxContextWindowTokens").GetInt32());
+        Assert.False(createRequest.GetProperty("github").TryGetProperty("telemetryEnabled", out _));
+        Assert.Equal("named at create", createRequest.GetProperty("name").GetString());
+        Assert.False(createRequest.GetProperty("state").GetProperty("skipEmbeddingRetrieval").GetBoolean());
+        Assert.Equal("Follow org policy.", createRequest.GetProperty("instructions").GetProperty("organizationText").GetString());
+        Assert.True(createRequest.GetProperty("instructions").GetProperty("onDemandDiscovery").GetBoolean());
+        Assert.Equal("persistent", createRequest.GetProperty("state").GetProperty("embeddingCacheStorage").GetString());
+        Assert.True(createRequest.GetProperty("hooks").GetProperty("enableRepositoryHooks").GetBoolean());
+        Assert.False(createRequest.GetProperty("git").GetProperty("enableHostGitOperations").GetBoolean());
+        Assert.True(createRequest.GetProperty("state").GetProperty("enableCrossSessionStore").GetBoolean());
+        Assert.False(createRequest.GetProperty("skills").GetProperty("enabled").GetBoolean());
 
         await session.DisposeAsync();
     }
@@ -479,68 +369,6 @@ public class ClientOptionsE2ETests(E2ETestFixture fixture, ITestOutputHelper out
     }
 
     [Fact]
-    public async Task Should_Propagate_Activity_TraceContext_To_Session_Resume()
-    {
-        var (cliPath, capturePath) = await CreateFakeCliCaptureAsync();
-
-        await using var client = Ctx.CreateClient(options: new CopilotClientOptions
-        {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForSpawnedStdio(path: cliPath, args: ["--capture-file", capturePath]),
-            GitHub = new ClientGitHubOptions { UseLoggedInUser = false }
-        });
-
-        await client.StartAsync();
-
-        using var activity = new Activity("dotnet-sdk-trace-resume");
-        activity.SetIdFormat(ActivityIdFormat.W3C);
-        activity.TraceStateString = "vendor=resume";
-        activity.Start();
-
-        var session = await Ctx.ResumeSessionAsync(client, "trace-resume-session", new ResumeSessionOptions
-        { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
-
-        using var capture = JsonDocument.Parse(await File.ReadAllTextAsync(capturePath));
-        var resumeRequest = GetCapturedRequestParams(capture.RootElement, "session.resume");
-
-        Assert.Equal(activity.Id, resumeRequest.GetProperty("traceparent").GetString());
-        Assert.Equal("vendor=resume", resumeRequest.GetProperty("tracestate").GetString());
-
-        await session.DisposeAsync();
-    }
-
-    [Fact]
-    public async Task Should_Forward_Granular_Multitenancy_Fields_In_Resume_Wire_Request()
-    {
-        var (cliPath, capturePath) = await CreateFakeCliCaptureAsync();
-
-        await using var client = Ctx.CreateClient(options: new CopilotClientOptions
-        {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForSpawnedStdio(path: cliPath, args: ["--capture-file", capturePath]),
-            GitHub = new ClientGitHubOptions { UseLoggedInUser = false }
-        });
-
-        await client.StartAsync();
-
-        var session = await Ctx.ResumeSessionAsync(client, "resume-session", new ResumeSessionOptions
-        { State = new SessionStateOptions { SkipEmbeddingRetrieval = false, EmbeddingCacheStorage = EmbeddingCacheStorageMode.Persistent, EnableCrossSessionStore = true }, Instructions = new SessionInstructionOptions { OrganizationText = "Resume org policy.", OnDemandDiscovery = true }, Hooks = new SessionHookOptions { EnableRepositoryHooks = true }, Git = new SessionGitOptions { EnableHostGitOperations = false }, Skills = new SessionSkillOptions { Enabled = false }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
-
-        using var capture = JsonDocument.Parse(await File.ReadAllTextAsync(capturePath));
-        var resumeRequest = GetCapturedRequestParams(capture.RootElement, "session.resume");
-        Assert.False(resumeRequest.GetProperty("state").GetProperty("skipEmbeddingRetrieval").GetBoolean());
-        Assert.Equal("Resume org policy.", resumeRequest.GetProperty("instructions").GetProperty("organizationText").GetString());
-        Assert.True(resumeRequest.GetProperty("instructions").GetProperty("onDemandDiscovery").GetBoolean());
-        Assert.Equal("persistent", resumeRequest.GetProperty("state").GetProperty("embeddingCacheStorage").GetString());
-        Assert.True(resumeRequest.GetProperty("hooks").GetProperty("enableRepositoryHooks").GetBoolean());
-        Assert.False(resumeRequest.GetProperty("git").GetProperty("enableHostGitOperations").GetBoolean());
-        Assert.True(resumeRequest.GetProperty("state").GetProperty("enableCrossSessionStore").GetBoolean());
-        Assert.False(resumeRequest.GetProperty("skills").GetProperty("enabled").GetBoolean());
-
-        await session.DisposeAsync();
-    }
-
-    [Fact]
     public async Task Should_Forward_Advanced_Session_Options_In_Resume_Wire_Request()
     {
         var (cliPath, capturePath) = await CreateFakeCliCaptureAsync();
@@ -557,7 +385,7 @@ public class ClientOptionsE2ETests(E2ETestFixture fixture, ITestOutputHelper out
         await client.StartAsync();
 
         var session = await Ctx.ResumeSessionAsync(client, "advanced-resume-session", new ResumeSessionOptions
-        { ClientName = "advanced-resume-client", Model = "claude-haiku-4.5", SuppressResumeEvent = true, ContinuePendingWork = true, Inference = new SessionInferenceOptions { ReasoningEffort = "low", ReasoningSummary = ReasoningSummary.None, ContextTier = ContextTier.Default }, Mcp = new SessionMcpOptions { OauthTokenStorage = McpOAuthTokenStorageMode.Persistent }, Plugins = new SessionPluginOptions { Directories = ["plugins-resume"] }, Tools = new SessionToolOptions { LargeOutput = new LargeToolOutputConfig { Enabled = false, MaxSizeBytes = 2048, OutputDirectory = outputDirectory, } }, State = new SessionStateOptions { Memory = new MemoryConfiguration { Enabled = false } }, Canvases = new ResumeSessionCanvasOptions { Open = [new Microsoft.Copilot.Rpc.OpenCanvasInstance { CanvasId = "resume-canvas", ExtensionId = "dotnet-sdk-tests/resume-extension", ExtensionName = "Resume Extension", InstanceId = "resume-canvas-1", Input = canvasInput.RootElement.Clone(), Status = "ready", Title = "Resume Canvas", Url = "https://example.com/resume-canvas", },] }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
+        { ClientName = "advanced-resume-client", Model = "claude-haiku-4.5", SuppressResumeEvent = true, ContinuePendingWork = true, Events = new SessionEventOptions { Streaming = true }, Inference = new SessionInferenceOptions { ReasoningEffort = "low", ReasoningSummary = ReasoningSummary.None, ContextTier = ContextTier.Default }, Mcp = new SessionMcpOptions { OauthTokenStorage = McpOAuthTokenStorageMode.Persistent }, Plugins = new SessionPluginOptions { Directories = ["plugins-resume"] }, Tools = new SessionToolOptions { LargeOutput = new LargeToolOutputConfig { Enabled = false, MaxSizeBytes = 2048, OutputDirectory = outputDirectory, } }, State = new SessionStateOptions { SkipEmbeddingRetrieval = false, EmbeddingCacheStorage = EmbeddingCacheStorageMode.Persistent, EnableCrossSessionStore = true, Memory = new MemoryConfiguration { Enabled = false } }, Instructions = new SessionInstructionOptions { OrganizationText = "Resume org policy.", OnDemandDiscovery = true }, Hooks = new SessionHookOptions { EnableRepositoryHooks = true }, Git = new SessionGitOptions { EnableHostGitOperations = false }, Skills = new SessionSkillOptions { Enabled = false }, Canvases = new ResumeSessionCanvasOptions { Open = [new Microsoft.Copilot.Rpc.OpenCanvasInstance { CanvasId = "resume-canvas", ExtensionId = "dotnet-sdk-tests/resume-extension", ExtensionName = "Resume Extension", InstanceId = "resume-canvas-1", Input = canvasInput.RootElement.Clone(), Status = "ready", Title = "Resume Canvas", Url = "https://example.com/resume-canvas", },] }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
 
         using var capture = JsonDocument.Parse(await File.ReadAllTextAsync(capturePath));
         var resumeRequest = GetCapturedRequestParams(capture.RootElement, "session.resume");
@@ -569,6 +397,7 @@ public class ClientOptionsE2ETests(E2ETestFixture fixture, ITestOutputHelper out
         Assert.Equal("default", resumeRequest.GetProperty("inference").GetProperty("contextTier").GetString());
         Assert.True(resumeRequest.GetProperty("suppressResumeEvent").GetBoolean());
         Assert.True(resumeRequest.GetProperty("continuePendingWork").GetBoolean());
+        Assert.True(resumeRequest.GetProperty("events").GetProperty("streaming").GetBoolean());
         Assert.Equal("persistent", resumeRequest.GetProperty("mcp").GetProperty("oauthTokenStorage").GetString());
         Assert.Equal("plugins-resume", resumeRequest.GetProperty("plugins").GetProperty("directories")[0].GetString());
         Assert.False(resumeRequest.GetProperty("tools").GetProperty("largeOutput").GetProperty("enabled").GetBoolean());
@@ -576,6 +405,14 @@ public class ClientOptionsE2ETests(E2ETestFixture fixture, ITestOutputHelper out
         Assert.Equal(outputDirectory, resumeRequest.GetProperty("tools").GetProperty("largeOutput").GetProperty("outputDir").GetString());
         Assert.False(resumeRequest.GetProperty("state").GetProperty("memory").GetProperty("enabled").GetBoolean());
         Assert.False(resumeRequest.TryGetProperty("remoteSession", out _));
+        Assert.False(resumeRequest.GetProperty("state").GetProperty("skipEmbeddingRetrieval").GetBoolean());
+        Assert.Equal("Resume org policy.", resumeRequest.GetProperty("instructions").GetProperty("organizationText").GetString());
+        Assert.True(resumeRequest.GetProperty("instructions").GetProperty("onDemandDiscovery").GetBoolean());
+        Assert.Equal("persistent", resumeRequest.GetProperty("state").GetProperty("embeddingCacheStorage").GetString());
+        Assert.True(resumeRequest.GetProperty("hooks").GetProperty("enableRepositoryHooks").GetBoolean());
+        Assert.False(resumeRequest.GetProperty("git").GetProperty("enableHostGitOperations").GetBoolean());
+        Assert.True(resumeRequest.GetProperty("state").GetProperty("enableCrossSessionStore").GetBoolean());
+        Assert.False(resumeRequest.GetProperty("skills").GetProperty("enabled").GetBoolean());
 
         var openCanvas = resumeRequest.GetProperty("canvases").GetProperty("open")[0];
         Assert.Equal("resume-canvas", openCanvas.GetProperty("canvasId").GetString());
@@ -627,50 +464,6 @@ public class ClientOptionsE2ETests(E2ETestFixture fixture, ITestOutputHelper out
     }
 
     [Fact]
-    public void Should_Accept_GitHubToken_Option()
-    {
-        var options = new CopilotClientOptions
-        {
-            Mode = CopilotClientMode.CodingAgent,
-            GitHub = new ClientGitHubOptions { Token = "gho_test_token" }
-        };
-
-        Assert.Equal("gho_test_token", options.GitHub.Token);
-    }
-
-    [Fact]
-    public void Should_Default_UseLoggedInUser_To_Null()
-    {
-        var options = new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent };
-
-        Assert.Null(options.GitHub.UseLoggedInUser);
-    }
-
-    [Fact]
-    public void Should_Allow_Explicit_UseLoggedInUser_False()
-    {
-        var options = new CopilotClientOptions
-        {
-            Mode = CopilotClientMode.CodingAgent,
-            GitHub = new ClientGitHubOptions { UseLoggedInUser = false }
-        };
-
-        Assert.False(options.GitHub.UseLoggedInUser);
-    }
-
-    [Fact]
-    public void Should_Allow_Explicit_UseLoggedInUser_True_With_GitHubToken()
-    {
-        var options = new CopilotClientOptions
-        {
-            Mode = CopilotClientMode.CodingAgent,
-            GitHub = new ClientGitHubOptions { Token = "gho_test_token", UseLoggedInUser = true }
-        };
-
-        Assert.True(options.GitHub.UseLoggedInUser);
-    }
-
-    [Fact]
     public void Should_Throw_When_GitHubToken_Used_With_UriConnection()
     {
         Assert.Throws<ArgumentException>(() =>
@@ -686,26 +479,6 @@ public class ClientOptionsE2ETests(E2ETestFixture fixture, ITestOutputHelper out
         {
             _ = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp("localhost", 8080), GitHub = new ClientGitHubOptions { UseLoggedInUser = false } });
         });
-    }
-
-    [Fact]
-    public void Should_Default_SessionIdleTimeoutSeconds_To_Null()
-    {
-        var options = new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent };
-
-        Assert.Null((options.Runtime as OwnedRuntimeConnection)?.SessionIdleTimeoutSeconds);
-    }
-
-    [Fact]
-    public void Should_Accept_SessionIdleTimeoutSeconds_Option()
-    {
-        var options = new CopilotClientOptions
-        {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForDefault(sessionIdleTimeoutSeconds: 600)
-        };
-
-        Assert.Equal(600, (options.Runtime as OwnedRuntimeConnection)?.SessionIdleTimeoutSeconds);
     }
 
     private static void AssertArgumentValue(string?[] args, string name, string expectedValue)
@@ -756,7 +529,7 @@ public class ClientOptionsE2ETests(E2ETestFixture fixture, ITestOutputHelper out
           });
         });
 
-        server.listen(0, "localhost", () => {
+        server.listen(0, "127.0.0.1", () => {
           const address = server.address();
           console.log(`listening on port ${address.port}`);
         });

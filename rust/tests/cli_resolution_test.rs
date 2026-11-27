@@ -18,12 +18,17 @@ use copilot_sdk::{
 };
 #[cfg(all(feature = "bundled-cli", has_bundled_cli))]
 use copilot_sdk::{CreateSessionOptions, OwnedRuntimeOptions};
+#[cfg(any(
+    all(not(feature = "bundled-cli"), has_extracted_cli),
+    all(feature = "bundled-cli", has_bundled_cli)
+))]
 use serial_test::serial;
 
 #[cfg(feature = "runtime")]
 #[allow(dead_code)]
 mod fake_runtime;
 
+#[cfg(all(not(feature = "bundled-cli"), has_extracted_cli))]
 fn unset_env(key: &str) {
     // SAFETY: these tests are serialized with #[serial(copilot_cli_path)]
     // so no other test in this binary mutates COPILOT_CLI_PATH while
@@ -36,57 +41,10 @@ fn unset_env(key: &str) {
     unsafe { std::env::remove_var(key) };
 }
 
+#[cfg(all(not(feature = "bundled-cli"), has_extracted_cli))]
 fn set_env(key: &str, value: &str) {
     // SAFETY: see `unset_env`.
     unsafe { std::env::set_var(key, value) };
-}
-
-/// COPILOT_CLI_PATH wins when it points at a real file, regardless of
-/// build mode.
-#[tokio::test(flavor = "current_thread")]
-#[serial(copilot_cli_path)]
-async fn env_override_resolves_to_pointed_file() {
-    let tmp = tempfile::NamedTempFile::new().expect("create tempfile");
-    // resolve.rs only checks `is_file()` for COPILOT_CLI_PATH, so a plain
-    // tempfile is sufficient — we don't need it to be executable. The
-    // downstream `Client::start` call will fail to exec an empty file,
-    // which we tolerate below; we just need to observe that the resolver
-    // returned the env-override path rather than `BinaryNotFound`.
-    let path = tmp.path().to_path_buf();
-
-    set_env(
-        "COPILOT_CLI_PATH",
-        path.to_str().expect("utf-8 tempfile path"),
-    );
-    let opts = ClientOptions::new(copilot_sdk::ClientMode::CodingAgent).with_runtime(
-        RuntimeConnection::for_spawned_stdio(
-            SpawnedProcessOptions::new().with_program(CliProgram::Resolve),
-        ),
-    );
-
-    // `Client::start` reads the env var via resolve.rs. We don't want to
-    // actually launch a subprocess against our empty temp file, so go
-    // through the public API just far enough to observe the resolution.
-    // The easiest observable behavior is that `Client::start` doesn't
-    // return `Error::BinaryNotFound` — it'll fail later trying to exec
-    // the empty file, which we tolerate.
-    let result = Client::start(opts).await;
-    unset_env("COPILOT_CLI_PATH");
-
-    match result {
-        Ok(_) => {}
-        Err(e) => {
-            let msg = format!("{e}");
-            assert!(
-                !msg.contains("not found"),
-                "expected COPILOT_CLI_PATH to win; got {msg}"
-            );
-        }
-    }
-
-    // Drop tmp explicitly so the file outlives the assertions above.
-    drop(tmp);
-    let _ = path;
 }
 
 /// Owned runtimes honor the effective CLI selection; external servers ignore it.

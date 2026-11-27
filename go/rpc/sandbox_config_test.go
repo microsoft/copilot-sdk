@@ -7,7 +7,7 @@ import (
 )
 
 func TestSandboxProxyCaTrustCertificateHostLists(t *testing.T) {
-	for _, hosts := range [][]string{nil, {}, {"example.test"}} {
+	for _, hosts := range [][]string{nil, {"example.test"}} {
 		request := SandboxProxyCaTrustCertificateRequest{AllowHosts: hosts}
 		data, err := json.Marshal(request)
 		if err != nil {

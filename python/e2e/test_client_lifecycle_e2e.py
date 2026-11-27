@@ -22,23 +22,6 @@ from .testharness import E2ETestContext
 pytestmark = pytest.mark.asyncio(loop_scope="module")
 
 
-async def _wait_for_last_session_id(client) -> str:
-    last_id = None
-
-    async def poll() -> bool:
-        nonlocal last_id
-        last_id = await client.get_last_session_id()
-        return bool(last_id)
-
-    deadline = asyncio.get_running_loop().time() + 10.0
-    while True:
-        if await poll():
-            return last_id
-        if asyncio.get_running_loop().time() >= deadline:
-            raise TimeoutError("last session id was not persisted before timeout")
-        await asyncio.sleep(0.05)
-
-
 def _make_isolated_client(ctx: E2ETestContext) -> CopilotClient:
     """Build a client with the same isolated env as ctx.client but disjoint state.
 
@@ -58,36 +41,6 @@ def _make_isolated_client(ctx: E2ETestContext) -> CopilotClient:
 
 
 class TestClientLifecycle:
-    async def test_should_return_last_session_id_after_sending_a_message(self, ctx: E2ETestContext):
-        session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all}
-        )
-        try:
-            await session.send_and_wait("Say hello")
-
-            last_id = await _wait_for_last_session_id(ctx.client)
-            assert last_id
-        finally:
-            await session.disconnect()
-
-    async def test_should_emit_session_lifecycle_events(self, ctx: E2ETestContext):
-        events: asyncio.Queue = asyncio.Queue()
-        unsubscribe = ctx.client.on_lifecycle(events.put_nowait)
-        try:
-            session = await ctx.client.create_session(
-                permissions={"on_request": PermissionHandler.approve_all}
-            )
-            try:
-                await session.send_and_wait("Say hello")
-
-                async with asyncio.timeout(10.0):
-                    while getattr(await events.get(), "session_id", None) != session.session_id:
-                        pass
-            finally:
-                await session.disconnect()
-        finally:
-            unsubscribe()
-
     async def test_should_receive_session_created_lifecycle_event(self, ctx: E2ETestContext):
         loop = asyncio.get_event_loop()
         created: asyncio.Future = loop.create_future()

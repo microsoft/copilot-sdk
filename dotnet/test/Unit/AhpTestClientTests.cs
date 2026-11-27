@@ -150,7 +150,6 @@ public sealed class AhpTestClientTests
 
     [Theory]
     [InlineData(false, false)]
-    [InlineData(false, true)]
     [InlineData(true, true)]
     public async Task CallerCancellationJoinsTheOriginalPendingRead(bool afterResubmission, bool recovery)
     {

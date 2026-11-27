@@ -50,38 +50,6 @@ async fn should_invoke_onsessionstart_hook_on_new_session() {
 }
 
 #[tokio::test]
-async fn should_invoke_onuserpromptsubmitted_hook_when_sending_a_message() {
-    super::support::with_shared_e2e_context(
-        &E2E,
-        "hooks_extended",
-        "should_invoke_onuserpromptsubmitted_hook_when_sending_a_message",
-        |ctx| {
-            Box::pin(async move {
-                ctx.set_default_copilot_user();
-                let (tx, mut rx) = mpsc::unbounded_channel();
-                let client = ctx.start_client().await;
-                let session = client
-                    .create_session(ctx.approve_all_session_config().with_hooks(|group| {
-                        group.with_handlers(Arc::new(RecordingHooks::user_prompt(tx, None)))
-                    }))
-                    .await
-                    .expect("create session");
-
-                session.send_and_wait("Say hello").await.expect("send");
-                let input = recv_with_timeout(&mut rx, "userPromptSubmitted hook").await;
-                assert!(input.prompt.contains("Say hello"));
-                assert!(input.timestamp > 0.0);
-                assert!(!input.working_directory.as_os_str().is_empty());
-
-                session.disconnect().await.expect("disconnect session");
-                client.stop().await.expect("stop client");
-            })
-        },
-    )
-    .await;
-}
-
-#[tokio::test]
 async fn should_invoke_onsessionend_hook_when_session_is_disconnected() {
     super::support::with_shared_e2e_context(
         &E2E,
@@ -147,6 +115,8 @@ async fn should_invoke_userpromptsubmitted_hook_and_modify_prompt() {
                     .expect("assistant message");
                 let input = recv_with_timeout(&mut rx, "userPromptSubmitted hook").await;
                 assert!(input.prompt.contains("Say something else"));
+                assert!(input.timestamp > 0.0);
+                assert!(!input.working_directory.as_os_str().is_empty());
                 assert!(assistant_message_content(&answer).contains("HOOKED_PROMPT"));
 
                 session.disconnect().await.expect("disconnect session");
@@ -536,4 +506,4 @@ impl ToolHandler for EchoValueTool {
     }
 }
 static E2E: super::support::SharedE2eGroup =
-    super::support::SharedE2eGroup::standard("hooks_extended", 7);
+    super::support::SharedE2eGroup::standard("hooks_extended", 6);

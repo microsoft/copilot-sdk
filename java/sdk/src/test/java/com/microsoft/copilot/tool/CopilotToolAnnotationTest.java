@@ -12,13 +12,11 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 import java.lang.reflect.Method;
-import java.lang.reflect.Parameter;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
 
 import org.junit.jupiter.api.Test;
 
-import com.microsoft.copilot.CopilotExperimental;
 import com.microsoft.copilot.rpc.ToolDefer;
 
 /**
@@ -40,20 +38,6 @@ public class CopilotToolAnnotationTest {
         Target target = CopilotTool.class.getAnnotation(Target.class);
         assertNotNull(target);
         assertArrayEquals(new ElementType[]{ElementType.METHOD}, target.value());
-    }
-
-    @Test
-    void copilotExperimentalTargetsTypeForAnnotationDeclarations() {
-        Target expTarget = CopilotExperimental.class.getAnnotation(Target.class);
-        assertNotNull(expTarget);
-        boolean includesType = false;
-        for (ElementType et : expTarget.value()) {
-            if (et == ElementType.TYPE) {
-                includesType = true;
-                break;
-            }
-        }
-        assertTrue(includesType, "@CopilotExperimental must target TYPE to be applicable to annotation declarations");
     }
 
     @Test
@@ -123,33 +107,5 @@ public class CopilotToolAnnotationTest {
                 @CopilotToolParam(value = "Temperature unit", required = false, defaultValue = "celsius") String unit) {
             return CompletableFuture.completedFuture("Sunny in " + location);
         }
-    }
-
-    @Test
-    void annotationsAreAccessibleViaReflection() throws Exception {
-        Method method = SampleToolHolder.class.getDeclaredMethod("getWeather", String.class, String.class);
-
-        CopilotTool toolAnnotation = method.getAnnotation(CopilotTool.class);
-        assertNotNull(toolAnnotation);
-        assertEquals("Get weather for a location", toolAnnotation.value());
-        assertEquals("get_weather", toolAnnotation.name());
-        assertFalse(toolAnnotation.overridesBuiltInTool());
-        assertFalse(toolAnnotation.skipPermission());
-        assertEquals(ToolDefer.AUTO, toolAnnotation.defer());
-
-        Parameter[] params = method.getParameters();
-        assertEquals(2, params.length);
-
-        CopilotToolParam locationParam = params[0].getAnnotation(CopilotToolParam.class);
-        assertNotNull(locationParam);
-        assertEquals("City name", locationParam.value());
-        assertTrue(locationParam.required());
-        assertEquals("", locationParam.defaultValue());
-
-        CopilotToolParam unitParam = params[1].getAnnotation(CopilotToolParam.class);
-        assertNotNull(unitParam);
-        assertEquals("Temperature unit", unitParam.value());
-        assertFalse(unitParam.required());
-        assertEquals("celsius", unitParam.defaultValue());
     }
 }

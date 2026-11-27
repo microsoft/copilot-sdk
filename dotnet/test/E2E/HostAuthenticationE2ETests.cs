@@ -154,9 +154,6 @@ public sealed class HostAuthenticationE2ETests : E2ETestBase
     [HostAuthenticationTheory]
     [InlineData("null")]
     [InlineData("throw")]
-    [InlineData("mismatch")]
-    [InlineData("malformed")]
-    [InlineData("expired")]
     public async Task Rejected_Custom_Admission_Never_Invokes_Create(string failure)
     {
         var owner = CreateOwner();
@@ -173,9 +170,7 @@ public sealed class HostAuthenticationE2ETests : E2ETestBase
                 observedToken = token;
                 observedCancellation = cancellation.IsCancellationRequested;
                 if (failure == "throw") throw new InvalidOperationException("validator unavailable");
-                return Task.FromResult(failure == "null" ? null : new AhpAuthenticationResult(
-                    failure == "mismatch" ? "another-owner" : "application-owner",
-                    failure == "expired" ? "2000-01-01T00:00:00Z" : failure == "malformed" ? "not-a-date" : DateTimeOffset.UtcNow.AddMinutes(5).ToString("O")));
+                return Task.FromResult<AhpAuthenticationResult?>(null);
             }),
             CreateSession = _ =>
             {

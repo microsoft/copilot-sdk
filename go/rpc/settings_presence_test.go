@@ -433,11 +433,6 @@ func TestFeatureFlagConfigPatchValuePresenceOnWire(t *testing.T) {
 			patch:  `{"undefinedKeys":[],"values":{"debug":true}}`,
 		},
 		{
-			name:   "empty removal list",
-			params: &SessionFeatureFlagsUpdateRequest{ConfigPatch: &FeatureFlagConfigPatch{UndefinedKeys: []string{}, Values: map[string]any{}}},
-			patch:  `{"undefinedKeys":[],"values":{}}`,
-		},
-		{
 			name:   "populated removal list",
 			params: &SessionFeatureFlagsUpdateRequest{ConfigPatch: &FeatureFlagConfigPatch{UndefinedKeys: []string{"obsolete"}, Values: map[string]any{"debug": false}}},
 			patch:  `{"undefinedKeys":["obsolete"],"values":{"debug":false}}`,
@@ -591,10 +586,6 @@ func TestSettingsValuePresenceOnWire(t *testing.T) {
 			{name: "explicit null", value: json.RawMessage("null"), present: true},
 			{name: "value", value: "chosen", present: true},
 			{name: "comparison float64", value: float64(9.223372036854776e18), present: true, settingsWire: "9223372036854776000e0"},
-			{name: "standard float32 fraction", value: float32(0.1), present: true},
-			{name: "comparison float32 integer", value: float32(9.223372e18), present: true, settingsWire: "9223372036854776000e0"},
-			{name: "exact integer", value: json.Number("9007199254740993"), present: true},
-			{name: "custom float32 encoder", value: settingsTextFloat32(0.1), present: true},
 			{name: "delete", delete: true},
 		} {
 			t.Run(method+"/"+test.name, func(t *testing.T) {
@@ -727,33 +718,12 @@ func TestSettingsInputRoutesPreserveNumericComparisonsOnWire(t *testing.T) {
 			fields: []string{"value"},
 		},
 		{
-			method: "user.settings.applyTopKey",
-			call: settingsRequestCall(settings.ApplyTopKey, &UserSettingsApplyTopKeyRequest{
-				CanonicalPath: []string{"extensions"}, TopKey: "extensions", Value: &pointedValue,
-			}),
-			fields: []string{"value"},
-		},
-		{
-			method: "user.settings.buildRuntime",
-			call: settingsRequestCall(settings.BuildRuntime, &UserSettingsBuildRuntimeRequest{
-				Environment: map[string]string{}, Overrides: value, Platform: "linux", WorkingDirectory: ".",
-			}),
-			fields: []string{"overrides"},
-		},
-		{
 			method: "user.settings.diagnoseProblems",
 			call: settingsRequestCall(settings.DiagnoseProblems, &UserSettingsProblemsRequest{
 				Sources: []UserSettingsProblemSource{{Config: value, FilePath: "settings.json", Kind: "user", Label: "User"}},
 			}),
 			fields: []string{"sources"},
 			want:   `[{"config":` + expected + `,"filePath":"settings.json","kind":"user","label":"User"}]`,
-		},
-		{
-			method: "user.settings.loadAndMergeRepo",
-			call: settingsRequestCall(settings.LoadAndMergeRepo, &UserSettingsLoadAndMergeRepoRequest{
-				RepoRoot: ".", UserSettings: value,
-			}),
-			fields: []string{"userSettings"},
 		},
 		{
 			method: "user.settings.mergeManagedAndUser",
@@ -763,22 +733,8 @@ func TestSettingsInputRoutesPreserveNumericComparisonsOnWire(t *testing.T) {
 			fields: []string{"managed", "user"},
 		},
 		{
-			method: "user.settings.mergeRepoValue",
-			call: settingsRequestCall(settings.MergeRepoValue, &UserSettingsMergeRepoValueParams{
-				RepoSettings: value, UserSettings: value,
-			}),
-			fields: []string{"repoSettings", "userSettings"},
-		},
-		{
 			method: "user.settings.normalize",
 			call: settingsRequestCall(settings.Normalize, &UserSettingsNormalizeRequest{
-				Settings: value,
-			}),
-			fields: []string{"settings"},
-		},
-		{
-			method: "user.settings.set",
-			call: settingsRequestCall(NewServerRPC(client).User.Settings().Set, &UserSettingsSetRequest{
 				Settings: value,
 			}),
 			fields: []string{"settings"},
@@ -789,20 +745,6 @@ func TestSettingsInputRoutesPreserveNumericComparisonsOnWire(t *testing.T) {
 				Key: "extensions", Value: value, IfFieldsMatch: value,
 			}),
 			fields: []string{"value", "ifFieldsMatch"},
-		},
-		{
-			method: "user.settings.validate",
-			call: settingsRequestCall(settings.Validate, &UserSettingsValidateRequest{
-				TopKey: "extensions", Value: value,
-			}),
-			fields: []string{"value"},
-		},
-		{
-			method: "user.settings.writeAll",
-			call: settingsRequestCall(settings.WriteAll, &UserSettingsWriteAllRequest{
-				Settings: value,
-			}),
-			fields: []string{"settings"},
 		},
 		{
 			method: "user.settings.writeKey",

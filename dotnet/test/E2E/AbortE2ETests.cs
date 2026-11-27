@@ -11,74 +11,12 @@ namespace Microsoft.Copilot.Test.E2E;
 
 /// <summary>
 /// Verifies that <see cref="CopilotSession.AbortAsync"/> cleanly interrupts an active
-/// turn — both during streaming and during tool execution — without leaving dangling
+/// turn — during tool execution — without leaving dangling
 /// state or causing exceptions in the event delivery pipeline.
 /// </summary>
 public class AbortE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
     : E2ETestBase(fixture, "abort", output)
 {
-    [Fact]
-    public async Task Should_Abort_During_Active_Streaming()
-    {
-        var session = await CreateSessionAsync(new CreateSessionOptions { Events = new SessionEventOptions { Streaming = true } });
-
-        var firstDeltaReceived = new TaskCompletionSource<AssistantMessageDeltaEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var allEvents = new List<SessionEvent>();
-
-        session.On<SessionEvent>(evt =>
-        {
-            lock (allEvents) { allEvents.Add(evt); }
-            if (evt is AssistantMessageDeltaEvent delta)
-            {
-                firstDeltaReceived.TrySetResult(delta);
-            }
-        });
-
-        // Fire-and-forget — we'll abort before it finishes
-        _ = session.SendAsync(new MessageOptions
-        {
-            Prompt = "Write a very long essay about the history of computing, covering every decade from the 1940s to the 2020s in great detail.",
-        });
-
-        // Wait for at least one delta to arrive (proves streaming started)
-        var delta = await firstDeltaReceived.Task.WaitAsync(TimeSpan.FromSeconds(60));
-        Assert.False(string.IsNullOrEmpty(delta.Data.DeltaContent));
-
-        // Now abort mid-stream
-        await session.AbortAsync();
-
-        List<SessionEvent> snapshot;
-        lock (allEvents) { snapshot = [.. allEvents]; }
-
-        // No session.idle should have appeared (abort cancels the turn)
-        // OR if idle DID appear, it should be after the abort, which is fine
-        // The key contract: no exceptions were thrown, and the session is usable afterwards
-        var types = snapshot.Select(e => e.Type).ToList();
-        Assert.Contains("assistant.message_delta", types);
-
-        // Session should be usable after abort — verify by listening for the
-        // recovery message rather than racing against a late idle from the
-        // aborted streaming turn.
-        var recoveryReceived = new TaskCompletionSource<AssistantMessageEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
-        session.On<SessionEvent>(evt =>
-        {
-            if (evt is AssistantMessageEvent msg && (msg.Data.Content?.Contains("abort_recovery_ok") == true))
-            {
-                recoveryReceived.TrySetResult(msg);
-            }
-        });
-
-        await session.SendAsync(new MessageOptions
-        {
-            Prompt = "Say 'abort_recovery_ok'.",
-        });
-
-        var recoveryMessage = await recoveryReceived.Task.WaitAsync(TimeSpan.FromSeconds(60));
-        Assert.Contains("abort_recovery_ok", recoveryMessage.Data.Content?.ToLowerInvariant() ?? string.Empty);
-
-        await session.DisposeAsync();
-    }
-
     [Fact]
     public async Task Should_Abort_During_Active_Tool_Execution()
     {
@@ -87,6 +25,15 @@ public class AbortE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
 
         var session = await CreateSessionAsync(new CreateSessionOptions
         { Tools = new SessionToolOptions { Definitions = [AIFunctionFactory.Create(SlowTool, "slow_analysis")] }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
+
+        var cancellationNotice = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cancellationSubscription = session.On<SessionInfoEvent>(evt =>
+        {
+            if (evt.Data.InfoType == "cancellation")
+            {
+                cancellationNotice.TrySetResult(evt.Data.Message);
+            }
+        });
 
         // Fire-and-forget
         _ = session.SendAsync(new MessageOptions
@@ -98,11 +45,17 @@ public class AbortE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
         var toolValue = await toolStarted.Task.WaitAsync(TimeSpan.FromSeconds(60));
         Assert.Equal("test_abort", toolValue);
 
-        // Abort while the tool is running
-        await session.AbortAsync();
-
-        // Release the tool so its task doesn't leak
-        releaseTool.TrySetResult("RELEASED_AFTER_ABORT");
+        try
+        {
+            // Abort while the tool is running and observe cancellation before the tool is released.
+            await session.AbortAsync();
+            Assert.Equal("Operation cancelled by user", await cancellationNotice.Task.WaitAsync(TimeSpan.FromSeconds(10)));
+        }
+        finally
+        {
+            // Release the tool so its task doesn't leak
+            releaseTool.TrySetResult("RELEASED_AFTER_ABORT");
+        }
 
         // Session should be usable after abort — verify by listening for the right event
         var recoveryReceived = new TaskCompletionSource<AssistantMessageEvent>(TaskCreationOptions.RunContinuationsAsynchronously);

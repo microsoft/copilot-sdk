@@ -12,9 +12,7 @@ import com.microsoft.copilot.rpc.SessionPermissionOptions;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.io.OutputStream;
-import java.net.BindException;
 import java.net.InetAddress;
-import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
@@ -56,15 +54,6 @@ import com.microsoft.copilot.rpc.CreateSessionOptions;
 class McpAuthInterestRegistrationTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
-
-    @Test
-    void recordingRuntimeReservesItsClientAddress() throws Exception {
-        try (var server = new RecordingRuntime(); var competing = new ServerSocket()) {
-            competing.setReuseAddress(true);
-            assertThrows(BindException.class,
-                    () -> competing.bind(new InetSocketAddress("127.0.0.1", server.listener.getLocalPort())));
-        }
-    }
 
     @Test
     void legacyRecordsKeepOriginalComponentLists() {

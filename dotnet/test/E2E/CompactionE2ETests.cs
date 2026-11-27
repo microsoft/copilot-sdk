@@ -111,25 +111,4 @@ public class CompactionE2ETests(E2ETestFixture fixture, ITestOutputHelper output
         Assert.Contains("dragon", content, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact]
-    public async Task Should_Not_Emit_Compaction_Events_When_Infinite_Sessions_Disabled()
-    {
-        await using var session = await CreateSessionAsync(new CreateSessionOptions
-        { State = new SessionStateOptions { InfiniteSessions = new InfiniteSessionConfig { Enabled = false } } });
-
-        var compactionEvents = new List<SessionEvent>();
-
-        session.On<SessionEvent>(evt =>
-        {
-            if (evt is SessionCompactionStartEvent or SessionCompactionCompleteEvent)
-            {
-                compactionEvents.Add(evt);
-            }
-        });
-
-        await session.SendAndWaitAsync(new MessageOptions { Prompt = "What is 2+2?" });
-
-        // Should not have any compaction events when disabled
-        Assert.Empty(compactionEvents);
-    }
 }

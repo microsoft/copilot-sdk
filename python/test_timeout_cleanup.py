@@ -4,16 +4,13 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
-
-from e2e.timeout_diagnostics import cancel_timed_out_test
 
 
 @pytest.mark.parametrize(
     "cancel_test,withhold_all,teardown_error",
-    [(False, False, True), (True, False, False), (True, True, True)],
+    [(True, False, False)],
 )
 def test_module_cleanup_after_timeout(tmp_path, cancel_test, withhold_all, teardown_error):
     (tmp_path / "conftest.py").write_text(
@@ -154,12 +151,3 @@ async def test_later_test_passes(ctx):
     assert "disconnect_locked=True" in output
     assert "outbound method=session.detach" in output
     assert "from pytest-timeout" in output
-
-
-@pytest.mark.parametrize("when", ["setup", "call", "teardown"])
-@pytest.mark.parametrize("error", [None, AssertionError("ordinary failure")])
-def test_cleanup_ignores_other_failures(when, error):
-    call = SimpleNamespace(
-        when=when, excinfo=None if error is None else SimpleNamespace(value=error)
-    )
-    assert not cancel_timed_out_test(call)

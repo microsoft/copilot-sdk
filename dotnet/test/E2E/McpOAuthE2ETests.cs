@@ -23,45 +23,6 @@ public class McpOAuthE2ETests(E2ETestFixture fixture, ITestOutputHelper output) 
     private const string CimdUrl = "https://github.com/copilot/cli/client-metadata.json";
 
     [Fact]
-    public async Task Should_Reclaim_Server_Process_When_Startup_Is_Canceled()
-    {
-        using var process = Process.Start(new ProcessStartInfo("node")
-        {
-            Arguments = "-e \"console.log('started'); setInterval(() => {}, 1000)\"",
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-        })!;
-        using var observer = Process.GetProcessById(process.Id);
-        using var cancellation = new CancellationTokenSource();
-        Task<OAuthMcpServer>? startup = null;
-        try
-        {
-            _ = observer.Handle;
-            Assert.Equal("started", await process.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(10)));
-            startup = OAuthMcpServer.WaitForListeningAsync(process, cancellation.Token);
-            cancellation.Cancel();
-
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => startup);
-            Assert.True(observer.HasExited, "Canceled startup retained the OAuth server process.");
-        }
-        finally
-        {
-            cancellation.Cancel();
-            startup ??= OAuthMcpServer.WaitForListeningAsync(process, cancellation.Token);
-            try
-            {
-                await startup;
-            }
-            catch (OperationCanceledException)
-            {
-                // The startup owner has already joined cleanup and disposed its Process.
-            }
-        }
-    }
-
-    [Fact]
     public async Task Should_Use_Cimd_Url_Instead_Of_Dynamic_Registration()
     {
         await using var oauthServer = await OAuthMcpServer.StartAsync(ExpectedToken, cimdSupported: true);

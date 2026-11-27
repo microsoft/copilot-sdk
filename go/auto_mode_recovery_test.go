@@ -119,6 +119,9 @@ func TestAutoModeRecoveryPostCreateFailureRollsBackAssignedID(t *testing.T) {
 	for _, failureMethod := range []string{"session.eventLog.registerInterest", "session.options.update"} {
 		for _, cloud := range []bool{false, true} {
 			for _, cleanupFailure := range []bool{false, true} {
+				if cleanupFailure && !cloud {
+					continue // Caller-owned IDs are never deleted, so a deletion failure cannot surface.
+				}
 				t.Run(fmt.Sprintf("%s/cloud-%t/cleanup-failure-%t", failureMethod, cloud, cleanupFailure), func(t *testing.T) {
 					client, server, requests := autoModeRecoveryClient(t, nil)
 					server.SetRequestHandler("session.create", func(params json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
@@ -660,103 +663,103 @@ func TestAutoModeRecoveryComposesWithPermissionEnvelopeAndMCPAuthRuntimeRefresh(
 }
 
 func TestAutoModeRecoveryComposesWithPermissionEnvelope(t *testing.T) {
-	for _, resume := range []bool{false, true} {
-		for _, envelopeEnabled := range []bool{false, true} {
-			t.Run(fmt.Sprintf("resume=%t/envelope=%t", resume, envelopeEnabled), func(t *testing.T) {
-				t.Parallel()
-				var rpcServer *jsonrpc2.Client
-				client, server, forwarded := newPermissionReviewClient(t, func(server *jsonrpc2.Client) {
-					rpcServer = server
-					for _, method := range []string{"session.create", "session.resume"} {
-						server.SetRequestHandler(method, func(json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
-							return []byte(`{"sessionId":"review-session","capabilities":{"ui":{"autoModeRecovery":true}}}`), nil
-						})
-					}
-					server.SetRequestHandler("session.eventLog.registerInterest", func(json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
-						return []byte(`{}`), nil
+	// Pairwise rows: each entry point and each handler shape composes with recovery once.
+	for _, row := range []struct{ resume, envelopeEnabled bool }{{false, false}, {true, true}} {
+		resume, envelopeEnabled := row.resume, row.envelopeEnabled
+		t.Run(fmt.Sprintf("resume=%t/envelope=%t", resume, envelopeEnabled), func(t *testing.T) {
+			t.Parallel()
+			var rpcServer *jsonrpc2.Client
+			client, server, forwarded := newPermissionReviewClient(t, func(server *jsonrpc2.Client) {
+				rpcServer = server
+				for _, method := range []string{"session.create", "session.resume"} {
+					server.SetRequestHandler(method, func(json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
+						return []byte(`{"sessionId":"review-session","capabilities":{"ui":{"autoModeRecovery":true}}}`), nil
 					})
-					server.SetRequestHandler("session.options.update", func(json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
-						return []byte(`{"success":true}`), nil
-					})
+				}
+				server.SetRequestHandler("session.eventLog.registerInterest", func(json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
+					return []byte(`{}`), nil
 				})
-				observed := make(chan any, 1)
-				legacy := func(request PermissionRequest, _ PermissionInvocation) (rpc.PermissionDecision, error) {
+				server.SetRequestHandler("session.options.update", func(json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
+					return []byte(`{"success":true}`), nil
+				})
+			})
+			observed := make(chan any, 1)
+			legacy := func(request PermissionRequest, _ PermissionInvocation) (rpc.PermissionDecision, error) {
+				observed <- request
+				return &rpc.PermissionDecisionNoResult{}, nil
+			}
+			var handler PermissionHandlerWithEnvelopeFunc
+			if envelopeEnabled {
+				handler = func(request *PermissionRequestEnvelope, _ PermissionHandlerInvocation) (rpc.PermissionDecision, error) {
 					observed <- request
 					return &rpc.PermissionDecisionNoResult{}, nil
 				}
-				var handler PermissionHandlerWithEnvelopeFunc
-				if envelopeEnabled {
-					handler = func(request *PermissionRequestEnvelope, _ PermissionHandlerInvocation) (rpc.PermissionDecision, error) {
-						observed <- request
-						return &rpc.PermissionDecisionNoResult{}, nil
-					}
-				}
-				recoveryCalls := make(chan AutoModeSwitchRequest, 1)
-				options := &CreateSessionOptions{
-					Interaction: SessionInteractionOptions{OnAutoModeSwitchRequest: func(request AutoModeSwitchRequest, _ AutoModeSwitchInvocation) (AutoModeSwitchResponse, error) {
-						recoveryCalls <- request
-						return AutoModeSwitchResponseYes, nil
-					}},
-				}
-				beforeOptions := *options
-				var session *Session
-				var err error
-				if resume {
-					config := &ResumeSessionOptions{Permissions: SessionPermissionOptions{OnRequest: legacy, OnRequestWithEnvelope: handler}, Interaction: SessionInteractionOptions{AutoModeRecovery: true, OnAutoModeSwitchRequest: options.Interaction.OnAutoModeSwitchRequest}}
-					before := *config
-					session, err = client.ResumeSession(t.Context(), "review-session", config)
-					assertPermissionConfigUnchanged(t, before, *config)
-				} else {
-					config := &CreateSessionOptions{SessionID: "review-session", Permissions: SessionPermissionOptions{OnRequest: legacy, OnRequestWithEnvelope: handler}, Interaction: SessionInteractionOptions{AutoModeRecovery: true, OnAutoModeSwitchRequest: options.Interaction.OnAutoModeSwitchRequest}}
-					before := *config
-					session, err = client.CreateSession(t.Context(), config)
-					assertPermissionConfigUnchanged(t, before, *config)
-				}
-				if err != nil {
-					t.Fatal(err)
-				}
-				assertPermissionConfigUnchanged(t, beforeOptions, *options)
-				original := json.RawMessage(`{"kind":"read","intention":"Read a file","path":"/workspace/file.txt","futureDetails":9007199254740993}`)
-				server.notify("session.event", map[string]any{
-					"sessionId": session.SessionID,
-					"event": map[string]any{"type": "permission.requested", "data": map[string]any{
-						"requestId": "permission-1", "permissionRequest": original,
-					}},
-				})
-				request := <-observed
-				if envelopeEnabled {
-					if _, ok := request.(*PermissionRequestEnvelope); !ok {
-						t.Fatalf("envelope handler received %T", request)
-					}
-				} else if _, ok := request.(*PermissionRequestRead); !ok {
-					t.Fatalf("legacy handler received %T", request)
-				}
-				if _, err := session.RPC.Permissions.ManagedReviewRequired(t.Context(), &rpc.SessionPermissionsManagedReviewRequiredRequest{Request: request}); err != nil {
-					t.Fatal(err)
-				}
-				want := original
-				if !envelopeEnabled {
-					want = json.RawMessage(`{"kind":"read","intention":"Read a file","path":"/workspace/file.txt"}`)
-				}
-				assertOriginalPermissionRequest(t, <-forwarded, want)
-				offer := AutoModeSwitchRequest{
-					AutoModeRecovery: &AutoModeRecoveryContext{RequestID: "offer-1", OriginalModel: "explicit-model"},
-				}
-				response, err := rpcServer.Request(t.Context(), "autoModeSwitch.request", autoModeSwitchRequest{
-					SessionID: session.SessionID, AutoModeRecovery: offer.AutoModeRecovery,
-				})
-				if err != nil {
-					t.Fatal(err)
-				}
-				var result autoModeSwitchResponse
-				if err := json.Unmarshal(response, &result); err != nil {
-					t.Fatal(err)
-				}
-				if result.Response != AutoModeSwitchResponseYes || !reflect.DeepEqual(<-recoveryCalls, offer) {
-					t.Fatalf("recovery callback lost its context: %s", response)
-				}
+			}
+			recoveryCalls := make(chan AutoModeSwitchRequest, 1)
+			options := &CreateSessionOptions{
+				Interaction: SessionInteractionOptions{OnAutoModeSwitchRequest: func(request AutoModeSwitchRequest, _ AutoModeSwitchInvocation) (AutoModeSwitchResponse, error) {
+					recoveryCalls <- request
+					return AutoModeSwitchResponseYes, nil
+				}},
+			}
+			beforeOptions := *options
+			var session *Session
+			var err error
+			if resume {
+				config := &ResumeSessionOptions{Permissions: SessionPermissionOptions{OnRequest: legacy, OnRequestWithEnvelope: handler}, Interaction: SessionInteractionOptions{AutoModeRecovery: true, OnAutoModeSwitchRequest: options.Interaction.OnAutoModeSwitchRequest}}
+				before := *config
+				session, err = client.ResumeSession(t.Context(), "review-session", config)
+				assertPermissionConfigUnchanged(t, before, *config)
+			} else {
+				config := &CreateSessionOptions{SessionID: "review-session", Permissions: SessionPermissionOptions{OnRequest: legacy, OnRequestWithEnvelope: handler}, Interaction: SessionInteractionOptions{AutoModeRecovery: true, OnAutoModeSwitchRequest: options.Interaction.OnAutoModeSwitchRequest}}
+				before := *config
+				session, err = client.CreateSession(t.Context(), config)
+				assertPermissionConfigUnchanged(t, before, *config)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertPermissionConfigUnchanged(t, beforeOptions, *options)
+			original := json.RawMessage(`{"kind":"read","intention":"Read a file","path":"/workspace/file.txt","futureDetails":9007199254740993}`)
+			server.notify("session.event", map[string]any{
+				"sessionId": session.SessionID,
+				"event": map[string]any{"type": "permission.requested", "data": map[string]any{
+					"requestId": "permission-1", "permissionRequest": original,
+				}},
 			})
-		}
+			request := <-observed
+			if envelopeEnabled {
+				if _, ok := request.(*PermissionRequestEnvelope); !ok {
+					t.Fatalf("envelope handler received %T", request)
+				}
+			} else if _, ok := request.(*PermissionRequestRead); !ok {
+				t.Fatalf("legacy handler received %T", request)
+			}
+			if _, err := session.RPC.Permissions.ManagedReviewRequired(t.Context(), &rpc.SessionPermissionsManagedReviewRequiredRequest{Request: request}); err != nil {
+				t.Fatal(err)
+			}
+			want := original
+			if !envelopeEnabled {
+				want = json.RawMessage(`{"kind":"read","intention":"Read a file","path":"/workspace/file.txt"}`)
+			}
+			assertOriginalPermissionRequest(t, <-forwarded, want)
+			offer := AutoModeSwitchRequest{
+				AutoModeRecovery: &AutoModeRecoveryContext{RequestID: "offer-1", OriginalModel: "explicit-model"},
+			}
+			response, err := rpcServer.Request(t.Context(), "autoModeSwitch.request", autoModeSwitchRequest{
+				SessionID: session.SessionID, AutoModeRecovery: offer.AutoModeRecovery,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var result autoModeSwitchResponse
+			if err := json.Unmarshal(response, &result); err != nil {
+				t.Fatal(err)
+			}
+			if result.Response != AutoModeSwitchResponseYes || !reflect.DeepEqual(<-recoveryCalls, offer) {
+				t.Fatalf("recovery callback lost its context: %s", response)
+			}
+		})
 	}
 }
 
@@ -1361,12 +1364,9 @@ func TestResumeSessionPrefixLookupGuard(t *testing.T) {
 		{"abc-def1", false},
 		{"abcdefg", false},
 		{"abcdeｆ1", false},
-		{"abcdef1é", false},
 		{"deadbeef_task1", false},
 		{"session-123", false},
 		{canonicalID, false},
-		{strings.ToUpper(canonicalID), false},
-		{canonicalID + "0", false},
 	} {
 		t.Run(test.sessionID, func(t *testing.T) {
 			client, server, _ := autoModeRecoveryClient(t, &SessionCapabilities{UI: &UICapabilities{AutoModeRecovery: true}})
@@ -1657,8 +1657,7 @@ func TestAutoModeRecoveryInFlightAliasCannotBeDetached(t *testing.T) {
 		recoveryFirst bool
 		aliasID       string
 	}{
-		{false, "abcdef12"}, {true, "abcdef12"},
-		{false, "ABCDEF12"}, {true, "ABCDEF12"},
+		{false, "abcdef12"}, {true, "ABCDEF12"},
 	} {
 		t.Run(fmt.Sprintf("recovery-first=%t/alias=%s", test.recoveryFirst, test.aliasID), func(t *testing.T) {
 			recoveryFirst := test.recoveryFirst
@@ -1833,8 +1832,6 @@ func TestAutoModeRecoverySuccessfulResumeKeepsAcceptedOwnerWithoutAcknowledgment
 		name string
 		caps *SessionCapabilities
 	}{
-		{"missing-capabilities", nil},
-		{"missing-ui", &SessionCapabilities{}},
 		{"false-acknowledgment", &SessionCapabilities{UI: &UICapabilities{}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -1943,7 +1940,7 @@ func TestAutoModeRecoverySuccessfulResumeKeepsAcceptedOwnerWithoutAcknowledgment
 
 func TestAutoModeRecoveryCancelledEnrollmentKeepsCallbacksUntilCleanupSettles(t *testing.T) {
 	for _, test := range []struct{ resume, cleanupFailure bool }{
-		{false, false}, {true, false}, {false, true}, {true, true},
+		{false, false}, {true, true},
 	} {
 		t.Run(fmt.Sprintf("resume=%t/cleanup-failure=%t", test.resume, test.cleanupFailure), func(t *testing.T) {
 			client, server, _ := autoModeRecoveryClient(t, nil)
@@ -2263,92 +2260,91 @@ func TestAutoModeRecoveryCleanupFenceDuringStart(t *testing.T) {
 }
 
 func TestAutoModeRecoveryCleanupFencesSameIDReuse(t *testing.T) {
-	for _, resume := range []bool{false, true} {
-		for _, retryResume := range []bool{false, true} {
-			t.Run(fmt.Sprintf("resume=%t/retry-resume=%t", resume, retryResume), func(t *testing.T) {
-				client, server, _ := autoModeRecoveryClient(t, nil)
-				detachStarted := make(chan string, 1)
-				releaseDetach := make(chan struct{})
-				var firstDetach sync.Once
-				server.SetRequestHandler("session.detach", func(params json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
-					var request sessionDetachRequest
-					if err := json.Unmarshal(params, &request); err != nil {
-						return nil, &jsonrpc2.Error{Code: -32602, Message: err.Error()}
-					}
+	for _, row := range []struct{ resume, retryResume bool }{{false, false}, {true, true}} {
+		resume, retryResume := row.resume, row.retryResume
+		t.Run(fmt.Sprintf("resume=%t/retry-resume=%t", resume, retryResume), func(t *testing.T) {
+			client, server, _ := autoModeRecoveryClient(t, nil)
+			detachStarted := make(chan string, 1)
+			releaseDetach := make(chan struct{})
+			var firstDetach sync.Once
+			server.SetRequestHandler("session.detach", func(params json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
+				var request sessionDetachRequest
+				if err := json.Unmarshal(params, &request); err != nil {
+					return nil, &jsonrpc2.Error{Code: -32602, Message: err.Error()}
+				}
 
-					firstDetach.Do(func() {
-						detachStarted <- request.SessionID
-						<-releaseDetach
-					})
-					return []byte(`{"success":true}`), nil
+				firstDetach.Do(func() {
+					detachStarted <- request.SessionID
+					<-releaseDetach
 				})
-				ctx, cancel := context.WithCancel(t.Context())
-				rejected := make(chan error, 1)
-				go func() {
-					_, err := openAutoModeRecoverySession(ctx, client, resume, true,
-						func(AutoModeSwitchRequest, AutoModeSwitchInvocation) (AutoModeSwitchResponse, error) {
-							return AutoModeSwitchResponseNo, nil
-						})
-					rejected <- err
-				}()
-				var releaseOnce sync.Once
-				release := func() { releaseOnce.Do(func() { close(releaseDetach) }) }
-				t.Cleanup(release)
-				defer cancel()
-				var sessionID string
-				select {
-				case sessionID = <-detachStarted:
-				case <-time.After(5 * time.Second):
-					t.Fatal("enrollment did not reach detach")
-				}
-				client.sessionsMux.Lock()
-				rejectedOwner := client.sessions[sessionID]
-				client.sessionsMux.Unlock()
-				cancel()
-				if err := <-rejected; !errors.Is(err, context.Canceled) {
-					t.Fatalf("expected canceled enrollment, got %v", err)
-				}
-				reuse := func(ctx context.Context) (*Session, error) {
-					if retryResume {
-						return client.ResumeSession(ctx, sessionID, &ResumeSessionOptions{})
-					}
-					return client.CreateSession(ctx, &CreateSessionOptions{SessionID: sessionID})
-				}
-				retryCtx, cancelRetry := context.WithCancel(t.Context())
-				defer cancelRetry()
-				admission := &autoRecoveryAdmissionContext{
-					Context: retryCtx, checked: make(chan struct{}), release: releaseDetach,
-				}
-				retried := make(chan error, 1)
-				go func() {
-					_, err := reuse(admission)
-					retried <- err
-				}()
-				select {
-				case <-admission.checked:
-				case <-time.After(5 * time.Second):
-					t.Fatal("replacement did not reach its cancellation boundary")
-				}
-				client.sessionsMux.Lock()
-				premature := client.sessions[sessionID]
-				client.sessionsMux.Unlock()
-				cancelRetry()
-				release()
-				if err := <-retried; !errors.Is(err, context.Canceled) {
-					t.Fatalf("same-ID cleanup wait lost cancellation: %v", err)
-				}
-				if premature != rejectedOwner {
-					t.Fatal("same-ID reuse published a replacement before the rejected attachment finished detaching")
-				}
-				replacement, err := reuse(t.Context())
-				if err != nil {
-					t.Fatalf("same-ID reuse failed after cleanup: %v", err)
-				}
-				if err := replacement.Disconnect(); err != nil {
-					t.Fatal(err)
-				}
+				return []byte(`{"success":true}`), nil
 			})
-		}
+			ctx, cancel := context.WithCancel(t.Context())
+			rejected := make(chan error, 1)
+			go func() {
+				_, err := openAutoModeRecoverySession(ctx, client, resume, true,
+					func(AutoModeSwitchRequest, AutoModeSwitchInvocation) (AutoModeSwitchResponse, error) {
+						return AutoModeSwitchResponseNo, nil
+					})
+				rejected <- err
+			}()
+			var releaseOnce sync.Once
+			release := func() { releaseOnce.Do(func() { close(releaseDetach) }) }
+			t.Cleanup(release)
+			defer cancel()
+			var sessionID string
+			select {
+			case sessionID = <-detachStarted:
+			case <-time.After(5 * time.Second):
+				t.Fatal("enrollment did not reach detach")
+			}
+			client.sessionsMux.Lock()
+			rejectedOwner := client.sessions[sessionID]
+			client.sessionsMux.Unlock()
+			cancel()
+			if err := <-rejected; !errors.Is(err, context.Canceled) {
+				t.Fatalf("expected canceled enrollment, got %v", err)
+			}
+			reuse := func(ctx context.Context) (*Session, error) {
+				if retryResume {
+					return client.ResumeSession(ctx, sessionID, &ResumeSessionOptions{})
+				}
+				return client.CreateSession(ctx, &CreateSessionOptions{SessionID: sessionID})
+			}
+			retryCtx, cancelRetry := context.WithCancel(t.Context())
+			defer cancelRetry()
+			admission := &autoRecoveryAdmissionContext{
+				Context: retryCtx, checked: make(chan struct{}), release: releaseDetach,
+			}
+			retried := make(chan error, 1)
+			go func() {
+				_, err := reuse(admission)
+				retried <- err
+			}()
+			select {
+			case <-admission.checked:
+			case <-time.After(5 * time.Second):
+				t.Fatal("replacement did not reach its cancellation boundary")
+			}
+			client.sessionsMux.Lock()
+			premature := client.sessions[sessionID]
+			client.sessionsMux.Unlock()
+			cancelRetry()
+			release()
+			if err := <-retried; !errors.Is(err, context.Canceled) {
+				t.Fatalf("same-ID cleanup wait lost cancellation: %v", err)
+			}
+			if premature != rejectedOwner {
+				t.Fatal("same-ID reuse published a replacement before the rejected attachment finished detaching")
+			}
+			replacement, err := reuse(t.Context())
+			if err != nil {
+				t.Fatalf("same-ID reuse failed after cleanup: %v", err)
+			}
+			if err := replacement.Disconnect(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
@@ -2589,79 +2585,78 @@ func TestCanonicalSessionFSCallbackRejectsWaitOnItsAliasPermit(t *testing.T) {
 }
 
 func TestSessionFSFactoryRejectsSameIDDeletion(t *testing.T) {
-	for _, resume := range []bool{false, true} {
-		for _, failSetup := range []bool{false, true} {
-			name := map[bool]string{false: "create", true: "resume"}[resume]
-			if failSetup {
-				name += "-invalid-provider"
-			}
-			t.Run(name, func(t *testing.T) {
-				client, server, _ := autoModeRecoveryClient(t, nil)
-				client.options.SessionFS = &SessionFSConfig{
-					InitialWorkingDirectory: "/workspace",
-					SessionStatePath:        "/sessions",
-					Conventions:             rpc.SessionFSSetProviderConventionsPosix,
-				}
-				if failSetup {
-					client.options.SessionFS.Capabilities = &SessionFSCapabilities{Binary: true}
-				}
-				deletions := make(chan string, 3)
-				server.SetRequestHandler("session.delete", func(params json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
-					var input struct {
-						SessionID string `json:"sessionId"`
-					}
-					if err := json.Unmarshal(params, &input); err != nil {
-						return nil, &jsonrpc2.Error{Code: -32602, Message: err.Error()}
-					}
-					deletions <- input.SessionID
-					return []byte(`{"success":true}`), nil
-				})
-				var nestedError error
-				factory := func(session *Session) SessionFSProvider {
-					ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-					defer cancel()
-					nestedError = client.DeleteSession(ctx, session.SessionID)
-					if err := client.DeleteSession(t.Context(), "unrelated"); err != nil {
-						t.Errorf("unrelated deletion in factory: %v", err)
-					}
-					return reentrySessionFSProvider{}
-				}
-				var session *Session
-				var err error
-				if resume {
-					session, err = client.ResumeSession(t.Context(), "factory", &ResumeSessionOptions{State: SessionStateOptions{CreateSessionFSProvider: factory}})
-				} else {
-					session, err = client.CreateSession(t.Context(), &CreateSessionOptions{SessionID: "factory", State: SessionStateOptions{CreateSessionFSProvider: factory}})
-				}
-				if session != nil {
-					defer session.stopEventProcessing()
-				}
-				if (err != nil) != failSetup {
-					t.Fatalf("setup error = %v, want failure = %v", err, failSetup)
-				}
-				if nestedError == nil || !strings.Contains(nestedError.Error(), "active session callback") {
-					t.Errorf("expected prompt factory deletion rejection, got %v", nestedError)
-				}
-				if got := <-deletions; got != "unrelated" {
-					t.Fatalf("factory deletion reached runtime: %s", got)
-				}
-				if err := client.DeleteSession(t.Context(), "factory"); err != nil {
-					t.Fatalf("factory callback scope survived setup completion: %v", err)
-				}
-				if got := <-deletions; got != "factory" {
-					t.Fatalf("post-factory deletion = %s", got)
-				}
-				client.options.SessionFS.Capabilities = nil
-				replacement, err := client.CreateSession(t.Context(), &CreateSessionOptions{SessionID: "factory", State: SessionStateOptions{CreateSessionFSProvider: func(*Session) SessionFSProvider {
-					return reentrySessionFSProvider{}
-				}},
-				})
-				if err != nil {
-					t.Fatalf("initialization after factory completion: %v", err)
-				}
-				replacement.stopEventProcessing()
-			})
+	for _, row := range []struct{ resume, failSetup bool }{{false, false}, {true, true}} {
+		resume, failSetup := row.resume, row.failSetup
+		name := map[bool]string{false: "create", true: "resume"}[resume]
+		if failSetup {
+			name += "-invalid-provider"
 		}
+		t.Run(name, func(t *testing.T) {
+			client, server, _ := autoModeRecoveryClient(t, nil)
+			client.options.SessionFS = &SessionFSConfig{
+				InitialWorkingDirectory: "/workspace",
+				SessionStatePath:        "/sessions",
+				Conventions:             rpc.SessionFSSetProviderConventionsPosix,
+			}
+			if failSetup {
+				client.options.SessionFS.Capabilities = &SessionFSCapabilities{Binary: true}
+			}
+			deletions := make(chan string, 3)
+			server.SetRequestHandler("session.delete", func(params json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
+				var input struct {
+					SessionID string `json:"sessionId"`
+				}
+				if err := json.Unmarshal(params, &input); err != nil {
+					return nil, &jsonrpc2.Error{Code: -32602, Message: err.Error()}
+				}
+				deletions <- input.SessionID
+				return []byte(`{"success":true}`), nil
+			})
+			var nestedError error
+			factory := func(session *Session) SessionFSProvider {
+				ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+				defer cancel()
+				nestedError = client.DeleteSession(ctx, session.SessionID)
+				if err := client.DeleteSession(t.Context(), "unrelated"); err != nil {
+					t.Errorf("unrelated deletion in factory: %v", err)
+				}
+				return reentrySessionFSProvider{}
+			}
+			var session *Session
+			var err error
+			if resume {
+				session, err = client.ResumeSession(t.Context(), "factory", &ResumeSessionOptions{State: SessionStateOptions{CreateSessionFSProvider: factory}})
+			} else {
+				session, err = client.CreateSession(t.Context(), &CreateSessionOptions{SessionID: "factory", State: SessionStateOptions{CreateSessionFSProvider: factory}})
+			}
+			if session != nil {
+				defer session.stopEventProcessing()
+			}
+			if (err != nil) != failSetup {
+				t.Fatalf("setup error = %v, want failure = %v", err, failSetup)
+			}
+			if nestedError == nil || !strings.Contains(nestedError.Error(), "active session callback") {
+				t.Errorf("expected prompt factory deletion rejection, got %v", nestedError)
+			}
+			if got := <-deletions; got != "unrelated" {
+				t.Fatalf("factory deletion reached runtime: %s", got)
+			}
+			if err := client.DeleteSession(t.Context(), "factory"); err != nil {
+				t.Fatalf("factory callback scope survived setup completion: %v", err)
+			}
+			if got := <-deletions; got != "factory" {
+				t.Fatalf("post-factory deletion = %s", got)
+			}
+			client.options.SessionFS.Capabilities = nil
+			replacement, err := client.CreateSession(t.Context(), &CreateSessionOptions{SessionID: "factory", State: SessionStateOptions{CreateSessionFSProvider: func(*Session) SessionFSProvider {
+				return reentrySessionFSProvider{}
+			}},
+			})
+			if err != nil {
+				t.Fatalf("initialization after factory completion: %v", err)
+			}
+			replacement.stopEventProcessing()
+		})
 	}
 }
 

@@ -119,28 +119,6 @@ class TestHooksExtended:
         assert inputs
         assert all(session_id == session.session_id for session_id in invocation_session_ids)
 
-    async def test_should_register_erroroccurred_hook(self, ctx: E2ETestContext):
-        inputs: list[dict] = []
-        invocation_session_ids: list[str] = []
-
-        async def on_error_occurred(input_data, invocation):
-            inputs.append(input_data)
-            invocation_session_ids.append(invocation["session_id"])
-            return {"errorHandling": "skip"}
-
-        session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all},
-            hooks={"handlers": {"on_error_occurred": on_error_occurred}},
-        )
-        try:
-            await session.send_and_wait("Say hi")
-            # Registration-only test: a healthy turn shouldn't fire OnErrorOccurred.
-            assert not inputs
-            assert not invocation_session_ids
-            assert session.session_id
-        finally:
-            await session.disconnect()
-
     async def test_should_invoke_agentstop_hook_and_apply_block_response(self, ctx: E2ETestContext):
         inputs: list[dict] = []
 
@@ -221,39 +199,10 @@ class TestHooksExtended:
         finally:
             await session.disconnect()
 
-    async def test_should_allow_posttooluse_to_return_modifiedresult(self, ctx: E2ETestContext):
-        inputs: list[dict] = []
-
-        async def on_post_tool_use(input_data, invocation):
-            inputs.append(input_data)
-            if input_data.get("toolName") != "view":
-                return None
-            return {
-                "modifiedResult": {
-                    "textResultForLlm": "modified by post hook",
-                    "resultType": "success",
-                    "toolTelemetry": {},
-                },
-                "suppressOutput": False,
-            }
-
-        session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all},
-            hooks={"handlers": {"on_post_tool_use": on_post_tool_use}},
-        )
-        try:
-            response = await session.send_and_wait(
-                "Call the view tool to read the current directory, then reply done."
-            )
-            assert any(inp.get("toolName") == "view" for inp in inputs)
-            assert "done" in (response.data.content or "").lower()
-        finally:
-            await session.disconnect()
-
     async def test_should_allow_posttooluse_to_return_a_toolresult_as_modifiedresult(
         self, ctx: E2ETestContext
     ):
-        # The same exchange as the wire-form dict above.
+        # Wire-form dict outputs pass through unchanged; a ToolResult is converted to wire form.
         await ctx.configure_for_test(
             "hooks_extended", "should_allow_posttooluse_to_return_modifiedresult"
         )

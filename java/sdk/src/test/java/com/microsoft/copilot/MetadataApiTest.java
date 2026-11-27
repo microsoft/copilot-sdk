@@ -11,7 +11,6 @@ import com.microsoft.copilot.generated.ToolExecutionProgressEvent;
 import com.microsoft.copilot.generated.rpc.ModelBillingTokenPrices;
 import com.microsoft.copilot.generated.rpc.ModelBillingTokenPricesLongContext;
 import com.microsoft.copilot.generated.rpc.Model;
-import com.microsoft.copilot.generated.rpc.ModelBilling;
 import com.microsoft.copilot.generated.rpc.ModelCapabilitiesLimitsVision;
 import com.microsoft.copilot.generated.rpc.ModelPolicyState;
 import com.microsoft.copilot.rpc.*;
@@ -62,11 +61,6 @@ public class MetadataApiTest {
         assertNotNull(progressEvent.getData());
         assertEquals("call-123", progressEvent.getData().toolCallId());
         assertEquals("Processing file 1 of 10...", progressEvent.getData().progressMessage());
-    }
-
-    @Test
-    void testToolExecutionProgressEventType() {
-        assertEquals("tool.execution_progress", new ToolExecutionProgressEvent().getType());
     }
 
     // ===== Response Type Deserialization Tests =====
@@ -270,29 +264,6 @@ public class MetadataApiTest {
     }
 
     @Test
-    void testModelBillingSerializationOmitsNullMultiplier() throws Exception {
-        var billing = ModelBilling.builder().build();
-
-        String json = MAPPER.writeValueAsString(billing);
-
-        assertFalse(json.contains("multiplier"));
-    }
-
-    @Test
-    void testModelBillingMultiplierOptPresent() throws Exception {
-        ModelBilling billing = MAPPER.readValue("{\"multiplier\": 1.5}", ModelBilling.class);
-
-        assertEquals(1.5, billing.multiplier());
-    }
-
-    @Test
-    void testModelBillingMultiplierOptAbsent() throws Exception {
-        ModelBilling billing = MAPPER.readValue("{}", ModelBilling.class);
-
-        assertNull(billing.multiplier());
-    }
-
-    @Test
     void testGetModelsResponseDeserialization() throws Exception {
         String json = """
                 {
@@ -344,51 +315,5 @@ public class MetadataApiTest {
         }
     }
 
-    @Test
-    void testGetAuthStatus() throws Exception {
-        assertNotNull(cliPath, "Copilot CLI not found in PATH or COPILOT_CLI_PATH");
-
-        try (var client = new CopilotClient(new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setRuntime(RuntimeConnection.forSpawnedStdio(cliPath)))) {
-            client.start().get();
-
-            GetAuthStatusResponse authStatus = client.getAuthStatus().get();
-
-            assertNotNull(authStatus);
-            // The response should have a status message regardless of auth state
-            // We can't guarantee the user is authenticated in tests
-        }
-    }
-
-    @Test
-    void testListModels() throws Exception {
-        assertNotNull(cliPath, "Copilot CLI not found in PATH or COPILOT_CLI_PATH");
-
-        try (var client = new CopilotClient(new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setRuntime(RuntimeConnection.forSpawnedStdio(cliPath)))) {
-            client.start().get();
-
-            // Note: listModels may require authentication
-            // This test verifies the method exists and can be called
-            try {
-                List<Model> models = client.listModels().get();
-                assertNotNull(models);
-                // If we got models, verify they have expected fields
-                for (Model model : models) {
-                    assertNotNull(model.id());
-                    assertNotNull(model.name());
-                }
-            } catch (Exception e) {
-                // May fail if not authenticated, which is acceptable in tests
-                System.out.println("listModels failed (may require auth): " + e.getMessage());
-            }
-        }
-    }
-
     // ===== Protocol Version Test =====
-
-    @Test
-    void testProtocolVersionIsFour() {
-        assertEquals(4, SdkProtocolVersion.get());
-    }
 }

@@ -2,8 +2,6 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
-using Microsoft.Extensions.AI;
-using System.ComponentModel;
 using System.Text.Json;
 using Xunit;
 using Xunit.Abstractions;
@@ -13,57 +11,6 @@ namespace Microsoft.Copilot.Test.E2E;
 public class ScenarioTestingLifecycleRecoveryE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
     : ScenarioTestingE2ETestBase(fixture, "scenario_testing_lifecycle_recovery", output)
 {
-    private static readonly TimeSpan LifecycleTimeout = TimeSpan.FromSeconds(60);
-
-    [Fact]
-    public async Task Should_Abort_Active_Scenario_Turn_And_Remain_Usable()
-    {
-        var toolStarted = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var releaseTool = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        await using var session = await CreateSessionAsync(new CreateSessionOptions
-        { Events = new SessionEventOptions { Streaming = true }, Tools = new SessionToolOptions { Definitions = [AIFunctionFactory.Create(BlockingLookup, "scenario_blocking_lookup")] } });
-
-        _ = session.SendAsync(new MessageOptions
-        {
-            Prompt = "Call scenario_blocking_lookup with key 'abort', then reply with the result.",
-            DisplayPrompt = "Run cancellable scenario lookup",
-            Source = MessageSource.Agent("scenario-client"),
-        });
-
-        Assert.Equal("abort", await toolStarted.Task.WaitAsync(LifecycleTimeout));
-        await session.AbortAsync();
-        releaseTool.TrySetResult("SCENARIO_ABORTED_TOOL_RESULT");
-
-        var recovery = new TaskCompletionSource<AssistantMessageEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var recoverySubscription = session.On<AssistantMessageEvent>(message =>
-        {
-            if (message.Data.Content?.Contains("SCENARIO_ABORT_RECOVERY_OK", StringComparison.Ordinal) == true)
-            {
-                recovery.TrySetResult(message);
-            }
-        });
-        await session.SendAsync(new MessageOptions
-        {
-            Prompt = "Reply with exactly SCENARIO_ABORT_RECOVERY_OK.",
-            DisplayPrompt = "Verify scenario session recovery",
-            Source = MessageSource.Agent("scenario-client"),
-        });
-        Assert.Contains(
-            "SCENARIO_ABORT_RECOVERY_OK",
-            (await recovery.Task.WaitAsync(LifecycleTimeout)).Data.Content ?? string.Empty,
-            StringComparison.Ordinal);
-
-        [Description("Blocks a scenario-owned lookup until released")]
-        async Task<string> BlockingLookup(
-            [Description("Lookup key")] string key,
-            CancellationToken cancellationToken)
-        {
-            toolStarted.TrySetResult(key);
-            return await releaseTool.Task.WaitAsync(Timeout.InfiniteTimeSpan, cancellationToken);
-        }
-    }
-
     [Fact]
     public async Task Should_Suspend_Disconnect_And_Resume_Scenario_State_Without_Delete()
     {

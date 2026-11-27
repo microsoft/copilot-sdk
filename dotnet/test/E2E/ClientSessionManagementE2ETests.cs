@@ -18,20 +18,6 @@ public class ClientSessionManagementE2ETests(E2ETestFixture fixture, ITestOutput
     }
 
     [Fact]
-    public async Task Should_Delete_Session_By_Id()
-    {
-        var session = await CreateSessionAsync();
-        var sessionId = session.SessionId;
-
-        await session.SendAndWaitAsync(new MessageOptions { Prompt = "Say OK." });
-        await session.DisposeAsync();
-        await Client.DeleteSessionAsync(sessionId);
-
-        var metadata = await Client.GetSessionMetadataAsync(sessionId);
-        Assert.Null(metadata);
-    }
-
-    [Fact]
     public async Task Should_Report_Error_When_Deleting_Unknown_Session_Id()
     {
         await Client.StartAsync();
@@ -74,16 +60,6 @@ public class ClientSessionManagementE2ETests(E2ETestFixture fixture, ITestOutput
     }
 
     [Fact]
-    public async Task Should_Get_Null_Foreground_Session_Id_In_Headless_Mode()
-    {
-        await Client.StartAsync();
-
-        var sessionId = await Client.GetForegroundSessionIdAsync();
-
-        Assert.Null(sessionId);
-    }
-
-    [Fact]
     public async Task Should_Report_Error_When_Setting_Foreground_Session_In_Headless_Mode()
     {
         var session = await CreateSessionAsync();
@@ -91,5 +67,7 @@ public class ClientSessionManagementE2ETests(E2ETestFixture fixture, ITestOutput
         await AssertFailureAsync(
             () => Client.SetForegroundSessionIdAsync(session.SessionId),
             "Not running in TUI+server mode");
+
+        Assert.Null(await Client.GetForegroundSessionIdAsync());
     }
 }

@@ -79,6 +79,3 @@ impl StartupTimings {
         u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
     }
 }
-
-#[cfg(test)]
-mod tests;

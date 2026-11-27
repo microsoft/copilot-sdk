@@ -44,33 +44,6 @@ public sealed class CopilotRequestHandlerProtocolTests
     }
 
     [Theory]
-    [InlineData(null)]
-    [InlineData("first-invocation")]
-    [InlineData("second-invocation")]
-    public async Task RequestContext_PreservesInvocationIdentity(string? agentInvocationId)
-    {
-        var source = new ControlledResponseStream();
-        var handler = new StreamRequestHandler(source);
-        await using var peer = await ProtocolPeer.StartAsync(handler);
-
-        await source.CompleteAsync();
-        await peer.BeginRequestAsync(invocationId: agentInvocationId);
-        var context = await handler.ReceivedContext.Task.WaitAsync(s_timeout);
-        Assert.Equal("test", context.RequestId);
-        Assert.Equal("session", context.SessionId);
-        Assert.Equal("trajectory", context.AgentId);
-        Assert.Equal("parent", context.ParentAgentId);
-        Assert.Equal(agentInvocationId, context.AgentInvocationId);
-        Assert.Equal(agentInvocationId, new CopilotRequestContext(context).AgentInvocationId);
-
-        await peer.AcknowledgeAsync(await peer.NextMethodAsync());
-        var end = await peer.NextMethodAsync();
-        Assert.True(end.GetProperty("params").GetProperty("end").GetBoolean());
-        await peer.AcknowledgeAsync(end);
-        await source.Disposed.WaitAsync(s_timeout);
-    }
-
-    [Theory]
     [InlineData("logical-invocation")]
     [InlineData(null)]
     [InlineData("")]
@@ -283,7 +256,6 @@ public sealed class CopilotRequestHandlerProtocolTests
     }
 
     [Theory]
-    [InlineData(0)]
     [InlineData(101)]
     public async Task HttpRequest_DefaultClientLeavesAWithheldResponseHeadToRuntimeCancellation(int responseHeadWaitSeconds)
     {

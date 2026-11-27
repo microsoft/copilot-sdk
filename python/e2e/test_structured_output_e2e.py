@@ -142,46 +142,6 @@ async def test_infers_typed_result_after_custom_tool(ctx):
         assert "response_format" not in exchanges[-1]["request"]
 
 
-async def test_typed_wait_returns_stop_hook_correction(ctx):
-    stops = 0
-
-    def stop_hook(_input, _invocation):
-        nonlocal stops
-        stops += 1
-        if stops == 1:
-            return {
-                "decision": "block",
-                "reason": "Correct the answer to 99, not 42. Do not use tools.",
-            }
-        return None
-
-    async with await ctx.client.create_session(
-        **config(ctx), hooks={"handlers": {"on_agent_stop": stop_hook}}
-    ) as session:
-        replies = []
-        unsubscribe = session.on(
-            lambda event: (
-                replies.append(event.data)
-                if not event.agent_id and isinstance(event.data, AssistantMessageData)
-                else None
-            )
-        )
-        try:
-            result = await session.send_and_wait_typed(
-                "What is 19 + 23? Do not use tools.", Answer, timeout=30
-            )
-            assert result.answer == 99
-            assert stops == 2
-            assert [Answer.model_validate_json(reply.content).answer for reply in replies] == [
-                42,
-                99,
-            ]
-            assert replies[0].originating_message_id
-            assert replies[0].originating_message_id == replies[1].originating_message_id
-        finally:
-            unsubscribe()
-
-
 async def test_send_selects_correlated_response_after_idle(ctx):
     entered = asyncio.Event()
     release = asyncio.Event()
@@ -366,6 +326,7 @@ async def test_typed_wait_returns_stop_hook_correction_after_terminal_tool(ctx):
             assert calls == 1
             assert stops == 2
             assert [json.loads(reply.content)["answer"] for reply in replies] == [63, 99]
+            assert replies[0].originating_message_id
             assert replies[0].originating_message_id == replies[1].originating_message_id
         finally:
             unsubscribe()

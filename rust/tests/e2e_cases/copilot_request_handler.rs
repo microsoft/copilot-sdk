@@ -650,69 +650,71 @@ async fn preserves_message_source_through_runtime_delivery() {
             let handler = Arc::new(RecordingHandler::default());
             let client = ctx.start_llm_client(handler.clone()).await;
 
-            for typed_rpc in [false, true] {
-                for immediate in [false, true] {
-                    for source in [None, Some(MessageSource::Agent("sender-id".into()))] {
-                        let session = client
-                            .create_session(ctx.approve_all_session_config())
-                            .await
-                            .expect("create session");
-                        let events = session.subscribe();
-                        let wire_source = source.as_ref().map(ToString::to_string);
-                        let message_id = if typed_rpc {
-                            let mut request = SendRequest::default();
-                            request.prompt = "Say OK.".to_string();
-                            request.mode = Some(if immediate {
-                                SendMode::Immediate
-                            } else {
-                                SendMode::Enqueue
-                            });
-                            if let Some(source) = source {
-                                request = request.with_source(source);
-                            }
-                            session
-                                .rpc()
-                                .send(request)
-                                .await
-                                .expect("RPC send")
-                                .message_id
-                        } else {
-                            let mut options = say_ok().with_mode(if immediate {
-                                DeliveryMode::Immediate
-                            } else {
-                                DeliveryMode::Enqueue
-                            });
-                            if let Some(source) = source {
-                                options = options.with_source(source);
-                            }
-                            session.send(options).await.expect("send")
-                        };
-
-                        let observed = collect_until_idle(events).await;
-                        let messages: Vec<_> = observed
-                            .iter()
-                            .filter(|event| event.event_type == "user.message")
-                            .map(|event| {
-                                event.typed_data::<UserMessageData>().expect("user message")
-                            })
-                            .collect();
-                        assert_eq!(messages.len(), 1, "expected one delivered user message");
-                        assert_eq!(messages[0].content, "Say OK.");
-                        assert_eq!(messages[0].source, wire_source);
-                        assert_eq!(messages[0].message_id.as_deref(), Some(message_id.as_str()));
-                        assert!(
-                            observed.iter().any(|event| {
-                                event.event_type == "assistant.message"
-                                    && event
-                                        .typed_data::<AssistantMessageData>()
-                                        .is_some_and(|data| data.content == SYNTHETIC_TEXT)
-                            }),
-                            "expected the synthetic provider response"
-                        );
-
-                        session.disconnect().await.expect("disconnect session");
+            let agent = || Some(MessageSource::Agent("sender-id".into()));
+            // Pairwise covering array: every pair of entry point, delivery mode and source
+            // value is exercised without running the full factorial.
+            for (typed_rpc, immediate, source) in [
+                (false, false, None),
+                (false, true, agent()),
+                (true, false, agent()),
+                (true, true, None),
+            ] {
+                let session = client
+                    .create_session(ctx.approve_all_session_config())
+                    .await
+                    .expect("create session");
+                let events = session.subscribe();
+                let wire_source = source.as_ref().map(ToString::to_string);
+                let message_id = if typed_rpc {
+                    let mut request = SendRequest::default();
+                    request.prompt = "Say OK.".to_string();
+                    request.mode = Some(if immediate {
+                        SendMode::Immediate
+                    } else {
+                        SendMode::Enqueue
+                    });
+                    if let Some(source) = source {
+                        request = request.with_source(source);
                     }
-                }
+                    session
+                        .rpc()
+                        .send(request)
+                        .await
+                        .expect("RPC send")
+                        .message_id
+                } else {
+                    let mut options = say_ok().with_mode(if immediate {
+                        DeliveryMode::Immediate
+                    } else {
+                        DeliveryMode::Enqueue
+                    });
+                    if let Some(source) = source {
+                        options = options.with_source(source);
+                    }
+                    session.send(options).await.expect("send")
+                };
+
+                let observed = collect_until_idle(events).await;
+                let messages: Vec<_> = observed
+                    .iter()
+                    .filter(|event| event.event_type == "user.message")
+                    .map(|event| event.typed_data::<UserMessageData>().expect("user message"))
+                    .collect();
+                assert_eq!(messages.len(), 1, "expected one delivered user message");
+                assert_eq!(messages[0].content, "Say OK.");
+                assert_eq!(messages[0].source, wire_source);
+                assert_eq!(messages[0].message_id.as_deref(), Some(message_id.as_str()));
+                assert!(
+                    observed.iter().any(|event| {
+                        event.event_type == "assistant.message"
+                            && event
+                                .typed_data::<AssistantMessageData>()
+                                .is_some_and(|data| data.content == SYNTHETIC_TEXT)
+                    }),
+                    "expected the synthetic provider response"
+                );
+
+                session.disconnect().await.expect("disconnect session");
             }
             assert!(!handler.inference_records().is_empty());
             client.stop().await.expect("stop client");

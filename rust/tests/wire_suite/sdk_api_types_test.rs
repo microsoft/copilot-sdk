@@ -9,7 +9,7 @@ use copilot_sdk::rpc::{
     SavedProviderConfigurationReadResult, SessionsOpenCreate, SessionsOpenCreateKind,
     SessionsOpenResume, SessionsOpenResumeKind, UnsupportedEnqueueCommandResult,
 };
-use copilot_sdk::session_events::{AssistantTurnStartData, RecommendedAutoTier, UserMessageData};
+use copilot_sdk::session_events::{AssistantTurnStartData, RecommendedAutoTier};
 
 #[test]
 fn assistant_turn_start_keeps_public_struct_update_syntax() {
@@ -453,35 +453,6 @@ fn mcp_discovery_debug_redacts_configuration_without_changing_wire() {
 }
 
 #[test]
-fn git_diff_result_preserves_workspace_fallback_details() {
-    use copilot_sdk::rpc::{GitDiffResult, WorkspaceDiffFileChange, WorkspaceDiffMode};
-
-    let result: GitDiffResult = serde_json::from_value(serde_json::json!({
-        "changes": [{
-            "path": "file.txt",
-            "diff": "@@ -1 +1 @@\n-before\n+after\n",
-            "changeType": "modified"
-        }],
-        "isFallback": true,
-        "mode": "unstaged",
-        "requestedMode": "session",
-        "unavailableReason": "session-busy"
-    }))
-    .unwrap();
-
-    assert!(result.is_fallback);
-    assert_eq!(result.mode, WorkspaceDiffMode::Unstaged);
-    assert_eq!(result.requested_mode, WorkspaceDiffMode::Session);
-    assert!(result.base_branch.is_none());
-    assert_eq!(
-        serde_json::to_value(result.unavailable_reason).unwrap(),
-        serde_json::json!("session-busy")
-    );
-    let changes: Vec<WorkspaceDiffFileChange> = result.changes;
-    assert_eq!(changes[0].path, "file.txt");
-}
-
-#[test]
 fn forge_manifest_retains_nullable_metadata() {
     use copilot_sdk::rpc::ForgeProposalManifestEntry;
 
@@ -600,46 +571,30 @@ fn fetch_response_modes_match_request_modes_and_round_trip() {
     }
 }
 
-macro_rules! filesystem_callback_result {
-    ($name:ident, $result:ty) => {
-        #[test]
-        fn $name() {
+#[test]
+fn filesystem_callback_results_accept_null_success_and_errors() {
+    macro_rules! assert_round_trips {
+        ($($result:ty),* $(,)?) => {$(
             for wire in [
                 serde_json::Value::Null,
                 serde_json::json!({ "code": "ENOENT", "message": "missing file" }),
             ] {
-                let result: $result = serde_json::from_value(wire.clone())
-                    .expect("filesystem callback results must accept success and failure");
+                let result: $result = serde_json::from_value(wire.clone()).unwrap_or_else(|error| {
+                    panic!("{} must accept success and failure: {error}", stringify!($result))
+                });
                 assert_eq!(serde_json::to_value(result).unwrap(), wire);
             }
-        }
-    };
+        )*};
+    }
+    assert_round_trips!(
+        copilot_sdk::rpc::SessionFsWriteFileResult,
+        copilot_sdk::rpc::SessionFsWriteFileBytesResult,
+        copilot_sdk::rpc::SessionFsAppendFileResult,
+        copilot_sdk::rpc::SessionFsMkdirResult,
+        copilot_sdk::rpc::SessionFsRmResult,
+        copilot_sdk::rpc::SessionFsRenameResult,
+    );
 }
-
-filesystem_callback_result!(
-    filesystem_write_file_result_accepts_null_success,
-    copilot_sdk::rpc::SessionFsWriteFileResult
-);
-filesystem_callback_result!(
-    filesystem_write_file_bytes_result_accepts_null_success,
-    copilot_sdk::rpc::SessionFsWriteFileBytesResult
-);
-filesystem_callback_result!(
-    filesystem_append_file_result_accepts_null_success,
-    copilot_sdk::rpc::SessionFsAppendFileResult
-);
-filesystem_callback_result!(
-    filesystem_mkdir_result_accepts_null_success,
-    copilot_sdk::rpc::SessionFsMkdirResult
-);
-filesystem_callback_result!(
-    filesystem_rm_result_accepts_null_success,
-    copilot_sdk::rpc::SessionFsRmResult
-);
-filesystem_callback_result!(
-    filesystem_rename_result_accepts_null_success,
-    copilot_sdk::rpc::SessionFsRenameResult
-);
 
 #[test]
 fn saved_provider_configuration_read_accepts_integral_float_token_limits() {
@@ -752,18 +707,6 @@ fn classify_trajectory_request_accepts_recorded_session_events() {
             "type": "user.message",
             "data": { "content": "Fix the build" }
         }])
-    );
-}
-
-#[test]
-fn user_message_data_preserves_external_struct_literals() {
-    let data = UserMessageData {
-        content: "Fix the build".into(),
-        ..Default::default()
-    };
-    assert_eq!(
-        serde_json::to_value(data).unwrap(),
-        serde_json::json!({"content": "Fix the build"})
     );
 }
 

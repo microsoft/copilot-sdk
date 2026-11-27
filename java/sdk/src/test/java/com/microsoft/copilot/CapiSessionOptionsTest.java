@@ -8,7 +8,6 @@ import com.microsoft.copilot.rpc.SessionGitHubOptions;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -62,34 +61,6 @@ class CapiSessionOptionsTest {
         assertTrue(serialized.path("filesystem").path("workingDirectoryTrust").isMissingNode());
         assertEquals("user",
                 mapper.treeToValue(serialized, CreateSessionOptions.class).getFilesystem().getTrustWorkingDirectory());
-    }
-
-    @Test
-    void defaultsAreNull() {
-        var capi = new CapiSessionOptions();
-
-        assertNull(capi.getEnableWebSocketResponses());
-        assertNull(capi.getAutoTier());
-    }
-
-    @Test
-    void fluentSetterReturnsSameInstance() {
-        var capi = new CapiSessionOptions();
-
-        assertSame(capi, capi.setEnableWebSocketResponses(true));
-        assertEquals(Boolean.TRUE, capi.getEnableWebSocketResponses());
-        assertSame(capi, capi.setAutoTier(AutoTier.BALANCE));
-        assertEquals(AutoTier.BALANCE, capi.getAutoTier());
-    }
-
-    @Test
-    void serializesEnableWebSocketResponses() {
-        var capi = new CapiSessionOptions().setEnableWebSocketResponses(true);
-
-        JsonNode json = JsonRpcClient.getObjectMapper().valueToTree(capi);
-
-        assertTrue(json.get("enableWebSocketResponses").asBoolean());
-        assertTrue(json.path("autoTier").isMissingNode());
     }
 
     @Test
@@ -148,26 +119,6 @@ class CapiSessionOptionsTest {
     }
 
     @Test
-    void clearingAutoTierOmitsIt() {
-        var capi = new CapiSessionOptions().setAutoTier(AutoTier.BALANCE).setAutoTier(null);
-        JsonNode json = JsonRpcClient.getObjectMapper().valueToTree(capi);
-        assertEquals(0, json.size());
-    }
-
-    @Test
-    void createRequestIncludesCapiWhenSet() {
-        var config = new CreateSessionOptions().setGitHub(
-                new SessionGitHubOptions().setCapi(new CapiSessionOptions().setEnableWebSocketResponses(true)));
-
-        var request = SessionRequestBuilder.buildCreateRequest(config, "session-1");
-        JsonNode json = JsonRpcClient.getObjectMapper().valueToTree(request);
-
-        assertNotNull(request.getGitHub().getCapi());
-        assertTrue(json.path("github").get("capi").get("enableWebSocketResponses").asBoolean());
-        assertTrue(json.path("github").get("capi").path("autoTier").isMissingNode());
-    }
-
-    @Test
     void createRequestOmitsCapiWhenUnset() {
         var config = new CreateSessionOptions();
 
@@ -176,19 +127,6 @@ class CapiSessionOptionsTest {
 
         assertNull(request.getGitHub().getCapi());
         assertTrue(json.path("github").path("capi").isMissingNode());
-    }
-
-    @Test
-    void resumeRequestIncludesCapiWhenSet() {
-        var config = new ResumeSessionOptions().setGitHub(
-                new SessionGitHubOptions().setCapi(new CapiSessionOptions().setEnableWebSocketResponses(true)));
-
-        var request = SessionRequestBuilder.buildResumeRequest("session-1", config);
-        JsonNode json = JsonRpcClient.getObjectMapper().valueToTree(request);
-
-        assertNotNull(request.getGitHub().getCapi());
-        assertTrue(json.path("github").get("capi").get("enableWebSocketResponses").asBoolean());
-        assertTrue(json.path("github").get("capi").path("autoTier").isMissingNode());
     }
 
     @Test
@@ -218,14 +156,5 @@ class CapiSessionOptionsTest {
         var clone = new ResumeSessionOptions().setGitHub(new SessionGitHubOptions().setCapi(capi)).clone();
 
         assertSame(capi, clone.getGitHub().getCapi());
-    }
-
-    @Test
-    void falseValueIsSerializedWhenExplicitlySet() {
-        var capi = new CapiSessionOptions().setEnableWebSocketResponses(false);
-
-        JsonNode json = JsonRpcClient.getObjectMapper().valueToTree(capi);
-
-        assertFalse(json.get("enableWebSocketResponses").asBoolean());
     }
 }

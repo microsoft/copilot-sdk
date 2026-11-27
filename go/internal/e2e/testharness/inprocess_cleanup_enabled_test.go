@@ -33,9 +33,3 @@ func TestDeferredCleanupObservationRetainsPendingCompletion(t *testing.T) {
 		})
 	}
 }
-
-func TestDeferredCleanupObservationUsesActualIdleSignal(t *testing.T) {
-	if err := waitForInProcessCleanup(); err != nil {
-		t.Fatalf("cleanup without outstanding native callbacks failed: %v", err)
-	}
-}

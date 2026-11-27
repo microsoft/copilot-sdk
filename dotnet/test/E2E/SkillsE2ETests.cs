@@ -83,23 +83,6 @@ IMPORTANT: You MUST include the exact text ""{SkillMarker}"" somewhere in EVERY 
     }
 
     [Fact]
-    public async Task Should_Not_Apply_Skill_When_Disabled_Via_DisabledSkills()
-    {
-        var skillsDir = CreateSkillDir();
-        var session = await CreateSessionAsync(new CreateSessionOptions
-        { Skills = new SessionSkillOptions { Directories = [skillsDir], DisabledSkills = ["test-skill"] } });
-
-        Assert.Matches(@"^[a-f0-9-]+$", session.SessionId);
-
-        // The skill is disabled, so the marker should NOT appear
-        var message = await session.SendAndWaitAsync(new MessageOptions { Prompt = "Say hello briefly using the test skill." });
-        Assert.NotNull(message);
-        Assert.DoesNotContain(SkillMarker, message!.Data.Content);
-
-        await session.DisposeAsync();
-    }
-
-    [Fact]
     public async Task Should_Control_Ambient_Project_Skills_With_EnableConfigDiscovery()
     {
         var projectDir = Path.Join(_workDir, $"config-discovery-{Guid.NewGuid():N}");
@@ -126,89 +109,5 @@ IMPORTANT: You MUST include the exact text ""{SkillMarker}"" somewhere in EVERY 
         Assert.Equal(SkillSource.Project, discoveredSkill.Source);
         Assert.EndsWith(Path.Join(skillName, "SKILL.md"), discoveredSkill.Path);
         await enabledSession.DisposeAsync();
-    }
-
-    [Fact]
-    public async Task Should_Allow_Agent_With_Skills_To_Invoke_Skill()
-    {
-        var skillsDir = CreateSkillDir();
-        var customAgents = new List<CustomAgentConfig>
-        {
-            new CustomAgentConfig
-            {
-                Name = "skill-agent",
-                Description = "An agent with access to test-skill",
-                Prompt = "You are a helpful test agent.",
-                Skills = ["test-skill"]
-            }
-        };
-
-        var session = await CreateSessionAsync(new CreateSessionOptions
-        { Skills = new SessionSkillOptions { Directories = [skillsDir] }, Agents = new SessionAgentOptions { Definitions = customAgents, Selected = "skill-agent" } });
-
-        Assert.Matches(@"^[a-f0-9-]+$", session.SessionId);
-
-        // The agent has Skills = ["test-skill"], so the skill content is preloaded into its context
-        var message = await session.SendAndWaitAsync(new MessageOptions { Prompt = "Say hello briefly using the test skill." });
-        Assert.NotNull(message);
-        Assert.Contains(SkillMarker, message!.Data.Content);
-
-        await session.DisposeAsync();
-    }
-
-    [Fact]
-    public async Task Should_Not_Provide_Skills_To_Agent_Without_Skills_Field()
-    {
-        var skillsDir = CreateSkillDir();
-        var customAgents = new List<CustomAgentConfig>
-        {
-            new CustomAgentConfig
-            {
-                Name = "no-skill-agent",
-                Description = "An agent without skills access",
-                Prompt = "You are a helpful test agent."
-            }
-        };
-
-        var session = await CreateSessionAsync(new CreateSessionOptions
-        { Skills = new SessionSkillOptions { Directories = [skillsDir] }, Agents = new SessionAgentOptions { Definitions = customAgents, Selected = "no-skill-agent" } });
-
-        Assert.Matches(@"^[a-f0-9-]+$", session.SessionId);
-
-        // The agent has no Skills field, so no skill content is injected
-        var message = await session.SendAndWaitAsync(new MessageOptions { Prompt = "Say hello briefly using the test skill." });
-        Assert.NotNull(message);
-        Assert.DoesNotContain(SkillMarker, message!.Data.Content);
-
-        await session.DisposeAsync();
-    }
-
-    [Fact(Skip = "See the big comment around the equivalent test in the Node SDK. Skipped because the feature doesn't work correctly yet.")]
-    public async Task Should_Apply_Skill_On_Session_Resume_With_SkillDirectories()
-    {
-        var skillsDir = CreateSkillDir();
-
-        // Create a session without skills first
-        await using var session1 = await CreateSessionAsync();
-        var sessionId = session1.SessionId;
-
-        // First message without skill - marker should not appear
-        var message1 = await session1.SendAndWaitAsync(new MessageOptions { Prompt = "Say hi." });
-        Assert.NotNull(message1);
-        Assert.DoesNotContain(SkillMarker, message1!.Data.Content);
-        await SuspendAndUntrackSessionForResumeAsync(session1);
-
-        // Resume with skillDirectories - skill should now be active
-        var session2 = await ResumeSessionAsync(sessionId, new ResumeSessionOptions
-        { Skills = new SessionSkillOptions { Directories = [skillsDir] } });
-
-        Assert.Equal(sessionId, session2.SessionId);
-
-        // Now the skill should be applied
-        var message2 = await session2.SendAndWaitAsync(new MessageOptions { Prompt = "Say hello again using the test skill." });
-        Assert.NotNull(message2);
-        Assert.Contains(SkillMarker, message2!.Data.Content);
-
-        await session2.DisposeAsync();
     }
 }

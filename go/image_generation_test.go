@@ -4,6 +4,7 @@ package copilot
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 )
 
@@ -48,9 +49,10 @@ func TestImageGenerationSerialization(t *testing.T) {
 	}
 }
 
-func TestImageWatermarkSerialization(t *testing.T) {
+func TestImageOptionsSerializeWithoutEnablingImages(t *testing.T) {
 	for _, watermark := range []bool{true, false} {
-		config := &ImageGenerationConfig{Watermark: Bool(watermark)}
+		saveToDisk := !watermark
+		config := &ImageGenerationConfig{Watermark: Bool(watermark), SaveToDisk: Bool(saveToDisk)}
 		for _, request := range []any{
 			createSessionRequest{ImageGeneration: config},
 			resumeSessionRequest{SessionID: "image-test", ImageGeneration: config},
@@ -67,36 +69,9 @@ func TestImageWatermarkSerialization(t *testing.T) {
 			if err := json.Unmarshal(data, &payload); err != nil {
 				t.Fatal(err)
 			}
-			value, present := payload.Tools.ImageGeneration["watermark"]
-			if !present || value != watermark || len(payload.Tools.ImageGeneration) != 1 {
-				t.Fatalf("watermark %v must serialize without enabling images: %s", watermark, data)
-			}
-		}
-	}
-}
-
-func TestImageSaveToDiskSerialization(t *testing.T) {
-	for _, saveToDisk := range []bool{true, false} {
-		config := &ImageGenerationConfig{SaveToDisk: Bool(saveToDisk)}
-		for _, request := range []any{
-			createSessionRequest{ImageGeneration: config},
-			resumeSessionRequest{SessionID: "image-test", ImageGeneration: config},
-		} {
-			data, err := json.Marshal(request)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var payload struct {
-				Tools struct {
-					ImageGeneration map[string]bool `json:"imageGeneration"`
-				} `json:"tools"`
-			}
-			if err := json.Unmarshal(data, &payload); err != nil {
-				t.Fatal(err)
-			}
-			value, present := payload.Tools.ImageGeneration["saveToDisk"]
-			if !present || value != saveToDisk || len(payload.Tools.ImageGeneration) != 1 {
-				t.Fatalf("saveToDisk %v must serialize without enabling images: %s", saveToDisk, data)
+			want := map[string]bool{"watermark": watermark, "saveToDisk": saveToDisk}
+			if !reflect.DeepEqual(payload.Tools.ImageGeneration, want) {
+				t.Fatalf("image options must serialize without enabling images: %s", data)
 			}
 		}
 	}

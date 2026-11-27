@@ -233,12 +233,28 @@ async fn typed_wait_returns_stop_hook_correction_after_terminal_tool() {
             });
             let client = ctx.start_client().await;
             let session = client.create_session(config(ctx.proxy_url()).with_tools(|group| group.with_definitions(vec![tool])).with_hooks(|group| group.with_handlers(hooks.clone()))).await.unwrap();
+            let events = session.subscribe();
             let result: Answer = session.send_and_wait_typed(
                 "Call lookup_number exactly once, then add 5 to the returned number. Do not guess its result."
             ).await.unwrap();
             assert_eq!(result.answer, 99);
             assert_eq!(calls.load(Ordering::SeqCst), 1);
             assert_eq!(hooks.calls.load(Ordering::SeqCst), 2);
+            let answers: Vec<_> = collect_until_idle(events)
+                .await
+                .into_iter()
+                .filter(|event| {
+                    event.agent_id.is_none()
+                        && event.event_type == "assistant.message"
+                        && event.data["toolRequests"].as_array().is_none_or(|tools| tools.is_empty())
+                })
+                .collect();
+            assert_eq!(answers.len(), 2);
+            assert!(!answers[0].data["originatingMessageId"].as_str().unwrap().is_empty());
+            assert_eq!(answers[0].data["originatingMessageId"], answers[1].data["originatingMessageId"]);
+            for (reply, expected) in answers.iter().zip([63, 99]) {
+                assert_eq!(serde_json::from_str::<Answer>(&assistant_message_content(reply)).unwrap().answer, expected);
+            }
             session.disconnect().await.unwrap();
             client.stop().await.unwrap();
         })
@@ -301,67 +317,6 @@ async fn concurrent_typed_sends_return_their_own_results() {
                 let (first, second) = tokio::join!(first, second);
                 assert_eq!(first.unwrap().first, 42);
                 assert_eq!(second.unwrap().second, 37);
-                session.disconnect().await.unwrap();
-                client.stop().await.unwrap();
-            })
-        },
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn typed_wait_returns_stop_hook_correction() {
-    super::support::with_shared_e2e_context(
-        &E2E,
-        "structured_output",
-        "typed_wait_returns_stop_hook_correction",
-        |ctx| {
-            Box::pin(async move {
-                let hooks = Arc::new(CorrectionHook {
-                    calls: AtomicUsize::new(0),
-                    reason: "Correct the answer to 99, not 42. Do not use tools.",
-                });
-                let client = ctx.start_client().await;
-                let session = client
-                    .create_session(
-                        config(ctx.proxy_url())
-                            .with_hooks(|group| group.with_handlers(hooks.clone())),
-                    )
-                    .await
-                    .unwrap();
-                let events = session.subscribe();
-                let result: Answer = session
-                    .send_and_wait_typed("What is 19 + 23? Do not use tools.")
-                    .await
-                    .unwrap();
-                assert_eq!(result.answer, 99);
-                assert_eq!(hooks.calls.load(Ordering::SeqCst), 2);
-                let replies: Vec<_> = collect_until_idle(events)
-                    .await
-                    .into_iter()
-                    .filter(|event| {
-                        event.agent_id.is_none() && event.event_type == "assistant.message"
-                    })
-                    .collect();
-                assert_eq!(replies.len(), 2);
-                assert!(
-                    !replies[0].data["originatingMessageId"]
-                        .as_str()
-                        .unwrap()
-                        .is_empty()
-                );
-                assert_eq!(
-                    replies[0].data["originatingMessageId"],
-                    replies[1].data["originatingMessageId"]
-                );
-                for (reply, expected) in replies.iter().zip([42, 99]) {
-                    assert_eq!(
-                        serde_json::from_str::<Answer>(&assistant_message_content(reply))
-                            .unwrap()
-                            .answer,
-                        expected
-                    );
-                }
                 session.disconnect().await.unwrap();
                 client.stop().await.unwrap();
             })
@@ -606,4 +561,4 @@ async fn typed_result_after_terminal_tool_and_steering() {
 }
 
 static E2E: super::support::SharedE2eGroup =
-    super::support::SharedE2eGroup::standard("structured_output", 9);
+    super::support::SharedE2eGroup::standard("structured_output", 8);

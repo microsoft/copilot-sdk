@@ -152,13 +152,15 @@ async def test_tcp_child_stderr_without_newlines_is_logged_before_exit(caplog):
         await client.force_stop()
 
 
-async def test_tcp_startup_timeout_reports_bounded_stderr_from_live_child():
+async def test_tcp_startup_timeout_stops_spawned_child(spawned):
     client = tcp_client("-c", NEVER_ANNOUNCES_PORT)
     try:
         with pytest.raises(RuntimeError, match="Timeout waiting for CLI server to start") as error:
-            await client._start_cli_server()
-        assert client._process is not None
-        assert client._process.poll() is None
+            await client.start()
+        [process] = spawned
+        assert process.poll() is not None
+        assert client._cli_process is None
+        assert client._state == "error"
     finally:
         await client.force_stop()
 
@@ -167,20 +169,6 @@ async def test_tcp_startup_timeout_reports_bounded_stderr_from_live_child():
     assert "stderr:" in message
     assert "old diagnostic" not in message
     assert len(message) < 65 * 1024
-
-
-async def test_tcp_startup_timeout_stops_spawned_child(spawned):
-    client = tcp_client("-c", NEVER_ANNOUNCES_PORT)
-    try:
-        with pytest.raises(RuntimeError, match="Timeout waiting for CLI server to start") as error:
-            await client.start()
-        assert "stderr:" in str(error.value)
-        [process] = spawned
-        assert process.poll() is not None
-        assert client._cli_process is None
-        assert client._state == "error"
-    finally:
-        await client.force_stop()
 
 
 async def test_cancelled_tcp_startup_stops_spawned_child(spawned):

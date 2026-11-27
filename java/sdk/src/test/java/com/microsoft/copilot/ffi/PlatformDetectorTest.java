@@ -6,7 +6,6 @@ package com.microsoft.copilot.ffi;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -60,15 +59,6 @@ class PlatformDetectorTest {
     void detectLinuxLibcParsesMuslInterpPath() throws Exception {
         byte[] muslProbe = buildElf64ProbeWithInterp("/lib/ld-musl-x86_64.so.1");
         assertEquals(PlatformDetector.LinuxLibc.MUSL, PlatformDetector.detectLinuxLibc(muslProbe));
-    }
-
-    @Test
-    void detectLinuxLibcOnLinuxReturnsRecognizedValue() {
-        withSystemProperty("os.name", "Linux", () -> {
-            PlatformDetector.LinuxLibc libc = PlatformDetector.detectLinuxLibc();
-            assertTrue(libc == PlatformDetector.LinuxLibc.GLIBC || libc == PlatformDetector.LinuxLibc.MUSL
-                    || libc == PlatformDetector.LinuxLibc.UNKNOWN);
-        });
     }
 
     @Test

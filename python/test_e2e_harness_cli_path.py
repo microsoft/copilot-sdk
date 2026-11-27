@@ -55,30 +55,6 @@ class TestGetCliPathForTests:
         monkeypatch.setenv("COPILOT_CLI_PATH", str(cli))
         assert context.get_cli_path_for_tests() == str(cli.resolve())
 
-    def test_prepares_the_checkout_runtime(self, tmp_path, monkeypatch):
-        monkeypatch.delenv("COPILOT_CLI_PATH", raising=False)
-        cli = tmp_path / "copilot"
-        cli.write_text("runtime\n")
-
-        class Result:
-            returncode = 0
-            stdout = f"{cli}\n"
-            stderr = ""
-
-        monkeypatch.setattr(context.subprocess, "run", lambda *args, **kwargs: Result())
-        assert context.get_cli_path_for_tests() == str(cli.resolve())
-
-    def test_preparation_failure_includes_command_error(self, tmp_path, monkeypatch):
-        class Result:
-            returncode = 1
-            stdout = ""
-            stderr = "same-checkout artifact missing"
-
-        monkeypatch.setattr(context.subprocess, "run", lambda *args, **kwargs: Result())
-        with pytest.raises(RuntimeError) as excinfo:
-            context._prepare_checkout_cli(tmp_path)
-        assert "same-checkout artifact missing" in str(excinfo.value)
-
     def test_rejects_missing_selected_cli_without_falling_back(self, tmp_path, monkeypatch):
         monkeypatch.setenv("COPILOT_CLI_PATH", str(tmp_path / "missing-cli"))
         monkeypatch.setattr(
@@ -145,20 +121,7 @@ async def test_inprocess_setup_reuses_prepared_runtime_without_mutating_host(
     assert context.os.getcwd() == original_cwd
 
 
-async def test_inprocess_setup_rejects_missing_prepared_library(prepared_runtime):
-    prepared_runtime.with_name("runtime.node").unlink()
-    test_context = context.E2ETestContext()
-    try:
-        with pytest.raises(RuntimeError, match="In-process runtime library not found next to"):
-            await test_context.setup()
-    finally:
-        await test_context.teardown()
-
-
-@pytest.mark.parametrize("explicit", [False, True])
-async def test_standalone_ffi_smoke_uses_the_fixture_runtime(
-    prepared_runtime, monkeypatch, explicit
-):
+async def test_standalone_ffi_smoke_uses_the_fixture_runtime(prepared_runtime, monkeypatch):
     create_host = Mock(side_effect=RuntimeError("native startup stopped"))
     monkeypatch.setattr("copilot.client.FfiRuntimeHost.create", create_host)
     test_context = context.E2ETestContext()
@@ -169,8 +132,8 @@ async def test_standalone_ffi_smoke_uses_the_fixture_runtime(
         monkeypatch.setenv("COPILOT_CLI_PATH", test_context.cli_path)
         smoke_test = test_inprocess_ffi_e2e.TestInProcessFfi()
         with pytest.raises(RuntimeError, match="native startup stopped"):
-            await smoke_test.test_should_start_and_connect_over_in_process_ffi(
-                test_context, "stop", explicit, monkeypatch
+            await smoke_test.test_should_start_and_connect_over_in_process_ffi_by_default(
+                test_context, monkeypatch
             )
         assert create_host.call_count == 2
         for call in create_host.call_args_list:

@@ -348,6 +348,22 @@ public final class CopilotClient implements AutoCloseable {
         if (requestedConnection instanceof TcpRuntimeConnection tcp) {
             this.optionsHost = tcp.getHost();
             this.optionsPort = tcp.getPort();
+        } else if (requestedConnection instanceof SpawnedTcpRuntimeConnection tcp) {
+            String host = "127.0.0.1";
+            var args = tcp.getArgs();
+            if (args != null) {
+                for (int index = 0; index < args.size(); index++) {
+                    String arg = args.get(index);
+                    if (arg.equals("--host") && index + 1 < args.size()) {
+                        host = args.get(++index);
+                    } else if (arg.startsWith("--host=")) {
+                        host = arg.substring("--host=".length());
+                    }
+                }
+            }
+            // Socket treats any-local addresses as the machine's hostname, not loopback.
+            this.optionsHost = host.equals("0.0.0.0") ? "127.0.0.1" : host.matches("[0:]*:[0:]*") ? "::1" : host;
+            this.optionsPort = null;
         } else {
             this.optionsHost = null;
             this.optionsPort = null;
@@ -558,7 +574,7 @@ public final class CopilotClient implements AutoCloseable {
                 // Child process (stdio or TCP)
                 CliServerManager.ProcessInfo processInfo = serverManager.startCliServer();
                 process = processInfo.process();
-                rpc = serverManager.connectToServer(process, processInfo.port() != null ? "localhost" : null,
+                rpc = serverManager.connectToServer(process, processInfo.port() != null ? optionsHost : null,
                         processInfo.port());
             }
 

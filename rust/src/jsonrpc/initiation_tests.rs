@@ -182,6 +182,7 @@ async fn unpolled_cancellable_request_drop_notifies_the_peer() {
         ("localModels.watch", Some(json!({"afterRevision": 1}))),
         ("taskAnalytics.classifyTrajectory", None),
         ("session.resume", None),
+        ("host.telemetry.prepare", Some(json!({}))),
     ] {
         let peer = Peer::new(false);
         let pending = peer

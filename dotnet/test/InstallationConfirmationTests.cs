@@ -186,30 +186,7 @@ public class InstallationConfirmationTests
     }
 
     [Fact]
-    public async Task Connection_Close_Cancels_All_Outstanding_Reviews()
-    {
-        var handler = new ControlledInstallationHandler();
-        var peer = await Peer.ConnectAsync(handler.HandleAsync);
-        try
-        {
-            await peer.ConfirmAsync(361, Request("a"));
-            await peer.ConfirmAsync(362, Request("b"));
-            var first = await handler.NextReviewAsync();
-            var second = await handler.NextReviewAsync();
-
-            peer.CloseTransport();
-
-            await WaitForCancellationAsync(first.Context.CancellationToken);
-            await WaitForCancellationAsync(second.Context.CancellationToken);
-        }
-        finally
-        {
-            await peer.DisposeAsync();
-        }
-    }
-
-    [Fact]
-    public async Task Connection_Close_Is_Distinct_And_Does_Not_Affect_Another_Connection()
+    public async Task Connection_Close_Cancels_All_Its_Reviews_Without_Affecting_Another_Connection()
     {
         var firstHandler = new ControlledInstallationHandler();
         var secondHandler = new ControlledInstallationHandler();
@@ -218,12 +195,15 @@ public class InstallationConfirmationTests
         try
         {
             await first.ConfirmAsync(401, Request("a"));
+            await first.ConfirmAsync(402, Request("a2"));
             var firstReview = await firstHandler.NextReviewAsync();
+            var firstOtherReview = await firstHandler.NextReviewAsync();
             await second.ConfirmAsync(401, Request("b"));
             var secondReview = await secondHandler.NextReviewAsync();
 
             first.CloseTransport();
             await WaitForCancellationAsync(firstReview.Context.CancellationToken);
+            await WaitForCancellationAsync(firstOtherReview.Context.CancellationToken);
             Assert.False(secondReview.Context.CancellationToken.IsCancellationRequested);
 
             firstReview.Decision.SetResult(InstallationDecision.Confirm);

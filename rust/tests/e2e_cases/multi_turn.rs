@@ -1,53 +1,9 @@
 use copilot_sdk::SessionEvent;
-use copilot_sdk::session_events::SessionEventType;
+use copilot_sdk::session_events::{
+    SessionEventType, ToolExecutionCompleteData, ToolExecutionStartData,
+};
 
 use super::support::{assistant_message_content, collect_until_idle, event_types};
-
-#[tokio::test]
-async fn should_use_tool_results_from_previous_turns() {
-    super::support::with_shared_e2e_context(
-        &E2E,
-        "multi_turn",
-        "should_use_tool_results_from_previous_turns",
-        |ctx| {
-            Box::pin(async move {
-                ctx.set_default_copilot_user();
-                std::fs::write(ctx.work_dir().join("secret.txt"), "The magic number is 42.")
-                    .expect("write secret");
-                let client = ctx.start_client().await;
-                let session = client
-                    .create_session(ctx.approve_all_session_config())
-                    .await
-                    .expect("create session");
-
-                let first_events = session.subscribe();
-                let first = session
-                    .send_and_wait(
-                        "Read the file 'secret.txt' and tell me what the magic number is.",
-                    )
-                    .await
-                    .expect("first send")
-                    .expect("assistant message");
-                assert!(assistant_message_content(&first).contains("42"));
-                assert_tool_turn_ordering(
-                    &collect_until_idle(first_events).await,
-                    "file read turn",
-                );
-
-                let second = session
-                    .send_and_wait("What is that magic number multiplied by 2?")
-                    .await
-                    .expect("second send")
-                    .expect("assistant message");
-                assert!(assistant_message_content(&second).contains("84"));
-
-                session.disconnect().await.expect("disconnect session");
-                client.stop().await.expect("stop client");
-            })
-        },
-    )
-    .await;
-}
 
 #[tokio::test]
 async fn should_handle_file_creation_then_reading_across_turns() {
@@ -127,6 +83,31 @@ fn assert_tool_turn_ordering(events: &[SessionEvent], turn_description: &str) {
     );
     assert!(user_message.unwrap() < tool_starts[0].0);
 
+    let starts: Vec<(usize, ToolExecutionStartData)> = tool_starts
+        .iter()
+        .map(|(index, event)| {
+            let data = event
+                .typed_data::<ToolExecutionStartData>()
+                .expect("typed tool.execution_start");
+            assert!(!data.tool_call_id.is_empty());
+            assert!(!data.tool_name.is_empty());
+            (*index, data)
+        })
+        .collect();
+    for (complete_index, event) in &tool_completes {
+        let complete = event
+            .typed_data::<ToolExecutionCompleteData>()
+            .expect("typed tool.execution_complete");
+        assert!(!complete.tool_call_id.is_empty());
+        assert!(
+            starts.iter().any(|(start_index, start)| {
+                start.tool_call_id == complete.tool_call_id && start_index < complete_index
+            }),
+            "tool.execution_complete {} has no preceding start in {turn_description}",
+            complete.tool_call_id
+        );
+    }
+
     let last_tool_complete = tool_completes
         .last()
         .map(|(index, _)| *index)
@@ -155,4 +136,4 @@ fn index_of(
         .find_map(|(index, event)| (event.parsed_type() == event_type).then_some(index))
 }
 static E2E: super::support::SharedE2eGroup =
-    super::support::SharedE2eGroup::standard("multi_turn", 2);
+    super::support::SharedE2eGroup::standard("multi_turn", 1);

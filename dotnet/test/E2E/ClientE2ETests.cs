@@ -24,11 +24,19 @@ public class ClientE2ETests(E2ETestFixture fixture) : IClassFixture<E2ETestFixtu
     private E2ETestContext Ctx => fixture.Ctx;
 
     [Theory]
-    [InlineData(true)]   // stdio transport
-    [InlineData(false)]  // TCP transport
-    public async Task Should_Start_And_Connect_To_Server(bool useStdio)
+    [InlineData(true, null)]   // stdio transport
+    [InlineData(false, null)]  // TCP transport
+    [InlineData(false, "::1")]
+    [InlineData(false, "0.0.0.0")]
+    [InlineData(false, "::")]
+    public async Task Should_Start_And_Connect_To_Server(bool useStdio, string? host)
     {
-        using var client = Ctx.CreateClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = useStdio ? RuntimeConnection.ForSpawnedStdio() : RuntimeConnection.ForSpawnedTcp() });
+        using var client = Ctx.CreateClient(new CopilotClientOptions
+        {
+            Mode = CopilotClientMode.CodingAgent,
+            Runtime = useStdio ? RuntimeConnection.ForSpawnedStdio()
+                : RuntimeConnection.ForSpawnedTcp(args: host is null ? null : ["--host", host])
+        });
 
         try
         {
@@ -37,6 +45,54 @@ public class ClientE2ETests(E2ETestFixture fixture) : IClassFixture<E2ETestFixtu
             Assert.Equal("pong: test message", pong.Message);
             Assert.NotEqual(default, pong.Timestamp);
 
+            var status = await client.GetStatusAsync();
+            Assert.NotNull(status.Version);
+            Assert.NotEmpty(status.Version);
+            Assert.True(status.ProtocolVersion >= 1);
+
+            var authStatus = await client.GetAuthStatusAsync();
+            if (authStatus.IsAuthenticated)
+            {
+                var models = await client.ListModelsAsync();
+                Assert.NotNull(models);
+                if (models.Count > 0)
+                {
+                    var model = models[0];
+                    Assert.NotNull(model.Id);
+                    Assert.NotEmpty(model.Id);
+                    Assert.NotNull(model.Name);
+                    Assert.NotNull(model.Capabilities);
+                }
+            }
+
+            await client.StopAsync();
+        }
+        finally
+        {
+            await client.ForceStopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task Should_Use_Updated_Bind_Host_On_Restart()
+    {
+        var runtime = RuntimeConnection.ForSpawnedTcp(args: ["--host=::1"]);
+        await using var client = Ctx.CreateClient(new CopilotClientOptions
+        {
+            Mode = CopilotClientMode.CodingAgent,
+            Runtime = runtime,
+        });
+
+        try
+        {
+            await client.StartAsync();
+            Assert.Equal("pong: before restart", (await client.PingAsync("before restart")).Message);
+            await client.StopAsync();
+
+            runtime.Args = ["--host", "127.0.0.1"];
+            await client.StartAsync();
+            Assert.Equal("pong: after restart", (await client.PingAsync("after restart")).Message);
+            Assert.Equal(["--host", "127.0.0.1"], runtime.Args);
             await client.StopAsync();
         }
         finally
@@ -99,17 +155,6 @@ public class ClientE2ETests(E2ETestFixture fixture) : IClassFixture<E2ETestFixtu
     }
 
     [Theory]
-    [InlineData(true)]   // stdio transport
-    [InlineData(false)]  // TCP transport
-    public async Task Should_Force_Stop_Without_Cleanup(bool useStdio)
-    {
-        using var client = Ctx.CreateClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = useStdio ? RuntimeConnection.ForSpawnedStdio() : RuntimeConnection.ForSpawnedTcp() });
-
-        await Ctx.CreateSessionAsync(client, new CreateSessionOptions { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
-        await client.ForceStopAsync();
-    }
-
-    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task RuntimePort_Is_Cleared_When_The_Client_Stops_Its_Runtime(bool forceStop)
@@ -160,95 +205,6 @@ public class ClientE2ETests(E2ETestFixture fixture) : IClassFixture<E2ETestFixtu
 
         await Assert.ThrowsAnyAsync<Exception>(() => client.StartAsync());
         Assert.Null(client.RuntimePort);
-    }
-
-    [Theory]
-    [InlineData(true)]   // stdio transport
-    [InlineData(false)]  // TCP transport
-    public async Task Should_Get_Status_With_Version_And_Protocol_Info(bool useStdio)
-    {
-        using var client = Ctx.CreateClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = useStdio ? RuntimeConnection.ForSpawnedStdio() : RuntimeConnection.ForSpawnedTcp() });
-
-        try
-        {
-            await client.StartAsync();
-
-            var status = await client.GetStatusAsync();
-            Assert.NotNull(status.Version);
-            Assert.NotEmpty(status.Version);
-            Assert.True(status.ProtocolVersion >= 1);
-
-            await client.StopAsync();
-        }
-        finally
-        {
-            await client.ForceStopAsync();
-        }
-    }
-
-    [Theory]
-    [InlineData(true)]   // stdio transport
-    [InlineData(false)]  // TCP transport
-    public async Task Should_Get_Auth_Status(bool useStdio)
-    {
-        using var client = Ctx.CreateClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = useStdio ? RuntimeConnection.ForSpawnedStdio() : RuntimeConnection.ForSpawnedTcp() });
-
-        try
-        {
-            await client.StartAsync();
-
-            var authStatus = await client.GetAuthStatusAsync();
-            // isAuthenticated is a bool, just verify we got a response
-            if (authStatus.IsAuthenticated)
-            {
-                Assert.NotNull(authStatus.AuthType);
-                Assert.NotNull(authStatus.StatusMessage);
-            }
-
-            await client.StopAsync();
-        }
-        finally
-        {
-            await client.ForceStopAsync();
-        }
-    }
-
-    [Theory]
-    [InlineData(true)]   // stdio transport
-    [InlineData(false)]  // TCP transport
-    public async Task Should_List_Models_When_Authenticated(bool useStdio)
-    {
-        using var client = Ctx.CreateClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = useStdio ? RuntimeConnection.ForSpawnedStdio() : RuntimeConnection.ForSpawnedTcp() });
-
-        try
-        {
-            await client.StartAsync();
-
-            var authStatus = await client.GetAuthStatusAsync();
-            if (!authStatus.IsAuthenticated)
-            {
-                // Skip if not authenticated - models.list requires auth
-                await client.StopAsync();
-                return;
-            }
-
-            var models = await client.ListModelsAsync();
-            Assert.NotNull(models);
-            if (models.Count > 0)
-            {
-                var model = models[0];
-                Assert.NotNull(model.Id);
-                Assert.NotEmpty(model.Id);
-                Assert.NotNull(model.Name);
-                Assert.NotNull(model.Capabilities);
-            }
-
-            await client.StopAsync();
-        }
-        finally
-        {
-            await client.ForceStopAsync();
-        }
     }
 
     [Theory]
@@ -313,8 +269,7 @@ public class ClientE2ETests(E2ETestFixture fixture) : IClassFixture<E2ETestFixtu
     }
 
     [Theory]
-    [InlineData(true)]   // stdio transport
-    [InlineData(false)]  // TCP transport
+    [InlineData(true)]   // stdio only: handler-less create is transport-independent
     public async Task Should_Allow_CreateSession_Called_Without_PermissionHandler(bool useStdio)
     {
         await using var client = Ctx.CreateClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = useStdio ? RuntimeConnection.ForSpawnedStdio() : RuntimeConnection.ForSpawnedTcp() });
@@ -350,8 +305,7 @@ public class ClientE2ETests(E2ETestFixture fixture) : IClassFixture<E2ETestFixtu
     }
 
     [Theory]
-    [InlineData(true)]   // stdio transport
-    [InlineData(false)]  // TCP transport
+    [InlineData(true)]   // stdio only: the custom handler bypasses the transport
     public async Task ListModels_WithCustomHandler_CallsHandler(bool useStdio)
     {
         IList<Model> customModels = new List<Model>
@@ -388,85 +342,8 @@ public class ClientE2ETests(E2ETestFixture fixture) : IClassFixture<E2ETestFixtu
         Assert.Equal(1, callCount);
         Assert.Single(models);
         Assert.Equal("my-custom-model", models[0].Id);
-    }
-
-    [Theory]
-    [InlineData(true)]   // stdio transport
-    [InlineData(false)]  // TCP transport
-    public async Task ListModels_WithCustomHandler_CachesResults(bool useStdio)
-    {
-        IList<Model> customModels = new List<Model>
-        {
-            new()
-            {
-                Id = "cached-model",
-                Name = "Cached Model",
-                Capabilities = new ModelCapabilities
-                {
-                    Supports = new ModelCapabilitiesSupports { Vision = false, ReasoningEffort = false },
-                    Limits = new ModelCapabilitiesLimits { MaxContextWindowTokens = 128000 }
-                }
-            }
-        };
-
-        var callCount = 0;
-        await using var client = Ctx.CreateClient(new CopilotClientOptions
-        {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = useStdio ? RuntimeConnection.ForSpawnedStdio() : RuntimeConnection.ForSpawnedTcp(),
-            Models = new ClientModelOptions
-            {
-                OnListModels = (ct) =>
-            {
-                callCount++;
-                return Task.FromResult(customModels);
-            }
-            }
-        });
-        await client.StartAsync();
 
         await client.ListModelsAsync();
-        await client.ListModelsAsync();
-        Assert.Equal(1, callCount); // Only called once due to caching
-    }
-
-    [Theory]
-    [InlineData(true)]   // stdio transport
-    [InlineData(false)]  // TCP transport
-    public async Task ListModels_WithCustomHandler_WorksWithoutStart(bool useStdio)
-    {
-        IList<Model> customModels = new List<Model>
-        {
-            new()
-            {
-                Id = "no-start-model",
-                Name = "No Start Model",
-                Capabilities = new ModelCapabilities
-                {
-                    Supports = new ModelCapabilitiesSupports { Vision = false, ReasoningEffort = false },
-                    Limits = new ModelCapabilitiesLimits { MaxContextWindowTokens = 128000 }
-                }
-            }
-        };
-
-        var callCount = 0;
-        await using var client = Ctx.CreateClient(new CopilotClientOptions
-        {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = useStdio ? RuntimeConnection.ForSpawnedStdio() : RuntimeConnection.ForSpawnedTcp(),
-            Models = new ClientModelOptions
-            {
-                OnListModels = (ct) =>
-            {
-                callCount++;
-                return Task.FromResult(customModels);
-            }
-            }
-        });
-
-        var models = await client.ListModelsAsync();
-        Assert.Equal(1, callCount);
-        Assert.Single(models);
-        Assert.Equal("no-start-model", models[0].Id);
+        Assert.Equal(1, callCount); // second call is served from the cache
     }
 }

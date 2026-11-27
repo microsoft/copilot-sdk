@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"context"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -17,81 +16,6 @@ const suspendTimeout = 60 * time.Second
 func TestSuspendE2E(t *testing.T) {
 	t.Parallel()
 	ctx := testharness.NewTestContext(t)
-
-	t.Run("should suspend idle session without throwing", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		client := ctx.NewClient()
-		t.Cleanup(func() { client.ForceStop() })
-
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}})
-		if err != nil {
-			t.Fatalf("Failed to create session: %v", err)
-		}
-
-		msg, err := session.SendAndWait(t.Context(), copilot.MessageOptions{
-			Prompt: "Reply with: SUSPEND_IDLE_OK",
-		})
-		if err != nil {
-			t.Fatalf("SendAndWait failed: %v", err)
-		}
-		if content := assistantContent(t, msg); !strings.Contains(content, "SUSPEND_IDLE_OK") {
-			t.Fatalf("Expected response to contain SUSPEND_IDLE_OK, got %q", content)
-		}
-
-		if err := suspendSession(t.Context(), session); err != nil {
-			t.Fatalf("Suspend failed: %v", err)
-		}
-	})
-
-	t.Run("should allow resume and continue conversation after suspend", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		_, serverPort := startTCPServer(t, ctx)
-
-		client1 := ctx.NewClient(func(opts *copilot.ClientOptions) {
-			opts.Runtime = copilot.TCPConnection{Host: "localhost", Port: serverPort, ConnectionToken: sharedTCPToken}
-		})
-		t.Cleanup(func() { client1.ForceStop() })
-
-		session1, err := client1.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}})
-		if err != nil {
-			t.Fatalf("Failed to create session: %v", err)
-		}
-		sessionID := session1.SessionID
-
-		if _, err := session1.SendAndWait(t.Context(), copilot.MessageOptions{
-			Prompt: "Remember the magic word: SUSPENSE. Reply with: SUSPEND_TURN_ONE",
-		}); err != nil {
-			t.Fatalf("First SendAndWait failed: %v", err)
-		}
-
-		if err := suspendSession(t.Context(), session1); err != nil {
-			t.Fatalf("Suspend failed: %v", err)
-		}
-		client1.ForceStop()
-
-		client2 := ctx.NewClient(func(opts *copilot.ClientOptions) {
-			opts.Runtime = copilot.TCPConnection{Host: "localhost", Port: serverPort, ConnectionToken: sharedTCPToken}
-		})
-		t.Cleanup(func() { client2.ForceStop() })
-
-		session2, err := client2.ResumeSession(t.Context(), sessionID, &copilot.ResumeSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}})
-		if err != nil {
-			t.Fatalf("Failed to resume session: %v", err)
-		}
-		t.Cleanup(func() { _ = session2.Disconnect() })
-
-		followUp, err := session2.SendAndWait(t.Context(), copilot.MessageOptions{
-			Prompt: "What was the magic word I asked you to remember? Reply with just the word.",
-		})
-		if err != nil {
-			t.Fatalf("Follow-up SendAndWait failed: %v", err)
-		}
-		if content := strings.ToUpper(assistantContent(t, followUp)); !strings.Contains(content, "SUSPENSE") {
-			t.Fatalf("Expected response to contain SUSPENSE, got %q", content)
-		}
-	})
 
 	t.Run("should cancel pending permission request when suspending", func(t *testing.T) {
 		ctx.ConfigureForTest(t)

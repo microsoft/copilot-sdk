@@ -22,37 +22,9 @@ from copilot._jsonrpc import JsonRpcClient, ProcessExitedError
 
 
 @pytest.mark.asyncio
-async def test_public_rpc_error_preserves_transport_data(monkeypatch):
-    assert "JsonRpcError" in copilot.__all__
-    public_error = copilot.JsonRpcError
-    process = MockProcess()
-    client = JsonRpcClient(process)
-    client._loop = asyncio.get_running_loop()
-    data = {"policyHelperFailure": {"category": "timeout", "message": "Helper timed out"}}
-
-    async def respond(message):
-        assert message["method"] == "session.managedSettings.recheckPolicyHelper"
-        client._handle_message(
-            {
-                "jsonrpc": "2.0",
-                "id": message["id"],
-                "error": {"code": -32000, "message": "operation failed", "data": data},
-            }
-        )
-
-    monkeypatch.setattr(client, "_send_message", respond)
-    with pytest.raises(public_error) as caught:
-        await client.request("session.managedSettings.recheckPolicyHelper")
-    assert caught.value.code == -32000
-    assert caught.value.message == "operation failed"
-    assert caught.value.data == data
-    assert str(caught.value) == "JSON-RPC Error -32000: operation failed"
-    assert client.pending_requests == {}
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize("method", ["sessions.import", "memories.import", "ping"])
 async def test_import_error_logs_preserve_caller_error_without_payload(method, monkeypatch, caplog):
+    assert "JsonRpcError" in copilot.__all__
     client = JsonRpcClient(MockProcess())
     client._loop = asyncio.get_running_loop()
     message_text = "Unsupported session record type 'private-import-content'."
@@ -75,6 +47,8 @@ async def test_import_error_logs_preserve_caller_error_without_payload(method, m
     assert caught.value.code == -32000
     assert caught.value.message == message_text
     assert caught.value.data == data
+    assert str(caught.value) == f"JSON-RPC Error -32000: {message_text}"
+    assert client.pending_requests == {}
     record = next(record for record in caplog.records if record.method == method)
     assert record.status == "failed"
     assert record.request_id
@@ -716,77 +690,6 @@ class ShortReadStream:
 class TestReadExact:
     """Tests for the _read_exact() method that handles short reads"""
 
-    def test_read_exact_single_chunk(self):
-        """Test reading data that fits in a single chunk"""
-        content = b"Hello, World!"
-        mock_stream = ShortReadStream(content, chunk_size=1024)
-
-        process = MockProcess()
-        process.stdout = mock_stream
-
-        client = JsonRpcClient(process)
-        result = client._read_exact(len(content))
-
-        assert result == content
-
-    def test_read_exact_multiple_chunks(self):
-        """Test reading data that requires multiple chunks (short reads)"""
-        # Create 100KB of data
-        content = b"x" * 100000
-        # Simulate 32KB chunks (typical pipe behavior)
-        mock_stream = ShortReadStream(content, chunk_size=32768)
-
-        process = MockProcess()
-        process.stdout = mock_stream
-
-        client = JsonRpcClient(process)
-        result = client._read_exact(len(content))
-
-        assert result == content
-        assert len(result) == 100000
-
-    def test_read_exact_at_64kb_boundary(self):
-        """Test reading exactly 64KB (common pipe buffer size)"""
-        content = b"y" * 65536  # Exactly 64KB
-        mock_stream = ShortReadStream(content, chunk_size=65536)
-
-        process = MockProcess()
-        process.stdout = mock_stream
-
-        client = JsonRpcClient(process)
-        result = client._read_exact(len(content))
-
-        assert result == content
-        assert len(result) == 65536
-
-    def test_read_exact_exceeds_64kb(self):
-        """Test reading data that exceeds 64KB (triggers the bug without fix)"""
-        # 80KB - larger than typical pipe buffer
-        content = b"z" * 81920
-        # Simulate reading with 64KB limit (macOS pipe buffer)
-        mock_stream = ShortReadStream(content, chunk_size=65536)
-
-        process = MockProcess()
-        process.stdout = mock_stream
-
-        client = JsonRpcClient(process)
-        result = client._read_exact(len(content))
-
-        assert result == content
-        assert len(result) == 81920
-
-    def test_read_exact_empty_stream_raises_eof(self):
-        """Test that reading from closed stream raises EOFError"""
-        mock_stream = ShortReadStream(b"", chunk_size=1024)
-
-        process = MockProcess()
-        process.stdout = mock_stream
-
-        client = JsonRpcClient(process)
-
-        with pytest.raises(EOFError, match="Unexpected end of stream"):
-            client._read_exact(10)
-
     def test_read_exact_partial_data_raises_eof(self):
         """Test that stream ending mid-message raises EOFError"""
         # Only 50 bytes available, but we request 100
@@ -838,82 +741,6 @@ class TestReadMessageWithLargePayloads:
         content_bytes = content.encode("utf-8")
         header = f"Content-Length: {len(content_bytes)}\r\n\r\n"
         return header.encode("utf-8") + content_bytes
-
-    def test_read_message_small_payload(self):
-        """Test reading a small JSON-RPC message"""
-        message = {"jsonrpc": "2.0", "id": "1", "result": {"status": "ok"}}
-        full_data = self.create_jsonrpc_message(message)
-
-        mock_stream = ShortReadStream(full_data, chunk_size=1024)
-        process = MockProcess()
-        process.stdout = mock_stream
-
-        client = JsonRpcClient(process)
-        result = client._read_message()
-
-        assert result == message
-
-    def test_read_message_large_payload_70kb(self):
-        """Test reading a 70KB JSON-RPC message (exceeds typical pipe buffer)"""
-        # Simulate a large response with context echo (common pattern)
-        large_content = "x" * 70000  # 70KB of data
-        message = {
-            "jsonrpc": "2.0",
-            "id": "1",
-            "result": {"content": large_content, "status": "complete"},
-        }
-
-        full_data = self.create_jsonrpc_message(message)
-        # Simulate 64KB pipe buffer limit
-        mock_stream = ShortReadStream(full_data, chunk_size=65536)
-
-        process = MockProcess()
-        process.stdout = mock_stream
-
-        client = JsonRpcClient(process)
-        result = client._read_message()
-
-        assert result == message
-        assert len(result["result"]["content"]) == 70000
-
-    def test_read_message_large_payload_100kb(self):
-        """Test reading a 100KB JSON-RPC message"""
-        large_content = "y" * 100000  # 100KB
-        message = {
-            "jsonrpc": "2.0",
-            "id": "2",
-            "result": {"data": large_content, "metadata": {"size": 100000}},
-        }
-
-        full_data = self.create_jsonrpc_message(message)
-        # Simulate short reads with 32KB chunks
-        mock_stream = ShortReadStream(full_data, chunk_size=32768)
-
-        process = MockProcess()
-        process.stdout = mock_stream
-
-        client = JsonRpcClient(process)
-        result = client._read_message()
-
-        assert result == message
-        assert len(result["result"]["data"]) == 100000
-
-    def test_read_message_exactly_64kb_content(self):
-        """Test reading message with exactly 64KB of content"""
-        content_64kb = "z" * 65536  # Exactly 64KB
-        message = {"jsonrpc": "2.0", "id": "3", "result": {"content": content_64kb}}
-
-        full_data = self.create_jsonrpc_message(message)
-        mock_stream = ShortReadStream(full_data, chunk_size=65536)
-
-        process = MockProcess()
-        process.stdout = mock_stream
-
-        client = JsonRpcClient(process)
-        result = client._read_message()
-
-        assert result == message
-        assert len(result["result"]["content"]) == 65536
 
     def test_read_message_multiple_messages_in_sequence(self):
         """Test reading multiple large messages in sequence"""

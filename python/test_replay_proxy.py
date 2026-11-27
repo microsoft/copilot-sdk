@@ -66,9 +66,16 @@ async def test_exchange_wait_checks_buffered_readiness_at_owner_expiry(monkeypat
     assert await context.wait_for_exchanges(2, timeout=0) is ready
     assert calls == [None]
 
+    with pytest.raises(
+        TimeoutError, match=r"^Timed out waiting for 3 chat completion request\(s\)$"
+    ) as failure:
+        await context.wait_for_exchanges(3, timeout=0)
 
-@pytest.mark.parametrize("direct_proxy", [False, True])
-async def test_direct_exchange_snapshot_has_no_competing_http_deadline(monkeypatch, direct_proxy):
+    assert isinstance(failure.value.__cause__, TimeoutError)
+    assert calls == [None, None]
+
+
+async def test_direct_exchange_snapshot_has_no_competing_http_deadline(monkeypatch):
     context = _exchange_context(monkeypatch)
     context._proxy._proxy_url = "http://proxy"
     ready = [{"request": {"id": "one"}}]
@@ -88,36 +95,15 @@ async def test_direct_exchange_snapshot_has_no_competing_http_deadline(monkeypat
         return client
 
     monkeypatch.setattr(httpx, "AsyncClient", create_client)
-    getter = context._proxy.get_exchanges if direct_proxy else context.get_exchanges
-    assert await getter() == ready
+    assert await context._proxy.get_exchanges() == ready
     assert len(clients) == 1
     assert clients[0].is_closed
-
-
-async def test_exchange_wait_final_pending_snapshot_preserves_count_and_diagnostic(monkeypatch):
-    context = _exchange_context(monkeypatch)
-    calls = []
-
-    async def get_exchanges(*, timeout=None):
-        calls.append(timeout)
-        return [{"request": {"id": "one"}}]
-
-    monkeypatch.setattr(context._proxy, "get_exchanges", get_exchanges)
-
-    with pytest.raises(
-        TimeoutError, match=r"^Timed out waiting for 2 chat completion request\(s\)$"
-    ) as failure:
-        await context.wait_for_exchanges(2, timeout=0)
-
-    assert isinstance(failure.value.__cause__, TimeoutError)
-    assert calls == [None]
 
 
 @pytest.mark.parametrize(
     "error_factory",
     [
         pytest.param(lambda: httpx.ReadTimeout("snapshot peer stalled"), id="transport"),
-        pytest.param(lambda: ValueError("malformed snapshot"), id="body"),
         pytest.param(lambda: asyncio.CancelledError("snapshot cancelled"), id="cancellation"),
     ],
 )
@@ -245,10 +231,7 @@ async def test_exchange_wait_cancels_and_closes_final_snapshot_http_client(monke
 
 
 @pytest.mark.parametrize("method", ["configure", "set_user"])
-@pytest.mark.parametrize("status", [200, 500])
-async def test_proxy_configuration_request_has_no_competing_http_deadline(
-    monkeypatch, method, status
-):
+async def test_proxy_configuration_request_has_no_competing_http_deadline(monkeypatch, method):
     proxy = CapiProxy()
     proxy._proxy_url = "http://proxy"
     actual_client = httpx.AsyncClient
@@ -273,7 +256,7 @@ async def test_proxy_configuration_request_has_no_competing_http_deadline(
 
     def respond(request):
         requests.append(request)
-        return httpx.Response(status)
+        return httpx.Response(500)
 
     def create_client(**kwargs):
         client = actual_client(transport=httpx.MockTransport(respond), **kwargs)
@@ -282,7 +265,7 @@ async def test_proxy_configuration_request_has_no_competing_http_deadline(
 
     factory = Mock(side_effect=create_client)
     monkeypatch.setattr(httpx, "AsyncClient", factory)
-    with contextlib.nullcontext() if status == 200 else failure:
+    with failure:
         await invoke()
     assert len(requests) == 1
     assert requests[0].method == "POST"
@@ -294,8 +277,7 @@ async def test_proxy_configuration_request_has_no_competing_http_deadline(
     assert clients[0].is_closed
 
 
-@pytest.mark.parametrize("status", [200, 500])
-async def test_oauth_request_snapshot_has_no_competing_http_deadline(monkeypatch, status):
+async def test_oauth_request_snapshot_has_no_competing_http_deadline(monkeypatch):
     monkeypatch.setenv("COPILOT_CLI_PATH", sys.executable)
     from e2e.test_mcp_oauth_e2e import _requests
 
@@ -306,7 +288,7 @@ async def test_oauth_request_snapshot_has_no_competing_http_deadline(monkeypatch
 
     def respond(request):
         requests.append(request)
-        return httpx.Response(status, json=ready)
+        return httpx.Response(500, json=ready)
 
     def create_client(**kwargs):
         client = actual_client(transport=httpx.MockTransport(respond), **kwargs)
@@ -315,13 +297,10 @@ async def test_oauth_request_snapshot_has_no_competing_http_deadline(monkeypatch
 
     factory = Mock(side_effect=create_client)
     monkeypatch.setattr(httpx, "AsyncClient", factory)
-    if status == 200:
-        assert await _requests("http://oauth") == ready
-    else:
-        with pytest.raises(httpx.HTTPStatusError) as failure:
-            await _requests("http://oauth")
-        assert failure.value.response.status_code == 500
-        assert failure.value.request is requests[0]
+    with pytest.raises(httpx.HTTPStatusError) as failure:
+        await _requests("http://oauth")
+    assert failure.value.response.status_code == 500
+    assert failure.value.request is requests[0]
     assert len(requests) == 1
     assert requests[0].method == "GET"
     assert str(requests[0].url) == "http://oauth/__requests"

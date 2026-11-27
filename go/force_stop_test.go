@@ -308,7 +308,8 @@ func TestForceStopReleasesRetainedHookCallbacks(t *testing.T) {
 }
 
 func TestForceStopRejectsAcknowledgedPlainResponseWaits(t *testing.T) {
-	for _, count := range []int{1, 2} {
+	// Two concurrent waits also cover the single-wait retirement path.
+	for _, count := range []int{2} {
 		for _, blockedHandler := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%d waits/blocked handler=%t", count, blockedHandler), func(t *testing.T) {
 				t.Parallel()

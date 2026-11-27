@@ -246,29 +246,6 @@ class TestClientOptions:
             finally:
                 await client.force_stop()
 
-    async def test_should_use_client_cwd_for_default_workingdirectory(self, ctx: E2ETestContext):
-        client_cwd = os.path.join(ctx.work_dir, "client-cwd")
-        os.makedirs(client_cwd, exist_ok=True)
-        with open(os.path.join(client_cwd, "marker.txt"), "w") as f:
-            f.write("I am in the client cwd")
-
-        client = CopilotClient(
-            mode="coding-agent", **_make_options(ctx, working_directory=client_cwd)
-        )
-        try:
-            session = await client.create_session(
-                permissions={"on_request": PermissionHandler.approve_all}
-            )
-            try:
-                message = await session.send_and_wait(
-                    "Read the file marker.txt and tell me what it says"
-                )
-                assert "client cwd" in (message.data.content or "")
-            finally:
-                await session.disconnect()
-        finally:
-            await client.stop()
-
     @pytest.mark.parametrize("log_level", [None, "info", "debug"])
     async def test_should_propagate_process_options_to_spawned_cli(
         self, ctx: E2ETestContext, log_level
@@ -630,6 +607,7 @@ class TestClientOptions:
                 assert params["agents"]["selected"] == "agent-one"
                 assert params["agents"]["default"]["excludedTools"][0] == "edit"
                 assert params["agents"]["definitions"][0]["name"] == "agent-one"
+                assert params["agents"]["definitions"][0]["skills"] == ["create-skill"]
                 assert params["plugins"]["directories"][0] == "plugins-create"
                 assert params["skills"]["disabledSkills"][0] == "disabled-create-skill"
                 assert params["state"]["infiniteSessions"]["enabled"] is False

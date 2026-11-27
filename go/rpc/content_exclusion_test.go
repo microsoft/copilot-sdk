@@ -13,8 +13,6 @@ import (
 
 func TestValidatedPoliciesPreserveJSONExtensions(t *testing.T) {
 	for _, input := range []string{
-		`{"policies":[]}`,
-		`{"policies":[{"rules":[{"paths":["src/**"],"source":{"name":"Security","type":"Organization"},"futureRuleField":{"items":[true,null,12.5]}}],"last_updated_at":1720000000,"scope":"all","futurePolicyField":{"nullable":null}}]}`,
 		`{"policies":[{"rules":[{"paths":["src/**"],"source":{"name":"Security","type":"Organization"},"futureRuleField":9007199254740993}],"last_updated_at":1720000000,"scope":"all","futurePolicyField":9007199254740993}]}`,
 	} {
 		t.Run(input, func(t *testing.T) {

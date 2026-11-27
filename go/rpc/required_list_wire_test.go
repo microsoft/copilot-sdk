@@ -54,91 +54,17 @@ func wireField(t *testing.T, raw json.RawMessage, field string) (string, bool) {
 	return string(value), ok
 }
 
-// Every public generated request with a required list, called with that list left nil.
+// One request per generated required-list emission shape (server struct copy, server
+// multi-field with nested lists, session request map, top-level session RPC), called with
+// the list left nil. go-codegen.test.ts owns which fields the generator coerces.
 func TestRequiredListsNilSentAsEmpty(t *testing.T) {
 	for _, test := range []struct {
 		method string
 		fields []string
 		call   wireCall
 	}{
-		{"decisions.ask", []string{"questions"}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-			_, err := (*ServerDecisionsAPI)(srv).Ask(ctx, &DecisionsAskRequest{})
-			return err
-		}},
-		{"extensions.disable", []string{"ids"}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-			_, err := (*ServerExtensionsAPI)(srv).Disable(ctx, &DiscoveredExtensionsDisableRequest{})
-			return err
-		}},
-		{"extensions.enable", []string{"ids"}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-			_, err := (*ServerExtensionsAPI)(srv).Enable(ctx, &DiscoveredExtensionsEnableRequest{})
-			return err
-		}},
-		{"managedSettings.compose", []string{"layers"}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-			_, err := (*ServerManagedSettingsAPI)(srv).Compose(ctx, &ManagedSettingsComposeRequest{})
-			return err
-		}},
-		{"managedSettings.permissions.evaluate", []string{"operations"}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-			_, err := (*ServerManagedSettingsPermissionsAPI)(srv).Evaluate(ctx, &ManagedPermissionsEvaluateRequest{})
-			return err
-		}},
-		{"mcp.config.disable", []string{"names"}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-			_, err := (*ServerMCPConfigAPI)(srv).Disable(ctx, &MCPConfigDisableRequest{})
-			return err
-		}},
-		{"mcp.config.enable", []string{"names"}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-			_, err := (*ServerMCPConfigAPI)(srv).Enable(ctx, &MCPConfigEnableRequest{})
-			return err
-		}},
 		{"mcp.prepareInstall", []string{"inputs", "secrets"}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
 			_, err := (*ServerMCPAPI)(srv).PrepareInstall(ctx, &MCPPrepareInstallRequest{})
-			return err
-		}},
-		{"plugins.builtin.set", []string{"paths"}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-			_, err := (*ServerPluginsBuiltinAPI)(srv).Set(ctx, &PluginsBuiltinSetRequest{})
-			return err
-		}},
-		{"plugins.disable", []string{"names"}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-			_, err := (*ServerPluginsAPI)(srv).Disable(ctx, &PluginsDisableRequest{})
-			return err
-		}},
-		{"plugins.enable", []string{"names"}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-			_, err := (*ServerPluginsAPI)(srv).Enable(ctx, &PluginsEnableRequest{})
-			return err
-		}},
-		{"secrets.addFilterValues", []string{"values"}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-			_, err := (*ServerSecretsAPI)(srv).AddFilterValues(ctx, &SecretsAddFilterValuesRequest{})
-			return err
-		}},
-		{"session.contentExclusion.checkPaths", []string{"paths"}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-			_, err := (*ContentExclusionAPI)(ses).CheckPaths(ctx, &ContentExclusionCheckPathsRequest{})
-			return err
-		}},
-		{"session.diagnostics.read", []string{"sources"}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-			_, err := (*DiagnosticsAPI)(ses).Read(ctx, &DiagnosticsReadRequest{})
-			return err
-		}},
-		{"session.extensions.sendAttachmentsToMessage", []string{"attachments"}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-			_, err := (*ExtensionsAPI)(ses).SendAttachmentsToMessage(ctx, &SendAttachmentsToMessageParams{})
-			return err
-		}},
-		{"session.history.importConversation", []string{"events"}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-			_, err := (*HistoryAPI)(ses).ImportConversation(ctx, &SessionHistoryImportConversationRequest{})
-			return err
-		}},
-		{"session.plugins.disable", []string{"names"}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-			_, err := (*PluginsAPI)(ses).Disable(ctx, &SessionPluginsDisableRequest{})
-			return err
-		}},
-		{"session.plugins.enable", []string{"names"}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-			_, err := (*PluginsAPI)(ses).Enable(ctx, &SessionPluginsEnableRequest{})
-			return err
-		}},
-		{"session.provider.withdraw", []string{"models"}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-			_, err := (*ProviderAPI)(ses).Withdraw(ctx, &ProviderWithdrawRequest{})
-			return err
-		}},
-		{"session.queue.appendSteering", []string{"attachments"}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-			_, err := (*QueueAPI)(ses).AppendSteering(ctx, &QueueAppendSteeringRequest{})
 			return err
 		}},
 		{"session.sendMessages", []string{"messages"}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
@@ -149,48 +75,8 @@ func TestRequiredListsNilSentAsEmpty(t *testing.T) {
 			_, err := (*ToolsAPI)(ses).Set(ctx, &ToolsSetRequest{})
 			return err
 		}},
-		{"session.workflow.log", []string{"lines"}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-			_, err := (*WorkflowAPI)(ses).Log(ctx, &WorkflowLogRequest{})
-			return err
-		}},
-		{"sessions.bulkDelete", []string{"sessionIds"}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-			_, err := (*ServerSessionsAPI)(srv).BulkDelete(ctx, &SessionsBulkDeleteRequest{})
-			return err
-		}},
 		{"sessions.checkInUse", []string{"sessionIds"}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
 			_, err := (*ServerSessionsAPI)(srv).CheckInUse(ctx, &SessionsCheckInUseRequest{})
-			return err
-		}},
-		{"sessions.enrichMetadata", []string{"sessions"}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-			_, err := (*ServerSessionsAPI)(srv).EnrichMetadata(ctx, &SessionsEnrichMetadataRequest{})
-			return err
-		}},
-		{"sessions.getClientMetadata", []string{"sessionIds"}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-			_, err := (*ServerSessionsAPI)(srv).GetClientMetadata(ctx, &SessionsGetClientMetadataRequest{})
-			return err
-		}},
-		{"sessions.setAdditionalPlugins", []string{"plugins"}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-			_, err := (*ServerSessionsAPI)(srv).SetAdditionalPlugins(ctx, &SessionsSetAdditionalPluginsRequest{})
-			return err
-		}},
-		{"shell.buildInteractiveEnvironment", []string{"additionalBlockedNames"}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-			_, err := (*ServerShellAPI)(srv).BuildInteractiveEnvironment(ctx, &ShellBuildInteractiveEnvironmentRequest{})
-			return err
-		}},
-		{"skills.config.setDisabledSkills", []string{"disabledSkills"}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-			_, err := (*ServerSkillsConfigAPI)(srv).SetDisabledSkills(ctx, &SkillsConfigSetDisabledSkillsRequest{})
-			return err
-		}},
-		{"skills.installSource", []string{"skillDirectories"}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-			_, err := (*ServerSkillsAPI)(srv).InstallSource(ctx, &SkillsInstallSourceRequest{})
-			return err
-		}},
-		{"skills.removeSource", []string{"skillDirectories"}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-			_, err := (*ServerSkillsAPI)(srv).RemoveSource(ctx, &SkillsRemoveSourceRequest{})
-			return err
-		}},
-		{"taskAnalytics.classifyTrajectory", []string{"events"}, func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-			_, err := (*ServerTaskAnalyticsAPI)(srv).ClassifyTrajectory(ctx, &TaskAnalyticsClassifyTrajectoryRequest{})
 			return err
 		}},
 	} {
@@ -287,13 +173,5 @@ func TestRequiredListNilLeavesCallerRequest(t *testing.T) {
 	})
 	if request.SessionIDs != nil {
 		t.Errorf("caller's SessionIDs = %#v, want nil", request.SessionIDs)
-	}
-	historyRequest := &SessionHistoryImportConversationRequest{}
-	captureParams(t, "session.history.importConversation", func(ctx context.Context, srv *serverAPI, ses *sessionAPI) error {
-		_, err := (*HistoryAPI)(ses).ImportConversation(ctx, historyRequest)
-		return err
-	})
-	if historyRequest.Events != nil {
-		t.Errorf("caller's Events = %#v, want nil", historyRequest.Events)
 	}
 }

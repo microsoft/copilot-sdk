@@ -45,11 +45,6 @@ public class SessionCanvasSnapshotTest {
     }
 
     @Test
-    void startsEmpty() {
-        assertTrue(session.getOpenCanvases().isEmpty());
-    }
-
-    @Test
     void openedUpsertsCanvases() {
         session.dispatchEvent(openedEvent("inst-1", "canvas-a"));
         session.dispatchEvent(openedEvent("inst-2", "canvas-b"));

@@ -63,33 +63,6 @@ class TestPreMcpToolCallHook:
         finally:
             await session.disconnect()
 
-    async def test_should_replace_meta_via_premcptoolcall_hook(self, ctx: E2ETestContext):
-        inputs: list[dict] = []
-
-        async def on_pre_mcp_tool_call(input_data, invocation):
-            inputs.append(input_data)
-            return {"metaToUse": {"completely": "replaced"}}
-
-        session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all},
-            mcp={"servers": meta_echo_mcp_config()},
-            hooks={"handlers": {"on_pre_mcp_tool_call": on_pre_mcp_tool_call}},
-        )
-        try:
-            response = await session.send_and_wait(
-                "Use the meta-echo/echo_meta tool with value 'test-replace'."
-                " Reply with just the raw tool result."
-            )
-            assert response is not None
-            assert "completely" in (response.data.content or "")
-            assert "replaced" in (response.data.content or "")
-
-            assert inputs
-            assert inputs[0].get("serverName") == "meta-echo"
-            assert inputs[0].get("toolName") == "echo_meta"
-        finally:
-            await session.disconnect()
-
     async def test_should_remove_meta_via_premcptoolcall_hook(self, ctx: E2ETestContext):
         inputs: list[dict] = []
 

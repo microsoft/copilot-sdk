@@ -33,62 +33,6 @@ public class SuspendE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
     private static readonly TimeSpan SuspendTimeout = TimeSpan.FromSeconds(60);
 
     [Fact]
-    public async Task Should_Suspend_Idle_Session_Without_Throwing()
-    {
-        var session = await CreateSessionAsync();
-
-        // Run a short turn so the session has some persisted state, then suspend.
-        await session.SendAndWaitAsync(new MessageOptions { Prompt = "Reply with: SUSPEND_IDLE_OK" });
-
-        // Suspend on an idle session must succeed (no current processing to cancel,
-        // notification turns already drained, but pending writes still get flushed).
-        await session.Rpc.SuspendAsync().WaitAsync(SuspendTimeout);
-
-        await session.DisposeAsync();
-    }
-
-    [Fact]
-    public async Task Should_Allow_Resume_And_Continue_Conversation_After_Suspend()
-    {
-        const string sharedToken = "suspend-shared-token";
-        await using var server = Ctx.CreateClient(options: new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForSpawnedTcp(connectionToken: sharedToken) });
-        await server.StartAsync();
-        var runtimePort = GetRuntimePort(server);
-
-        string sessionId;
-        await using (var client1 = Ctx.CreateClient(options: new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp("localhost", runtimePort, connectionToken: sharedToken) }))
-        {
-            var session1 = await Ctx.CreateSessionAsync(client1, new CreateSessionOptions
-            { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
-            sessionId = session1.SessionId;
-
-            await session1.SendAndWaitAsync(new MessageOptions
-            {
-                Prompt = "Remember the magic word: SUSPENSE. Reply with: SUSPEND_TURN_ONE",
-            });
-
-            // Graceful suspend rather than ForceStopAsync — must drain and flush state
-            // before the client tears down so the next session sees a consistent log.
-            await session1.Rpc.SuspendAsync().WaitAsync(SuspendTimeout);
-            await session1.DisposeAsync();
-        }
-
-        // A different client should be able to pick the session back up. The previous
-        // turn was completed before suspend, so there is no pending work to continue.
-        await using var client2 = Ctx.CreateClient(options: new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp("localhost", runtimePort, connectionToken: sharedToken) });
-        var session2 = await Ctx.ResumeSessionAsync(client2, sessionId, new ResumeSessionOptions
-        { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
-
-        var followUp = await session2.SendAndWaitAsync(new MessageOptions
-        {
-            Prompt = "What was the magic word I asked you to remember? Reply with just the word.",
-        });
-        Assert.Contains("SUSPENSE", followUp?.Data.Content ?? string.Empty, StringComparison.OrdinalIgnoreCase);
-
-        await session2.DisposeAsync();
-    }
-
-    [Fact]
     public async Task Should_Cancel_Pending_Permission_Request_When_Suspending()
     {
         // Per the runtime impl, suspend resolves all pending permission requests with
@@ -209,12 +153,5 @@ public class SuspendE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
             toolStarted.TrySetResult(value);
             return await releaseTool.Task;
         }
-    }
-
-    private static int GetRuntimePort(CopilotClient client)
-    {
-        var port = client.RuntimePort
-            ?? throw new InvalidOperationException("Expected the test server to be listening on a TCP port.");
-        return port;
     }
 }

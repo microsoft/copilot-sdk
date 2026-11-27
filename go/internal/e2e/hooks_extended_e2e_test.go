@@ -83,10 +83,11 @@ func TestSessionLifecycleModeE2E(t *testing.T) {
 //
 // Covers the general-purpose handlers on copilot.SessionHooks: OnPreToolUse,
 // OnPostToolUse, OnPostToolUseFailure, OnUserPromptSubmitted,
-// OnUserPromptTransformed, OnSessionStart, OnSessionEnd, OnErrorOccurred,
-// OnAgentStop. Subagent hooks are exercised in subagent_hooks_e2e_test.go.
+// OnUserPromptTransformed, OnSessionStart, OnSessionEnd, OnAgentStop.
+// OnErrorOccurred is covered by session_test.go dispatch tests because a healthy
+// replayed turn cannot trigger it. Subagent hooks are exercised in subagent_hooks_e2e_test.go.
 // Output-shape behavior (modifiedPrompt / modifiedTransformedPrompt /
-// additionalContext / errorHandling / modifiedArgs / modifiedResult /
+// additionalContext / modifiedArgs / modifiedResult /
 // sessionSummary) is asserted alongside hook invocation.
 func TestHooksExtendedE2E(t *testing.T) {
 	t.Parallel()
@@ -282,49 +283,6 @@ func TestHooksExtendedE2E(t *testing.T) {
 		defer mu.Unlock()
 		if len(inputs) == 0 {
 			t.Fatal("Expected sessionEnd hook to be invoked at least once")
-		}
-	})
-
-	t.Run("should register errorOccurred hook", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		var (
-			mu     sync.Mutex
-			inputs []copilot.ErrorOccurredHookInput
-		)
-
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Hooks: copilot.SessionHookOptions{Handlers: &copilot.SessionHooks{
-			OnErrorOccurred: func(input copilot.ErrorOccurredHookInput, invocation copilot.HookInvocation) (*copilot.ErrorOccurredHookOutput, error) {
-				mu.Lock()
-				inputs = append(inputs, input)
-				mu.Unlock()
-				if invocation.SessionID == "" {
-					t.Error("Expected non-empty session ID in invocation")
-				}
-				return &copilot.ErrorOccurredHookOutput{ErrorHandling: "skip"}, nil
-			},
-		}},
-		})
-		if err != nil {
-			t.Fatalf("Failed to create session: %v", err)
-		}
-
-		if _, err := session.SendAndWait(t.Context(), copilot.MessageOptions{Prompt: "Say hi"}); err != nil {
-			t.Fatalf("Failed to send message: %v", err)
-		}
-
-		// OnErrorOccurred is dispatched only by genuine runtime errors (e.g. provider
-		// failures, internal exceptions). A normal turn cannot deterministically trigger
-		// one, so this is a registration-only test: the SDK must accept the hook and not
-		// invoke it inappropriately during a healthy turn.
-		mu.Lock()
-		got := len(inputs)
-		mu.Unlock()
-		if got != 0 {
-			t.Errorf("Expected errorOccurred hook to not fire on a healthy turn, got %d invocations", got)
-		}
-		if session.SessionID == "" {
-			t.Error("Expected session id to be set")
 		}
 	})
 

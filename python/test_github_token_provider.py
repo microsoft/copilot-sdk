@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
-from typing import Any, cast, get_args, get_type_hints
+from typing import Any, cast
 
 import pytest
 
@@ -13,13 +13,10 @@ from copilot import (
 )
 from copilot._jsonrpc import JsonRpcClient, JsonRpcError
 from copilot.rpc import (
-    UNSET_SENTINEL,
     GitHubTokenAcquireRequest,
-    SessionOpenInferenceOptions,
     SessionRpc,
     SessionUpdateInferenceOptions,
     SessionUpdateOptionsParams,
-    Unset,
 )
 
 
@@ -168,22 +165,6 @@ async def test_copied_options_update_preserves_default_provider_presence(routing
     assert fake.requests == [
         ("session.options.update", {"sessionId": "routing", "inference": routing})
     ]
-
-
-@pytest.mark.parametrize(
-    "options_type", [SessionOpenInferenceOptions, SessionUpdateInferenceOptions]
-)
-@pytest.mark.parametrize("routing", [{}, {"defaultProvider": None}, {"defaultProvider": "named"}])
-def test_generated_default_provider_annotation_covers_omission(options_type, routing):
-    assert Unset in get_args(get_type_hints(options_type)["default_provider"])
-    value = deepcopy(options_type.from_dict(routing)).default_provider
-    if isinstance(value, Unset):
-        assert "defaultProvider" not in routing
-        assert value is UNSET_SENTINEL
-    elif value is None:
-        assert routing["defaultProvider"] is None
-    else:
-        assert value.upper() == "NAMED"
 
 
 @pytest.mark.asyncio

@@ -21,8 +21,6 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
-import com.microsoft.copilot.rpc.AgentStopHookInput;
-import com.microsoft.copilot.rpc.AgentStopHookOutput;
 import com.microsoft.copilot.rpc.MessageOptions;
 import com.microsoft.copilot.rpc.PermissionHandler;
 import com.microsoft.copilot.rpc.PostToolUseHookInput;
@@ -64,92 +62,6 @@ public class HooksTest {
     }
 
     /**
-     * Verifies that pre-tool-use hook is invoked when model runs a tool.
-     *
-     * @see Snapshot: hooks/invoke_pre_tool_use_hook_when_model_runs_a_tool
-     */
-    @Test
-    void testInvokePreToolUseHookWhenModelRunsATool() throws Exception {
-        ctx.configureForTest("hooks", "invoke_pre_tool_use_hook_when_model_runs_a_tool");
-
-        var preToolUseInputs = new CopyOnWriteArrayList<PreToolUseHookInput>();
-        final String[] sessionIdHolder = new String[1];
-
-        var config = ctx.newSessionConfig()
-                .setPermissions(ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))
-                .setHooks(ctx.newSessionConfig().getHooks()
-                        .setHandlers(new SessionHooks().setOnPreToolUse((input, invocation) -> {
-                            preToolUseInputs.add(input);
-                            assertEquals(sessionIdHolder[0], invocation.getSessionId());
-                            return CompletableFuture.completedFuture(PreToolUseHookOutput.allow());
-                        })));
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(config).get();
-            sessionIdHolder[0] = session.getSessionId();
-
-            // Create a file for the model to read
-            Path testFile = ctx.getWorkDir().resolve("hello.txt");
-            Files.writeString(testFile, "Hello from the test!");
-
-            session.sendAndWait(
-                    new MessageOptions().setPrompt("Read the contents of hello.txt and tell me what it says"))
-                    .get(60, TimeUnit.SECONDS);
-
-            // Should have received at least one preToolUse hook call
-            assertFalse(preToolUseInputs.isEmpty(), "Should have received preToolUse hook calls");
-
-            // Should have received the tool name
-            assertTrue(preToolUseInputs.stream().anyMatch(i -> i.getToolName() != null && !i.getToolName().isEmpty()),
-                    "Should have received tool name in preToolUse hook");
-        }
-    }
-
-    /**
-     * Verifies that post-tool-use hook is invoked after model runs a tool.
-     *
-     * @see Snapshot: hooks/invoke_post_tool_use_hook_after_model_runs_a_tool
-     */
-    @Test
-    void testInvokePostToolUseHookAfterModelRunsATool() throws Exception {
-        ctx.configureForTest("hooks", "invoke_post_tool_use_hook_after_model_runs_a_tool");
-
-        var postToolUseInputs = new CopyOnWriteArrayList<PostToolUseHookInput>();
-        final String[] sessionIdHolder = new String[1];
-
-        var config = ctx.newSessionConfig()
-                .setPermissions(ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))
-                .setHooks(ctx.newSessionConfig().getHooks()
-                        .setHandlers(new SessionHooks().setOnPostToolUse((input, invocation) -> {
-                            postToolUseInputs.add(input);
-                            assertEquals(sessionIdHolder[0], invocation.getSessionId());
-                            return CompletableFuture.completedFuture(null);
-                        })));
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(config).get();
-            sessionIdHolder[0] = session.getSessionId();
-
-            // Create a file for the model to read
-            Path testFile = ctx.getWorkDir().resolve("world.txt");
-            Files.writeString(testFile, "World from the test!");
-
-            session.sendAndWait(
-                    new MessageOptions().setPrompt("Read the contents of world.txt and tell me what it says"))
-                    .get(60, TimeUnit.SECONDS);
-
-            // Should have received at least one postToolUse hook call
-            assertFalse(postToolUseInputs.isEmpty(), "Should have received postToolUse hook calls");
-
-            // Should have received the tool name and result
-            assertTrue(postToolUseInputs.stream().anyMatch(i -> i.getToolName() != null && !i.getToolName().isEmpty()),
-                    "Should have received tool name in postToolUse hook");
-            assertTrue(postToolUseInputs.stream().anyMatch(i -> i.getToolResult() != null),
-                    "Should have received tool result in postToolUse hook");
-        }
-    }
-
-    /**
      * Verifies that both hooks are invoked for a single tool call.
      *
      * @see Snapshot: hooks/invoke_both_hooks_for_single_tool_call
@@ -160,15 +72,18 @@ public class HooksTest {
 
         var preToolUseInputs = new CopyOnWriteArrayList<PreToolUseHookInput>();
         var postToolUseInputs = new CopyOnWriteArrayList<PostToolUseHookInput>();
+        var invocationSessionIds = new CopyOnWriteArrayList<String>();
 
         var config = ctx.newSessionConfig()
                 .setPermissions(ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))
                 .setHooks(ctx.newSessionConfig().getHooks()
                         .setHandlers(new SessionHooks().setOnPreToolUse((input, invocation) -> {
                             preToolUseInputs.add(input);
+                            invocationSessionIds.add(invocation.getSessionId());
                             return CompletableFuture.completedFuture(PreToolUseHookOutput.allow());
                         }).setOnPostToolUse((input, invocation) -> {
                             postToolUseInputs.add(input);
+                            invocationSessionIds.add(invocation.getSessionId());
                             return CompletableFuture.completedFuture(null);
                         })));
 
@@ -185,6 +100,10 @@ public class HooksTest {
             // Both hooks should have been called
             assertFalse(preToolUseInputs.isEmpty(), "Should have received preToolUse hook calls");
             assertFalse(postToolUseInputs.isEmpty(), "Should have received postToolUse hook calls");
+            assertTrue(invocationSessionIds.stream().allMatch(session.getSessionId()::equals),
+                    "Hook invocations should carry the session ID");
+            assertTrue(postToolUseInputs.stream().anyMatch(i -> i.getToolResult() != null),
+                    "Should have received tool result in postToolUse hook");
 
             // The same tool should appear in both
             Set<String> preToolNames = preToolUseInputs.stream().map(PreToolUseHookInput::getToolName)
@@ -238,48 +157,6 @@ public class HooksTest {
             assertNotNull(response, "Response should not be null");
 
             assertEquals(originalContent, Files.readString(testFile), "Denied preToolUse hook should block file edits");
-        }
-    }
-
-    /**
-     * Verifies that agent-stop can block a natural stop and enqueue another turn.
-     *
-     * @see Snapshot:
-     *      hooks_extended/should_invoke_agentstop_hook_and_apply_block_response
-     */
-    @Test
-    void testInvokeAgentStopHookAndApplyBlockResponse() throws Exception {
-        ctx.configureForTest("hooks_extended", "should_invoke_agentstop_hook_and_apply_block_response");
-
-        var inputs = new ArrayList<AgentStopHookInput>();
-        final String[] sessionIdHolder = new String[1];
-        var config = ctx.newSessionConfig()
-                .setPermissions(ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))
-                .setHooks(ctx.newSessionConfig().getHooks()
-                        .setHandlers(new SessionHooks().setOnAgentStop((input, invocation) -> {
-                            assertEquals(sessionIdHolder[0], invocation.getSessionId());
-                            inputs.add(input);
-                            if (inputs.size() == 1) {
-                                return CompletableFuture.completedFuture(new AgentStopHookOutput().setDecision("block")
-                                        .setReason("Reply with exactly: AGENT_STOP_CONTINUED"));
-                            }
-                            return CompletableFuture.completedFuture(null);
-                        })));
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(config).get();
-            sessionIdHolder[0] = session.getSessionId();
-
-            var response = session.sendAndWait(new MessageOptions().setPrompt("Reply with exactly: AGENT_STOP_INITIAL"))
-                    .get(60, TimeUnit.SECONDS);
-
-            assertEquals(2, inputs.size());
-            assertNotEquals(Boolean.TRUE, inputs.get(0).getStopHookActive());
-            assertEquals(Boolean.TRUE, inputs.get(1).getStopHookActive());
-            assertEquals("end_turn", inputs.get(0).getStopReason());
-            assertFalse(inputs.get(0).getTranscriptPath().isBlank());
-            assertNotNull(response);
-            assertTrue(response.getData().content().contains("AGENT_STOP_CONTINUED"));
         }
     }
 

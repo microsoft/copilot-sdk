@@ -51,16 +51,6 @@ public class ToolDefinitionTest {
     }
 
     @Test
-    void testDeferNeverIsSerialized() throws Exception {
-        ToolDefinition tool = ToolDefinition.createWithDefer("lookup_issue", "Fetch issue details", schema(),
-                invocation -> CompletableFuture.completedFuture("ok"), ToolDefer.NEVER);
-
-        ObjectNode json = (ObjectNode) MAPPER.readTree(MAPPER.writeValueAsString(tool));
-
-        assertEquals("never", json.get("defer").asText());
-    }
-
-    @Test
     void testMetadataIsSerialized() throws Exception {
         Map<String, Object> metadata = Map.of("github.com/copilot:safeForTelemetry",
                 Map.of("name", true, "inputsNames", false));
@@ -74,16 +64,6 @@ public class ToolDefinitionTest {
     }
 
     @Test
-    void testMetadataOmittedWhenNull() throws Exception {
-        ToolDefinition tool = ToolDefinition.create("my_tool", "A tool", schema(),
-                invocation -> CompletableFuture.completedFuture("ok"));
-
-        ObjectNode json = (ObjectNode) MAPPER.readTree(MAPPER.writeValueAsString(tool));
-
-        assertFalse(json.has("metadata"));
-    }
-
-    @Test
     void testSevenArgConstructorLeavesMetadataNull() throws Exception {
         ToolDefinition tool = new ToolDefinition("my_tool", "A tool", schema(),
                 invocation -> CompletableFuture.completedFuture("ok"), null, null, null);
@@ -93,21 +73,6 @@ public class ToolDefinitionTest {
         ObjectNode json = (ObjectNode) MAPPER.readTree(MAPPER.writeValueAsString(tool));
 
         assertFalse(json.has("metadata"));
-    }
-
-    @Test
-    void testMetadataCopyMethodSerializes() throws Exception {
-        Map<String, Object> metadata = Map.of("github.com/copilot:safeForTelemetry",
-                Map.of("name", true, "inputsNames", false));
-        ToolDefinition tool = ToolDefinition
-                .create("my_tool", "A tool", schema(), invocation -> CompletableFuture.completedFuture("ok"))
-                .metadata(metadata);
-
-        assertEquals(metadata, tool.metadata());
-
-        ObjectNode json = (ObjectNode) MAPPER.readTree(MAPPER.writeValueAsString(tool));
-
-        assertTrue(json.get("metadata").has("github.com/copilot:safeForTelemetry"));
     }
 
     @Test

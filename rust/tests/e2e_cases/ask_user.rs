@@ -15,50 +15,6 @@ use tokio::sync::{Notify, mpsc};
 use super::support::{DEFAULT_TEST_TOKEN, assistant_message_content, recv_with_timeout};
 
 #[tokio::test]
-async fn should_invoke_user_input_handler_when_model_uses_ask_user_tool() {
-    super::support::with_shared_e2e_context(&E2E,
-        "ask_user",
-        "should_invoke_user_input_handler_when_model_uses_ask_user_tool",
-        |ctx| {
-            Box::pin(async move {
-                ctx.set_default_copilot_user();
-                let (request_tx, mut request_rx) = mpsc::unbounded_channel();
-                let client = ctx.start_client().await;
-                let handler = Arc::new(RecordingUserInputHandler {
-                    request_tx,
-                    answer: UserInputAnswer::FirstChoiceOrFreeform("freeform answer"),
-                });
-                let session = client
-                    .create_session(
-                        CreateSessionOptions::default()
-                            .with_github(|group| group.with_token(DEFAULT_TEST_TOKEN))
-                            .with_interaction(|group| group.with_on_user_input_request(handler.clone() as Arc<dyn UserInputHandler>))
-                            .with_permissions(|group| group.with_on_request(handler as Arc<dyn PermissionHandler>)),
-                    )
-                    .await
-                    .expect("create session");
-
-                session
-                    .send_and_wait(
-                        "Ask me to choose between 'Option A' and 'Option B' using the ask_user tool. \
-                         Wait for my response before continuing.",
-                    )
-                    .await
-                    .expect("send");
-
-                let request = recv_with_timeout(&mut request_rx, "user input request").await;
-                assert_eq!(request.session_id, *session.id());
-                assert!(!request.question.is_empty());
-
-                session.disconnect().await.expect("disconnect session");
-                client.stop().await.expect("stop client");
-            })
-        },
-    )
-    .await;
-}
-
-#[tokio::test]
 async fn should_receive_choices_in_user_input_request() {
     super::support::with_shared_e2e_context(&E2E,
         "ask_user",
@@ -91,6 +47,7 @@ async fn should_receive_choices_in_user_input_request() {
                     .expect("send");
 
                 let request = recv_with_timeout(&mut request_rx, "user input request").await;
+                assert_eq!(request.session_id, *session.id());
                 let choices = request.choices.expect("choices");
                 assert!(choices.iter().any(|choice| choice == "Red"));
                 assert!(choices.iter().any(|choice| choice == "Blue"));
@@ -352,4 +309,4 @@ impl ToolHandler for SetMarkerTool {
     }
 }
 static E2E: super::support::SharedE2eGroup =
-    super::support::SharedE2eGroup::standard("ask_user", 4);
+    super::support::SharedE2eGroup::standard("ask_user", 3);

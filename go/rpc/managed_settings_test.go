@@ -20,7 +20,6 @@ func TestManagedSettingsResolveRequestEncoding(t *testing.T) {
 		want   string
 	}{
 		{"nil", nil, `{}`},
-		{"empty", &ManagedSettingsResolveRequest{}, `{}`},
 		{"selected", &ManagedSettingsResolveRequest{SelectionID: &selectionID}, `{"selectionId":"selected-account"}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {

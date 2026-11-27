@@ -18,6 +18,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -189,8 +190,9 @@ class GeneratedTypesJacksonRoundTripTest {
     @TestFactory
     Collection<DynamicTest> everyNamedUnionSubtypeWritesItsDiscriminatorOnce() throws Exception {
         var strict = MAPPER.copy().enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
+        List<Class<?>> classes = discoverGeneratedClasses();
         List<DynamicTest> tests = new ArrayList<>();
-        for (Class<?> base : discoverGeneratedClasses()) {
+        for (Class<?> base : classes) {
             var typeInfo = base.getAnnotation(JsonTypeInfo.class);
             var subtypes = base.getAnnotation(JsonSubTypes.class);
             if (typeInfo == null || subtypes == null || typeInfo.use() != JsonTypeInfo.Id.NAME)
@@ -208,6 +210,26 @@ class GeneratedTypesJacksonRoundTripTest {
                 }));
             }
         }
+        tests.add(DynamicTest.dynamicTest("every concrete session event is registered under its own type", () -> {
+            // Keyed by each discovered class's own getType(), independent of the
+            // @JsonSubTypes table, so a dropped or misnamed registration fails here.
+            Map<String, Class<?>> discovered = new HashMap<>();
+            for (Class<?> cls : classes) {
+                if (!SessionEvent.class.isAssignableFrom(cls) || Modifier.isAbstract(cls.getModifiers())
+                        || cls == UnknownSessionEvent.class)
+                    continue;
+                var constructor = cls.getDeclaredConstructor();
+                constructor.setAccessible(true);
+                String type = ((SessionEvent) constructor.newInstance()).getType();
+                assertNull(discovered.put(type, cls), "Duplicate session event type " + type);
+            }
+            Map<String, Class<?>> registered = new HashMap<>();
+            for (var subtype : SessionEvent.class.getAnnotation(JsonSubTypes.class).value()) {
+                registered.put(subtype.name(), subtype.value());
+            }
+            assertTrue(discovered.containsKey("session.idle"));
+            assertEquals(discovered, registered);
+        }));
         assertTrue(tests.stream().anyMatch(test -> test.getDisplayName().endsWith(".SessionIdleEvent")));
         return tests;
     }

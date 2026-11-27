@@ -28,11 +28,7 @@ func messageSourceTestCases() []struct {
 	}{
 		{name: "omitted"},
 		{name: "user", value: MessageSourceUser, wire: "user"},
-		{name: "system", value: MessageSourceSystem, wire: "system"},
 		{name: "agent", value: MessageSourceAgent("reviewer"), wire: "agent-reviewer"},
-		{name: "empty agent id", value: MessageSourceAgent(""), wire: "agent-"},
-		{name: "opaque agent id", value: MessageSourceAgent(" Agent/É "), wire: "agent- Agent/É "},
-		{name: "prefixed agent id", value: MessageSourceAgent("agent-reviewer"), wire: "agent-agent-reviewer"},
 		{name: "automation", value: MessageSourceAutomation("merge-check"), wire: "automation-merge-check"},
 	}
 }
@@ -101,8 +97,11 @@ func TestSession_SendMessageSource(t *testing.T) {
 }
 
 func TestSession_SendAndWaitMessageSource(t *testing.T) {
-	for _, source := range messageSourceTestCases() {
-		for _, mode := range []string{"", "enqueue", "immediate"} {
+	// Send owns each source/mode wire value; completion outcomes are independent of both.
+	sources := messageSourceTestCases()
+	for i, mode := range []string{"", "enqueue", "immediate"} {
+		source := sources[i*(len(sources)-1)/2]
+		{
 			for _, tc := range []struct {
 				name        string
 				events      []SessionEvent

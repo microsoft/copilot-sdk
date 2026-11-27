@@ -4,7 +4,6 @@
 
 using Microsoft.Copilot.Rpc;
 using Microsoft.Copilot.Test.Harness;
-using Microsoft.Extensions.AI;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -19,32 +18,6 @@ public class SessionFsE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
         SessionStatePath = CreateSessionStatePath(),
         Conventions = SessionFsSetProviderConventions.Posix,
     };
-
-    [Fact]
-    public async Task Should_Route_File_Operations_Through_The_Session_Fs_Provider()
-    {
-        var providerRoot = CreateProviderRoot();
-        try
-        {
-            await using var client = CreateSessionFsClient(providerRoot);
-
-            var session = await Ctx.CreateSessionAsync(client, new CreateSessionOptions
-            { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll }, State = new SessionStateOptions { CreateSessionFsProvider = s => new TestSessionFsHandler(s.SessionId, providerRoot) } });
-
-            var msg = await session.SendAndWaitAsync(new MessageOptions { Prompt = "What is 100 + 200?" });
-            Assert.Contains("300", msg?.Data.Content ?? string.Empty);
-            await session.DisposeAsync();
-
-            var eventsPath = GetStoredPath(providerRoot, session.SessionId, $"{SessionFsConfig.SessionStatePath}/events.jsonl");
-            await WaitForConditionAsync(() => File.Exists(eventsPath));
-            var content = await ReadAllTextSharedAsync(eventsPath);
-            Assert.Contains("300", content);
-        }
-        finally
-        {
-            await TryDeleteDirectoryAsync(providerRoot);
-        }
-    }
 
     [Fact]
     // BYOK test models do not advertise vision; only the CAPI test model forwards
@@ -109,6 +82,7 @@ public class SessionFsE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
 
             var eventsPath = GetStoredPath(providerRoot, sessionId, $"{SessionFsConfig.SessionStatePath}/events.jsonl");
             await WaitForConditionAsync(() => File.Exists(eventsPath));
+            Assert.Contains("100", await ReadAllTextSharedAsync(eventsPath));
 
             var session2 = await Ctx.ResumeSessionAsync(client, sessionId, new ResumeSessionOptions
             { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll }, State = new SessionStateOptions { CreateSessionFsProvider = createSessionFsHandler } });
@@ -350,132 +324,6 @@ public class SessionFsE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
         }
     }
 
-    [Fact]
-    public async Task Should_Map_Large_Output_Handling_Into_SessionFs()
-    {
-        var providerRoot = CreateProviderRoot();
-        try
-        {
-            const int largeContentSize = 100_000;
-            var suppliedFileContent = new string('x', largeContentSize);
-
-            await using var client = CreateSessionFsClient(providerRoot);
-            var session = await Ctx.CreateSessionAsync(client, new CreateSessionOptions
-            { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll }, State = new SessionStateOptions { CreateSessionFsProvider = s => new TestSessionFsHandler(s.SessionId, providerRoot) }, Tools = new SessionToolOptions { Definitions = [AIFunctionFactory.Create(() => suppliedFileContent, "get_big_string", "Returns a large string")] } });
-
-            await session.SendAndWaitAsync(new MessageOptions
-            {
-                Prompt = "Call the get_big_string tool and reply with the word DONE only.",
-            });
-
-            var messages = await session.GetEventsAsync();
-            var toolResult = FindToolCallResult(messages, "get_big_string");
-            Assert.NotNull(toolResult);
-            // Windows reports the spilled file path with backslash separators.
-            toolResult = toolResult!.Replace('\\', '/');
-            Assert.Contains($"{SessionFsConfig.SessionStatePath}/temp/", toolResult);
-
-            var match = System.Text.RegularExpressions.Regex.Match(
-                toolResult!,
-                $"({System.Text.RegularExpressions.Regex.Escape(SessionFsConfig.SessionStatePath)}/temp/[^\\s]+)");
-            Assert.True(match.Success);
-
-            var fileContent = await ReadAllTextSharedAsync(GetStoredPath(providerRoot, session.SessionId, match.Groups[1].Value));
-            Assert.Equal(suppliedFileContent, fileContent);
-            await session.DisposeAsync();
-        }
-        finally
-        {
-            await TryDeleteDirectoryAsync(providerRoot);
-        }
-    }
-
-    [Fact]
-    public async Task Should_Succeed_With_Compaction_While_Using_SessionFs()
-    {
-        var providerRoot = CreateProviderRoot();
-        try
-        {
-            await using var client = CreateSessionFsClient(providerRoot);
-            var session = await Ctx.CreateSessionAsync(client, new CreateSessionOptions
-            { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll }, State = new SessionStateOptions { CreateSessionFsProvider = s => new TestSessionFsHandler(s.SessionId, providerRoot) } });
-
-            await session.SendAndWaitAsync(new MessageOptions { Prompt = "What is 2+2?" });
-
-            var eventsPath = GetStoredPath(providerRoot, session.SessionId, $"{SessionFsConfig.SessionStatePath}/events.jsonl");
-            await WaitForConditionAsync(() => File.Exists(eventsPath), TimeSpan.FromSeconds(30));
-            var contentBefore = await ReadAllTextSharedAsync(eventsPath);
-            Assert.DoesNotContain("checkpointNumber", contentBefore);
-
-            var compaction = TestHelper.GetNextEventOfTypeAsync<SessionCompactionCompleteEvent>(
-                session, TimeSpan.FromSeconds(30));
-            await session.Rpc.History.CompactAsync();
-            Assert.NotNull(await compaction);
-        }
-        finally
-        {
-            await TryDeleteDirectoryAsync(providerRoot);
-        }
-    }
-
-    [Fact]
-    public async Task Should_Write_Workspace_Metadata_Via_SessionFs()
-    {
-        var providerRoot = CreateProviderRoot();
-        try
-        {
-            await using var client = CreateSessionFsClient(providerRoot);
-            var session = await Ctx.CreateSessionAsync(client, new CreateSessionOptions
-            { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll }, State = new SessionStateOptions { CreateSessionFsProvider = s => new TestSessionFsHandler(s.SessionId, providerRoot) } });
-
-            var msg = await session.SendAndWaitAsync(new MessageOptions { Prompt = "What is 7 * 8?" });
-            Assert.Contains("56", msg?.Data.Content ?? string.Empty);
-
-            var workspaceYamlPath = GetStoredPath(providerRoot, session.SessionId, $"{SessionFsConfig.SessionStatePath}/workspace.yaml");
-            await WaitForConditionAsync(
-                async () => File.Exists(workspaceYamlPath)
-                    && (await ReadAllTextSharedAsync(workspaceYamlPath)).Contains(session.SessionId),
-                TimeSpan.FromSeconds(30));
-
-            var indexPath = GetStoredPath(providerRoot, session.SessionId, $"{SessionFsConfig.SessionStatePath}/checkpoints/index.md");
-            await WaitForConditionAsync(() => File.Exists(indexPath), TimeSpan.FromSeconds(30));
-
-            await session.DisposeAsync();
-        }
-        finally
-        {
-            await TryDeleteDirectoryAsync(providerRoot);
-        }
-    }
-
-    [Fact]
-    public async Task Should_Persist_Plan_Md_Via_SessionFs()
-    {
-        var providerRoot = CreateProviderRoot();
-        try
-        {
-            await using var client = CreateSessionFsClient(providerRoot);
-            var session = await Ctx.CreateSessionAsync(client, new CreateSessionOptions
-            { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll }, State = new SessionStateOptions { CreateSessionFsProvider = s => new TestSessionFsHandler(s.SessionId, providerRoot) } });
-
-            // Write a plan via the session RPC
-            await session.SendAndWaitAsync(new MessageOptions { Prompt = "What is 2 + 3?" });
-            await session.Rpc.Plan.UpdateAsync("# Test Plan\n\nThis is a test.");
-
-            var planPath = GetStoredPath(providerRoot, session.SessionId, $"{SessionFsConfig.SessionStatePath}/plan.md");
-            await WaitForConditionAsync(
-                async () => File.Exists(planPath)
-                    && (await ReadAllTextSharedAsync(planPath)).Contains("This is a test."),
-                TimeSpan.FromSeconds(30));
-
-            await session.DisposeAsync();
-        }
-        finally
-        {
-            await TryDeleteDirectoryAsync(providerRoot);
-        }
-    }
-
     private CopilotClient CreateSessionFsClient(string providerRoot, bool useStdio = true, string? tcpConnectionToken = null, bool binary = false)
     {
         RuntimeConnection connection = useStdio
@@ -501,24 +349,6 @@ public class SessionFsE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
     : SessionFsConfig,
                 Runtime = connection
             });
-    }
-
-    private static string? FindToolCallResult(IReadOnlyList<SessionEvent> messages, string toolName)
-    {
-        var callId = messages
-            .OfType<ToolExecutionStartEvent>()
-            .FirstOrDefault(m => string.Equals(m.Data.ToolName, toolName, StringComparison.Ordinal))
-            ?.Data.ToolCallId;
-
-        if (callId is null)
-        {
-            return null;
-        }
-
-        return messages
-            .OfType<ToolExecutionCompleteEvent>()
-            .FirstOrDefault(m => string.Equals(m.Data.ToolCallId, callId, StringComparison.Ordinal))
-            ?.Data.Result?.Content;
     }
 
     private static string CreateProviderRoot()

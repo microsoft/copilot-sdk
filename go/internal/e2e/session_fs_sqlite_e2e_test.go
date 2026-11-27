@@ -48,39 +48,6 @@ func (p *inMemorySqliteProvider) recordedCalls() []sqliteCall {
 	return append([]sqliteCall(nil), p.sqliteCalls...)
 }
 
-func TestInMemorySqliteProviderConcurrentCalls(t *testing.T) {
-	t.Parallel()
-	provider := newInMemorySqliteProvider("concurrent-sqlite")
-	start := make(chan struct{})
-	var workers sync.WaitGroup
-	workers.Add(2)
-	go func() {
-		defer workers.Done()
-		<-start
-		for range 100 {
-			if _, err := provider.SqliteQuery(rpc.SessionFSSqliteQueryTypeExec, "CREATE TABLE items (id TEXT)", nil); err != nil {
-				t.Errorf("SqliteQuery: %v", err)
-			}
-		}
-	}()
-	go func() {
-		defer workers.Done()
-		<-start
-		for range 100 {
-			for _, call := range provider.recordedCalls() {
-				if call.SessionID != "concurrent-sqlite" || call.QueryType != "exec" {
-					t.Errorf("Unexpected recorded call: %+v", call)
-				}
-			}
-		}
-	}()
-	close(start)
-	workers.Wait()
-	if got := len(provider.recordedCalls()); got != 100 {
-		t.Fatalf("Expected 100 recorded calls, got %d", got)
-	}
-}
-
 func (p *inMemorySqliteProvider) ensureParent(path string) {
 	parts := strings.Split(strings.TrimRight(path, "/"), "/")
 	for i := 1; i < len(parts); i++ {

@@ -73,7 +73,8 @@ public class SystemMessageTransformE2ETests(E2ETestFixture fixture, ITestOutputH
         {
             return content + "\nAlways end your reply with TRANSFORM_MARKER";
         }
-                    }
+                    },
+                    [SystemMessageSection.CodeChangeRules] = new SectionOverride { Action = SectionOverrideAction.Remove },
                 }
             },
             Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll }
@@ -91,41 +92,6 @@ public class SystemMessageTransformE2ETests(E2ETestFixture fixture, ITestOutputH
         Assert.NotEmpty(traffic);
         var systemMessage = GetSystemMessage(traffic[0]);
         Assert.Contains("TRANSFORM_MARKER", systemMessage);
-    }
-
-    [Fact]
-    public async Task Should_Work_With_Static_Overrides_And_Transforms_Together()
-    {
-        var transformCallbackInvoked = false;
-
-        var session = await CreateSessionAsync(new CreateSessionOptions
-        {
-            SystemMessage = new SystemMessageConfig
-            {
-                Mode = SystemMessageMode.Customize,
-                Sections = new Dictionary<SystemMessageSection, SectionOverride>
-                {
-                    [SystemMessageSection.Safety] = new SectionOverride { Action = SectionOverrideAction.Remove },
-                    [SystemMessageSection.Identity] = new SectionOverride
-                    {
-                        Transform = async (content) =>
-        {
-            transformCallbackInvoked = true;
-            return content;
-        }
-                    }
-                }
-            },
-            Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll }
-        });
-
-        await File.WriteAllTextAsync(Path.Combine(Ctx.WorkDir, "combo.txt"), "Combo test!");
-
-        await TestHelper.SendAndGetFinalAssistantMessageAsync(session, new MessageOptions
-        {
-            Prompt = "Read the contents of combo.txt and tell me what it says"
-        });
-
-        Assert.True(transformCallbackInvoked, "Expected identity transform callback to be invoked");
+        Assert.DoesNotContain("<code_change_instructions>", systemMessage);
     }
 }

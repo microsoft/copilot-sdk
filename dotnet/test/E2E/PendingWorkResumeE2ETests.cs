@@ -78,6 +78,7 @@ public class PendingWorkResumeE2ETests(E2ETestFixture fixture, ITestOutputHelper
                 }
             });
             var resumeEvent = await GetSingleResumeEventAsync(session2);
+            Assert.Equal(true, resumeEvent.Data.ContinuePendingWork);
             Assert.False(resumeEvent.Data.SessionWasActive);
 
             var finalReplyObserved = false;
@@ -120,69 +121,6 @@ public class PendingWorkResumeE2ETests(E2ETestFixture fixture, ITestOutputHelper
         {
             Interlocked.Increment(ref originalToolInvocations);
             return $"ORIGINAL_SHOULD_NOT_RUN_{value}";
-        }
-    });
-
-    [Fact]
-    public async Task Should_Continue_Pending_External_Tool_Request_After_Resume()
-        => await WithSdkDiagnosticsAsync(async () =>
-    {
-        var originalToolStarted = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var releaseOriginalTool = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        await using var server = Ctx.CreateClient(options: new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForSpawnedTcp(connectionToken: SharedToken) });
-        await server.StartAsync();
-        var runtimePort = GetRuntimePort(server);
-
-        using var suspendedClient = Ctx.CreateClient(options: new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp("localhost", runtimePort, connectionToken: SharedToken) });
-        var session1 = await Ctx.CreateSessionAsync(suspendedClient, new CreateSessionOptions
-        { Tools = new SessionToolOptions { Definitions = [AIFunctionFactory.Create(BlockingExternalTool, "resume_external_tool")] }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
-        var sessionId = session1.SessionId;
-
-        try
-        {
-            var toolRequested = WaitForExternalToolRequestAsync(session1, "resume_external_tool");
-
-            await session1.SendAsync(new MessageOptions
-            {
-                Prompt = "Use resume_external_tool with value 'beta', then reply with the result.",
-            });
-
-            var toolEvent = await toolRequested;
-            Assert.Equal("beta", await originalToolStarted.Task.WaitAsync(PendingWorkTimeout));
-            await suspendedClient.ForceStopAsync();
-
-            await using var resumedClient = Ctx.CreateClient(options: new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp("localhost", runtimePort, connectionToken: SharedToken) });
-            var session2 = await Ctx.ResumeSessionAsync(resumedClient, sessionId, new ResumeSessionOptions
-            { ContinuePendingWork = true, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
-
-            var finalResponse = TestHelper.GetNextEventOfTypeAsync<AssistantMessageEvent>(
-                session2,
-                message => message.Data.Content?.Contains("EXTERNAL_RESUMED_BETA", StringComparison.Ordinal) == true,
-                PendingWorkTimeout);
-            var resumedTurnIdle = TestHelper.GetNextEventOfTypeAsync<SessionIdleEvent>(session2, PendingWorkTimeout);
-            var toolResult = await session2.Rpc.Tools.HandlePendingToolCallAsync(
-                toolEvent.Data.RequestId,
-                result: JsonDocument.Parse("\"EXTERNAL_RESUMED_BETA\"").RootElement.Clone());
-            Assert.True(toolResult.Success);
-            Assert.Contains("EXTERNAL_RESUMED_BETA", (await finalResponse).Data.Content);
-            await resumedTurnIdle;
-
-            await session2.DisposeAsync();
-            await resumedClient.ForceStopAsync();
-        }
-        finally
-        {
-            releaseOriginalTool.TrySetResult("ORIGINAL_SHOULD_NOT_WIN");
-        }
-
-        [Description("Looks up a value after resumption")]
-        async Task<string> BlockingExternalTool(
-            [Description("Value to look up")] string value,
-            CancellationToken cancellationToken)
-        {
-            originalToolStarted.TrySetResult(value);
-            return await releaseOriginalTool.Task.WaitAsync(Timeout.InfiniteTimeSpan, cancellationToken);
         }
     });
 
@@ -468,80 +406,6 @@ public class PendingWorkResumeE2ETests(E2ETestFixture fixture, ITestOutputHelper
             return await releaseOriginalToolB.Task.WaitAsync(Timeout.InfiniteTimeSpan, cancellationToken);
         }
     });
-
-    [Fact]
-    public async Task Should_Resume_Successfully_When_No_Pending_Work_Exists()
-    {
-        await using var server = Ctx.CreateClient(options: new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForSpawnedTcp(connectionToken: SharedToken) });
-        await server.StartAsync();
-        var runtimePort = GetRuntimePort(server);
-
-        string sessionId;
-        await using (var firstClient = Ctx.CreateClient(options: new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp("localhost", runtimePort, connectionToken: SharedToken) }))
-        {
-            var firstSession = await Ctx.CreateSessionAsync(firstClient, new CreateSessionOptions
-            { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
-            sessionId = firstSession.SessionId;
-
-            var firstAnswer = await firstSession.SendAndWaitAsync(new MessageOptions { Prompt = "Reply with exactly: NO_PENDING_TURN_ONE" });
-            Assert.Contains("NO_PENDING_TURN_ONE", firstAnswer?.Data.Content ?? string.Empty);
-
-            await firstSession.DisposeAsync();
-        }
-
-        await using var resumedClient = Ctx.CreateClient(options: new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp("localhost", runtimePort, connectionToken: SharedToken) });
-        var resumedSession = await Ctx.ResumeSessionAsync(resumedClient, sessionId, new ResumeSessionOptions
-        { ContinuePendingWork = true, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
-
-        // Resuming with ContinuePendingWork=true on a session whose previous turn already
-        // completed must be a no-op for pending work and must leave the session usable.
-        var followUp = await resumedSession.SendAndWaitAsync(new MessageOptions { Prompt = "Reply with exactly: NO_PENDING_TURN_TWO" });
-
-        Assert.Contains("NO_PENDING_TURN_TWO", followUp?.Data.Content ?? string.Empty);
-
-        await resumedSession.DisposeAsync();
-    }
-
-    [Fact]
-    public async Task Should_Report_ContinuePendingWork_True_In_Resume_Event()
-    {
-        await using var server = Ctx.CreateClient(options: new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForSpawnedTcp(connectionToken: SharedToken) });
-        await server.StartAsync();
-        var runtimePort = GetRuntimePort(server);
-
-        string sessionId;
-        await using (var firstClient = Ctx.CreateClient(options: new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp("localhost", runtimePort, connectionToken: SharedToken) }))
-        {
-            var firstSession = await Ctx.CreateSessionAsync(firstClient, new CreateSessionOptions
-            { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
-            sessionId = firstSession.SessionId;
-
-            var firstAnswer = await firstSession.SendAndWaitAsync(new MessageOptions
-            {
-                Prompt = "Reply with exactly: CONTINUE_PENDING_WORK_TRUE_TURN_ONE",
-            });
-            Assert.Contains("CONTINUE_PENDING_WORK_TRUE_TURN_ONE", firstAnswer?.Data.Content ?? string.Empty);
-
-            await firstSession.DisposeAsync();
-        }
-
-        await using var resumedClient = Ctx.CreateClient(options: new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp("localhost", runtimePort, connectionToken: SharedToken) });
-        var resumedSession = await Ctx.ResumeSessionAsync(resumedClient, sessionId, new ResumeSessionOptions
-        { ContinuePendingWork = true, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
-
-        var resumeEvent = await GetSingleResumeEventAsync(resumedSession);
-        Assert.Equal(true, resumeEvent.Data.ContinuePendingWork);
-        Assert.Equal((bool?)false, resumeEvent.Data.SessionWasActive);
-
-        var followUp = await resumedSession.SendAndWaitAsync(new MessageOptions
-        {
-            Prompt = "Reply with exactly: CONTINUE_PENDING_WORK_TRUE_TURN_TWO",
-        });
-
-        Assert.Contains("CONTINUE_PENDING_WORK_TRUE_TURN_TWO", followUp?.Data.Content ?? string.Empty);
-
-        await resumedSession.DisposeAsync();
-    }
 
     private static async Task<ExternalToolRequestedEvent> WaitForExternalToolRequestAsync(
         CopilotSession session,

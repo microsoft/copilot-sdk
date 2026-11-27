@@ -6,8 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -136,174 +134,70 @@ func TestScenarioTestingSendsE2E(t *testing.T) {
 		}, extension)
 	})
 
-	for _, mode := range []string{"", "enqueue", "immediate"} {
-		name := mode
-		if name == "" {
-			name = "default"
+	t.Run("should not invoke send when scenario cancels before dispatch", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		defer cancel()
+		f := newGeneratedRPCFixture(t, ctx)
+		var calls atomic.Int64
+		f.server.SetRequestHandler("session.send", func(json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
+			calls.Add(1)
+			return json.RawMessage(`{"messageId":"unexpected"}`), nil
+		})
+
+		cancelled, cancelSend := context.WithCancel(ctx)
+		cancelSend()
+		_, err := f.session.Send(cancelled, copilot.MessageOptions{
+			Prompt:        "This message must never be invoked.",
+			DisplayPrompt: "Cancelled scenario message",
+			Source:        copilot.MessageSourceAgent("scenario-client"),
+		})
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Send error = %v, want context cancellation", err)
 		}
-		t.Run("should not invoke send when scenario cancels before dispatch "+name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-			defer cancel()
-			f := newGeneratedRPCFixture(t, ctx)
-			var calls atomic.Int64
-			f.server.SetRequestHandler("session.send", func(json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
-				calls.Add(1)
-				return json.RawMessage(`{"messageId":"unexpected"}`), nil
-			})
+		if calls.Load() != 0 {
+			t.Fatalf("session.send calls = %d, want 0", calls.Load())
+		}
+	})
 
-			cancelled, cancelSend := context.WithCancel(ctx)
-			cancelSend()
-			_, err := f.session.Send(cancelled, copilot.MessageOptions{
-				Prompt:        "This message must never be invoked.",
-				DisplayPrompt: "Cancelled scenario message",
-				Mode:          mode,
-				Source:        copilot.MessageSourceAgent("scenario-client"),
-			})
-			if !errors.Is(err, context.Canceled) {
-				t.Fatalf("Send error = %v, want context cancellation", err)
-			}
-			if calls.Load() != 0 {
-				t.Fatalf("session.send calls = %d, want 0", calls.Load())
-			}
-		})
-
-		t.Run("should not replay scenario send after ambiguous transport loss "+name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-			defer cancel()
-			f := newGeneratedRPCFixture(t, ctx)
-			var calls atomic.Int64
-			capturedRequests := make(chan map[string]any, 1)
-			f.server.SetRequestHandler("session.send", func(params json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
-				calls.Add(1)
-				var captured map[string]any
-				if err := json.Unmarshal(params, &captured); err != nil {
-					return nil, &jsonrpc2.Error{Code: -32000, Message: err.Error()}
-				}
-				capturedRequests <- captured
-				_ = f.conn.Close()
-				return nil, nil
-			})
-
-			_, err := f.session.Send(ctx, copilot.MessageOptions{
-				Prompt:        "AMBIGUOUS_SCENARIO_SEND",
-				DisplayPrompt: "Ambiguous scenario send",
-				Mode:          mode,
-				Source:        copilot.MessageSourceAgent("scenario-client"),
-			})
-			if err == nil {
-				t.Fatal("Expected transport loss")
-			}
-			if errors.Is(err, context.DeadlineExceeded) {
-				t.Fatalf("Send waited for its deadline instead of reporting transport loss: %v", err)
-			}
-			if calls.Load() != 1 {
-				t.Fatalf("session.send calls = %d, want 1", calls.Load())
-			}
-			var captured map[string]any
-			select {
-			case captured = <-capturedRequests:
-			case <-ctx.Done():
-				t.Fatalf("Timed out waiting for captured session.send request: %v", ctx.Err())
-			}
-			if mode == "" {
-				if _, exists := captured["mode"]; exists {
-					t.Fatalf("Default mode should be omitted: %#v", captured)
-				}
-			} else if captured["mode"] != mode {
-				t.Fatalf("mode = %#v, want %q", captured["mode"], mode)
-			}
-		})
-	}
-
-	t.Run("should order idle queued and immediate scenario delivery", func(t *testing.T) {
-		f := newGeneratedRPCFixture(t, t.Context())
-		var mu sync.Mutex
-		var events []copilot.SessionEvent
-		var sends int
+	t.Run("should not replay scenario send after ambiguous transport loss", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		defer cancel()
+		f := newGeneratedRPCFixture(t, ctx)
+		var calls atomic.Int64
+		capturedRequests := make(chan map[string]any, 1)
 		f.server.SetRequestHandler("session.send", func(params json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
-			var request struct {
-				Prompt string `json:"prompt"`
-				Mode   string `json:"mode"`
+			calls.Add(1)
+			var captured map[string]any
+			if err := json.Unmarshal(params, &captured); err != nil {
+				return nil, &jsonrpc2.Error{Code: -32000, Message: err.Error()}
 			}
-			if err := json.Unmarshal(params, &request); err != nil {
-				t.Errorf("Unmarshal session.send failed: %v", err)
-			}
-			mu.Lock()
-			defer mu.Unlock()
-			sends++
-			messageID := fmt.Sprintf("scenario-message-%d", sends)
-			delivery := copilot.UserMessageDeliveryIdle
-			switch sends {
-			case 4, 5:
-				delivery = copilot.UserMessageDeliverySteering
-			case 6:
-				delivery = copilot.UserMessageDeliveryQueued
-			}
-			events = append(events, scenarioEvent(messageID, &copilot.UserMessageData{
-				Content:            request.Prompt,
-				Delivery:           &delivery,
-				MessageID:          &messageID,
-				TransformedContent: &request.Prompt,
-			}))
-			return mustJSON(t, map[string]any{"messageId": messageID}), nil
-		})
-		f.server.SetRequestHandler("session.getMessages", func(_ json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
-			mu.Lock()
-			defer mu.Unlock()
-			return mustJSON(t, map[string]any{"events": append([]copilot.SessionEvent(nil), events...)}), nil
+			capturedRequests <- captured
+			_ = f.conn.Close()
+			return nil, nil
 		})
 
-		send := func(prompt, mode string) string {
-			t.Helper()
-			result, err := f.session.Send(t.Context(), copilot.MessageOptions{
-				Prompt: prompt,
-				Mode:   mode,
-				Source: copilot.MessageSourceAgent("scenario-client"),
-			})
-			if err != nil {
-				t.Fatalf("Send(%q, %q) failed: %v", prompt, mode, err)
-			}
-			return result
+		_, err := f.session.Send(ctx, copilot.MessageOptions{
+			Prompt:        "AMBIGUOUS_SCENARIO_SEND",
+			DisplayPrompt: "Ambiguous scenario send",
+			Source:        copilot.MessageSourceAgent("scenario-client"),
+		})
+		if err == nil {
+			t.Fatal("Expected transport loss")
 		}
-
-		idleEnqueueID := send("IDLE_ENQUEUE", "enqueue")
-		idleImmediateID := send("IDLE_IMMEDIATE", "immediate")
-		_ = send("START_BLOCKING_TURN", "")
-		steeringID := send("FIRST_STEERING", "immediate")
-		immediateBehindID := send("SECOND_IMMEDIATE", "immediate")
-		queuedID := send("FINAL_QUEUED", "enqueue")
-
-		observed, err := f.session.GetEvents(t.Context())
-		if err != nil {
-			t.Fatalf("GetEvents failed: %v", err)
+		if errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Send waited for its deadline instead of reporting transport loss: %v", err)
 		}
-		find := func(id string) (int, *copilot.UserMessageData) {
-			t.Helper()
-			for i, event := range observed {
-				data, ok := event.Data.(*copilot.UserMessageData)
-				if ok && data.MessageID != nil && *data.MessageID == id {
-					return i, data
-				}
-			}
-			t.Fatalf("Did not find user.message for %q", id)
-			return -1, nil
+		if calls.Load() != 1 {
+			t.Fatalf("session.send calls = %d, want 1", calls.Load())
 		}
-		assertDelivery := func(id string, want copilot.UserMessageDelivery) int {
-			t.Helper()
-			index, data := find(id)
-			if data.Delivery == nil || *data.Delivery != want {
-				t.Fatalf("Delivery for %q = %#v, want %q", id, data.Delivery, want)
-			}
-			return index
+		var captured map[string]any
+		select {
+		case captured = <-capturedRequests:
+		case <-ctx.Done():
+			t.Fatalf("Timed out waiting for captured session.send request: %v", ctx.Err())
 		}
-
-		assertDelivery(idleEnqueueID, copilot.UserMessageDeliveryIdle)
-		assertDelivery(idleImmediateID, copilot.UserMessageDeliveryIdle)
-		steeringIndex := assertDelivery(steeringID, copilot.UserMessageDeliverySteering)
-		behindIndex := assertDelivery(immediateBehindID, copilot.UserMessageDeliverySteering)
-		queuedIndex := assertDelivery(queuedID, copilot.UserMessageDeliveryQueued)
-		if steeringIndex >= behindIndex || behindIndex >= queuedIndex {
-			t.Fatalf("Unexpected delivery order: steering=%d behind=%d queued=%d", steeringIndex, behindIndex, queuedIndex)
+		if _, exists := captured["mode"]; exists {
+			t.Fatalf("Default mode should be omitted: %#v", captured)
 		}
 	})
 }

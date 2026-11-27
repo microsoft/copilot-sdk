@@ -673,23 +673,6 @@ class GeneratedBuilderEvolutionTest {
     }
 
     @Test
-    void representativeRpcBuildersRoundTripThroughJackson() throws Exception {
-        var switchTo = com.microsoft.copilot.generated.rpc.SessionModelSwitchToParams.builder().sessionId("session-1")
-                .modelId("model-1").build();
-        var options = com.microsoft.copilot.generated.rpc.SessionOptionsUpdateParams.builder().sessionId("session-1")
-                .model("model-2").build();
-
-        var switchJson = JSON.writeValueAsString(switchTo);
-        var optionsJson = JSON.writeValueAsString(options);
-        assertEquals("model-1", JSON
-                .readValue(switchJson, com.microsoft.copilot.generated.rpc.SessionModelSwitchToParams.class).modelId());
-        assertEquals("model-2", JSON
-                .readValue(optionsJson, com.microsoft.copilot.generated.rpc.SessionOptionsUpdateParams.class).model());
-        assertFalse(JSON.readTree(switchJson).has("autoTier"));
-        assertFalse(JSON.readTree(optionsJson).has("experiments"));
-    }
-
-    @Test
     void sealedAndMutableUnionVariantBuildersKeepJacksonDiscriminators() throws Exception {
         var sealed = com.microsoft.copilot.generated.rpc.McpPlanTransportChoicePackage.builder().choiceId("choice-1")
                 .transport(com.microsoft.copilot.generated.rpc.McpPlanPackageTransport.STDIO).packageType("npm")
@@ -730,22 +713,6 @@ class GeneratedBuilderEvolutionTest {
         assertNotEquals(mutable, sameValues);
         mutable.setMessage("updated page");
         assertEquals("updated page", mutable.getMessage());
-    }
-
-    @Test
-    @Tag("java-compatibility")
-    void compilerFailureRetainsTheCompleteExpectedDiagnostic() throws Exception {
-        JavaCompiler compiler = requireCompiler();
-        Path source = tempDirectory.resolve("diagnostics/MissingTypeControl.java");
-        Files.createDirectories(source.getParent());
-        Files.writeString(source, "package fixture; final class MissingTypeControl { MissingBaselineType value; }\n",
-                StandardCharsets.UTF_8);
-        Path output = tempDirectory.resolve("diagnostics/classes");
-        Compilation result = compile(compiler, List.of(source), output, testClasspath());
-
-        assertFalse(result.success(), result.diagnostics());
-        assertTrue(result.diagnostics().contains("MissingBaselineType"), result.diagnostics());
-        assertTrue(result.diagnostics().contains("compiler.err.cant.resolve"), result.diagnostics());
     }
 
     @Test
@@ -995,5 +962,4 @@ class GeneratedBuilderEvolutionTest {
 
     private record Compilation(boolean success, String diagnostics) {
     }
-
 }

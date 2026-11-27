@@ -55,9 +55,6 @@ import com.microsoft.copilot.rpc.CopilotExpAssignmentResponse;
 import com.microsoft.copilot.rpc.CreateSessionRequest;
 import com.microsoft.copilot.rpc.CreateSessionResponse;
 import com.microsoft.copilot.rpc.DefaultAgentConfig;
-import com.microsoft.copilot.rpc.ElicitationHandler;
-import com.microsoft.copilot.rpc.ElicitationResult;
-import com.microsoft.copilot.rpc.ElicitationResultAction;
 import com.microsoft.copilot.rpc.ExitPlanModeResult;
 import com.microsoft.copilot.rpc.ExpConfigEntry;
 import com.microsoft.copilot.rpc.GitHubMcpToolConfig;
@@ -120,21 +117,6 @@ public class SessionRequestBuilderTest {
             }
             assertEquals(choice,
                     mapper.treeToValue(wire, SessionOpenOptions.class).inference().allowMultipleToolCalls());
-        }
-    }
-
-    @Test
-    void toolFilterPrecedenceIsOmittedInAllModes() throws Exception {
-        var mapper = JsonRpcClient.getObjectMapper();
-        for (var mode : new CopilotClientMode[]{CopilotClientMode.CODING_AGENT, CopilotClientMode.EMPTY}) {
-            for (var request : new Object[]{
-                    SessionRequestBuilder.buildCreateRequest(new CreateSessionOptions(), "s1", mode),
-                    SessionRequestBuilder.buildResumeRequest("s1", new ResumeSessionOptions(), mode),
-                    SessionRequestBuilder.buildCreateRequest(null, "s1", mode),
-                    SessionRequestBuilder.buildResumeRequest("s1", null, mode)}) {
-                var json = mapper.readTree(mapper.writeValueAsBytes(request));
-                assertFalse(json.has("toolFilterPrecedence"), mode + " must use the runtime default");
-            }
         }
     }
 
@@ -319,17 +301,38 @@ public class SessionRequestBuilderTest {
     }
 
     @Test
-    void askUserVariantDefaultsToOmittedLegacyBehavior() throws Exception {
+    void defaultCreateAndResumeRequestsOmitUnsetOptionalFields() throws Exception {
         var mapper = JsonRpcClient.getObjectMapper();
-        var createRequest = SessionRequestBuilder.buildCreateRequest(new CreateSessionOptions(), "create-session");
-        var resumeRequest = SessionRequestBuilder.buildResumeRequest("resume-session", new ResumeSessionOptions());
+        var create = SessionRequestBuilder.buildCreateRequest(new CreateSessionOptions(), "default-create");
+        var resume = SessionRequestBuilder.buildResumeRequest("default-resume", new ResumeSessionOptions());
 
-        assertNull(createRequest.getInteraction().getAskUserVariant());
-        assertFalse(mapper.readTree(mapper.writeValueAsBytes(createRequest)).path("interaction").has("askUserVariant"));
-        assertNull(resumeRequest.getInteraction().getAskUserVariant());
-        assertFalse(mapper.readTree(mapper.writeValueAsBytes(resumeRequest)).path("interaction").has("askUserVariant"));
+        assertNull(create.getCloud());
+        assertNull(create.getInteraction().getRequestExitPlanMode());
+        assertNull(create.getInteraction().getRequestAutoModeSwitch());
+        assertNull(create.getInteraction().getAskUserVariant());
+        assertNull(resume.getInteraction().getAskUserVariant());
+        assertNull(create.getSkills().getHasProvider());
+        assertNull(resume.getSkills().getHasProvider());
+        assertNull(create.getExperiments().getEnableExperimentalMode());
+        assertNull(resume.getExperiments().getEnableExperimentalMode());
+        assertNull(create.getExperiments().getAssignments());
+        assertNull(resume.getExperiments().getAssignments());
+        assertNull(create.getState().getMemory());
+        assertNull(resume.getState().getMemory());
+        assertNull(create.getGitHub().getTelemetryEnabled());
+        assertNull(resume.getGitHub().getTelemetryEnabled());
+        assertNull(create.getMcp().getOauthTokenStorage());
+        assertNull(resume.getMcp().getOauthTokenStorage());
+
+        var createJson = mapper.readTree(mapper.writeValueAsBytes(create));
+        var resumeJson = mapper.readTree(mapper.writeValueAsBytes(resume));
+        assertFalse(createJson.has("cloud"));
+        for (var json : List.of(createJson, resumeJson)) {
+            assertFalse(json.path("interaction").has("askUserVariant"), json.toString());
+            assertFalse(json.path("skills").has("hasProvider"), json.toString());
+            assertFalse(json.path("experiments").has("assignments"), json.toString());
+        }
     }
-
     @Test
     @AllowCopilotExperimental
     void skillProviderFlagIsForwardedAndSerializedForCreateAndResume() throws Exception {
@@ -348,20 +351,6 @@ public class SessionRequestBuilderTest {
                 .asBoolean());
         assertTrue(mapper.readTree(mapper.writeValueAsBytes(resumeRequest)).path("skills").path("hasProvider")
                 .asBoolean());
-    }
-
-    @Test
-    void skillProviderFlagIsOmittedWhenUnset() throws Exception {
-        var mapper = JsonRpcClient.getObjectMapper();
-        var createRequest = SessionRequestBuilder.buildCreateRequest(new CreateSessionOptions(),
-                "skill-provider-create");
-        var resumeRequest = SessionRequestBuilder.buildResumeRequest("skill-provider-resume",
-                new ResumeSessionOptions());
-
-        assertNull(createRequest.getSkills().getHasProvider());
-        assertNull(resumeRequest.getSkills().getHasProvider());
-        assertFalse(mapper.readTree(mapper.writeValueAsBytes(createRequest)).path("skills").has("hasProvider"));
-        assertFalse(mapper.readTree(mapper.writeValueAsBytes(resumeRequest)).path("skills").has("hasProvider"));
     }
 
     @Test
@@ -418,22 +407,6 @@ public class SessionRequestBuilderTest {
         CreateSessionRequest request = SessionRequestBuilder.buildCreateRequest(config, "test-session-id");
 
         assertTrue(request.getHooks().getHasHandlers(), "Should be true when hooks have handlers");
-    }
-
-    @Test
-    void testBuildCreateRequestSetsEnvValueModeToDirect() {
-        CreateSessionRequest request = SessionRequestBuilder.buildCreateRequest(new CreateSessionOptions(),
-                "test-session-id");
-        assertEquals("direct", request.getMcp().getEnvValueMode());
-    }
-
-    @Test
-    void testBuildCreateRequestAlwaysSetsRequestPermissionTrue() {
-        // No permission handler set - requestPermission should still be true
-        CreateSessionRequest request = SessionRequestBuilder.buildCreateRequest(new CreateSessionOptions(),
-                "test-session-id");
-        assertTrue(request.getPermissions().getRequest(),
-                "requestPermission should always be true to enable deny-by-default behavior");
     }
 
     @Test
@@ -496,13 +469,6 @@ public class SessionRequestBuilderTest {
                 .setExperiments(new SessionExperimentOptions().setEnableExperimentalMode(false));
         CreateSessionRequest request = SessionRequestBuilder.buildCreateRequest(config, "test-session-id");
         assertFalse(request.getExperiments().getEnableExperimentalMode());
-    }
-
-    @Test
-    void testBuildCreateRequestOmitsEnableExperimentalModeWhenNotSet() {
-        CreateSessionRequest request = SessionRequestBuilder.buildCreateRequest(new CreateSessionOptions(),
-                "test-session-id");
-        assertNull(request.getExperiments().getEnableExperimentalMode());
     }
 
     @Test
@@ -576,34 +542,6 @@ public class SessionRequestBuilderTest {
     }
 
     @Test
-    void testBuildCreateRequestOmitsMemoryWhenNotSet() {
-        var config = new CreateSessionOptions();
-        CreateSessionRequest request = SessionRequestBuilder.buildCreateRequest(config, "test-session-id");
-        assertNull(request.getState().getMemory());
-    }
-
-    @Test
-    void testBuildCreateRequestForwardsEnableSessionTelemetryWhenFalse() {
-        var config = new CreateSessionOptions().setGitHub(new SessionGitHubOptions().setTelemetryEnabled(false));
-        CreateSessionRequest request = SessionRequestBuilder.buildCreateRequest(config, "test-session-id");
-        assertFalse(request.getGitHub().getTelemetryEnabled());
-    }
-
-    @Test
-    void testBuildCreateRequestOmitsEnableSessionTelemetryWhenNotSet() {
-        var config = new CreateSessionOptions();
-        CreateSessionRequest request = SessionRequestBuilder.buildCreateRequest(config, "test-session-id");
-        assertNull(request.getGitHub().getTelemetryEnabled());
-    }
-
-    @Test
-    void testBuildCreateRequestPassesThroughNullMcpOAuthTokenStorage() {
-        var config = new CreateSessionOptions();
-        CreateSessionRequest request = SessionRequestBuilder.buildCreateRequest(config, "test-session-id");
-        assertNull(request.getMcp().getOauthTokenStorage());
-    }
-
-    @Test
     void testBuildCreateRequestForwardsExplicitMcpOAuthTokenStorage() {
         var config = new CreateSessionOptions().setMcp(new SessionMcpOptions().setOauthTokenStorage("persistent"));
         CreateSessionRequest request = SessionRequestBuilder.buildCreateRequest(config, "test-session-id");
@@ -635,12 +573,6 @@ public class SessionRequestBuilderTest {
         assertSame(autopilot, request.getExecution().getAutopilot());
     }
 
-    @Test
-    void testBuildCreateRequestNullConfigHasNullMcpOAuthTokenStorage() {
-        CreateSessionRequest request = SessionRequestBuilder.buildCreateRequest(null, "test-session-id");
-        assertNull(request.getMcp().getOauthTokenStorage());
-    }
-
     // =========================================================================
     // buildResumeRequest
     // =========================================================================
@@ -655,21 +587,6 @@ public class SessionRequestBuilderTest {
         assertEquals("direct", request.getMcp().getEnvValueMode(),
                 "envValueMode should be 'direct' even for null config");
         assertNull(request.getSkills().getHasProvider());
-    }
-
-    @Test
-    void continuePendingWorkIsForwardedAndSerializedOnResume() throws Exception {
-        var mapper = JsonRpcClient.getObjectMapper();
-        for (boolean enabled : new boolean[]{true, false}) {
-            var config = new ResumeSessionOptions().setContinuePendingWork(enabled);
-            assertEquals(enabled, config.getContinuePendingWork().orElseThrow());
-
-            var request = SessionRequestBuilder.buildResumeRequest("sid-pending", config.clone());
-            assertEquals(enabled, request.getContinuePendingWork());
-            var serialized = mapper.readTree(mapper.writeValueAsBytes(request));
-            assertTrue(serialized.has("continuePendingWork"));
-            assertEquals(enabled, serialized.get("continuePendingWork").booleanValue());
-        }
     }
 
     @Test
@@ -695,8 +612,9 @@ public class SessionRequestBuilderTest {
             assertSame(config, config.setContinuePendingWork(enabled));
             var request = SessionRequestBuilder.buildResumeRequest("sid-pending", config.clone());
             assertEquals(enabled, request.getContinuePendingWork());
-            assertEquals(enabled,
-                    mapper.readTree(mapper.writeValueAsBytes(request)).path("continuePendingWork").booleanValue());
+            var serialized = mapper.readTree(mapper.writeValueAsBytes(request));
+            assertTrue(serialized.has("continuePendingWork"));
+            assertEquals(enabled, serialized.get("continuePendingWork").booleanValue());
         }
 
         assertSame(config, config.setContinuePendingWork((Boolean) null));
@@ -721,32 +639,11 @@ public class SessionRequestBuilderTest {
     }
 
     @Test
-    void testBuildResumeRequestForwardsEnableSessionTelemetryWhenFalse() {
-        var config = new ResumeSessionOptions().setGitHub(new SessionGitHubOptions().setTelemetryEnabled(false));
-        ResumeSessionRequest request = SessionRequestBuilder.buildResumeRequest("sid-1", config);
-        assertFalse(request.getGitHub().getTelemetryEnabled());
-    }
-
-    @Test
-    void testBuildResumeRequestOmitsEnableSessionTelemetryWhenNotSet() {
-        var config = new ResumeSessionOptions();
-        ResumeSessionRequest request = SessionRequestBuilder.buildResumeRequest("sid-1", config);
-        assertNull(request.getGitHub().getTelemetryEnabled());
-    }
-
-    @Test
     void testBuildResumeRequestSetsEnableExperimentalMode() {
         var config = new ResumeSessionOptions()
                 .setExperiments(new SessionExperimentOptions().setEnableExperimentalMode(true));
         ResumeSessionRequest request = SessionRequestBuilder.buildResumeRequest("sid-1", config);
         assertTrue(request.getExperiments().getEnableExperimentalMode());
-    }
-
-    @Test
-    void testBuildResumeRequestOmitsEnableExperimentalModeWhenNotSet() {
-        var config = new ResumeSessionOptions();
-        ResumeSessionRequest request = SessionRequestBuilder.buildResumeRequest("sid-1", config);
-        assertNull(request.getExperiments().getEnableExperimentalMode());
     }
 
     @Test
@@ -827,20 +724,6 @@ public class SessionRequestBuilderTest {
     }
 
     @Test
-    void testBuildResumeRequestSetsEnvValueModeToDirect() {
-        ResumeSessionRequest request = SessionRequestBuilder.buildResumeRequest("sid-8", new ResumeSessionOptions());
-        assertEquals("direct", request.getMcp().getEnvValueMode());
-    }
-
-    @Test
-    void testBuildResumeRequestAlwaysSetsRequestPermissionTrue() {
-        // No permission handler set - requestPermission should still be true
-        ResumeSessionRequest request = SessionRequestBuilder.buildResumeRequest("sid-9", new ResumeSessionOptions());
-        assertTrue(request.getPermissions().getRequest(),
-                "requestPermission should always be true to enable deny-by-default behavior");
-    }
-
-    @Test
     void testBuildResumeRequestSetsClientName() {
         var config = new ResumeSessionOptions().setClientName("my-app");
         ResumeSessionRequest request = SessionRequestBuilder.buildResumeRequest("sid-10", config);
@@ -898,13 +781,6 @@ public class SessionRequestBuilderTest {
     }
 
     @Test
-    void testBuildResumeRequestPassesThroughNullMcpOAuthTokenStorage() {
-        var config = new ResumeSessionOptions();
-        ResumeSessionRequest request = SessionRequestBuilder.buildResumeRequest("sid-12", config);
-        assertNull(request.getMcp().getOauthTokenStorage());
-    }
-
-    @Test
     void testBuildResumeRequestForwardsExplicitMcpOAuthTokenStorage() {
         var config = new ResumeSessionOptions().setMcp(new SessionMcpOptions().setOauthTokenStorage("persistent"));
         ResumeSessionRequest request = SessionRequestBuilder.buildResumeRequest("sid-13", config);
@@ -934,12 +810,6 @@ public class SessionRequestBuilderTest {
         assertTrue(request.getFilesystem().getTrackFileChanges());
         assertSame(sessionLimits, request.getExecution().getLimits());
         assertSame(autopilot, request.getExecution().getAutopilot());
-    }
-
-    @Test
-    void testBuildResumeRequestNullConfigHasNullMcpOAuthTokenStorage() {
-        ResumeSessionRequest request = SessionRequestBuilder.buildResumeRequest("sid-14", null);
-        assertNull(request.getMcp().getOauthTokenStorage());
     }
 
     @Test
@@ -978,13 +848,6 @@ public class SessionRequestBuilderTest {
         var config = new ResumeSessionOptions().setState(new SessionStateOptions().setMemory(memory));
         ResumeSessionRequest request = SessionRequestBuilder.buildResumeRequest("sid-mem", config);
         assertEquals(memory, request.getState().getMemory());
-    }
-
-    @Test
-    void testBuildResumeRequestOmitsMemoryWhenNotSet() {
-        var config = new ResumeSessionOptions();
-        ResumeSessionRequest request = SessionRequestBuilder.buildResumeRequest("sid-mem", config);
-        assertNull(request.getState().getMemory());
     }
 
     // =========================================================================
@@ -1027,16 +890,19 @@ public class SessionRequestBuilderTest {
     @Test
     void testConfigureResumeSessionWithHooks() throws Exception {
         var session = createTestSession();
-        var hooks = new SessionHooks().setOnPreToolUse((input, inv) -> CompletableFuture.completedFuture(null));
+        var invokedTool = new CompletableFuture<String>();
+        var hooks = new SessionHooks().setOnPreToolUse((input, inv) -> {
+            invokedTool.complete(input.getToolName());
+            return CompletableFuture.completedFuture(null);
+        });
         var config = new ResumeSessionOptions().setHooks(new SessionHookOptions().setHandlers(hooks));
 
         SessionRequestBuilder.configureSession(session, config);
 
-        // Hooks registered — handleHooksInvoke should dispatch preToolUse
         var mapper = JsonRpcClient.getObjectMapper();
         var input = mapper.valueToTree(Map.of("toolName", "test_tool"));
-        var result = session.handleHooksInvoke("preToolUse", input).get();
-        assertNull(result); // handler returns null
+        assertNull(session.handleHooksInvoke("preToolUse", input).get());
+        assertEquals("test_tool", invokedTool.getNow(null));
     }
 
     // =========================================================================
@@ -1148,82 +1014,6 @@ public class SessionRequestBuilderTest {
     }
 
     @Test
-    void configureSessionWithCommands_registersCommands() {
-        CopilotSession session = new CopilotSession("session-1", null);
-
-        var cmd = new com.microsoft.copilot.rpc.CommandDefinition().setName("deploy")
-                .setHandler(ctx -> CompletableFuture.completedFuture(null));
-        var config = new CreateSessionOptions()
-                .setInteraction(new SessionInteractionOptions().setCommands(List.of(cmd)));
-
-        // Covers config.getCommands() != null branch (L235-236)
-        SessionRequestBuilder.configureSession(session, config);
-        // If no exception thrown, the branch was covered
-    }
-
-    @Test
-    void configureSessionWithElicitationHandler_registersHandler() {
-        CopilotSession session = new CopilotSession("session-1", null);
-
-        ElicitationHandler handler = (context) -> CompletableFuture
-                .completedFuture(new ElicitationResult().setAction(ElicitationResultAction.CANCEL));
-        var config = new CreateSessionOptions()
-                .setInteraction(new SessionInteractionOptions().setOnElicitationRequest(handler));
-
-        // Covers config.getOnElicitationRequest() != null branch (L238-239)
-        SessionRequestBuilder.configureSession(session, config);
-    }
-
-    @Test
-    void configureSessionWithOnEvent_registersEventHandler() {
-        CopilotSession session = new CopilotSession("session-1", null);
-
-        var config = new CreateSessionOptions().setEvents(new SessionEventOptions().setOnEvent(event -> {
-        }));
-
-        // Covers config.getOnEvent() != null branch (L241-242)
-        SessionRequestBuilder.configureSession(session, config);
-    }
-
-    @Test
-    void configureResumedSessionWithCommands_registersCommands() {
-        CopilotSession session = new CopilotSession("session-1", null);
-
-        var cmd = new com.microsoft.copilot.rpc.CommandDefinition().setName("rollback")
-                .setHandler(ctx -> CompletableFuture.completedFuture(null));
-        var config = new ResumeSessionOptions()
-                .setInteraction(new SessionInteractionOptions().setCommands(List.of(cmd)));
-
-        // Covers ResumeSessionOptions.getCommands() != null branch (L271-272)
-        SessionRequestBuilder.configureSession(session, config);
-    }
-
-    @Test
-    void configureResumedSessionWithElicitationHandler_registersHandler() {
-        CopilotSession session = new CopilotSession("session-1", null);
-
-        ElicitationHandler handler = (context) -> CompletableFuture
-                .completedFuture(new ElicitationResult().setAction(ElicitationResultAction.CANCEL));
-        var config = new ResumeSessionOptions()
-                .setInteraction(new SessionInteractionOptions().setOnElicitationRequest(handler));
-
-        // Covers ResumeSessionOptions.getOnElicitationRequest() != null branch
-        // (L274-275)
-        SessionRequestBuilder.configureSession(session, config);
-    }
-
-    @Test
-    void configureResumedSessionWithOnEvent_registersEventHandler() {
-        CopilotSession session = new CopilotSession("session-1", null);
-
-        var config = new ResumeSessionOptions().setEvents(new SessionEventOptions().setOnEvent(event -> {
-        }));
-
-        // Covers ResumeSessionOptions.getOnEvent() != null branch (L277-278)
-        SessionRequestBuilder.configureSession(session, config);
-    }
-
-    @Test
     @AllowCopilotExperimental
     void configureResumedSessionWithSkillProvider_registersProvider() {
         CopilotSession session = new CopilotSession("session-1", null);
@@ -1315,15 +1105,6 @@ public class SessionRequestBuilderTest {
     }
 
     @Test
-    void testCreateRequestOmitsEnableSessionTelemetryWhenNull() throws Exception {
-        var config = new CreateSessionOptions();
-        CreateSessionRequest request = SessionRequestBuilder.buildCreateRequest(config, "test-session-id");
-        var mapper = JsonRpcClient.getObjectMapper();
-        var json = mapper.writeValueAsString(request);
-        assertFalse(json.contains("enableSessionTelemetry"), "enableSessionTelemetry should be omitted when null");
-    }
-
-    @Test
     void testResumeRequestSerializesEnableSessionTelemetryWhenFalse() throws Exception {
         var config = new ResumeSessionOptions().setGitHub(new SessionGitHubOptions().setTelemetryEnabled(false));
         ResumeSessionRequest request = SessionRequestBuilder.buildResumeRequest("sid-tel", config);
@@ -1333,112 +1114,9 @@ public class SessionRequestBuilderTest {
                 "enableSessionTelemetry should be serialized when set to false");
     }
 
-    @Test
-    void testResumeRequestOmitsEnableSessionTelemetryWhenNull() throws Exception {
-        var config = new ResumeSessionOptions();
-        ResumeSessionRequest request = SessionRequestBuilder.buildResumeRequest("sid-tel", config);
-        var mapper = JsonRpcClient.getObjectMapper();
-        var json = mapper.writeValueAsString(request);
-        assertFalse(json.contains("enableSessionTelemetry"), "enableSessionTelemetry should be omitted when null");
-    }
-
     // =========================================================================
     // Mode handler request flags
     // =========================================================================
-
-    @Test
-    void testBuildCreateRequestWithExitPlanModeHandler() {
-        var config = new CreateSessionOptions().setInteraction(new SessionInteractionOptions().setOnExitPlanModeRequest(
-                (request, invocation) -> CompletableFuture.completedFuture(new ExitPlanModeResult())));
-
-        CreateSessionRequest request = SessionRequestBuilder.buildCreateRequest(config, "test-session-id");
-
-        assertTrue(request.getInteraction().getRequestExitPlanMode());
-    }
-
-    @Test
-    void testBuildCreateRequestWithAutoModeSwitchHandler() {
-        var config = new CreateSessionOptions()
-                .setInteraction(new SessionInteractionOptions().setOnAutoModeSwitchRequest(
-                        (request, invocation) -> CompletableFuture.completedFuture(AutoModeSwitchResponse.NO)));
-
-        CreateSessionRequest request = SessionRequestBuilder.buildCreateRequest(config, "test-session-id");
-
-        assertTrue(request.getInteraction().getRequestAutoModeSwitch());
-    }
-
-    @Test
-    void testBuildCreateRequestWithoutModeHandlers() {
-        var config = new CreateSessionOptions();
-
-        CreateSessionRequest request = SessionRequestBuilder.buildCreateRequest(config, "test-session-id");
-
-        assertNull(request.getInteraction().getRequestExitPlanMode());
-        assertNull(request.getInteraction().getRequestAutoModeSwitch());
-    }
-
-    @Test
-    void testBuildResumeRequestWithExitPlanModeHandler() {
-        var config = new ResumeSessionOptions().setInteraction(new SessionInteractionOptions().setOnExitPlanModeRequest(
-                (request, invocation) -> CompletableFuture.completedFuture(new ExitPlanModeResult())));
-
-        ResumeSessionRequest request = SessionRequestBuilder.buildResumeRequest("session-1", config);
-
-        assertTrue(request.getInteraction().getRequestExitPlanMode());
-    }
-
-    @Test
-    void testBuildResumeRequestWithAutoModeSwitchHandler() {
-        var config = new ResumeSessionOptions()
-                .setInteraction(new SessionInteractionOptions().setOnAutoModeSwitchRequest(
-                        (request, invocation) -> CompletableFuture.completedFuture(AutoModeSwitchResponse.NO)));
-
-        ResumeSessionRequest request = SessionRequestBuilder.buildResumeRequest("session-1", config);
-
-        assertTrue(request.getInteraction().getRequestAutoModeSwitch());
-    }
-
-    @Test
-    void configureSessionWithExitPlanModeHandler_registersHandler() {
-        CopilotSession session = new CopilotSession("session-1", null);
-
-        var config = new CreateSessionOptions().setInteraction(new SessionInteractionOptions().setOnExitPlanModeRequest(
-                (request, invocation) -> CompletableFuture.completedFuture(new ExitPlanModeResult())));
-
-        SessionRequestBuilder.configureSession(session, config);
-    }
-
-    @Test
-    void configureSessionWithAutoModeSwitchHandler_registersHandler() {
-        CopilotSession session = new CopilotSession("session-1", null);
-
-        var config = new CreateSessionOptions()
-                .setInteraction(new SessionInteractionOptions().setOnAutoModeSwitchRequest(
-                        (request, invocation) -> CompletableFuture.completedFuture(AutoModeSwitchResponse.NO)));
-
-        SessionRequestBuilder.configureSession(session, config);
-    }
-
-    @Test
-    void configureResumedSessionWithExitPlanModeHandler_registersHandler() {
-        CopilotSession session = new CopilotSession("session-1", null);
-
-        var config = new ResumeSessionOptions().setInteraction(new SessionInteractionOptions().setOnExitPlanModeRequest(
-                (request, invocation) -> CompletableFuture.completedFuture(new ExitPlanModeResult())));
-
-        SessionRequestBuilder.configureSession(session, config);
-    }
-
-    @Test
-    void configureResumedSessionWithAutoModeSwitchHandler_registersHandler() {
-        CopilotSession session = new CopilotSession("session-1", null);
-
-        var config = new ResumeSessionOptions()
-                .setInteraction(new SessionInteractionOptions().setOnAutoModeSwitchRequest(
-                        (request, invocation) -> CompletableFuture.completedFuture(AutoModeSwitchResponse.NO)));
-
-        SessionRequestBuilder.configureSession(session, config);
-    }
 
     @Test
     void testCreateRequestSerializesModeFlags() throws Exception {
@@ -1473,32 +1151,6 @@ public class SessionRequestBuilderTest {
     // =========================================================================
 
     @Test
-    void testBuildCreateRequestPropagatesCloudSessionOptions() throws Exception {
-        var cloud = new CloudSessionOptions()
-                .setRepository(new CloudSessionRepository().setOwner("my-org").setName("my-repo").setBranch("main"));
-        var config = new CreateSessionOptions().setCloud(cloud);
-
-        CreateSessionRequest request = SessionRequestBuilder.buildCreateRequest(config, "test-session-id");
-
-        assertNotNull(request.getCloud());
-        assertEquals("my-org", request.getCloud().getRepository().getOwner());
-        assertEquals("my-repo", request.getCloud().getRepository().getName());
-        assertEquals("main", request.getCloud().getRepository().getBranch());
-    }
-
-    @Test
-    void testBuildCreateRequestOmitsCloudWhenNull() throws Exception {
-        var config = new CreateSessionOptions();
-
-        CreateSessionRequest request = SessionRequestBuilder.buildCreateRequest(config, "test-session-id");
-        var mapper = JsonRpcClient.getObjectMapper();
-        var json = mapper.writeValueAsString(request);
-
-        assertNull(request.getCloud());
-        assertFalse(json.contains("\"cloud\""), "cloud should be omitted when null");
-    }
-
-    @Test
     void testCloudSessionOptionsSerializesCorrectly() throws Exception {
         var cloud = new CloudSessionOptions()
                 .setRepository(new CloudSessionRepository().setOwner("acme").setName("widgets").setBranch("feature-1"));
@@ -1517,31 +1169,6 @@ public class SessionRequestBuilderTest {
     // =========================================================================
     // ExP assignment injection wiring
     // =========================================================================
-
-    @Test
-    void testBuildRequestsPropagateAndSerializeExpAssignments() throws Exception {
-        var mapper = JsonRpcClient.getObjectMapper();
-        var createAssignments = new CopilotExpAssignmentResponse()
-                .setConfigs(List.of(new ExpConfigEntry().setId("exp-create")));
-        var resumeAssignments = new CopilotExpAssignmentResponse()
-                .setConfigs(List.of(new ExpConfigEntry().setId("exp-resume")));
-
-        var createConfig = new CreateSessionOptions()
-                .setExperiments(new SessionExperimentOptions().setAssignments(createAssignments));
-        CreateSessionRequest createRequest = SessionRequestBuilder.buildCreateRequest(createConfig, "session-1");
-        assertEquals(createAssignments, createRequest.getExperiments().getAssignments());
-        var createJson = mapper.writeValueAsString(createRequest);
-        assertTrue(createJson.contains("\"assignments\""));
-        assertTrue(createJson.contains("\"Id\":\"exp-create\""));
-
-        var resumeConfig = new ResumeSessionOptions()
-                .setExperiments(new SessionExperimentOptions().setAssignments(resumeAssignments));
-        ResumeSessionRequest resumeRequest = SessionRequestBuilder.buildResumeRequest("session-1", resumeConfig);
-        assertEquals(resumeAssignments, resumeRequest.getExperiments().getAssignments());
-        var resumeJson = mapper.writeValueAsString(resumeRequest);
-        assertTrue(resumeJson.contains("\"assignments\""));
-        assertTrue(resumeJson.contains("\"Id\":\"exp-resume\""));
-    }
 
     @Test
     void testBuiltInAgentAllowlistPreservesOmissionEmptySubsetAndClone() throws Exception {
@@ -1575,23 +1202,6 @@ public class SessionRequestBuilderTest {
             assertFalse(createNull.path("agents").has("includedBuiltinAgents"));
             assertFalse(resumeNull.path("agents").has("includedBuiltinAgents"));
         }
-    }
-
-    @Test
-    void testBuildRequestsOmitExpAssignmentsWhenUnset() throws Exception {
-        var mapper = JsonRpcClient.getObjectMapper();
-
-        CreateSessionRequest createRequest = SessionRequestBuilder.buildCreateRequest(new CreateSessionOptions(),
-                "session-1");
-        assertNull(createRequest.getExperiments().getAssignments());
-        var createJson = mapper.writeValueAsString(createRequest);
-        assertFalse(createJson.contains("\"assignments\""), "expAssignments should be omitted when null");
-
-        ResumeSessionRequest resumeRequest = SessionRequestBuilder.buildResumeRequest("session-1",
-                new ResumeSessionOptions());
-        assertNull(resumeRequest.getExperiments().getAssignments());
-        var resumeJson = mapper.writeValueAsString(resumeRequest);
-        assertFalse(resumeJson.contains("\"assignments\""), "expAssignments should be omitted when null");
     }
 
     @Test

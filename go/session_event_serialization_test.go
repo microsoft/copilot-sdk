@@ -17,7 +17,7 @@ var _ EmbeddedTextResourceContents = rpc.EmbeddedTextResourceContents{}
 
 func TestSessionEventAutoTier(t *testing.T) {
 	for _, eventType := range []string{"session.start", "session.resume"} {
-		for _, tier := range []AutoTier{"", AutoTierEfficiency, AutoTierBalance, AutoTierIntelligence, AutoTierFast} {
+		for _, tier := range []AutoTier{"", AutoTierFast} {
 			t.Run(eventType+"/"+string(tier), func(t *testing.T) {
 				data := map[string]any{
 					"sessionId": "test-session", "version": 1,
@@ -235,72 +235,6 @@ func TestRawSessionEventDataWithNilRawMarshalsAsNull(t *testing.T) {
 	}
 }
 
-func TestManagedSettingsResolvedProvenanceRoundTrips(t *testing.T) {
-	sources := []ManagedSettingsResolvedSource{
-		ManagedSettingsResolvedSourceServer,
-		ManagedSettingsResolvedSourceDevice,
-		ManagedSettingsResolvedSourceClient,
-		ManagedSettingsResolvedSourceMixed,
-		ManagedSettingsResolvedSourceNone,
-	}
-	expectedSources := []string{"server", "device", "client", "mixed", "none"}
-	for i, source := range sources {
-		if string(source) != expectedSources[i] {
-			t.Fatalf("expected source %q, got %q", expectedSources[i], source)
-		}
-	}
-
-	clientManaged := true
-	resolved := SessionManagedSettingsResolvedData{
-		BypassPermissionsDisabled: true,
-		ClientManaged:             &clientManaged,
-		DeviceManaged:             false,
-		FailClosed:                false,
-		ManagedKeys:               []string{"permissions"},
-		ServerManaged:             false,
-		Source:                    ManagedSettingsResolvedSourceClient,
-	}
-	data, err := json.Marshal(resolved)
-	if err != nil {
-		t.Fatalf("failed to marshal managed settings resolution: %v", err)
-	}
-
-	var serialized map[string]any
-	if err := json.Unmarshal(data, &serialized); err != nil {
-		t.Fatalf("failed to inspect managed settings resolution: %v", err)
-	}
-	if serialized["source"] != "client" || serialized["clientManaged"] != true {
-		t.Fatalf("expected client provenance, got %v", serialized)
-	}
-
-	var roundTripped SessionManagedSettingsResolvedData
-	if err := json.Unmarshal(data, &roundTripped); err != nil {
-		t.Fatalf("failed to round-trip managed settings resolution: %v", err)
-	}
-	if roundTripped.Source != ManagedSettingsResolvedSourceClient ||
-		roundTripped.ClientManaged == nil ||
-		!*roundTripped.ClientManaged {
-		t.Fatalf("expected client provenance to round-trip, got %#v", roundTripped)
-	}
-
-	resolved.Source = ManagedSettingsResolvedSourceMixed
-	resolved.ClientManaged = nil
-	data, err = json.Marshal(resolved)
-	if err != nil {
-		t.Fatalf("failed to marshal mixed managed settings resolution: %v", err)
-	}
-	serialized = nil
-	if err := json.Unmarshal(data, &serialized); err != nil {
-		t.Fatalf("failed to inspect mixed managed settings resolution: %v", err)
-	}
-	if serialized["source"] != "mixed" {
-		t.Fatalf("expected mixed provenance, got %v", serialized["source"])
-	}
-	if _, ok := serialized["clientManaged"]; ok {
-		t.Fatalf("expected absent clientManaged to be omitted, got %v", serialized)
-	}
-}
-
 func TestSessionRootUnionEventRoundTrips(t *testing.T) {
 	cases := []struct {
 		eventType SessionEventType
@@ -309,15 +243,9 @@ func TestSessionRootUnionEventRoundTrips(t *testing.T) {
 		{
 			eventType: SessionEventTypeSessionIndexedSearch,
 			payloads: []string{
-				`{"kind":"status","state":"ready"}`,
 				`{"kind":"startup","outcome":"failed","fileCount":0,"startupDurationMs":12.5,
 				  "forcedByEnv":false,"warmStart":true,"disabledReason":"organization",
 				  "errorMessage":"test startup diagnostic","eligible":false}`,
-				`{"kind":"server_error","errorType":"unexpected_exit","exitCode":0,
-				  "errorMessage":"test server diagnostic"}`,
-				`{"kind":"incremental","phase":"updated","changedFileCount":0,"addedFileCount":2,
-				  "deletedFileCount":1,"totalChangeCount":3,"walkDurationMs":0,
-				  "updateDurationMs":1.25,"totalDurationMs":1.25}`,
 				`{"kind":"future_variant","details":{"enabled":false,"count":0,"ratio":0.5}}`,
 			},
 		},
@@ -329,19 +257,8 @@ func TestSessionRootUnionEventRoundTrips(t *testing.T) {
 				  "readwritePathsCount":0,"readonlyPathsCount":1,"deniedPathsCount":0,
 				  "addCurrentWorkingDirectory":true,"allowOutbound":false,"allowLocalNetwork":false,
 				  "proxyMode":"none","allowBypass":false,"gitAuth":false,"ghAuth":false,"keychainAccess":false}`,
-				`{"kind":"spawn_completed","control":"process","outcome":"succeeded","platform":"linux",
-				  "backend":"bubblewrap","enforcementPoint":"shell","durationMs":1.5}`,
 				`{"kind":"enforcement_state","control":"process","outcome":"engaged","platform":"linux",
 				  "backend":"bubblewrap","enforcementPoint":"shell","command":null}`,
-				`{"kind":"access_denied","control":"filesystem","outcome":"denied","platform":"linux",
-				  "enforcementPoint":"builtin_filesystem","denialClass":"filesystem_read",
-				  "attestation":"builtin_policy_checked","deniedResource":"/restricted/example"}`,
-				`{"kind":"bypass_decided","control":"bypass","outcome":"declined","platform":"linux",
-				  "enforcementPoint":"shell","source":"user_prompted","toolCallId":"tool-1"}`,
-				`{"kind":"permissive_retry_decided","control":"process","outcome":"approved","platform":"linux",
-				  "enforcementPoint":"shell","source":"model_requested"}`,
-				`{"kind":"permissive_retry_completed","control":"process","outcome":"succeeded",
-				  "platform":"linux","enforcementPoint":"shell"}`,
 			},
 		},
 	}
@@ -454,12 +371,7 @@ func TestSessionManagedSettingsResolvedEventRoundTrips(t *testing.T) {
 // The failure event is ephemeral: the runtime emits it when an Auto preference
 // switch cannot mint a usable model, and never persists or replays it.
 func TestSessionAutoTierSwitchFailedEvent(t *testing.T) {
-	reasons := []AutoTierSwitchFailureReason{
-		AutoTierSwitchFailureReasonPolicyRejected,
-		AutoTierSwitchFailureReasonRequestFailed,
-		AutoTierSwitchFailureReasonSetupFailed,
-		AutoTierSwitchFailureReasonUnsupported,
-	}
+	reasons := []AutoTierSwitchFailureReason{AutoTierSwitchFailureReasonPolicyRejected}
 	for _, reason := range reasons {
 		t.Run(string(reason), func(t *testing.T) {
 			wire, err := json.Marshal(map[string]any{

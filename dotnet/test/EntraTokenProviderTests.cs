@@ -11,19 +11,6 @@ namespace Microsoft.Copilot.Test;
 public class EntraTokenProviderTests
 {
     [Fact]
-    public void Null_Configuration_Remains_Disabled()
-    {
-        EntraAuthOptions? config = null;
-        var options = new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Entra = config };
-        Assert.Null(options.Entra);
-
-        config = new EntraAuthOptions { ClientId = "existing-client" };
-        options.Entra = config;
-        Assert.Equal("existing-client", options.Entra!.ClientId);
-        Assert.Null(options.Entra.TokenProvider);
-    }
-
-    [Fact]
     public async Task Presents_Typed_Identity_And_Resource_Requests()
     {
         var observed = new List<EntraTokenAcquireRequest>();

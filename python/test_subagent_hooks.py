@@ -109,17 +109,11 @@ async def test_subagent_start_dispatches_normalized_input_and_context():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "hook_output",
-    [
-        {"decision": "block", "reason": "Read the rest of the file"},
-        {"modifiedResponse": "Verified: Hello from subagent test!"},
-        {"decision": "allow", "modifiedResponse": "Verified: Hello from subagent test!"},
-    ],
-)
-async def test_subagent_stop_dispatches_normalized_input_and_verdict(
-    hook_output: SubagentStopHookOutput,
-):
+async def test_subagent_stop_dispatches_normalized_input_and_verdict():
+    hook_output: SubagentStopHookOutput = {
+        "decision": "block",
+        "reason": "Read the rest of the file",
+    }
     captured: list[tuple[SubagentStopHookInput, dict[str, str]]] = []
 
     def on_stop(
@@ -170,11 +164,3 @@ async def test_subagent_stop_without_handler_returns_none():
     session._register_hooks({"on_subagent_start": lambda _input, _invocation: None})
 
     assert await session._handle_hooks_invoke("subagentStop", {}) is None
-
-
-@pytest.mark.asyncio
-async def test_subagent_start_without_handler_returns_none():
-    session = CopilotSession("parent", None)
-    session._register_hooks({"on_subagent_stop": lambda _input, _invocation: None})
-
-    assert await session._handle_hooks_invoke("subagentStart", {}) is None

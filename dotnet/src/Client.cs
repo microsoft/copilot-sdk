@@ -10,6 +10,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
+using System.Net;
 using System.Net.Sockets;
 using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
@@ -449,12 +450,12 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
                 else
                 {
                     // Child process (stdio or TCP)
-                    var (startedProcess, portOrNull, startedStderrPump) = await StartCliServerAsync(ct);
+                    var (startedProcess, dialHost, portOrNull, startedStderrPump) = await StartCliServerAsync(ct);
                     cliProcess = startedProcess;
                     stderrPump = startedStderrPump;
                     ownedRuntimePort = portOrNull is int port ? new RuntimePortRegistration(port) : null;
                     Volatile.Write(ref _actualPort, ownedRuntimePort);
-                    connection = await ConnectToServerAsync(cliProcess, portOrNull is null ? null : "localhost", portOrNull, stderrPump, ct);
+                    connection = await ConnectToServerAsync(cliProcess, dialHost, portOrNull, stderrPump, ct);
                     connection.OwnedRuntimePort = ownedRuntimePort;
                 }
 
@@ -2819,7 +2820,38 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
         }
     }
 
-    private async Task<(Process Process, int? DetectedLocalhostTcpPort, ProcessStderrPump StderrPump)> StartCliServerAsync(CancellationToken cancellationToken)
+    private static string GetSpawnedTcpDialHost(List<string> args)
+    {
+        var host = "127.0.0.1";
+        for (var index = 0; index < args.Count; index++)
+        {
+            var arg = args[index];
+            if (arg == "--host" && index + 1 < args.Count)
+            {
+                host = args[++index];
+            }
+            else if (arg.StartsWith("--host=", StringComparison.Ordinal))
+            {
+                host = arg.Substring("--host=".Length);
+            }
+        }
+
+        // Winsock rejects wildcard destinations, unlike wildcard bind addresses.
+        if (IPAddress.TryParse(host, out var bindAddress))
+        {
+            if (bindAddress.Equals(IPAddress.Any))
+            {
+                return IPAddress.Loopback.ToString();
+            }
+            if (bindAddress.Equals(IPAddress.IPv6Any))
+            {
+                return IPAddress.IPv6Loopback.ToString();
+            }
+        }
+        return host;
+    }
+
+    private async Task<(Process Process, string? DialHost, int? DetectedLocalhostTcpPort, ProcessStderrPump StderrPump)> StartCliServerAsync(CancellationToken cancellationToken)
     {
         var options = _options;
         var logger = _logger;
@@ -2852,6 +2884,7 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
         {
             args.AddRange(childProcessConnection.Args);
         }
+        var dialHost = tcpConnection is null ? null : GetSpawnedTcpDialHost(args);
 
         args.AddRange(["--headless", "--no-auto-update"]);
         if (options.Observability.LogLevel is { } logLevel && !string.IsNullOrEmpty(logLevel.Value))
@@ -3022,7 +3055,7 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
                 }
             }
 
-            return (cliProcess, detectedLocalhostTcpPort, stderrPump);
+            return (cliProcess, dialHost, detectedLocalhostTcpPort, stderrPump);
         }
         catch
         {

@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -124,30 +123,6 @@ func userMessageText(body map[string]any) []string {
 		}
 	}
 	return texts
-}
-
-func TestUserMessageText(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		body string
-		want []string
-	}{
-		{`{"messages":[{"role":"user","content":"chat"}]}`, []string{"chat"}},
-		{`{"input":"responses"}`, []string{"responses"}},
-		{`{"input":[{"role":"user","content":"responses"}]}`, []string{"responses"}},
-		{`{"input":[{"role":"assistant","content":"ignored"},{"type":"function_call_output","output":"ignored"},{"role":"user","content":[{"type":"text","text":"chat"},{"type":"input_text","text":"responses"},{"type":"input_image","text":"ignored"},{"type":"input_text","text":42},null,"ignored"]}]}`, []string{"chat", "responses"}},
-		{`{}`, nil},
-	} {
-		t.Run(tc.body, func(t *testing.T) {
-			var body map[string]any
-			if err := json.Unmarshal([]byte(tc.body), &body); err != nil {
-				t.Fatal(err)
-			}
-			if got := userMessageText(body); !slices.Equal(got, tc.want) {
-				t.Fatalf("userMessageText() = %q, want %q", got, tc.want)
-			}
-		})
-	}
 }
 
 func (rt *recordingForwardingTransport) inferenceRecords() []subagentRequestRecord {

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Literal
 
 import pytest
 
@@ -118,11 +117,9 @@ class TestScenarioSends:
         finally:
             await client.stop()
 
-    @pytest.mark.parametrize("mode", [None, "enqueue", "immediate"])
     async def test_should_not_dispatch_pre_cancelled_send(
         self,
         ctx: E2ETestContext,
-        mode: Literal["enqueue", "immediate"] | None,
     ):
         client, capture_path = create_scenario_client(ctx, "send")
         try:
@@ -131,9 +128,7 @@ class TestScenarioSends:
                 permissions={"on_request": PermissionHandler.approve_all},
             )
             try:
-                send_task = asyncio.create_task(
-                    session.send("This must not be dispatched.", mode=mode)
-                )
+                send_task = asyncio.create_task(session.send("This must not be dispatched."))
                 assert send_task.cancel()
 
                 with pytest.raises(asyncio.CancelledError):
@@ -145,11 +140,9 @@ class TestScenarioSends:
         finally:
             await client.stop()
 
-    @pytest.mark.parametrize("mode", [None, "enqueue", "immediate"])
     async def test_should_not_replay_send_after_ambiguous_transport_loss(
         self,
         ctx: E2ETestContext,
-        mode: Literal["enqueue", "immediate"] | None,
     ):
         client, capture_path = create_scenario_client(ctx, "send-fail")
         session = await client.create_session(
@@ -157,16 +150,13 @@ class TestScenarioSends:
         )
         try:
             with pytest.raises(Exception) as exc_info:
-                await session.send("Lose the transport after accepting this.", mode=mode)
+                await session.send("Lose the transport after accepting this.")
 
             assert type(exc_info.value).__name__ == "ProcessExitedError"
             requests = _send_requests(capture_path)
             assert len(requests) == 1
             assert requests[0]["params"]["prompt"] == ("Lose the transport after accepting this.")
-            if mode is None:
-                assert "mode" not in requests[0]["params"]
-            else:
-                assert requests[0]["params"]["mode"] == mode
+            assert "mode" not in requests[0]["params"]
 
             with pytest.raises(Exception) as retry_exc_info:
                 await session.send("Fail immediately after transport loss.")

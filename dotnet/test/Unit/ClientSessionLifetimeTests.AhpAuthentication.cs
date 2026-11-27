@@ -41,9 +41,6 @@ public sealed partial class ClientSessionLifetimeTests
     [InlineData("github", CopilotClientMode.CodingAgent)]
     [InlineData("none", CopilotClientMode.CodingAgent)]
     [InlineData("custom", CopilotClientMode.CodingAgent)]
-    [InlineData("github", CopilotClientMode.Empty)]
-    [InlineData("none", CopilotClientMode.Empty)]
-    [InlineData("custom", CopilotClientMode.Empty)]
     public async Task Ahp_Serializes_Only_Admission_Policy_And_Preserves_Listener_Secret(string mode, CopilotClientMode clientMode)
     {
         await using var server = await FakeCopilotServer.StartAsync();

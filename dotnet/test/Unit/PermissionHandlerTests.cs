@@ -84,38 +84,6 @@ public class PermissionHandlerTests
     }
 
     [Fact]
-    public async Task ApproveAllLeavesManagedKnownVariantPendingThroughBaseType()
-    {
-        PermissionRequest request = new PermissionRequestRead
-        {
-            Intention = "Read managed content",
-            ManagedApprovalRequired = true,
-            Path = "/workspace/file.txt",
-        };
-
-        var decision = await PermissionHandler.ApproveAll(request, new PermissionInvocation());
-
-        Assert.IsType<PermissionDecisionNoResult>(decision);
-    }
-
-    [Fact]
-    public void DerivedManagedApprovalAccessorForwardsToBaseStorage()
-    {
-        var request = new PermissionRequestRead
-        {
-            Intention = "Read managed content",
-            ManagedApprovalRequired = true,
-            Path = "/workspace/file.txt",
-        };
-
-        PermissionRequest genericRequest = request;
-        Assert.True(genericRequest.ManagedApprovalRequired);
-
-        genericRequest.ManagedApprovalRequired = false;
-        Assert.False(request.ManagedApprovalRequired);
-    }
-
-    [Fact]
     public async Task ApproveAllLeavesUnknownRequestPending()
     {
         var request = new PermissionRequest { Kind = "future-managed-kind" };

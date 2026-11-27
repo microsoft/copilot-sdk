@@ -72,19 +72,15 @@ class TestInProcessFfi:
         finally:
             await asyncio.gather(*(client.force_stop() for client in clients))
 
-    @pytest.mark.parametrize("explicit", [False, True], ids=["default", "explicit"])
-    @pytest.mark.parametrize("shutdown_method", ["stop", "force_stop"])
-    async def test_should_start_and_connect_over_in_process_ffi(
-        self, ctx: E2ETestContext, shutdown_method: str, explicit: bool, monkeypatch
+    async def test_should_start_and_connect_over_in_process_ffi_by_default(
+        self, ctx: E2ETestContext, monkeypatch
     ):
         # In-process hosting loads runtime.node directly. ``ping`` is a purely local
-        # RPC round-trip, so no auth or replay proxy is involved.
+        # RPC round-trip, so no auth or replay proxy is involved. Explicit
+        # for_inprocess selection plus stop/force_stop are covered above.
         with monkeypatch.context() as environment:
             environment.delenv("COPILOT_SDK_DEFAULT_CONNECTION", raising=False)
-            client = CopilotClient(
-                mode="coding-agent",
-                runtime=RuntimeConnection.for_inprocess() if explicit else None,
-            )
+            client = CopilotClient(mode="coding-agent")
         await client.start()
 
         try:
@@ -93,4 +89,4 @@ class TestInProcessFfi:
             assert pong.message == "pong: ffi message"
             assert pong.timestamp is not None
         finally:
-            await getattr(client, shutdown_method)()
+            await client.stop()

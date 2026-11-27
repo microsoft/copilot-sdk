@@ -75,72 +75,6 @@ async fn client_receives_commands_changed_when_another_client_joins_with_command
 }
 
 #[tokio::test]
-async fn capabilities_changed_fires_when_second_client_joins_with_elicitation_handler() {
-    with_e2e_context(
-        "multi_client_commands_elicitation",
-        "capabilities_changed_fires_when_second_client_joins_with_elicitation_handler",
-        |ctx| {
-            Box::pin(async move {
-                ctx.set_default_copilot_user();
-                let port = free_tcp_port();
-                let server = start_tcp_server(ctx, port).await;
-                let session1 = server
-                    .create_session(ctx.approve_all_session_config())
-                    .await
-                    .expect("create session");
-                assert_ne!(
-                    session1.capabilities().ui.and_then(|ui| ui.elicitation),
-                    Some(true)
-                );
-                let client2 = start_external_client(ctx, port).await;
-
-                let capabilities_changed =
-                    wait_for_event(session1.subscribe(), "elicitation enabled", |event| {
-                        if event.parsed_type() != SessionEventType::CapabilitiesChanged {
-                            return false;
-                        }
-                        event
-                            .typed_data::<CapabilitiesChangedData>()
-                            .and_then(|data| data.ui.and_then(|ui| ui.elicitation))
-                            == Some(true)
-                    });
-                let session2 = client2
-                    .resume_session(
-                        resume_config(session1.id().clone())
-                            .with_permissions(|group| {
-                                group.with_on_request(Arc::new(ElicitationApproveHandler))
-                            })
-                            .with_interaction(|group| {
-                                group.with_on_elicitation_request(Arc::new(
-                                    ElicitationApproveHandler,
-                                ))
-                            }),
-                    )
-                    .await
-                    .expect("resume session with elicitation handler");
-                capabilities_changed.await;
-                assert_eq!(
-                    session1.capabilities().ui.and_then(|ui| ui.elicitation),
-                    Some(true)
-                );
-
-                session2
-                    .disconnect()
-                    .await
-                    .expect("disconnect second session");
-                client2.force_stop();
-                session1
-                    .disconnect()
-                    .await
-                    .expect("disconnect first session");
-                server.stop().await.expect("stop server client");
-            })
-        },
-    )
-    .await;
-}
-
-#[tokio::test]
 async fn capabilities_changed_fires_when_elicitation_provider_disconnects() {
     with_e2e_context(
         "multi_client_commands_elicitation",
@@ -154,6 +88,10 @@ async fn capabilities_changed_fires_when_elicitation_provider_disconnects() {
                     .create_session(ctx.approve_all_session_config())
                     .await
                     .expect("create session");
+                assert_ne!(
+                    session1.capabilities().ui.and_then(|ui| ui.elicitation),
+                    Some(true)
+                );
                 let client2 = start_external_client(ctx, port).await;
                 let enabled =
                     wait_for_event(session1.subscribe(), "elicitation enabled", |event| {
@@ -180,6 +118,10 @@ async fn capabilities_changed_fires_when_elicitation_provider_disconnects() {
                     .await
                     .expect("resume session with elicitation handler");
                 enabled.await;
+                assert_eq!(
+                    session1.capabilities().ui.and_then(|ui| ui.elicitation),
+                    Some(true)
+                );
 
                 let disabled =
                     wait_for_event(session1.subscribe(), "elicitation disabled", |event| {

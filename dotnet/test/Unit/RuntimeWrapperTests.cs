@@ -72,25 +72,6 @@ public sealed class RuntimeWrapperTests
     }
 
     [Fact]
-    public async Task Copilot_Cli_Path_Does_Not_Require_Adjacent_Runtime_Node()
-    {
-        var explicitPath = Path.Combine(
-            Path.GetTempPath(),
-            $"missing-environment-copilot-{Guid.NewGuid():N}");
-        var connection = RuntimeConnection.ForSpawnedStdio();
-        connection.Environment = new Dictionary<string, string> { ["COPILOT_CLI_PATH"] = explicitPath };
-        await using var client = new CopilotClient(new CopilotClientOptions
-        {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = connection,
-        });
-
-        var exception = await Assert.ThrowsAnyAsync<Exception>(() => client.StartAsync());
-
-        Assert.DoesNotContain("runtime.node", exception.ToString(), StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
     public async Task Copilot_Cli_Path_Uses_Platform_Key_Casing()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"missing-copilot-{Guid.NewGuid():N}");
@@ -337,6 +318,7 @@ public sealed class RuntimeWrapperTests
 
         Assert.Contains(explicitPath, exception.ToString(), StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("runtime wrapper", exception.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("runtime.node", exception.ToString(), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

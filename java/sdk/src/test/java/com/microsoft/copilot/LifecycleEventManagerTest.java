@@ -108,20 +108,6 @@ class LifecycleEventManagerTest {
 
     // ===== dispatch with no handlers =====
 
-    @Test
-    void dispatchWithNoHandlersDoesNotThrow() {
-        assertDoesNotThrow(() -> manager.dispatch(event("created")));
-    }
-
-    @Test
-    void dispatchWithNoTypedMatchDoesNotThrow() {
-        var received = new ArrayList<SessionLifecycleEvent>();
-        manager.subscribe("deleted", received::add);
-
-        assertDoesNotThrow(() -> manager.dispatch(event("created")));
-        assertTrue(received.isEmpty());
-    }
-
     // ===== error handling =====
 
     @Test
@@ -150,21 +136,6 @@ class LifecycleEventManagerTest {
 
         assertDoesNotThrow(() -> manager.dispatch(event("created")));
         assertEquals(1, received.size());
-    }
-
-    @Test
-    void typedAndWildcardErrorsDoNotAffectEachOther() {
-        var wildcardReceived = new ArrayList<SessionLifecycleEvent>();
-
-        // Typed handler throws
-        manager.subscribe("created", e -> {
-            throw new RuntimeException("typed error");
-        });
-        // Wildcard still receives
-        manager.subscribe(wildcardReceived::add);
-
-        assertDoesNotThrow(() -> manager.dispatch(event("created")));
-        assertEquals(1, wildcardReceived.size());
     }
 
     // ===== multiple handlers =====

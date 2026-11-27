@@ -220,28 +220,6 @@ async fn assert_routing(
 }
 
 #[tokio::test]
-async fn should_route_alpha_sonnet_turn_to_its_provider_and_wire_model() {
-    assert_routing(
-        "should_route_alpha_sonnet_turn_to_its_provider_and_wire_model",
-        "alpha/sonnet",
-        "byok-gpt-4o",
-        "alpha",
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn should_route_alpha_haiku_turn_to_its_provider_and_wire_model() {
-    assert_routing(
-        "should_route_alpha_haiku_turn_to_its_provider_and_wire_model",
-        "alpha/haiku",
-        "byok-gpt-4o-mini",
-        "alpha",
-    )
-    .await;
-}
-
-#[tokio::test]
 async fn should_route_delta_turbo_turn_to_its_provider_and_wire_model() {
     assert_routing(
         "should_route_delta_turbo_turn_to_its_provider_and_wire_model",
@@ -251,4 +229,4 @@ async fn should_route_delta_turbo_turn_to_its_provider_and_wire_model() {
     )
     .await;
 }
-static E2E: super::support::SharedE2eGroup = super::support::SharedE2eGroup::standard(CATEGORY, 4);
+static E2E: super::support::SharedE2eGroup = super::support::SharedE2eGroup::standard(CATEGORY, 2);

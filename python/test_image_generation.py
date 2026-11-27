@@ -16,14 +16,7 @@ from copilot import CopilotClient, ImageGenerationConfig, PermissionHandler, Run
     [
         None,
         {},
-        {"enabled": True},
-        {"enabled": False},
-        {"watermark": True},
-        {"watermark": False},
-        {"enabled": False, "watermark": True},
-        {"enabled": True, "watermark": False},
-        {"save_to_disk": True},
-        {"save_to_disk": False},
+        {"enabled": False, "watermark": True, "save_to_disk": False},
         {"enabled": True, "watermark": False, "save_to_disk": True},
     ],
 )

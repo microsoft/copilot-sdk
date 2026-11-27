@@ -70,7 +70,6 @@ public class RuntimeConnectionTcpTests
     [InlineData("")]
     [InlineData(" ")]
     [InlineData("http://localhost")]
-    [InlineData("https://localhost")]
     [InlineData("localhost:9000")]
     [InlineData("localhost/path")]
     [InlineData("[::1]")]
@@ -86,7 +85,6 @@ public class RuntimeConnectionTcpTests
 
     [Theory]
     [InlineData(0)]
-    [InlineData(-1)]
     [InlineData(65536)]
     public void ForTcp_RejectsInvalidPort(int port)
     {

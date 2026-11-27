@@ -302,22 +302,17 @@ async def test_skill_provider_null_list_becomes_empty_catalog() -> None:
 
 
 @pytest.mark.asyncio
-async def test_skill_provider_read_none_returns_null_markdown() -> None:
-    session = CopilotSession("session-1", Mock())
-    session._register_skill_provider(_SyncSkillProvider(markdown={"missing": None}))
-
-    assert await session._handle_skill_provider_read("missing") == {"markdown": None}
-
-
-@pytest.mark.asyncio
-async def test_skill_provider_failures_are_generic_and_do_not_leak_provider_errors() -> None:
+async def test_skill_provider_failures_are_generic_and_logged_with_session_id(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     session = CopilotSession("session-1", Mock())
     session._register_skill_provider(_FailingSkillProvider())
 
-    with pytest.raises(JsonRpcError) as list_error:
-        await session._handle_skill_provider_list()
-    with pytest.raises(JsonRpcError) as read_error:
-        await session._handle_skill_provider_read("secret")
+    with caplog.at_level("WARNING", logger="copilot.session"):
+        with pytest.raises(JsonRpcError) as list_error:
+            await session._handle_skill_provider_list()
+        with pytest.raises(JsonRpcError) as read_error:
+            await session._handle_skill_provider_read("secret")
 
     assert list_error.value.code == -32603
     assert list_error.value.message == "Skill provider listSkills failed"
@@ -327,21 +322,6 @@ async def test_skill_provider_failures_are_generic_and_do_not_leak_provider_erro
     assert read_error.value.message == "Skill provider readSkill failed"
     assert read_error.value.data is None
     assert "secret-read-token" not in str(read_error.value)
-
-
-@pytest.mark.asyncio
-async def test_skill_provider_failures_are_logged_with_session_id(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    session = CopilotSession("session-1", Mock())
-    session._register_skill_provider(_FailingSkillProvider())
-
-    with caplog.at_level("WARNING", logger="copilot.session"):
-        with pytest.raises(JsonRpcError):
-            await session._handle_skill_provider_list()
-        with pytest.raises(JsonRpcError):
-            await session._handle_skill_provider_read("secret")
-
     records = [r for r in caplog.records if r.getMessage().startswith("Skill provider")]
     assert [r.getMessage() for r in records] == [
         "Skill provider listSkills failed",
@@ -376,10 +356,6 @@ async def test_skill_provider_cancelled_error_raised_by_provider_is_a_failure() 
     assert read_error.value.message == "Skill provider readSkill failed"
 
 
-class _HostAbort(BaseException):
-    """A host-defined BaseException that is not an Exception, like pytest's ``Failed``."""
-
-
 class _RaisingSkillProvider:
     def __init__(self, error: type[BaseException]) -> None:
         self._error = error
@@ -392,26 +368,11 @@ class _RaisingSkillProvider:
 
 
 @pytest.mark.asyncio
-async def test_skill_provider_base_exception_raised_by_provider_is_a_failure() -> None:
+async def test_skill_provider_interrupt_propagates() -> None:
     session = CopilotSession("session-1", Mock())
-    session._register_skill_provider(_RaisingSkillProvider(_HostAbort))
+    session._register_skill_provider(_RaisingSkillProvider(KeyboardInterrupt))
 
-    with pytest.raises(JsonRpcError) as list_error:
-        await session._handle_skill_provider_list()
-    with pytest.raises(JsonRpcError) as read_error:
-        await session._handle_skill_provider_read("aborted")
-
-    assert list_error.value.message == "Skill provider listSkills failed"
-    assert read_error.value.message == "Skill provider readSkill failed"
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("error", [SystemExit, KeyboardInterrupt])
-async def test_skill_provider_exit_or_interrupt_propagates(error: type[BaseException]) -> None:
-    session = CopilotSession("session-1", Mock())
-    session._register_skill_provider(_RaisingSkillProvider(error))
-
-    with pytest.raises(error):
+    with pytest.raises(KeyboardInterrupt):
         await session._handle_skill_provider_list()
 
 

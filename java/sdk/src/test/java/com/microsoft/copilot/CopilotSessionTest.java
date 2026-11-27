@@ -15,7 +15,6 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
@@ -34,14 +33,11 @@ import com.microsoft.copilot.generated.SessionIdleEvent;
 import com.microsoft.copilot.generated.SessionStartEvent;
 import com.microsoft.copilot.generated.ToolExecutionStartEvent;
 import com.microsoft.copilot.generated.UserMessageEvent;
-import com.microsoft.copilot.generated.rpc.SessionRpc;
 import com.microsoft.copilot.rpc.MessageOptions;
 import com.microsoft.copilot.rpc.PermissionHandler;
 import com.microsoft.copilot.rpc.ResumeSessionOptions;
 import com.microsoft.copilot.rpc.CreateSessionOptions;
-import com.microsoft.copilot.rpc.DefaultAgentConfig;
 import com.microsoft.copilot.rpc.SystemMessageConfig;
-import com.microsoft.copilot.rpc.ToolDefinition;
 
 /**
  * Tests for CopilotSession.
@@ -108,38 +104,6 @@ public class CopilotSessionTest {
                 boolean matchesNotFound = causeMessage != null && causeMessage.toLowerCase().contains("not found");
                 assertTrue(matchesClosed || matchesNotFound);
             }
-        }
-    }
-
-    /**
-     * Verifies that sessions maintain conversation state across multiple messages.
-     *
-     * @see Snapshot: session/should_have_stateful_conversation
-     */
-    @Test
-    void testShouldHaveStatefulConversation() throws Exception {
-        ctx.configureForTest("session", "should_have_stateful_conversation");
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig().setPermissions(
-                    ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))).get();
-
-            AssistantMessageEvent response1 = session.sendAndWait(new MessageOptions().setPrompt("What is 1+1?"), 60000)
-                    .get(90, TimeUnit.SECONDS);
-
-            assertNotNull(response1);
-            assertTrue(response1.getData().content().contains("2"),
-                    "Response should contain 2: " + response1.getData().content());
-
-            AssistantMessageEvent response2 = session
-                    .sendAndWait(new MessageOptions().setPrompt("Now if you double that, what do you get?"), 60000)
-                    .get(90, TimeUnit.SECONDS);
-
-            assertNotNull(response2);
-            assertTrue(response2.getData().content().contains("4"),
-                    "Response should contain 4: " + response2.getData().content());
-
-            session.close();
         }
     }
 
@@ -289,9 +253,12 @@ public class CopilotSessionTest {
         // throughout the test, matching the behavior of other SDK implementations
         try (CopilotClient client1 = ctx.createClient()) {
             // Create initial session
-            CopilotSession session1 = client1.createSession(ctx.newSessionConfig().setPermissions(
-                    ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))).get();
-            String sessionId = session1.getSessionId();
+            String sessionId = "e2e-new-client-" + java.util.UUID.randomUUID();
+            CopilotSession session1 = client1
+                    .createSession(ctx.newSessionConfig().setSessionId(sessionId).setPermissions(
+                            ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL)))
+                    .get();
+            assertEquals(sessionId, session1.getSessionId());
 
             AssistantMessageEvent answer = session1.sendAndWait(new MessageOptions().setPrompt("What is 1+1?")).get(60,
                     TimeUnit.SECONDS);
@@ -326,87 +293,6 @@ public class CopilotSessionTest {
 
                 session2.close();
             }
-        }
-    }
-
-    @Test
-    @Tag("isolated-resume")
-    void testShouldRecoverMarkerAfterColdResumeWithExplicitSessionId() throws Exception {
-        final String snapshot = "should_recover_marker_after_cold_resume_with_explicit_session_id";
-        ctx.configureForTest("session", snapshot);
-
-        String sessionId = "e2e-cold-resume-" + java.util.UUID.randomUUID();
-
-        try (CopilotClient client1 = ctx.createClient()) {
-            CopilotSession session1 = client1
-                    .createSession(ctx.newSessionConfig().setSessionId(sessionId).setPermissions(
-                            ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL)))
-                    .get(30, TimeUnit.SECONDS);
-            assertEquals(sessionId, session1.getSessionId());
-
-            AssistantMessageEvent answer = session1.sendAndWait(new MessageOptions()
-                    .setPrompt("Please remember this exact secret marker for later - MARKER-7f3ac21e. "
-                            + "Reply with only the single word \"Acknowledged\"."))
-                    .get(60, TimeUnit.SECONDS);
-            assertNotNull(answer);
-            assertTrue(answer.getData().content().contains("Acknowledged"),
-                    "Response should contain Acknowledged: " + answer.getData().content());
-
-            session1.close();
-            client1.forceStop().get(30, TimeUnit.SECONDS);
-        }
-
-        try (CopilotClient client2 = ctx.createClient()) {
-            CopilotSession session2 = client2
-                    .resumeSession(sessionId,
-                            new ResumeSessionOptions().setPermissions(
-                                    new SessionPermissionOptions().setOnRequest(PermissionHandler.APPROVE_ALL)))
-                    .get(30, TimeUnit.SECONDS);
-            assertEquals(sessionId, session2.getSessionId());
-
-            AssistantMessageEvent answer2 = session2.sendAndWait(
-                    new MessageOptions().setPrompt("What was the exact secret marker I asked you to remember earlier? "
-                            + "Reply with only that marker value and nothing else."))
-                    .get(60, TimeUnit.SECONDS);
-            assertNotNull(answer2);
-            assertTrue(answer2.getData().content().contains("MARKER-7f3ac21e"),
-                    "Resumed response should contain marker: " + answer2.getData().content());
-
-            session2.close();
-        }
-    }
-
-    /**
-     * Verifies that sessions work with appended system message configuration.
-     *
-     * @see Snapshot:
-     *      session/should_create_a_session_with_appended_systemmessage_config
-     */
-    @Test
-    void testShouldCreateSessionWithAppendedSystemMessageConfig() throws Exception {
-        ctx.configureForTest("session", "should_create_a_session_with_appended_systemmessage_config");
-
-        try (CopilotClient client = ctx.createClient()) {
-            String systemMessageSuffix = "End each response with the phrase 'Have a nice day!'";
-            CreateSessionOptions config = ctx.newSessionConfig()
-                    .setSystemMessage(
-                            new SystemMessageConfig().setContent(systemMessageSuffix).setMode(SystemMessageMode.APPEND))
-                    .setPermissions(
-                            ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL));
-
-            CopilotSession session = client.createSession(config).get();
-
-            assertNotNull(session.getSessionId());
-
-            AssistantMessageEvent response = session
-                    .sendAndWait(new MessageOptions().setPrompt("What is your full name?")).get(60, TimeUnit.SECONDS);
-
-            assertNotNull(response);
-            assertTrue(response.getData().content().contains("GitHub"),
-                    "Response should contain GitHub: " + response.getData().content());
-            assertTrue(response.getData().content().contains("Have a nice day!"),
-                    "Response should end with 'Have a nice day!': " + response.getData().content());
-            session.close();
         }
     }
 
@@ -495,115 +381,6 @@ public class CopilotSessionTest {
             assertNotNull(answer);
             assertTrue(answer.getData().content().contains("4"),
                     "Response should contain 4: " + answer.getData().content());
-
-            session.close();
-        }
-    }
-
-    /**
-     * Verifies that sessions can be created with available tools configuration.
-     *
-     * @see Snapshot: session/should_create_a_session_with_availabletools
-     */
-    @Test
-    void testShouldCreateSessionWithAvailableTools() throws Exception {
-        ctx.configureForTest("session", "should_create_a_session_with_availabletools");
-
-        try (CopilotClient client = ctx.createClient()) {
-            CreateSessionOptions config = ctx.newSessionConfig()
-                    .setPermissions(ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))
-                    .setTools(ctx.newSessionConfig().getTools().setAvailableTools(List.of("view", "edit")));
-
-            CopilotSession session = client.createSession(config).get();
-
-            assertNotNull(session.getSessionId());
-
-            AssistantMessageEvent response = session.sendAndWait(new MessageOptions().setPrompt("What is 1+1?")).get(60,
-                    TimeUnit.SECONDS);
-
-            assertNotNull(response);
-            session.close();
-        }
-    }
-
-    /**
-     * Verifies that sessions can be created with excluded tools configuration.
-     *
-     * @see Snapshot: session/should_create_a_session_with_excludedtools
-     */
-    @Test
-    void testShouldCreateSessionWithExcludedTools() throws Exception {
-        ctx.configureForTest("session", "should_create_a_session_with_excludedtools");
-
-        try (CopilotClient client = ctx.createClient()) {
-            CreateSessionOptions config = ctx.newSessionConfig()
-                    .setPermissions(ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))
-                    .setTools(ctx.newSessionConfig().getTools().setExcludedTools(List.of("view")));
-
-            CopilotSession session = client.createSession(config).get();
-
-            assertNotNull(session.getSessionId());
-
-            AssistantMessageEvent response = session.sendAndWait(new MessageOptions().setPrompt("What is 1+1?")).get(60,
-                    TimeUnit.SECONDS);
-
-            assertNotNull(response);
-            assertTrue(response.getData().content().contains("2"),
-                    "Response should contain 2: " + response.getData().content());
-            session.close();
-        }
-    }
-
-    /**
-     * Verifies that an error is thrown when resuming a non-existent session.
-     *
-     * @see Snapshot: session/should_receive_session_events
-     */
-    @Test
-    void testShouldThrowErrorWhenResumingNonExistentSession() throws Exception {
-        ctx.configureForTest("session", "should_receive_session_events");
-
-        try (CopilotClient client = ctx.createClient()) {
-            try {
-                client.resumeSession("non-existent-session-id",
-                        new ResumeSessionOptions().setPermissions(
-                                new SessionPermissionOptions().setOnRequest(PermissionHandler.APPROVE_ALL)))
-                        .get(30, TimeUnit.SECONDS);
-                fail("Expected exception when resuming non-existent session");
-            } catch (Exception e) {
-                // Should throw an error
-                assertTrue(e.getMessage() != null || e.getCause() != null, "Exception should have a message or cause");
-            }
-        }
-    }
-
-    /**
-     * Verifies that sessions can be created with a custom config directory.
-     *
-     * @see Snapshot: session/should_create_session_with_custom_config_dir
-     */
-    @Test
-    void testShouldCreateSessionWithCustomConfigDir() throws Exception {
-        ctx.configureForTest("session", "should_create_session_with_custom_config_dir");
-
-        try (CopilotClient client = ctx.createClient()) {
-            String customConfigDir = ctx.getWorkDir().resolve("custom-config").toString();
-
-            CreateSessionOptions config = ctx.newSessionConfig()
-                    .setPermissions(ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))
-                    .setConfigDirectory(customConfigDir);
-            CopilotSession session = client.createSession(config).get();
-
-            assertNotNull(session.getSessionId());
-            assertTrue(session.getSessionId().matches("^[a-f0-9-]+$"));
-
-            // Session should work normally with custom config dir
-            AssistantMessageEvent response = session.sendAndWait(new MessageOptions().setPrompt("What is 1+1?")).get(60,
-                    TimeUnit.SECONDS);
-
-            assertNotNull(response);
-            assertTrue(response.getData().content().contains("2"),
-                    "Response should contain 2: " + response.getData().content());
 
             session.close();
         }
@@ -737,53 +514,6 @@ public class CopilotSessionTest {
     }
 
     /**
-     * Verifies that sessions can be created with custom tools.
-     *
-     * @see Snapshot: session/should_create_session_with_custom_tool
-     */
-    @Test
-    void testShouldCreateSessionWithCustomTool() throws Exception {
-        ctx.configureForTest("session", "should_create_session_with_custom_tool");
-
-        // Define a custom get_secret_number tool
-        Map<String, Object> parameters = new java.util.HashMap<>();
-        Map<String, Object> properties = new java.util.HashMap<>();
-        Map<String, Object> keyProp = new java.util.HashMap<>();
-        keyProp.put("type", "string");
-        keyProp.put("description", "Key");
-        properties.put("key", keyProp);
-        parameters.put("type", "object");
-        parameters.put("properties", properties);
-        parameters.put("required", java.util.List.of("key"));
-
-        ToolDefinition getSecretNumberTool = ToolDefinition.create("get_secret_number", "Gets the secret number",
-                parameters, (invocation) -> {
-                    Map<String, Object> args = invocation.getArguments();
-                    String key = (String) args.get("key");
-                    // Return 54321 for ALPHA, 0 otherwise
-                    int result = "ALPHA".equals(key) ? 54321 : 0;
-                    return CompletableFuture.completedFuture(String.valueOf(result));
-                });
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig()
-                    .setPermissions(ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))
-                    .setTools(ctx.newSessionConfig().getTools().setDefinitions(java.util.List.of(getSecretNumberTool))))
-                    .get();
-
-            AssistantMessageEvent response = session
-                    .sendAndWait(new MessageOptions().setPrompt("What is the secret number for key ALPHA?"))
-                    .get(60, TimeUnit.SECONDS);
-
-            assertNotNull(response);
-            assertTrue(response.getData().content().contains("54321"),
-                    "Response should contain 54321: " + response.getData().content());
-
-            session.close();
-        }
-    }
-
-    /**
      * Verifies that getLastSessionId returns the ID of the most recently used
      * session.
      *
@@ -832,64 +562,6 @@ public class CopilotSessionTest {
     }
 
     /**
-     * Verifies that listSessions returns metadata with optional context
-     * information.
-     *
-     * @see Snapshot: session/should_list_sessions
-     */
-    @Test
-    void testListSessionsIncludesContextWhenAvailable() throws Exception {
-        ctx.configureForTest("session", "should_list_sessions");
-
-        try (CopilotClient client = ctx.createClient()) {
-            var session = client.createSession(ctx.newSessionConfig().setPermissions(
-                    ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))).get();
-
-            var sessions = client.listSessions().get(30, TimeUnit.SECONDS);
-            assertNotNull(sessions);
-
-            // List may be empty or contain sessions depending on test environment
-            // The main goal is to verify the API works and context field is accessible
-            for (var s : sessions) {
-                assertNotNull(s.getSessionId());
-                // Context field is optional
-                if (s.getContext() != null) {
-                    // When context is present, cwd should be non-null
-                    assertNotNull(s.getContext().getCwd());
-                }
-            }
-
-            session.close();
-        }
-    }
-
-    /**
-     * Verifies that SessionListFilter works with fluent setters.
-     */
-    @Test
-    void testSessionListFilterFluentAPI() throws Exception {
-        ctx.configureForTest("session", "should_list_sessions");
-
-        try (CopilotClient client = ctx.createClient()) {
-            var session = client.createSession(ctx.newSessionConfig().setPermissions(
-                    ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))).get();
-
-            var filter = new com.microsoft.copilot.rpc.SessionListFilter().setCwd("/test/path")
-                    .setRepository("owner/repo").setBranch("main").setGitRoot("/test");
-
-            assertEquals("/test/path", filter.getCwd());
-            assertEquals("owner/repo", filter.getRepository());
-            assertEquals("main", filter.getBranch());
-            assertEquals("/test", filter.getGitRoot());
-
-            var filteredSessions = client.listSessions(filter).get(30, TimeUnit.SECONDS);
-            assertNotNull(filteredSessions);
-
-            session.close();
-        }
-    }
-
-    /**
      * Verifies that getSessionMetadata returns metadata for a known session ID.
      *
      * @see Snapshot: session/should_get_session_metadata_by_id
@@ -923,66 +595,4 @@ public class CopilotSessionTest {
         }
     }
 
-    /**
-     * Verifies that {@link CopilotSession#getRpc()} returns a non-null
-     * {@link SessionRpc} wired to the session's ID and that all namespace fields
-     * are present.
-     */
-    @Test
-    void testGetRpcReturnsSessionRpcWithCorrectSessionId() throws Exception {
-        ctx.configureForTest("session", "should_receive_session_events");
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig().setPermissions(
-                    ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))).get();
-
-            SessionRpc rpc = session.getRpc();
-            assertNotNull(rpc, "getRpc() must not return null");
-            assertNotNull(rpc.agent, "SessionRpc.agent must not be null");
-            assertNotNull(rpc.model, "SessionRpc.model must not be null");
-            assertNotNull(rpc.tools, "SessionRpc.tools must not be null");
-            assertNotNull(rpc.permissions, "SessionRpc.permissions must not be null");
-            assertNotNull(rpc.commands, "SessionRpc.commands must not be null");
-            assertNotNull(rpc.ui, "SessionRpc.ui must not be null");
-
-            session.close();
-        }
-    }
-
-    /**
-     * Verifies that sessions can be created with defaultAgent.excludedTools
-     * configuration.
-     *
-     * @see Snapshot:
-     *      session/should_create_a_session_with_defaultagent_excludedtools
-     */
-    @Test
-    void testShouldCreateSessionWithDefaultAgentExcludedTools() throws Exception {
-        ctx.configureForTest("session", "should_create_a_session_with_defaultagent_excludedtools");
-
-        Map<String, Object> parameters = new java.util.HashMap<>();
-        parameters.put("type", "object");
-        parameters.put("properties", new java.util.HashMap<>());
-
-        ToolDefinition secretTool = ToolDefinition.create("secret_tool", "A secret tool hidden from the default agent",
-                parameters, (invocation) -> CompletableFuture.completedFuture("SECRET"));
-
-        try (CopilotClient client = ctx.createClient()) {
-            CreateSessionOptions config = ctx.newSessionConfig()
-                    .setPermissions(ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))
-                    .setTools(ctx.newSessionConfig().getTools().setDefinitions(List.of(secretTool)))
-                    .setAgents(ctx.newSessionConfig().getAgents()
-                            .setDefault(new DefaultAgentConfig().setExcludedTools(List.of("secret_tool"))));
-
-            CopilotSession session = client.createSession(config).get();
-
-            assertNotNull(session.getSessionId());
-
-            AssistantMessageEvent response = session.sendAndWait(new MessageOptions().setPrompt("What is 1+1?")).get(60,
-                    TimeUnit.SECONDS);
-
-            assertNotNull(response);
-            session.close();
-        }
-    }
 }

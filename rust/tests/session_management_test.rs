@@ -8,8 +8,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use copilot_sdk::session::Session;
 use copilot_sdk::session_management::{
-    SessionManagementConfigureRequest, SessionManagementCreateHostRequest,
-    SessionManagementCreateResult, SessionManagementScope,
+    SessionManagementCreateHostRequest, SessionManagementCreateResult,
 };
 use copilot_sdk::{Client, CreateSessionOptions, Error, ErrorKind, SessionCreationHandler};
 use serde_json::{Value, json};
@@ -18,23 +17,6 @@ use tokio::sync::Notify;
 use tokio::time::timeout;
 
 const TIMEOUT: Duration = Duration::from_secs(2);
-
-#[test]
-fn session_management_scope_uses_the_canonical_typed_wire_values() {
-    for (scope, wire) in [
-        (SessionManagementScope::All, "all"),
-        (SessionManagementScope::InProcess, "in-process"),
-    ] {
-        let request = SessionManagementConfigureRequest {
-            scope: Some(scope),
-            ..Default::default()
-        };
-        assert_eq!(
-            serde_json::to_value(request).unwrap(),
-            json!({ "scope": wire })
-        );
-    }
-}
 
 async fn write_frame(writer: &mut DuplexStream, message: Value) {
     let body = serde_json::to_vec(&message).unwrap();

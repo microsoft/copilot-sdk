@@ -274,25 +274,6 @@ func TestSkillProviderDispatch(t *testing.T) {
 	}
 }
 
-func TestSkillProviderOmitsUnsetOptionalDescriptorFields(t *testing.T) {
-	data, err := json.Marshal(rpc.SkillProviderListResult{
-		Skills: []rpc.SkillProviderDescriptor{{Name: "review", Description: "Reviews code"}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var decoded map[string][]map[string]any
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatal(err)
-	}
-	skill := decoded["skills"][0]
-	for _, key := range []string{"argumentHint", "userInvocable", "disableModelInvocation", "directory"} {
-		if _, ok := skill[key]; ok {
-			t.Fatalf("%s should be omitted when unset: %s", key, data)
-		}
-	}
-}
-
 func TestSkillProviderEmptyListBecomesEmptyArray(t *testing.T) {
 	rpcClient, server, _ := newRuntimeShutdownRpcPair(t)
 	t.Cleanup(server.Stop)

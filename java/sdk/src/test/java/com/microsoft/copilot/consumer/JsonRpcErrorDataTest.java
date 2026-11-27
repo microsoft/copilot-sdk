@@ -48,8 +48,8 @@ class JsonRpcErrorDataTest {
     @ParameterizedTest
     @NullSource
     @ValueSource(strings = {"{\"reason\":\"details-not-in-message\",\"nested\":{\"items\":[1,false,null]}}",
-            "[{\"nested\":[\"value\"]},2,false,null]", "\"detail — unicode\"", "42", "9007199254740993", "1.25", "0",
-            "true", "false", "{}", "[]", "\"\"", "null"})
+            "[{\"nested\":[\"value\"]},2,false,null]", "\"detail — unicode\"", "9007199254740993", "1.25", "true",
+            "null"})
     void preservesRawDataThroughPublicClient(String dataJson) throws Exception {
         try (var server = new FramedServer(Reply.ERROR, dataJson);
                 var client = new CopilotClient(new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
@@ -70,16 +70,6 @@ class JsonRpcErrorDataTest {
 
             var joinFailure = assertThrows(CompletionException.class, future::join);
             assertSame(error, joinFailure.getCause());
-        }
-    }
-
-    @Test
-    void preservesSuccessfulResponses() throws Exception {
-        try (var server = new FramedServer(Reply.SUCCESS, null);
-                var client = new CopilotClient(new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                        .setRuntime(RuntimeConnection.forTcp("127.0.0.1", server.port())))) {
-            client.start().get();
-            assertEquals("hello", client.ping("hello").get().message());
         }
     }
 

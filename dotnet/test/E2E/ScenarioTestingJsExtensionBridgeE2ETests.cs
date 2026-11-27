@@ -217,6 +217,13 @@ public class ScenarioTestingJsExtensionBridgeE2ETests(E2ETestFixture fixture, IT
             input: new Dictionary<string, object> { ["value"] = "after" });
         Assert.Equal("after", action.Result!.Value.GetProperty("value").GetString());
 
+        var exception = await Assert.ThrowsAsync<RemoteRpcException>(() =>
+            session.Rpc.Canvas.Action.InvokeAsync(
+                instanceId: "js-scenario-canvas-1",
+                actionName: "fail",
+                input: new Dictionary<string, object>()));
+        Assert.Contains("The JavaScript canvas action failed.", exception.Message, StringComparison.Ordinal);
+
         await session.Rpc.Canvas.CloseAsync("js-scenario-canvas-1");
         var trace = await WaitForTraceAsync(fixture.TraceFile, "close");
         var open = Assert.Single(trace, entry => GetKind(entry) == "open");
@@ -225,45 +232,19 @@ public class ScenarioTestingJsExtensionBridgeE2ETests(E2ETestFixture fixture, IT
         Assert.False(open.TryGetProperty("host", out _));
 
         var actions = trace.Where(entry => GetKind(entry) == "action").ToList();
-        Assert.Equal(["continue", "set-value"], actions.Select(entry => entry.GetProperty("actionName").GetString()));
+        Assert.Equal(["continue", "set-value", "fail"], actions.Select(entry => entry.GetProperty("actionName").GetString()));
         Assert.All(actions, entry =>
             AssertBridgeContext(entry, session.SessionId, fixture.ExtensionId, "js-scenario-canvas-1"));
         Assert.Equal("after", actions[1].GetProperty("input").GetProperty("value").GetString());
 
         var close = Assert.Single(trace, entry => GetKind(entry) == "close");
         AssertBridgeContext(close, session.SessionId, fixture.ExtensionId, "js-scenario-canvas-1");
-        Assert.Equal(
-            ["open", "action", "sent", "action", "close"],
-            trace.Where(entry => GetKind(entry) != "joined").Select(GetKind));
-    }
-
-    [Fact]
-    public async Task Should_Surface_Structured_CanvasError_From_Js_Extension()
-    {
-        var fixture = await CreateExtensionFixtureAsync();
-        await using var client = CreateExtensionClient(fixture);
-        await using var session = await Ctx.CreateSessionAsync(client, CreateSessionConfig(fixture.ProjectDirectory));
-
-        await WaitForExtensionAsync(session, fixture.ExtensionId);
-        await WaitForCanvasAsync(session, fixture.ExtensionId);
-        await OpenCanvasWhenRegisteredAsync(
-            session,
-            canvasId: "js-scenario-canvas",
-            instanceId: "js-scenario-canvas-error",
-            extensionId: fixture.ExtensionId,
-            input: new Dictionary<string, object> { ["value"] = "before" });
-
-        var exception = await Assert.ThrowsAsync<RemoteRpcException>(() =>
-            session.Rpc.Canvas.Action.InvokeAsync(
-                instanceId: "js-scenario-canvas-error",
-                actionName: "fail",
-                input: new Dictionary<string, object>()));
-
-        Assert.Contains("The JavaScript canvas action failed.", exception.Message, StringComparison.Ordinal);
-        var trace = await WaitForTraceAsync(fixture.TraceFile, "error");
         var error = Assert.Single(trace, entry => GetKind(entry) == "error");
         Assert.Equal("js_canvas_failed", error.GetProperty("code").GetString());
         Assert.Equal("The JavaScript canvas action failed.", error.GetProperty("message").GetString());
+        Assert.Equal(
+            ["open", "action", "sent", "action", "action", "error", "close"],
+            trace.Where(entry => GetKind(entry) != "joined").Select(GetKind));
     }
 
     private CopilotClient CreateExtensionClient(

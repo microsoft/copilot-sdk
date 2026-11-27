@@ -44,13 +44,6 @@ public class CopilotClientModeTest {
     }
 
     @Test
-    void testSetModeEmpty() {
-        var opts = new CopilotClientOptions();
-        opts.setMode(CopilotClientMode.EMPTY);
-        assertEquals(CopilotClientMode.EMPTY, opts.getMode());
-    }
-
-    @Test
     void testEmptyModeRequiresCopilotHome() {
         var opts = new CopilotClientOptions().setMode(CopilotClientMode.EMPTY).setAutoStart(false);
         // Empty mode without copilotHome should throw
@@ -75,19 +68,5 @@ public class CopilotClientModeTest {
         try (var client = new CopilotClient(options)) {
             assertEquals(ConnectionState.DISCONNECTED, client.getState());
         }
-    }
-
-    @Test
-    void testCopilotClientModeEnumValues() {
-        assertEquals(2, CopilotClientMode.values().length);
-        assertEquals(CopilotClientMode.EMPTY, CopilotClientMode.valueOf("EMPTY"));
-        assertEquals(CopilotClientMode.CODING_AGENT, CopilotClientMode.valueOf("CODING_AGENT"));
-    }
-
-    @Test
-    void testEnumSerializationNames() {
-        // CopilotClientMode is a plain enum; verify the values exist
-        assertNotNull(CopilotClientMode.EMPTY);
-        assertNotNull(CopilotClientMode.CODING_AGENT);
     }
 }

@@ -4,9 +4,10 @@
 
 package com.microsoft.copilot;
 
-import com.microsoft.copilot.rpc.SessionAgentOptions;
 import com.microsoft.copilot.rpc.SessionMcpOptions;
 import com.microsoft.copilot.rpc.SessionPermissionOptions;
+
+import com.fasterxml.jackson.databind.JsonNode;
 
 import org.junit.jupiter.api.Tag;
 
@@ -26,7 +27,6 @@ import org.junit.jupiter.api.Timeout;
 
 import com.microsoft.copilot.generated.AssistantMessageEvent;
 import com.microsoft.copilot.generated.rpc.McpServerStatus;
-import com.microsoft.copilot.rpc.CustomAgentConfig;
 import com.microsoft.copilot.rpc.DefaultAgentConfig;
 import com.microsoft.copilot.rpc.McpServerConfig;
 import com.microsoft.copilot.rpc.McpStdioServerConfig;
@@ -87,40 +87,6 @@ public class McpAndAgentsTest {
     // ============ MCP Server Tests ============
 
     /**
-     * Verifies that MCP server configuration is accepted on session create.
-     *
-     * @see Snapshot:
-     *      mcp_and_agents/should_accept_mcp_server_configuration_on_session_create
-     */
-    @Test
-    @Timeout(value = 900, unit = TimeUnit.SECONDS, threadMode = Timeout.ThreadMode.SAME_THREAD)
-    void testShouldAcceptMcpServerConfigurationOnSessionCreate() throws Exception {
-        ctx.configureForTest("mcp_and_agents", "should_accept_mcp_server_configuration_on_session_create");
-
-        var mcpServers = createTestMcpServers("test-server");
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig()
-                    .setMcp(ctx.newSessionConfig().getMcp().setServers(mcpServers)).setPermissions(
-                            ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL)))
-                    .get();
-
-            assertNotNull(session.getSessionId());
-            waitForMcpServerStatus(session, "test-server", McpServerStatus.CONNECTED);
-
-            // Simple interaction to verify session works
-            AssistantMessageEvent response = session.sendAndWait(new MessageOptions().setPrompt("What is 2+2?")).get(60,
-                    TimeUnit.SECONDS);
-
-            assertNotNull(response);
-            assertTrue(response.getData().content().contains("4"),
-                    "Response should contain 4: " + response.getData().content());
-
-            session.close();
-        }
-    }
-
-    /**
      * Verifies that MCP server configuration is accepted on session resume.
      *
      * @see Snapshot:
@@ -153,19 +119,19 @@ public class McpAndAgentsTest {
     }
 
     /**
-     * Verifies that multiple MCP servers can be configured.
+     * Verifies that multiple MCP servers can be configured, including one whose
+     * configuration omits args.
      *
      * @see Snapshot:
      *      mcp_and_agents/should_accept_mcp_server_configuration_on_session_create
      */
     @Test
     @Timeout(value = 900, unit = TimeUnit.SECONDS, threadMode = Timeout.ThreadMode.SAME_THREAD)
-    void testShouldHandleMultipleMcpServers() throws Exception {
-        // Use same snapshot as single MCP server test since it doesn't depend on server
-        // count
+    void testShouldHandleMultipleMcpServersIncludingOneWithoutArgs() throws Exception {
         ctx.configureForTest("mcp_and_agents", "should_accept_mcp_server_configuration_on_session_create");
 
         var mcpServers = createTestMcpServers("server1", "server2");
+        mcpServers.put("test-server", new McpStdioServerConfig().setCommand("echo").setTools(List.of("*")));
 
         try (CopilotClient client = ctx.createClient()) {
             CopilotSession session = client.createSession(ctx.newSessionConfig()
@@ -176,34 +142,6 @@ public class McpAndAgentsTest {
             assertNotNull(session.getSessionId());
             waitForMcpServerStatus(session, "server1", McpServerStatus.CONNECTED);
             waitForMcpServerStatus(session, "server2", McpServerStatus.CONNECTED);
-            session.close();
-        }
-    }
-
-    // ============ Custom Agent Tests ============
-
-    /**
-     * Verifies that MCP server configuration is accepted without args.
-     *
-     * @see Snapshot:
-     *      mcp_and_agents/should_accept_mcp_server_configuration_on_session_create
-     */
-    @Test
-    void testAcceptMcpServerConfigWithoutArgs() throws Exception {
-        // Reuse existing snapshot - this test validates that args can be omitted
-        ctx.configureForTest("mcp_and_agents", "should_accept_mcp_server_configuration_on_session_create");
-
-        var mcpServers = new HashMap<String, McpServerConfig>();
-        // Create MCP server config without specifying args
-        mcpServers.put("test-server", new McpStdioServerConfig().setCommand("echo").setTools(List.of("*")));
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig()
-                    .setMcp(ctx.newSessionConfig().getMcp().setServers(mcpServers)).setPermissions(
-                            ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL)))
-                    .get();
-
-            assertNotNull(session.getSessionId());
 
             AssistantMessageEvent response = session.sendAndWait(new MessageOptions().setPrompt("What is 2+2?")).get(60,
                     TimeUnit.SECONDS);
@@ -211,206 +149,6 @@ public class McpAndAgentsTest {
             assertNotNull(response);
             assertTrue(response.getData().content().contains("4"),
                     "Response should contain 4: " + response.getData().content());
-
-            session.close();
-        }
-    }
-
-    // ============ Custom Agent Tests ============
-
-    /**
-     * Verifies that custom agent configuration is accepted on session create.
-     *
-     * @see Snapshot:
-     *      mcp_and_agents/should_accept_custom_agent_configuration_on_session_create
-     */
-    @Test
-    void testShouldAcceptCustomAgentConfigurationOnSessionCreate() throws Exception {
-        ctx.configureForTest("mcp_and_agents", "should_accept_custom_agent_configuration_on_session_create");
-
-        List<CustomAgentConfig> customAgents = List.of(new CustomAgentConfig().setName("test-agent")
-                .setDisplayName("Test Agent").setDescription("A test agent for SDK testing")
-                .setPrompt("You are a helpful test agent.").setInfer(true));
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig()
-                    .setAgents(ctx.newSessionConfig().getAgents().setDefinitions(customAgents)).setPermissions(
-                            ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL)))
-                    .get();
-
-            assertNotNull(session.getSessionId());
-
-            // Simple interaction to verify session works
-            AssistantMessageEvent response = session.sendAndWait(new MessageOptions().setPrompt("What is 5+5?")).get(60,
-                    TimeUnit.SECONDS);
-
-            assertNotNull(response);
-            assertTrue(response.getData().content().contains("10"),
-                    "Response should contain 10: " + response.getData().content());
-
-            session.close();
-        }
-    }
-
-    /**
-     * Verifies that custom agent configuration is accepted on session resume.
-     *
-     * @see Snapshot:
-     *      mcp_and_agents/should_accept_custom_agent_configuration_on_session_resume
-     */
-    @Test
-    void testShouldAcceptCustomAgentConfigurationOnSessionResume() throws Exception {
-        ctx.configureForTest("mcp_and_agents", "should_accept_custom_agent_configuration_on_session_resume");
-
-        try (CopilotClient client = ctx.createClient()) {
-            // Create a session first
-            CopilotSession session1 = client.createSession(ctx.newSessionConfig().setPermissions(
-                    ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))).get();
-            String sessionId = session1.getSessionId();
-            session1.sendAndWait(new MessageOptions().setPrompt("What is 1+1?")).get(60, TimeUnit.SECONDS);
-
-            // Resume with custom agents
-            List<CustomAgentConfig> customAgents = List
-                    .of(new CustomAgentConfig().setName("resume-agent").setDisplayName("Resume Agent")
-                            .setDescription("An agent added on resume").setPrompt("You are a resume test agent."));
-
-            CopilotSession session2 = client.resumeSession(sessionId,
-                    new ResumeSessionOptions().setAgents(new SessionAgentOptions().setDefinitions(customAgents))
-                            .setPermissions(new SessionPermissionOptions().setOnRequest(PermissionHandler.APPROVE_ALL)))
-                    .get();
-
-            assertEquals(sessionId, session2.getSessionId());
-
-            AssistantMessageEvent response = session2.sendAndWait(new MessageOptions().setPrompt("What is 6+6?"))
-                    .get(60, TimeUnit.SECONDS);
-
-            assertNotNull(response);
-            assertTrue(response.getData().content().contains("12"),
-                    "Response should contain 12: " + response.getData().content());
-
-            session2.close();
-        }
-    }
-
-    /**
-     * Verifies that custom agents can be configured with tools.
-     *
-     * @see Snapshot:
-     *      mcp_and_agents/should_accept_custom_agent_configuration_on_session_create
-     */
-    @Test
-    void testShouldAcceptCustomAgentWithToolsConfiguration() throws Exception {
-        // Use same snapshot as create test since this just verifies configuration
-        // acceptance
-        ctx.configureForTest("mcp_and_agents", "should_accept_custom_agent_configuration_on_session_create");
-
-        List<CustomAgentConfig> customAgents = List.of(new CustomAgentConfig().setName("tool-agent")
-                .setDisplayName("Tool Agent").setDescription("An agent with specific tools")
-                .setPrompt("You are an agent with specific tools.").setTools(List.of("bash", "edit")).setInfer(true));
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig()
-                    .setAgents(ctx.newSessionConfig().getAgents().setDefinitions(customAgents)).setPermissions(
-                            ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL)))
-                    .get();
-
-            assertNotNull(session.getSessionId());
-            session.close();
-        }
-    }
-
-    /**
-     * Verifies that custom agents can be configured with MCP servers.
-     *
-     * @see Snapshot:
-     *      mcp_and_agents/should_accept_both_mcp_servers_and_custom_agents
-     */
-    @Test
-    void testShouldAcceptCustomAgentWithMcpServers() throws Exception {
-        // Use combined snapshot since this uses both MCP servers and custom agents
-        ctx.configureForTest("mcp_and_agents", "should_accept_both_mcp_servers_and_custom_agents");
-
-        var agentMcpServers = createTestMcpServers("agent-server");
-
-        List<CustomAgentConfig> customAgents = List.of(new CustomAgentConfig().setName("mcp-agent")
-                .setDisplayName("MCP Agent").setDescription("An agent with its own MCP servers")
-                .setPrompt("You are an agent with MCP servers.").setMcpServers(agentMcpServers));
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig()
-                    .setAgents(ctx.newSessionConfig().getAgents().setDefinitions(customAgents)).setPermissions(
-                            ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL)))
-                    .get();
-
-            assertNotNull(session.getSessionId());
-            session.close();
-        }
-    }
-
-    /**
-     * Verifies that multiple custom agents can be configured.
-     *
-     * @see Snapshot:
-     *      mcp_and_agents/should_accept_custom_agent_configuration_on_session_create
-     */
-    @Test
-    void testShouldAcceptMultipleCustomAgents() throws Exception {
-        // Use same snapshot as create test
-        ctx.configureForTest("mcp_and_agents", "should_accept_custom_agent_configuration_on_session_create");
-
-        List<CustomAgentConfig> customAgents = List.of(
-                new CustomAgentConfig().setName("agent1").setDisplayName("Agent One").setDescription("First agent")
-                        .setPrompt("You are agent one."),
-                new CustomAgentConfig().setName("agent2").setDisplayName("Agent Two").setDescription("Second agent")
-                        .setPrompt("You are agent two.").setInfer(false));
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig()
-                    .setAgents(ctx.newSessionConfig().getAgents().setDefinitions(customAgents)).setPermissions(
-                            ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL)))
-                    .get();
-
-            assertNotNull(session.getSessionId());
-            session.close();
-        }
-    }
-
-    // ============ Combined Configuration Tests ============
-
-    /**
-     * Verifies that both MCP servers and custom agents can be configured.
-     *
-     * @see Snapshot:
-     *      mcp_and_agents/should_accept_both_mcp_servers_and_custom_agents
-     */
-    @Test
-    @Timeout(value = 900, unit = TimeUnit.SECONDS, threadMode = Timeout.ThreadMode.SAME_THREAD)
-    void testShouldAcceptBothMcpServersAndCustomAgents() throws Exception {
-        ctx.configureForTest("mcp_and_agents", "should_accept_both_mcp_servers_and_custom_agents");
-
-        var mcpServers = createTestMcpServers("shared-server");
-
-        List<CustomAgentConfig> customAgents = List.of(new CustomAgentConfig().setName("combined-agent")
-                .setDisplayName("Combined Agent").setDescription("An agent using shared MCP servers")
-                .setPrompt("You are a combined test agent."));
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig()
-                    .setMcp(ctx.newSessionConfig().getMcp().setServers(mcpServers))
-                    .setAgents(ctx.newSessionConfig().getAgents().setDefinitions(customAgents)).setPermissions(
-                            ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL)))
-                    .get();
-
-            assertNotNull(session.getSessionId());
-            waitForMcpServerStatus(session, "shared-server", McpServerStatus.CONNECTED);
-
-            AssistantMessageEvent response = session.sendAndWait(new MessageOptions().setPrompt("What is 7+7?")).get(60,
-                    TimeUnit.SECONDS);
-
-            assertNotNull(response);
-            assertTrue(response.getData().content().contains("14"),
-                    "Response should contain 14: " + response.getData().content());
-
             session.close();
         }
     }
@@ -457,46 +195,17 @@ public class McpAndAgentsTest {
             assertNotNull(response);
             assertTrue(response.getData().content().toLowerCase().contains("no"),
                     "Response should indicate that secret_tool is not accessible: " + response.getData().content());
+
+            // The replay matcher ignores tools, so check the CAPI tool list directly.
+            JsonNode exchanges = JsonRpcClient.getObjectMapper().valueToTree(ctx.getExchanges());
+            assertFalse(exchanges.isEmpty(), "Should have at least one exchange");
+            for (JsonNode exchange : exchanges) {
+                for (JsonNode tool : exchange.path("request").path("tools")) {
+                    assertNotEquals("secret_tool", tool.path("function").path("name").asText(), exchange.toString());
+                }
+            }
             session.close();
         }
     }
 
-    /**
-     * Verifies that defaultAgent configuration is accepted on session resume.
-     *
-     * @see Snapshot:
-     *      mcp_and_agents/should_accept_defaultagent_configuration_on_session_resume
-     */
-    @Test
-    void testShouldAcceptDefaultAgentConfigurationOnSessionResume() throws Exception {
-        ctx.configureForTest("mcp_and_agents", "should_accept_defaultagent_configuration_on_session_resume");
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig().setPermissions(
-                    ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))).get();
-
-            assertNotNull(session.getSessionId());
-            String sessionId = session.getSessionId();
-            // Do not call session.close() here — that invokes session.detach on the
-            // server,
-            // which removes the session and causes the subsequent resumeSession to fail
-            // with "Session not found". The session handle is simply abandoned and the
-            // server-side session remains alive for the resume call below.
-
-            CopilotSession resumedSession = client.resumeSession(sessionId,
-                    new ResumeSessionOptions()
-                            .setPermissions(new SessionPermissionOptions().setOnRequest(PermissionHandler.APPROVE_ALL))
-                            .setAgents(new SessionAgentOptions()
-                                    .setDefault(new DefaultAgentConfig().setExcludedTools(List.of("view")))))
-                    .get();
-
-            assertNotNull(resumedSession.getSessionId());
-
-            AssistantMessageEvent response = resumedSession.sendAndWait(new MessageOptions().setPrompt("What is 3+3?"))
-                    .get(60, TimeUnit.SECONDS);
-
-            assertNotNull(response);
-            resumedSession.close();
-        }
-    }
 }

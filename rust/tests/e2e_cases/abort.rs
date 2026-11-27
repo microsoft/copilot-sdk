@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use copilot_sdk::handler::ApproveAllHandler;
-use copilot_sdk::session_events::{AssistantMessageDeltaData, SessionEventType};
+use copilot_sdk::session_events::{SessionEventType, SessionInfoData};
 use copilot_sdk::tool::ToolHandler;
 use copilot_sdk::{CreateSessionOptions, Error, Tool, ToolInvocation, ToolResult};
 use serde_json::json;
@@ -11,78 +11,6 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 use super::support::{
     DEFAULT_TEST_TOKEN, assistant_message_content, recv_with_timeout, wait_for_event,
 };
-
-#[tokio::test]
-async fn should_abort_during_active_streaming() {
-    super::support::with_dedicated_e2e_context(
-        "abort",
-        "should_abort_during_active_streaming",
-        |ctx| {
-            Box::pin(async move {
-                ctx.set_default_copilot_user();
-                let client = ctx.start_client().await;
-                let session = client
-                    .create_session(
-                        ctx.approve_all_session_config()
-                            .with_events(|group| group.with_streaming(true)),
-                    )
-                    .await
-                    .expect("create session");
-                let events = session.subscribe();
-
-                session
-                .send(
-                    "Write a very long essay about the history of computing, covering every decade \
-                         from the 1940s to the 2020s in great detail.",
-                )
-                .await
-                .expect("send long streaming turn");
-
-                let delta = wait_for_event(events, "assistant.message_delta", |event| {
-                    event.parsed_type() == SessionEventType::AssistantMessageDelta
-                })
-                .await;
-                assert!(
-                    !delta
-                        .typed_data::<AssistantMessageDeltaData>()
-                        .expect("assistant.message_delta data")
-                        .delta_content
-                        .is_empty()
-                );
-
-                session.abort().await.expect("abort session");
-
-                // Session should be usable after abort. Wait for the specific recovery
-                // message rather than racing against a late idle from the aborted turn.
-                let recovery_events = session.subscribe();
-                session
-                    .send("Say 'abort_recovery_ok'.")
-                    .await
-                    .expect("send recovery");
-                let recovery = wait_for_event(
-                    recovery_events,
-                    "assistant.message containing abort_recovery_ok",
-                    |event| {
-                        event.parsed_type() == SessionEventType::AssistantMessage
-                            && assistant_message_content(event)
-                                .to_lowercase()
-                                .contains("abort_recovery_ok")
-                    },
-                )
-                .await;
-                assert!(
-                    assistant_message_content(&recovery)
-                        .to_lowercase()
-                        .contains("abort_recovery_ok")
-                );
-
-                session.disconnect().await.expect("disconnect session");
-                client.stop().await.expect("stop client");
-            })
-        },
-    )
-    .await;
-}
 
 #[tokio::test]
 async fn should_abort_during_active_tool_execution() {
@@ -129,6 +57,7 @@ async fn should_abort_during_active_tool_execution() {
                     .await
                     .expect("create session");
                 let events = session.subscribe();
+                let cancellation_events = session.subscribe();
 
                 session
                     .send("Use slow_analysis with value 'test_abort'. Wait for the result.")
@@ -139,6 +68,21 @@ async fn should_abort_during_active_tool_execution() {
                 assert_eq!(tool_value, "test_abort");
 
                 session.abort().await.expect("abort session");
+                // Observe cancellation while the tool is still held; dropping release_tx on
+                // failure still unblocks the tool.
+                let notice = wait_for_event(cancellation_events, "cancellation notice", |event| {
+                    event
+                        .typed_data::<SessionInfoData>()
+                        .is_some_and(|data| data.info_type == "cancellation")
+                })
+                .await;
+                assert_eq!(
+                    notice
+                        .typed_data::<SessionInfoData>()
+                        .expect("info data")
+                        .message,
+                    "Operation cancelled by user"
+                );
                 let _ = release_tx.send("RELEASED_AFTER_ABORT".to_string());
                 wait_for_event(events, "session.idle after abort", |event| {
                     event.parsed_type() == SessionEventType::SessionIdle

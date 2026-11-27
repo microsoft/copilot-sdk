@@ -17,28 +17,18 @@ public class CanvasE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
     : E2ETestBase(fixture, "canvas", output)
 {
     [Fact]
-    public async Task Should_Discover_Canvas_Via_List()
+    public async Task Should_List_Open_Invoke_And_Close_Canvas_Through_The_Handler()
     {
         var handler = new TestCanvasHandler();
         await using var session = await CreateCanvasSessionAsync(handler);
 
-        var result = await session.Rpc.Canvas.ListAsync();
-
-        var canvas = Assert.Single(result.Canvases);
+        var canvas = Assert.Single((await session.Rpc.Canvas.ListAsync()).Canvases);
         Assert.Equal("counter", canvas.CanvasId);
         Assert.Equal("Counter", canvas.DisplayName);
         Assert.Equal("Tracks a counter value.", canvas.Description);
         Assert.Single(canvas.Actions!);
         Assert.Equal("increment", canvas.Actions![0].Name);
         Assert.Empty(handler.OpenRequests);
-    }
-
-    [Fact]
-    public async Task Should_Open_Canvas_Through_The_Handler()
-    {
-        var handler = new TestCanvasHandler();
-        await using var session = await CreateCanvasSessionAsync(handler);
-        var canvas = Assert.Single((await session.Rpc.Canvas.ListAsync()).Canvases);
 
         var openResult = await session.Rpc.Canvas.OpenAsync(
             canvasId: "counter",
@@ -53,68 +43,40 @@ public class CanvasE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
         Assert.Equal("ready", openResult.Status);
         Assert.Equal("https://example.com/counter/counter-1", openResult.Url);
 
-        var request = Assert.Single(handler.OpenRequests);
-        Assert.Equal(session.SessionId, request.SessionId);
-        Assert.Equal(canvas.ExtensionId, request.ExtensionId);
-        Assert.Equal("counter", request.CanvasId);
-        Assert.Equal("counter-1", request.InstanceId);
-        Assert.Equal(41, GetRequiredInt32(request.Input, "start"));
+        var openRequest = Assert.Single(handler.OpenRequests);
+        Assert.Equal(session.SessionId, openRequest.SessionId);
+        Assert.Equal(canvas.ExtensionId, openRequest.ExtensionId);
+        Assert.Equal("counter", openRequest.CanvasId);
+        Assert.Equal("counter-1", openRequest.InstanceId);
+        Assert.Equal(41, GetRequiredInt32(openRequest.Input, "start"));
 
         var openCanvases = await session.Rpc.Canvas.ListOpenAsync();
         Assert.Single(openCanvases.OpenCanvases);
         Assert.Equal("counter-1", openCanvases.OpenCanvases[0].InstanceId);
-    }
 
-    [Fact]
-    public async Task Should_Invoke_Canvas_Action_Through_The_Handler()
-    {
-        var handler = new TestCanvasHandler();
-        await using var session = await CreateCanvasSessionAsync(handler);
-        var canvas = Assert.Single((await session.Rpc.Canvas.ListAsync()).Canvases);
-        await session.Rpc.Canvas.OpenAsync(
-            canvasId: "counter",
-            instanceId: "counter-1",
-            extensionId: canvas.ExtensionId,
-            input: new Dictionary<string, object> { ["start"] = 41 });
-
-        var result = await session.Rpc.Canvas.Action.InvokeAsync(
+        var actionResult = await session.Rpc.Canvas.Action.InvokeAsync(
             instanceId: "counter-1",
             actionName: "increment",
             input: new Dictionary<string, object> { ["delta"] = 1 });
 
-        var request = Assert.Single(handler.ActionRequests);
-        Assert.Equal(session.SessionId, request.SessionId);
-        Assert.Equal(canvas.ExtensionId, request.ExtensionId);
-        Assert.Equal("counter", request.CanvasId);
-        Assert.Equal("counter-1", request.InstanceId);
-        Assert.Equal("increment", request.ActionName);
-        Assert.Equal(1, GetRequiredInt32(request.Input, "delta"));
-        Assert.True(result.Result.HasValue);
-        Assert.NotEqual(JsonValueKind.Undefined, result.Result.Value.ValueKind);
-    }
-
-    [Fact]
-    public async Task Should_Close_Canvas_Through_The_Handler()
-    {
-        var handler = new TestCanvasHandler();
-        await using var session = await CreateCanvasSessionAsync(handler);
-        var canvas = Assert.Single((await session.Rpc.Canvas.ListAsync()).Canvases);
-        await session.Rpc.Canvas.OpenAsync(
-            canvasId: "counter",
-            instanceId: "counter-1",
-            extensionId: canvas.ExtensionId,
-            input: new Dictionary<string, object> { ["start"] = 41 });
+        var actionRequest = Assert.Single(handler.ActionRequests);
+        Assert.Equal(session.SessionId, actionRequest.SessionId);
+        Assert.Equal(canvas.ExtensionId, actionRequest.ExtensionId);
+        Assert.Equal("counter", actionRequest.CanvasId);
+        Assert.Equal("counter-1", actionRequest.InstanceId);
+        Assert.Equal("increment", actionRequest.ActionName);
+        Assert.Equal(1, GetRequiredInt32(actionRequest.Input, "delta"));
+        Assert.True(actionResult.Result.HasValue);
+        Assert.NotEqual(JsonValueKind.Undefined, actionResult.Result.Value.ValueKind);
 
         await session.Rpc.Canvas.CloseAsync("counter-1");
 
-        var request = Assert.Single(handler.CloseRequests);
-        Assert.Equal(session.SessionId, request.SessionId);
-        Assert.Equal(canvas.ExtensionId, request.ExtensionId);
-        Assert.Equal("counter", request.CanvasId);
-        Assert.Equal("counter-1", request.InstanceId);
-
-        var openCanvases = await session.Rpc.Canvas.ListOpenAsync();
-        Assert.Empty(openCanvases.OpenCanvases);
+        var closeRequest = Assert.Single(handler.CloseRequests);
+        Assert.Equal(session.SessionId, closeRequest.SessionId);
+        Assert.Equal(canvas.ExtensionId, closeRequest.ExtensionId);
+        Assert.Equal("counter", closeRequest.CanvasId);
+        Assert.Equal("counter-1", closeRequest.InstanceId);
+        Assert.Empty((await session.Rpc.Canvas.ListOpenAsync()).OpenCanvases);
     }
 
     private Task<CopilotSession> CreateCanvasSessionAsync(TestCanvasHandler handler)

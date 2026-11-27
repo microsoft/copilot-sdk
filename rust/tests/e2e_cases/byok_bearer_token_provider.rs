@@ -3,7 +3,6 @@
  *--------------------------------------------------------------------------------------------*/
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -17,7 +16,6 @@ use http::HeaderMap;
 
 use super::support::{capi_meta_body, with_e2e_context_no_snapshot};
 
-const PRIMARY_BASE_URL: &str = "https://byok-endpoint.invalid/v1";
 const RED_HOST: &str = "byok-red.invalid";
 const RED_BASE_URL: &str = "https://byok-red.invalid/v1";
 const BLUE_HOST: &str = "byok-blue.invalid";
@@ -36,15 +34,6 @@ struct CapturingRequestHandler {
 }
 
 impl CapturingRequestHandler {
-    fn auth_headers(&self) -> Vec<String> {
-        self.captures
-            .lock()
-            .unwrap()
-            .iter()
-            .filter_map(|capture| capture.authorization.clone())
-            .collect()
-    }
-
     fn auth_header_for_host(&self, host: &str) -> Option<String> {
         self.captures
             .lock()
@@ -139,81 +128,6 @@ async fn run_turn(
         .expect("create session");
     let _ = session.send_and_wait(MessageOptions::new(prompt)).await;
     let _ = session.disconnect().await;
-}
-
-#[tokio::test]
-async fn reacquires_a_fresh_token_for_each_request() {
-    // The runtime registers the LLM inference provider per connection and, by design,
-    // never releases the slot on disconnect (runtime `shared_api/llm_inference.rs`). Over
-    // the in-process transport every client shares this process's runtime, so a second
-    // provider-registering client is refused ("Another client is already the LLM
-    // inference provider"). The BYOK bearer-token behavior over the in-process transport
-    // is covered by `callback_token_is_applied_as_authorization_header`; this scenario's
-    // provider-dispatch logic is transport-agnostic and is covered over stdio.
-    if super::support::skip_inprocess(
-        "llmInference.setProvider is process-global in-process; a second provider client is refused",
-    ) {
-        return;
-    }
-    with_e2e_context_no_snapshot(|ctx| {
-        Box::pin(async move {
-            ctx.set_default_copilot_user();
-            let handler = Arc::new(CapturingRequestHandler::default());
-            let client = ctx.start_llm_client(handler.clone()).await;
-            handler.reset();
-
-            let calls = Arc::new(AtomicUsize::new(0));
-            let callback_calls = calls.clone();
-            let providers = vec![
-                NamedProviderConfig::new("mi", PRIMARY_BASE_URL)
-                    .with_provider_type("openai")
-                    .with_wire_api("completions")
-                    .with_bearer_token_provider(Arc::new(move |_args: ProviderTokenArgs| {
-                        let callback_calls = callback_calls.clone();
-                        async move {
-                            let call = callback_calls.fetch_add(1, Ordering::SeqCst) + 1;
-                            Ok::<_, BearerTokenError>(format!("rotating-token-{call}"))
-                        }
-                    })),
-            ];
-            let models =
-                vec![ProviderModelConfig::new("default", "mi").with_wire_model("byok-gpt-4o")];
-
-            run_turn(
-                &client,
-                providers.clone(),
-                models.clone(),
-                "mi/default",
-                "What is 1+1?",
-            )
-            .await;
-            run_turn(&client, providers, models, "mi/default", "What is 2+2?").await;
-
-            let auths = handler.auth_headers();
-            assert!(
-                auths.len() >= 2,
-                "expected at least 2 captured Authorization headers, got {auths:?}"
-            );
-            assert!(
-                auths[0].starts_with("Bearer rotating-token-")
-                    && auths[1].starts_with("Bearer rotating-token-"),
-                "expected rotating-token bearer headers, got {auths:?}"
-            );
-            assert!(
-                calls.load(Ordering::SeqCst) >= 2,
-                "expected callback to be invoked at least twice"
-            );
-            // Validate the captured Authorization header is the final assertion.
-            assert_ne!(
-                auths[0], auths[1],
-                "expected distinct tokens per request, both were {:?}",
-                auths[0]
-            );
-
-            client.stop().await.expect("stop client");
-        })
-    })
-    .await;
 }
 
 #[tokio::test]

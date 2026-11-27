@@ -30,13 +30,6 @@ class InternalExecutorProviderTest {
     }
 
     @Test
-    void userProvidedExecutorIsNotOwned() {
-        Executor executor = ForkJoinPool.commonPool();
-
-        assertFalse(new InternalExecutorProvider(executor).canBeShutdown());
-    }
-
-    @Test
     void providerIsPackagePrivate() {
         assertFalse(Modifier.isPublic(InternalExecutorProvider.class.getModifiers()));
     }

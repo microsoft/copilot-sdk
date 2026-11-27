@@ -174,7 +174,7 @@ func TestGroupedSessionOptionsWireOwnership(t *testing.T) {
 	client, requests, cleanup := newInMemoryClient(t)
 	defer cleanup()
 	options := &CreateSessionOptions{
-		Tools:       SessionToolOptions{Definitions: []Tool{}, AvailableTools: []string{}},
+		Tools:       SessionToolOptions{Definitions: []Tool{}, AvailableTools: []string{"allowed_tool", "excluded_tool"}, ExcludedTools: []string{"excluded_tool"}},
 		Events:      SessionEventOptions{Streaming: Bool(false)},
 		Filesystem:  CreateSessionFilesystemOptions{AdditionalDirectories: []string{}, TrackFileChanges: Bool(false)},
 		MCP:         SessionMCPOptions{Servers: map[string]MCPServerConfig{}, DisabledServers: []string{}},
@@ -196,7 +196,7 @@ func TestGroupedSessionOptionsWireOwnership(t *testing.T) {
 		}
 	}
 	for group, want := range map[string]map[string]any{
-		"tools":       {"definitions": []any{}, "availableTools": []any{}},
+		"tools":       {"definitions": []any{}, "availableTools": []any{"allowed_tool", "excluded_tool"}, "excludedTools": []any{"excluded_tool"}},
 		"filesystem":  {"additionalDirectories": []any{}, "trackFileChanges": false},
 		"mcp":         {"servers": map[string]any{}, "disabledServers": []any{}, "envValueMode": "direct"},
 		"inference":   {"allowMultipleToolCalls": false},

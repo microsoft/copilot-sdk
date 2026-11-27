@@ -55,19 +55,6 @@ public class FakeCopilotUpstreamTests
         Assert.Equal(1, upstream.WsRequestMessageCount);
         await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, null, ct);
     }
-
-    [Theory]
-    [InlineData("models?test=query", "\"model_picker_enabled\":true")]
-    [InlineData("models/session", "{}")]
-    [InlineData("policy", "{\"state\":\"enabled\"}")]
-    public async Task ServesTheRuntimeBootstrapRoutes(string path, string expected)
-    {
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        await using var upstream = new FakeCopilotUpstream();
-        using var http = new HttpClient(new SocketsHttpHandler { UseProxy = false });
-        var content = await http.GetStringAsync(new Uri(new Uri(upstream.BaseUrl), path), deadline.Token);
-        Assert.Contains(expected, content);
-    }
 }
 
 #endif

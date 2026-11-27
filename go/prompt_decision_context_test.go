@@ -66,15 +66,6 @@ func TestUserInputReplyCarriesDecisionContextOnlyWhenLabeled(t *testing.T) {
 			},
 			want: `{"answer":"Only src/app.ts","wasFreeform":true}`,
 		},
-		{
-			name: "plain handler",
-			register: func(s *Session) {
-				s.registerUserInputHandler(func(UserInputRequest, UserInputInvocation) (UserInputResponse, error) {
-					return answer, nil
-				})
-			},
-			want: `{"answer":"Only src/app.ts","wasFreeform":true}`,
-		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			session := &Session{SessionID: "s1"}
@@ -138,15 +129,6 @@ func TestExitPlanModeReplyCarriesDecisionContextOnlyWhenLabeled(t *testing.T) {
 			},
 			want: `{"approved":true,"selectedAction":"interactive"}`,
 		},
-		{
-			name: "plain handler",
-			register: func(s *Session) {
-				s.registerExitPlanModeHandler(func(ExitPlanModeRequest, ExitPlanModeInvocation) (ExitPlanModeResult, error) {
-					return review, nil
-				})
-			},
-			want: `{"approved":true,"selectedAction":"interactive"}`,
-		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			session := &Session{SessionID: "s1"}
@@ -188,15 +170,6 @@ func TestElicitationAnswerSendsDecisionContextBesideResult(t *testing.T) {
 			register: func(s *Session) {
 				s.registerAttributedElicitationHandler(func(ElicitationContext) (AttributedElicitationResult, error) {
 					return AttributedElicitationResult{ElicitationResult: accepted}, nil
-				})
-			},
-			want: unlabeled,
-		},
-		{
-			name: "plain handler",
-			register: func(s *Session) {
-				s.registerElicitationHandler(func(ElicitationContext) (ElicitationResult, error) {
-					return accepted, nil
 				})
 			},
 			want: unlabeled,

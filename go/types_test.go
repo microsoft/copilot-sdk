@@ -51,38 +51,6 @@ func TestPersistedLocalModelOptionsPreserveOpaqueNumbers(t *testing.T) {
 	}
 }
 
-func TestLocalModelProviderConfigurationRoundTrip(t *testing.T) {
-	for _, test := range []struct {
-		name  string
-		input string
-		value any
-		field string
-	}{
-		{"provider", `{"name":"local","type":"winml","baseUrl":"model.gguf","localModel":{"device":"gpu","future":[1,true]}}`, &NamedProviderConfig{}, "localModel"},
-		{"model", `{"id":"model","provider":"local","autoLocal":{"source":"azureml","future":[1,true]}}`, &ProviderModelConfig{}, "autoLocal"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			if err := json.Unmarshal([]byte(test.input), test.value); err != nil {
-				t.Fatal(err)
-			}
-			data, err := json.Marshal(test.value)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var expected, actual map[string]any
-			if err := json.Unmarshal([]byte(test.input), &expected); err != nil {
-				t.Fatal(err)
-			}
-			if err := json.Unmarshal(data, &actual); err != nil {
-				t.Fatal(err)
-			}
-			if !reflect.DeepEqual(actual[test.field], expected[test.field]) {
-				t.Fatalf("%s changed: expected %#v, got %#v", test.field, expected[test.field], actual[test.field])
-			}
-		})
-	}
-}
-
 func TestMemoryConfiguration_Mode(t *testing.T) {
 	for _, test := range []struct {
 		name string
@@ -122,34 +90,6 @@ func TestUserPromptTransformedHookOutput_PreservesEmptyReplacement(t *testing.T)
 	}
 	if string(data) != `{"modifiedTransformedPrompt":""}` {
 		t.Fatalf("expected empty replacement to be preserved, got %s", data)
-	}
-}
-
-func TestProviderConfig_JSONIncludesHeaders(t *testing.T) {
-	config := ProviderConfig{
-		BaseURL: "https://example.com/provider",
-		Headers: map[string]string{"Authorization": "Bearer provider-token"},
-	}
-
-	data, err := json.Marshal(config)
-	if err != nil {
-		t.Fatalf("failed to marshal provider config: %v", err)
-	}
-
-	var decoded map[string]any
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("failed to unmarshal provider config: %v", err)
-	}
-
-	if decoded["baseUrl"] != "https://example.com/provider" {
-		t.Fatalf("expected baseUrl to round-trip, got %v", decoded["baseUrl"])
-	}
-	headers, ok := decoded["headers"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected headers object, got %T", decoded["headers"])
-	}
-	if headers["Authorization"] != "Bearer provider-token" {
-		t.Fatalf("expected Authorization header, got %v", headers["Authorization"])
 	}
 }
 

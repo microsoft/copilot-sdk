@@ -20,15 +20,15 @@ public sealed partial class ClientSessionLifetimeTests
         await using var server = await FakeCopilotServer.StartAsync();
         server.ResponseFactory = _ => null;
         await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
-        var storedSessionIds = new List<string>();
+        var stored = new List<StoredMemory>();
         var memory = new MemoryConfiguration
         {
             Enabled = true,
-            StoreMemory = (stored, _) =>
+            StoreMemory = (item, _) =>
             {
-                lock (storedSessionIds)
+                lock (stored)
                 {
-                    storedSessionIds.Add(stored.SessionId);
+                    stored.Add(item);
                 }
                 return Task.CompletedTask;
             }
@@ -59,7 +59,14 @@ public sealed partial class ClientSessionLifetimeTests
         {
             Assert.Equal(JsonValueKind.Null, (await result.WaitAsync(TimeSpan.FromSeconds(5))).ValueKind);
         }
-        Assert.Equal(["memory-create", "memory-resume"], storedSessionIds.Order());
+        Assert.Equal(["memory-create", "memory-resume"], stored.Select(item => item.SessionId).Order());
+        Assert.All(stored, item =>
+        {
+            Assert.Equal("package manager", item.Subject);
+            Assert.Equal("Use pnpm.", item.Fact);
+            Assert.Equal("package.json", item.Citations);
+            Assert.Equal("The workspace uses pnpm.", item.Reason);
+        });
         Assert.DoesNotContain(server.Requests, request => request.Method == "session.memory.configureStore");
 
         server.BeforeResponseAsync = null;
@@ -89,40 +96,6 @@ public sealed partial class ClientSessionLifetimeTests
         var cloudError = await Assert.ThrowsAsync<ArgumentException>(() => client.CreateSessionAsync(new CreateSessionOptions
         { Cloud = new CloudSessionOptions(), State = new SessionStateOptions { Memory = new MemoryConfiguration { Enabled = true, StoreMemory = (_, _) => Task.CompletedTask } } }));
         Assert.Equal("Memory stores are not supported for cloud sessions.", cloudError.Message);
-    }
-
-    [Fact]
-    public async Task MemoryStore_Store_Request_Invokes_Callback()
-    {
-        await using var server = await FakeCopilotServer.StartAsync();
-        server.ResponseFactory = _ => null;
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
-        StoredMemory? stored = null;
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions
-        {
-            State = new SessionStateOptions
-            {
-                Memory = new MemoryConfiguration
-                {
-                    Enabled = true,
-                    StoreMemory = (memory, _) =>
-        {
-            stored = memory;
-            return Task.CompletedTask;
-        }
-                }
-            }
-        });
-
-        var result = await server.SendRequestAsync("memoryStore.store", MemoryStoreRequest(session.SessionId));
-
-        Assert.Equal(JsonValueKind.Null, result.ValueKind);
-        Assert.NotNull(stored);
-        Assert.Equal(session.SessionId, stored.SessionId);
-        Assert.Equal("package manager", stored.Subject);
-        Assert.Equal("Use pnpm.", stored.Fact);
-        Assert.Equal("package.json", stored.Citations);
-        Assert.Equal("The workspace uses pnpm.", stored.Reason);
     }
 
     [Fact]

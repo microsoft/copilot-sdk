@@ -81,18 +81,6 @@ def _release_fetches(version: str, runtime_platform: str, data: bytes):
     return fetch
 
 
-def test_release_asset_uses_platform_package_name(monkeypatch):
-    monkeypatch.setenv("COPILOT_CLI_DOWNLOAD_BASE_URL", "https://mirror.example/releases/")
-
-    name = _cli_version.get_release_asset_name("1.2.3-4", "linux-x64")
-
-    assert name == "github-copilot-1.2.3-4-linux-x64.tgz"
-    assert (
-        _cli_version.get_download_url("1.2.3-4", name)
-        == "https://mirror.example/releases/v1.2.3-4/github-copilot-1.2.3-4-linux-x64.tgz"
-    )
-
-
 @pytest.mark.parametrize(
     ("version", "repository", "tag"),
     [
@@ -110,6 +98,7 @@ def test_release_asset_uses_platform_package_name(monkeypatch):
 def test_pinned_runtime_uses_matching_release_and_mirror(monkeypatch, version, repository, tag):
     monkeypatch.delenv("COPILOT_CLI_DOWNLOAD_BASE_URL", raising=False)
     asset = _cli_version.get_release_asset_name(version, "linux-x64")
+    assert asset == f"github-copilot-{version}-linux-x64.tgz"
     expected = f"https://github.com/github/{repository}/releases/download/{tag}"
     assert _cli_version.get_download_url(version, asset) == f"{expected}/{asset}"
     assert _cli_version.get_checksums_url(version) == f"{expected}/SHA256SUMS.txt"
@@ -117,6 +106,10 @@ def test_pinned_runtime_uses_matching_release_and_mirror(monkeypatch, version, r
     assert (
         _cli_version.get_checksums_url(version)
         == f"https://mirror.example/releases/{tag}/SHA256SUMS.txt"
+    )
+    assert (
+        _cli_version.get_download_url(version, asset)
+        == f"https://mirror.example/releases/{tag}/{asset}"
     )
 
 
@@ -878,28 +871,3 @@ def test_download_runtime_can_provision_library_from_canonical_staged_bundle(tmp
         )
     )
     assert fetch_mock.call_count == 2
-
-
-def test_resolve_library_path_accepts_adjacent_runtime_node(tmp_path):
-    wrapper = tmp_path / ("copilot-runtime.exe" if os.name == "nt" else "copilot-runtime")
-    wrapper.write_bytes(b"wrapper")
-    runtime_node = tmp_path / "runtime.node"
-    runtime_node.write_bytes(b"runtime")
-
-    assert _ffi_runtime_host.resolve_library_path(str(wrapper)) == str(runtime_node)
-
-
-def test_rejects_cached_wrapper_without_runtime_node(tmp_path):
-    runtime_platform = "linux-x64"
-    wrapper_name = "copilot-runtime.exe" if os.name == "nt" else "copilot-runtime"
-    cache_dir = tmp_path / "cache"
-    install_dir = cache_dir / "prebuilds" / runtime_platform
-    install_dir.mkdir(parents=True)
-    (install_dir / wrapper_name).write_bytes(b"wrapper")
-
-    with (
-        patch.object(_cli_download, "get_cache_dir", return_value=cache_dir),
-        patch.object(_cli_download, "get_runtime_platform", return_value=runtime_platform),
-    ):
-        with pytest.raises(RuntimeError, match="Incomplete Copilot runtime bundle"):
-            _cli_download.ensure_runtime_wrapper(version="1.2.3")

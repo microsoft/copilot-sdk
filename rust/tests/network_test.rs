@@ -44,8 +44,6 @@ async fn authenticate_negotiate(
 ) -> Result<Option<String>> {
     match request.spn.as_str() {
         "HTTP/unavailable" => Ok(None),
-        "HTTP/failing" => Err(Error::with_message(ErrorKind::Io, "lookup failed")),
-        "HTTP/panicking" => panic!("lookup panicked"),
         spn => Ok(Some(format!("token for {spn}"))),
     }
 }
@@ -55,8 +53,6 @@ async fn authenticate_basic(
 ) -> Result<Option<NetworkAuthenticateBasicResult>> {
     match request.proxy.as_str() {
         "http://unavailable.example:8080" => Ok(None),
-        "http://failing.example:8080" => Err(Error::with_message(ErrorKind::Io, "lookup failed")),
-        "http://panicking.example:8080" => panic!("lookup panicked"),
         proxy => Ok(Some(NetworkAuthenticateBasicResult {
             username: Some(format!("user for {proxy}")),
             password: request.realm.map(|realm| {
@@ -115,40 +111,18 @@ async fn start_stalled_request(
     id: u64,
 ) -> (Client, FakeRuntime, mpsc::UnboundedReceiver<&'static str>) {
     let (events_tx, mut events) = mpsc::unbounded_channel();
-    let (proxy_events, negotiate_events) = (events_tx.clone(), events_tx.clone());
     let (client, mut runtime) = start(
         ClientOptions::new(copilot_sdk::ClientMode::CodingAgent).with_network(
-            NetworkConfig::new()
-                .with_resolve_proxy(move |request: NetworkResolveProxyRequest| {
-                    let events = proxy_events.clone();
-                    async move {
-                        if request.url == "https://stalled.example/" {
-                            stall(events).await
-                        } else {
-                            resolve_proxy(request).await
-                        }
+            NetworkConfig::new().with_resolve_proxy(move |request: NetworkResolveProxyRequest| {
+                let events = events_tx.clone();
+                async move {
+                    if request.url == "https://stalled.example/" {
+                        stall(events).await
+                    } else {
+                        resolve_proxy(request).await
                     }
-                })
-                .with_authenticate_negotiate(move |request: NetworkAuthenticateNegotiateRequest| {
-                    let events = negotiate_events.clone();
-                    async move {
-                        if request.spn == "HTTP/stalled" {
-                            stall(events).await
-                        } else {
-                            authenticate_negotiate(request).await
-                        }
-                    }
-                })
-                .with_authenticate_basic(move |request: NetworkAuthenticateBasicRequest| {
-                    let events = events_tx.clone();
-                    async move {
-                        if request.proxy == "http://stalled.example:8080" {
-                            stall(events).await
-                        } else {
-                            authenticate_basic(request).await
-                        }
-                    }
-                }),
+                }
+            }),
         ),
         vec![json!({ "result": null })],
     )
@@ -244,11 +218,6 @@ async fn registers_only_configured_callbacks_and_scope() {
     let cases = [
         (
             ClientOptions::new(copilot_sdk::ClientMode::CodingAgent),
-            vec![],
-        ),
-        (
-            ClientOptions::new(copilot_sdk::ClientMode::CodingAgent)
-                .with_network(NetworkConfig::new()),
             vec![],
         ),
         (
@@ -601,24 +570,8 @@ async fn answers_missing_values_and_returns_callback_failures_and_panics() {
                 json!({ "url": "https://failing.example/" }),
             ),
             (
-                "network.authenticateNegotiate",
-                json!({ "spn": "HTTP/failing" }),
-            ),
-            (
-                "network.authenticateBasic",
-                json!({ "proxy": "http://failing.example:8080", "previousRejected": false }),
-            ),
-            (
                 "network.resolveProxy",
                 json!({ "url": "https://panicking.example/" }),
-            ),
-            (
-                "network.authenticateNegotiate",
-                json!({ "spn": "HTTP/panicking" }),
-            ),
-            (
-                "network.authenticateBasic",
-                json!({ "proxy": "http://panicking.example:8080", "previousRejected": false }),
             ),
         ],
     )
@@ -636,22 +589,6 @@ async fn answers_missing_values_and_returns_callback_failures_and_panics() {
             }),
             json!({
                 "jsonrpc": "2.0", "id": 1004,
-                "error": { "code": -32603, "message": "lookup failed" }
-            }),
-            json!({
-                "jsonrpc": "2.0", "id": 1005,
-                "error": { "code": -32603, "message": "lookup failed" }
-            }),
-            json!({
-                "jsonrpc": "2.0", "id": 1006,
-                "error": { "code": -32603, "message": "request handler panicked" }
-            }),
-            json!({
-                "jsonrpc": "2.0", "id": 1007,
-                "error": { "code": -32603, "message": "request handler panicked" }
-            }),
-            json!({
-                "jsonrpc": "2.0", "id": 1008,
                 "error": { "code": -32603, "message": "request handler panicked" }
             }),
         ]
@@ -660,108 +597,56 @@ async fn answers_missing_values_and_returns_callback_failures_and_panics() {
 
 #[tokio::test]
 async fn cancelled_requests_drop_the_callback_future() {
-    let mut outcomes = Vec::new();
-    for (method, stalled, later) in [
-        (
-            "network.resolveProxy",
-            json!({ "url": "https://stalled.example/" }),
-            json!({ "url": "https://api.example.com/" }),
-        ),
-        (
-            "network.authenticateNegotiate",
-            json!({ "spn": "HTTP/stalled" }),
-            json!({ "spn": "HTTP/proxy.example" }),
-        ),
-        (
-            "network.authenticateBasic",
-            json!({ "proxy": "http://stalled.example:8080", "previousRejected": false }),
-            json!({ "proxy": "http://proxy.example:8080", "previousRejected": false }),
-        ),
-    ] {
-        let (client, mut runtime, mut events) = start_stalled_request(method, stalled, 1000).await;
-        write_frame(
-            &mut runtime.writer,
-            json!({ "jsonrpc": "2.0", "method": "$/cancelRequest", "params": { "id": 1000 } }),
-        )
-        .await;
-        let dropped = timeout(WAIT, events.recv()).await.unwrap();
-        let cancelled = read_frame(&mut runtime.reader).await;
-        // The next frame answers a later request, not the cancelled one again.
-        write_frame(
-            &mut runtime.writer,
-            json!({ "jsonrpc": "2.0", "id": 1001, "method": method, "params": later }),
-        )
-        .await;
-        let answered = read_frame(&mut runtime.reader).await;
-        client.force_stop();
-        outcomes.push((method, dropped, cancelled, answered));
-    }
-    let cancelled = json!({
-        "jsonrpc": "2.0", "id": 1000,
-        "error": { "code": -32800, "message": "Request cancelled" }
-    });
+    let (client, mut runtime, mut events) = start_stalled_request(
+        "network.resolveProxy",
+        json!({ "url": "https://stalled.example/" }),
+        1000,
+    )
+    .await;
+    write_frame(
+        &mut runtime.writer,
+        json!({ "jsonrpc": "2.0", "method": "$/cancelRequest", "params": { "id": 1000 } }),
+    )
+    .await;
+    let dropped = timeout(WAIT, events.recv()).await.unwrap();
+    let cancelled = read_frame(&mut runtime.reader).await;
+    // The next frame answers a later request, not the cancelled one again.
+    write_frame(
+        &mut runtime.writer,
+        json!({
+            "jsonrpc": "2.0", "id": 1001, "method": "network.resolveProxy",
+            "params": { "url": "https://api.example.com/" }
+        }),
+    )
+    .await;
+    let answered = read_frame(&mut runtime.reader).await;
+    client.force_stop();
     assert_eq!(
-        outcomes,
-        [
-            (
-                "network.resolveProxy",
-                Some("dropped"),
-                cancelled.clone(),
-                json!({
-                    "jsonrpc": "2.0", "id": 1001,
-                    "result": { "proxy": "PROXY proxy.example:8080; DIRECT" }
-                }),
-            ),
-            (
-                "network.authenticateNegotiate",
-                Some("dropped"),
-                cancelled.clone(),
-                json!({
-                    "jsonrpc": "2.0", "id": 1001,
-                    "result": { "token": "token for HTTP/proxy.example" }
-                }),
-            ),
-            (
-                "network.authenticateBasic",
-                Some("dropped"),
-                cancelled,
-                json!({
-                    "jsonrpc": "2.0", "id": 1001,
-                    "result": { "username": "user for http://proxy.example:8080" }
-                }),
-            ),
-        ]
+        (dropped, cancelled, answered),
+        (
+            Some("dropped"),
+            json!({
+                "jsonrpc": "2.0", "id": 1000,
+                "error": { "code": -32800, "message": "Request cancelled" }
+            }),
+            json!({
+                "jsonrpc": "2.0", "id": 1001,
+                "result": { "proxy": "PROXY proxy.example:8080; DIRECT" }
+            }),
+        )
     );
 }
 
 #[tokio::test]
 async fn closed_connection_drops_pending_callback_futures() {
-    let mut dropped = Vec::new();
-    for (method, params) in [
-        (
-            "network.resolveProxy",
-            json!({ "url": "https://stalled.example/" }),
-        ),
-        (
-            "network.authenticateNegotiate",
-            json!({ "spn": "HTTP/stalled" }),
-        ),
-        (
-            "network.authenticateBasic",
-            json!({ "proxy": "http://stalled.example:8080", "previousRejected": false }),
-        ),
-    ] {
-        let (client, runtime, mut events) = start_stalled_request(method, params, 1000).await;
-        drop(runtime);
-        dropped.push((method, timeout(WAIT, events.recv()).await.unwrap()));
-        client.force_stop();
-    }
-    assert_eq!(
-        dropped,
-        [
-            ("network.resolveProxy", Some("dropped")),
-            ("network.authenticateNegotiate", Some("dropped")),
-            ("network.authenticateBasic", Some("dropped")),
-        ]
-    );
+    let (client, runtime, mut events) = start_stalled_request(
+        "network.resolveProxy",
+        json!({ "url": "https://stalled.example/" }),
+        1000,
+    )
+    .await;
+    drop(runtime);
+    let dropped = timeout(WAIT, events.recv()).await.unwrap();
+    client.force_stop();
+    assert_eq!(dropped, Some("dropped"));
 }

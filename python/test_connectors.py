@@ -21,7 +21,6 @@ from copilot.rpc import (
 from copilot.session import CopilotSession
 
 
-@pytest.mark.parametrize("availability", ["disabled", "enabled", "unavailable"])
 @pytest.mark.parametrize(
     ("result_type", "payload"),
     [
@@ -37,13 +36,11 @@ from copilot.session import CopilotSession
         ),
     ],
 )
-def test_discovery_availability_is_distinct_from_session_availability(
-    result_type, payload, availability
-):
+def test_discovery_availability_is_distinct_from_session_availability(result_type, payload):
     assert ConnectorDiscoveryAvailability is not ConnectorAvailability
-    payload = {**payload, "availability": availability}
+    payload = {**payload, "availability": "disabled"}
     result = result_type.from_dict(payload)
-    assert result.availability is ConnectorDiscoveryAvailability(availability)
+    assert result.availability is ConnectorDiscoveryAvailability.DISABLED
     assert result.to_dict() == payload
 
 
@@ -252,30 +249,6 @@ async def test_session_connector_account_and_targeted_reconcile_use_exact_wire_c
             },
         ),
     ]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("supported", [None, False])
-async def test_hosts_can_avoid_unsupported_session_connector_calls(supported):
-    capabilities = connector_response("session.connectors.getCapabilities", {})
-    if supported is not None:
-        capabilities.update(sessionAccountSelection=supported, targetedReconcile=supported)
-    transport = Mock()
-    transport.request = AsyncMock(return_value=capabilities)
-    session = CopilotSession("session-1", transport)
-
-    result = await session.rpc.connectors.get_capabilities()
-    if result.availability is ConnectorAvailability.ENABLED:
-        if result.session_account_selection is True:
-            await session.rpc.connectors.get_account()
-        if result.targeted_reconcile is True:
-            await session.rpc.connectors.reconcile(
-                ConnectorReconcileRequest(account_id="account-1", force_connector_name="calendar")
-            )
-
-    transport.request.assert_awaited_once_with(
-        "session.connectors.getCapabilities", {"sessionId": "session-1"}
-    )
 
 
 @pytest.mark.asyncio

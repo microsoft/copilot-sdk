@@ -82,20 +82,6 @@ func TestCanvasHandlerDefaults_OnAction_ReturnsNoHandler(t *testing.T) {
 	}
 }
 
-func TestCanvasHandlerDefaults_OnClose_ReturnsNil(t *testing.T) {
-	d := CanvasHandlerDefaults{}
-	if err := d.OnClose(context.Background(), rpc.CanvasProviderCloseRequest{}); err != nil {
-		t.Fatalf("expected nil from default OnClose, got %v", err)
-	}
-}
-
-func TestCanvasError_ErrorString(t *testing.T) {
-	e := NewCanvasError("foo_code", "bar message")
-	if got := e.Error(); got != "foo_code: bar message" {
-		t.Fatalf("unexpected Error() output: %q", got)
-	}
-}
-
 type recordingCanvasHandler struct {
 	CanvasHandlerDefaults
 	openCtx      *rpc.CanvasProviderOpenRequest

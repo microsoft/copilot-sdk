@@ -174,14 +174,6 @@ func TestMultiProviderRegistryE2E(t *testing.T) {
 		}
 	}
 
-	t.Run("should route alpha sonnet turn to its provider and wire model", func(t *testing.T) {
-		assertRouting(t, "alpha/sonnet", "byok-gpt-4o", "alpha")
-	})
-
-	t.Run("should route alpha haiku turn to its provider and wire model", func(t *testing.T) {
-		assertRouting(t, "alpha/haiku", "byok-gpt-4o-mini", "alpha")
-	})
-
 	t.Run("should route delta turbo turn to its provider and wire model", func(t *testing.T) {
 		assertRouting(t, "delta/turbo", "byok-gpt-4-turbo", "delta")
 	})

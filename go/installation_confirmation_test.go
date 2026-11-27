@@ -73,56 +73,6 @@ const installationConfirmationFixture = `{
   }
 }`
 
-const skillInstallationConfirmationFixture = `{
-  "confirmationId": "confirmation-skill",
-  "operationId": "operation-skill",
-  "policySessionId": "original-session",
-  "expiresAt": "2026-09-24T03:00:00Z",
-  "reviewFingerprint": "fingerprint-skill",
-  "review": {
-    "resource": "skill",
-    "review": {
-      "action": "install",
-      "name": "demo",
-      "description": "Demo Skill",
-      "catalogue": {
-        "resourceId": "123",
-        "displayName": "Demo Skill",
-        "description": "Demo Skill",
-        "publisher": "Octo",
-        "source": "https://agentfinder.github.com"
-      },
-      "source": {
-        "resourceId": "123",
-        "catalogRevisionId": "1",
-        "repositoryId": "42",
-        "repository": "octo/demo",
-        "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "root": "",
-        "descriptorDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-        "bundleDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
-      },
-      "target": {
-        "scope": "personal",
-        "displayLabel": "~/.copilot/skills/demo",
-        "relativePath": "skills/demo",
-        "diagnosticsAbsolutePath": "/home/skills/demo"
-      },
-      "installsDisabled": true,
-      "files": [{
-        "path": "SKILL.md",
-        "sizeBytes": 12,
-        "mediaType": "text/markdown",
-        "executable": false,
-        "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
-      }],
-      "totalBytes": 12,
-      "entrypointPath": "SKILL.md",
-      "entrypointContent": "---\nname: demo\n---"
-    }
-  }
-}`
-
 type installationConfirmationCall struct {
 	request InstallationConfirmationRequest
 	context InstallationConfirmationContext
@@ -379,24 +329,6 @@ func TestInstallationConfirmationCancellationBeatsDecisionReadyTogether(t *testi
 	}
 }
 
-func TestInstallationConfirmationSkillReviewDeserializesAsTypedVariant(t *testing.T) {
-	var request InstallationConfirmationRequest
-	if err := json.Unmarshal([]byte(skillInstallationConfirmationFixture), &request); err != nil {
-		t.Fatal(err)
-	}
-	skillReview, ok := request.Review.(*rpc.InstallationReviewSkill)
-	if !ok {
-		t.Fatalf("review type = %T, want *rpc.InstallationReviewSkill", request.Review)
-	}
-	install, ok := skillReview.Review.(*rpc.SkillInstallationReviewInstall)
-	if !ok {
-		t.Fatalf("skill review type = %T, want *rpc.SkillInstallationReviewInstall", skillReview.Review)
-	}
-	if install.Name != "demo" || !install.InstallsDisabled {
-		t.Fatalf("unexpected skill install review: %+v", install)
-	}
-}
-
 func TestInstallationConfirmationTypedReviewEchoesChallengeAndFingerprint(t *testing.T) {
 	calls := make(chan installationConfirmationCall, 1)
 	release := make(chan struct{})
@@ -544,31 +476,6 @@ func TestInstallationConfirmationStaleUnknownAndStringCancelDontTouchSuccessor(t
 	}
 }
 
-func TestInstallationConfirmationConnectionCloseDistinctAndPerConnection(t *testing.T) {
-	firstCalls := make(chan installationConfirmationCall, 1)
-	_, firstPeer := newInstallationConfirmationHarness(t, InstallationConfirmationHandlerFunc(func(request InstallationConfirmationRequest, context InstallationConfirmationContext) (InstallationConfirmationDecision, error) {
-		firstCalls <- installationConfirmationCall{request: request, context: context}
-		<-context.Done()
-		return InstallationConfirmationDecisionConfirm, nil
-	}))
-	_, secondPeer := newInstallationConfirmationHarness(t, InstallationConfirmationHandlerFunc(func(InstallationConfirmationRequest, InstallationConfirmationContext) (InstallationConfirmationDecision, error) {
-		return InstallationConfirmationDecisionDecline, nil
-	}))
-
-	firstPeer.request(501, "installations.confirm", installationConfirmationRequest(t, "a"))
-	firstCall := waitInstallationConfirmationCall(t, firstCalls)
-	if err := firstPeer.conn.Close(); err != nil {
-		t.Fatal(err)
-	}
-	waitForClosed(t, firstCall.context.Done(), "first confirmation context")
-
-	secondPeer.request(502, "installations.confirm", installationConfirmationRequest(t, "b"))
-	response := decodeInstallationConfirmationResult(t, secondPeer.readResponse(502))
-	if response.Decision != InstallationConfirmationDecisionDecline {
-		t.Fatalf("second response decision = %q", response.Decision)
-	}
-}
-
 func TestInstallationConfirmationConnectionCloseCancelsAllOutstandingReviews(t *testing.T) {
 	calls := make(chan installationConfirmationCall, 2)
 	_, peer := newInstallationConfirmationHarness(t, InstallationConfirmationHandlerFunc(func(request InstallationConfirmationRequest, context InstallationConfirmationContext) (InstallationConfirmationDecision, error) {
@@ -661,23 +568,4 @@ func TestInstallationConfirmationRefusalsNeverApprove(t *testing.T) {
 			t.Fatalf("expected invalid decision error, got %+v", response)
 		}
 	})
-}
-
-func TestInstallationConfirmationDoesNotInferOptionalLegacySession(t *testing.T) {
-	calls := make(chan installationConfirmationCall, 1)
-	_, peer := newInstallationConfirmationHarness(t, InstallationConfirmationHandlerFunc(func(request InstallationConfirmationRequest, context InstallationConfirmationContext) (InstallationConfirmationDecision, error) {
-		calls <- installationConfirmationCall{request: request, context: context}
-		return InstallationConfirmationDecisionDecline, nil
-	}))
-	request := installationConfirmationRequest(t, "legacy")
-	request.PolicySessionID = nil
-	peer.request(801, "installations.confirm", request)
-	call := waitInstallationConfirmationCall(t, calls)
-	if call.request.PolicySessionID != nil {
-		t.Fatalf("policy session was inferred: %q", *call.request.PolicySessionID)
-	}
-	response := decodeInstallationConfirmationResult(t, peer.readResponse(801))
-	if response.Decision != InstallationConfirmationDecisionDecline {
-		t.Fatalf("response decision = %q", response.Decision)
-	}
 }

@@ -26,15 +26,12 @@ namespace Microsoft.Copilot.Test.E2E;
 /// <see cref="CapturingRequestHandler"/> that intercepts the runtime's outbound
 /// model request in-process, captures the <c>Authorization</c> header, and
 /// returns a synthetic response — so nothing touches the network and there is no
-/// CAPI proxy acting as the inference endpoint. They validate, against a real
-/// runtime:
+/// CAPI proxy acting as the inference endpoint. It validates the .NET callback
+/// binding against a real runtime: per-provider dispatch routes each provider's
+/// turn to its own callback with the forwarded provider name and session id, and
+/// the resulting token reaches that provider's endpoint. Runtime per-request
+/// re-acquisition is owned by the Node.js E2E.
 /// </para>
-/// <list type="number">
-///   <item>the callback's token reaches the model request as <c>Authorization: Bearer &lt;token&gt;</c>;</item>
-///   <item>the runtime re-acquires a token per request (no runtime-side caching);</item>
-///   <item>per-provider dispatch routes each provider's turn to its own callback,
-///   and the resulting token reaches that provider's endpoint.</item>
-/// </list>
 /// </remarks>
 [Trait(E2ETestTraits.Backend, E2ETestTraits.SelfConfiguredBackend)]
 public class ByokBearerTokenProviderE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
@@ -44,8 +41,6 @@ public class ByokBearerTokenProviderE2ETests(E2ETestFixture fixture, ITestOutput
     // handler fully answers any request aimed at a `.invalid` host, so they only
     // need to be syntactically valid, non-resolving URLs. Distinct hosts let the
     // per-provider test assert routing by host.
-    private const string PrimaryHost = "byok-endpoint.invalid";
-    private const string PrimaryBaseUrl = $"https://{PrimaryHost}/v1";
     private const string RedHost = "byok-red.invalid";
     private const string RedBaseUrl = $"https://{RedHost}/v1";
     private const string BlueHost = "byok-blue.invalid";
@@ -87,87 +82,6 @@ public class ByokBearerTokenProviderE2ETests(E2ETestFixture fixture, ITestOutput
         {
             await session.DisposeAsync();
         }
-    }
-
-    [Fact]
-    public async Task Applies_The_Callbacks_Token_As_The_Authorization_Header()
-    {
-        const string sentinel = "sentinel-bearer-token-abc123";
-        var calls = 0;
-
-        var handler = new CapturingRequestHandler();
-        await using var client = CreateClientWith(handler);
-        await client.StartAsync();
-
-        var providers = new List<NamedProviderConfig>
-        {
-            new()
-            {
-                Name = "mi",
-                Type = "openai",
-                WireApi = "completions",
-                BaseUrl = PrimaryBaseUrl,
-                BearerTokenProvider = _ =>
-                {
-                    Interlocked.Increment(ref calls);
-                    return Task.FromResult(sentinel);
-                },
-            },
-        };
-        var models = new List<ProviderModelConfig>
-        {
-            new() { Id = "default", Provider = "mi", WireModel = "byok-gpt-4o" },
-        };
-
-        await RunTurnAsync(client, providers, models, "mi/default", "What is 5+5?");
-
-        // The runtime acquired a token via the callback and applied it verbatim as
-        // the bearer credential on the outbound model request.
-        Assert.Contains($"Bearer {sentinel}", handler.AuthHeaders());
-        Assert.True(calls >= 1, "Expected the bearer-token callback to be invoked at least once.");
-    }
-
-    [Fact]
-    public async Task Re_Acquires_A_Fresh_Token_For_Each_Request()
-    {
-        var calls = 0;
-
-        var handler = new CapturingRequestHandler();
-        await using var client = CreateClientWith(handler);
-        await client.StartAsync();
-
-        var providers = new List<NamedProviderConfig>
-        {
-            new()
-            {
-                Name = "mi",
-                Type = "openai",
-                WireApi = "completions",
-                BaseUrl = PrimaryBaseUrl,
-                // A distinct token per acquisition proves the runtime re-invokes
-                // the callback per request rather than caching a previous token.
-                BearerTokenProvider = _ =>
-                {
-                    var n = Interlocked.Increment(ref calls);
-                    return Task.FromResult($"rotating-token-{n}");
-                },
-            },
-        };
-        var models = new List<ProviderModelConfig>
-        {
-            new() { Id = "default", Provider = "mi", WireModel = "byok-gpt-4o" },
-        };
-
-        await RunTurnAsync(client, providers, models, "mi/default", "What is 1+1?");
-        await RunTurnAsync(client, providers, models, "mi/default", "What is 2+2?");
-
-        // Each outbound request carries a freshly-acquired, distinct token.
-        var auths = handler.AuthHeaders();
-        Assert.True(auths.Count >= 2, $"Expected at least 2 captured Authorization headers, saw {auths.Count}.");
-        Assert.Matches(@"^Bearer rotating-token-\d+$", auths[0]);
-        Assert.Matches(@"^Bearer rotating-token-\d+$", auths[1]);
-        Assert.NotEqual(auths[0], auths[1]);
-        Assert.True(calls >= 2, "Expected the bearer-token callback to be invoked at least twice.");
     }
 
     [Fact]
@@ -275,10 +189,6 @@ internal sealed class CapturingRequestHandler : CopilotRequestHandler
         // CAPI bootstrap (model catalog, policy, …) — answered off-network.
         return Task.FromResult(RecordingRequestHandler.BuildNonInferenceResponse(uri.ToString()));
     }
-
-    /// <summary>The <c>Authorization</c> headers captured across BYOK requests, in arrival order.</summary>
-    public IReadOnlyList<string> AuthHeaders() =>
-        [.. _captures.Select(c => c.Authorization).Where(v => v is not null).Cast<string>()];
 
     /// <summary>The <c>Authorization</c> header captured for requests aimed at <paramref name="host"/>, if any.</summary>
     public string? AuthHeaderForHost(string host) =>

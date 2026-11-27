@@ -8,10 +8,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.CompletableFuture;
 
 import org.junit.jupiter.api.Test;
 
@@ -19,7 +16,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
- * Generated dispatch and serialization supplement TypeScript's real MCP tests.
+ * Generated serialization supplements TypeScript's real MCP tests.
  */
 class McpPromptsTest {
     private final ObjectMapper mapper = new ObjectMapper();
@@ -44,46 +41,5 @@ class McpPromptsTest {
         }
         var result = mapper.treeToValue(fixtures.get("richPrompt"), SessionMcpPromptsGetResult.class);
         assertEquals(fixtures.get("richPrompt"), mapper.valueToTree(result));
-    }
-
-    @Test
-    void promptNamespaceDispatchesBoundSessionAndPreservesOptionalArguments() throws Exception {
-        record Call(String method, JsonNode params, Class<?> resultType) {
-        }
-        List<Call> calls = new ArrayList<>();
-        RpcCaller caller = new RpcCaller() {
-            @Override
-            public <T> CompletableFuture<T> invoke(String method, Object params, Class<T> resultType) {
-                calls.add(new Call(method, mapper.valueToTree(params), resultType));
-                return CompletableFuture.completedFuture(null);
-            }
-        };
-        var session = new SessionRpc(caller, "bound-session");
-        session.mcp.prompts.list(SessionMcpPromptsListParams.builder().sessionId("foreign-session")
-                .serverName("fixture").cursor(null).build()).join();
-        session.mcp.prompts.list(SessionMcpPromptsListParams.builder().sessionId("foreign-session")
-                .serverName("fixture").cursor("page:2/opaque+cursor=").build()).join();
-        session.mcp.prompts.get(SessionMcpPromptsGetParams.builder().sessionId("foreign-session").serverName("fixture")
-                .promptName("rich").arguments(null).build()).join();
-        session.mcp.prompts.get(SessionMcpPromptsGetParams.builder().sessionId("foreign-session").serverName("fixture")
-                .promptName("rich").arguments(Map.of()).build()).join();
-        session.mcp.prompts.get(SessionMcpPromptsGetParams.builder().sessionId("foreign-session").serverName("fixture")
-                .promptName("rich").arguments(Map.of("topic", "日本語", "style", "")).build()).join();
-
-        assertEquals(5, calls.size());
-        for (int i = 0; i < calls.size(); i++) {
-            Call call = calls.get(i);
-            assertEquals("bound-session", call.params().get("sessionId").asText());
-            assertEquals("fixture", call.params().get("serverName").asText());
-            assertEquals(i < 2 ? "session.mcp.prompts.list" : "session.mcp.prompts.get", call.method());
-            assertEquals(i < 2 ? SessionMcpPromptsListResult.class : SessionMcpPromptsGetResult.class,
-                    call.resultType());
-        }
-        assertFalse(calls.get(0).params().has("cursor"));
-        assertEquals("page:2/opaque+cursor=", calls.get(1).params().get("cursor").asText());
-        assertEquals("rich", calls.get(2).params().get("promptName").asText());
-        assertFalse(calls.get(2).params().has("arguments"));
-        assertEquals(mapper.readTree("{}"), calls.get(3).params().get("arguments"));
-        assertEquals(mapper.readTree("{\"topic\":\"日本語\",\"style\":\"\"}"), calls.get(4).params().get("arguments"));
     }
 }

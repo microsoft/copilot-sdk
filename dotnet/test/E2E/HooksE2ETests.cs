@@ -11,91 +11,11 @@ namespace Microsoft.Copilot.Test.E2E;
 public class HooksE2ETests(E2ETestFixture fixture, ITestOutputHelper output) : E2ETestBase(fixture, "hooks", output)
 {
     [Fact]
-    public async Task Should_Invoke_PreToolUse_Hook_When_Model_Runs_A_Tool()
-    {
-        var preToolUseInputs = new List<PreToolUseHookInput>();
-        CopilotSession? session = null;
-        session = await CreateSessionAsync(new CreateSessionOptions
-        {
-            Permissions = new SessionPermissionOptions
-            {
-                OnRequest = PermissionHandler.ApproveAll
-            },
-            Hooks = new SessionHookOptions
-            {
-                Handlers = new SessionHooks
-                {
-                    OnPreToolUse = (input, invocation) =>
-                    {
-                        preToolUseInputs.Add(input);
-                        Assert.Equal(session!.SessionId, invocation.SessionId);
-                        return Task.FromResult<PreToolUseHookOutput?>(new PreToolUseHookOutput { PermissionDecision = "allow" });
-                    }
-                }
-            }
-        });
-
-        // Create a file for the model to read
-        await File.WriteAllTextAsync(Path.Join(Ctx.WorkDir, "hello.txt"), "Hello from the test!");
-
-        await TestHelper.SendAndGetFinalAssistantMessageAsync(session, new MessageOptions
-        {
-            Prompt = "Read the contents of hello.txt and tell me what it says"
-        });
-
-        // Should have received at least one preToolUse hook call
-        Assert.NotEmpty(preToolUseInputs);
-
-        // Should have received the tool name
-        Assert.Contains(preToolUseInputs, i => !string.IsNullOrEmpty(i.ToolName));
-    }
-
-    [Fact]
-    public async Task Should_Invoke_PostToolUse_Hook_After_Model_Runs_A_Tool()
-    {
-        var postToolUseInputs = new List<PostToolUseHookInput>();
-        CopilotSession? session = null;
-        session = await CreateSessionAsync(new CreateSessionOptions
-        {
-            Permissions = new SessionPermissionOptions
-            {
-                OnRequest = PermissionHandler.ApproveAll
-            },
-            Hooks = new SessionHookOptions
-            {
-                Handlers = new SessionHooks
-                {
-                    OnPostToolUse = (input, invocation) =>
-                    {
-                        postToolUseInputs.Add(input);
-                        Assert.Equal(session!.SessionId, invocation.SessionId);
-                        return Task.FromResult<PostToolUseHookOutput?>(null);
-                    }
-                }
-            }
-        });
-
-        // Create a file for the model to read
-        await File.WriteAllTextAsync(Path.Join(Ctx.WorkDir, "world.txt"), "World from the test!");
-
-        await TestHelper.SendAndGetFinalAssistantMessageAsync(session, new MessageOptions
-        {
-            Prompt = "Read the contents of world.txt and tell me what it says"
-        });
-
-        // Should have received at least one postToolUse hook call
-        Assert.NotEmpty(postToolUseInputs);
-
-        // Should have received the tool name and result
-        Assert.Contains(postToolUseInputs, i => !string.IsNullOrEmpty(i.ToolName));
-        Assert.Contains(postToolUseInputs, i => i.ToolResult != null);
-    }
-
-    [Fact]
     public async Task Should_Invoke_Both_PreToolUse_And_PostToolUse_Hooks_For_Single_Tool_Call()
     {
         var preToolUseInputs = new List<PreToolUseHookInput>();
         var postToolUseInputs = new List<PostToolUseHookInput>();
+        var invocationSessionIds = new List<string>();
 
         var session = await CreateSessionAsync(new CreateSessionOptions
         {
@@ -110,11 +30,13 @@ public class HooksE2ETests(E2ETestFixture fixture, ITestOutputHelper output) : E
                     OnPreToolUse = (input, invocation) =>
                     {
                         preToolUseInputs.Add(input);
+                        invocationSessionIds.Add(invocation.SessionId);
                         return Task.FromResult<PreToolUseHookOutput?>(new PreToolUseHookOutput { PermissionDecision = "allow" });
                     },
                     OnPostToolUse = (input, invocation) =>
                     {
                         postToolUseInputs.Add(input);
+                        invocationSessionIds.Add(invocation.SessionId);
                         return Task.FromResult<PostToolUseHookOutput?>(null);
                     }
                 }
@@ -131,6 +53,9 @@ public class HooksE2ETests(E2ETestFixture fixture, ITestOutputHelper output) : E
         // Both hooks should have been called
         Assert.NotEmpty(preToolUseInputs);
         Assert.NotEmpty(postToolUseInputs);
+        Assert.All(invocationSessionIds, id => Assert.Equal(session.SessionId, id));
+        Assert.Contains(postToolUseInputs, i => i.ToolResult != null);
+        Assert.Contains(postToolUseInputs, i => !string.IsNullOrEmpty(i.ToolName));
 
         Assert.All(preToolUseInputs, input => Assert.False(string.IsNullOrEmpty(input.ToolCallId)));
         Assert.All(postToolUseInputs, post =>

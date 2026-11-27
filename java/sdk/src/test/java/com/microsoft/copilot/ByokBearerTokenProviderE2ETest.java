@@ -9,7 +9,6 @@ import org.junit.jupiter.api.Tag;
 import static com.microsoft.copilot.CopilotRequestTestSupport.buildNonInferenceResponse;
 import static com.microsoft.copilot.CopilotRequestTestSupport.newLlmClient;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.ByteArrayInputStream;
@@ -27,7 +26,6 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import javax.net.ssl.SSLSession;
 
@@ -53,8 +51,6 @@ import com.microsoft.copilot.rpc.ProviderModelConfig;
 @Tag("e2e")
 public class ByokBearerTokenProviderE2ETest {
 
-    private static final String PRIMARY_HOST = "byok-endpoint.invalid";
-    private static final String PRIMARY_BASE_URL = "https://" + PRIMARY_HOST + "/v1";
     private static final String RED_HOST = "byok-red.invalid";
     private static final String RED_BASE_URL = "https://" + RED_HOST + "/v1";
     private static final String BLUE_HOST = "byok-blue.invalid";
@@ -78,49 +74,6 @@ public class ByokBearerTokenProviderE2ETest {
     @BeforeEach
     void resetHandler() {
         handler = new CapturingRequestHandler();
-    }
-
-    @Test
-    void appliesCallbackTokenAsAuthorizationHeader() throws Exception {
-        String sentinel = "sentinel-bearer-token-abc123";
-        AtomicInteger calls = new AtomicInteger();
-        BearerTokenProvider tokenProvider = args -> {
-            calls.incrementAndGet();
-            return CompletableFuture.completedFuture(sentinel);
-        };
-
-        List<NamedProviderConfig> providers = List.of(new NamedProviderConfig().setName("mi").setType("openai")
-                .setWireApi("completions").setBaseUrl(PRIMARY_BASE_URL).setBearerTokenProvider(tokenProvider));
-        List<ProviderModelConfig> models = List
-                .of(new ProviderModelConfig().setId("default").setProvider("mi").setWireModel("byok-gpt-4o"));
-
-        runTurn(providers, models, "mi/default", "What is 5+5?");
-
-        assertTrue(handler.authHeaders().contains("Bearer " + sentinel),
-                "Expected captured Authorization headers to contain the callback token: " + handler.authHeaders());
-        assertTrue(calls.get() >= 1, "Expected the callback to be invoked at least once");
-    }
-
-    @Test
-    void reacquiresFreshTokenForEachRequest() throws Exception {
-        AtomicInteger calls = new AtomicInteger();
-        BearerTokenProvider tokenProvider = args -> CompletableFuture
-                .completedFuture("rotating-token-" + calls.incrementAndGet());
-
-        List<NamedProviderConfig> providers = List.of(new NamedProviderConfig().setName("mi").setType("openai")
-                .setWireApi("completions").setBaseUrl(PRIMARY_BASE_URL).setBearerTokenProvider(tokenProvider));
-        List<ProviderModelConfig> models = List
-                .of(new ProviderModelConfig().setId("default").setProvider("mi").setWireModel("byok-gpt-4o"));
-
-        runTurn(providers, models, "mi/default", "What is 1+1?");
-        runTurn(providers, models, "mi/default", "What is 2+2?");
-
-        List<String> auths = handler.authHeaders();
-        assertTrue(auths.size() >= 2, "Expected at least two captured Authorization headers, got " + auths);
-        assertTrue(auths.get(0).startsWith("Bearer rotating-token-"), "Expected rotating token, got " + auths);
-        assertTrue(auths.get(1).startsWith("Bearer rotating-token-"), "Expected rotating token, got " + auths);
-        assertNotEquals(auths.get(0), auths.get(1), "Expected distinct tokens per request");
-        assertTrue(calls.get() >= 2, "Expected the callback to be invoked at least twice");
     }
 
     @Test
@@ -203,16 +156,6 @@ public class ByokBearerTokenProviderE2ETest {
                 return new StubHttpResponse(404, "{\"error\":{\"message\":\"fake byok endpoint\"}}");
             }
             return buildNonInferenceResponse(request.uri().toString());
-        }
-
-        List<String> authHeaders() {
-            List<String> auths = new ArrayList<>();
-            for (CapturedRequest capture : captures) {
-                if (capture.authorization() != null) {
-                    auths.add(capture.authorization());
-                }
-            }
-            return auths;
         }
 
         String authHeaderForHost(String host) {

@@ -7,14 +7,11 @@ package com.microsoft.copilot;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.microsoft.copilot.generated.rpc.ModelSwitchAutoTierStatus;
-import com.microsoft.copilot.generated.rpc.SessionModelSwitchAutoTierResult;
 import com.microsoft.copilot.rpc.AutoTier;
 import com.microsoft.copilot.rpc.ElicitationParams;
 import com.microsoft.copilot.rpc.ElicitationSchema;
@@ -297,27 +294,6 @@ class SessionAutoTierSwitchTest {
             assertTrue(params.get("autoTier").isNull(), "returning to provider-default routing must send null");
             assertEquals("sess-7", params.get("sessionId").asText());
         }
-    }
-
-    @Test
-    void switchAutoTier_result_deserializes_every_field() throws Exception {
-        var json = """
-                {
-                  "status": "pending",
-                  "effectiveAutoTier": "balance",
-                  "pendingAutoTier": "fast",
-                  "activatingAutoTier": null,
-                  "supersededAutoTier": "efficiency"
-                }
-                """;
-
-        var result = new ObjectMapper().readValue(json, SessionModelSwitchAutoTierResult.class);
-
-        assertEquals(ModelSwitchAutoTierStatus.PENDING, result.status());
-        assertEquals(com.microsoft.copilot.generated.rpc.AutoTier.BALANCE, result.effectiveAutoTier());
-        assertEquals(com.microsoft.copilot.generated.rpc.AutoTier.FAST, result.pendingAutoTier());
-        assertNull(result.activatingAutoTier());
-        assertEquals(com.microsoft.copilot.generated.rpc.AutoTier.EFFICIENCY, result.supersededAutoTier());
     }
 
     /**

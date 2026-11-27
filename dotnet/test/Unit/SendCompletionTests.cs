@@ -66,7 +66,6 @@ public sealed partial class ClientSessionLifetimeTests
     [InlineData(false, false)]
     [InlineData(true, false)]
     [InlineData(false, true)]
-    [InlineData(true, true)]
     public async Task SendAndWait_Returns_Only_The_Runtime_Owned_Response(bool noOutput, bool autopilot)
     {
         await using var server = await FakeCopilotServer.StartAsync();

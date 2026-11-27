@@ -68,6 +68,7 @@ class TestSystemMessageTransform:
                 "mode": "customize",
                 "sections": {
                     "identity": {"action": identity_transform},
+                    "code_change_rules": {"action": "remove"},
                 },
             },
             permissions={"on_request": PermissionHandler.approve_all},
@@ -81,36 +82,7 @@ class TestSystemMessageTransform:
         traffic = await ctx.get_exchanges()
         system_message = _get_system_message(traffic[0])
         assert "TRANSFORM_MARKER" in system_message
-
-        await session.disconnect()
-
-    async def test_should_work_with_static_overrides_and_transforms_together(
-        self, ctx: E2ETestContext
-    ):
-        """Test that static overrides and transforms work together"""
-        identity_contents = []
-
-        async def identity_transform(content: str) -> str:
-            identity_contents.append(content)
-            return content
-
-        session = await ctx.client.create_session(
-            system_message={
-                "mode": "customize",
-                "sections": {
-                    "safety": {"action": "remove"},
-                    "identity": {"action": identity_transform},
-                },
-            },
-            permissions={"on_request": PermissionHandler.approve_all},
-        )
-
-        write_file(ctx.work_dir, "combo.txt", "Combo test!")
-
-        await session.send_and_wait("Read the contents of combo.txt and tell me what it says")
-
-        # The transform callback should have been invoked
-        assert len(identity_contents) > 0
+        assert "<code_change_instructions>" not in system_message
 
         await session.disconnect()
 

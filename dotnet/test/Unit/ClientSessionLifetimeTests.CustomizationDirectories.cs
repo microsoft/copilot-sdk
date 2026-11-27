@@ -153,9 +153,9 @@ public sealed partial class ClientSessionLifetimeTests
             Runtime = RuntimeConnection.ForTcp(server.Host, server.Port)
         });
         await using var created = await client.CreateSessionAsync(new CreateSessionOptions
-        { WorkingDirectory = "request-cwd", EnableConfigDiscovery = false, Hooks = new SessionHookOptions { EnableRepositoryHooks = false, Directories = directories["hookDirectories"] }, Skills = new SessionSkillOptions { Directories = directories["skillDirectories"] }, Agents = new SessionAgentOptions { Directories = directories["agentDirectories"] }, Instructions = new CreateSessionInstructionOptions { Directories = directories["instructionDirectories"] } });
+        { WorkingDirectory = "request-cwd", ConfigDirectory = "create-config", EnableConfigDiscovery = false, Hooks = new SessionHookOptions { EnableRepositoryHooks = false, Directories = directories["hookDirectories"] }, Skills = new SessionSkillOptions { Directories = directories["skillDirectories"] }, Agents = new SessionAgentOptions { Directories = directories["agentDirectories"] }, Instructions = new CreateSessionInstructionOptions { Directories = directories["instructionDirectories"] } });
         await using var resumed = await client.ResumeSessionAsync("resumed", new ResumeSessionOptions
-        { WorkingDirectory = "resume-cwd", EnableConfigDiscovery = false, Hooks = new SessionHookOptions { EnableRepositoryHooks = false, Directories = directories["hookDirectories"] }, Skills = new SessionSkillOptions { Directories = directories["skillDirectories"] }, Agents = new SessionAgentOptions { Directories = directories["agentDirectories"] }, Instructions = new SessionInstructionOptions { Directories = directories["instructionDirectories"] } });
+        { WorkingDirectory = "resume-cwd", ConfigDirectory = "resume-config", EnableConfigDiscovery = false, Hooks = new SessionHookOptions { EnableRepositoryHooks = false, Directories = directories["hookDirectories"] }, Skills = new SessionSkillOptions { Directories = directories["skillDirectories"] }, Agents = new SessionAgentOptions { Directories = directories["agentDirectories"] }, Instructions = new SessionInstructionOptions { Directories = directories["instructionDirectories"] } });
         foreach (var method in new[] { "session.create", "session.resume" })
         {
             var payload = Assert.Single(server.Requests, request => request.Method == method).Params;
@@ -170,6 +170,7 @@ public sealed partial class ClientSessionLifetimeTests
                     Assert.Equal(entry.Value, payload.GetProperty(entry.Key.Replace("Directories", "s")).GetProperty("directories").EnumerateArray().Select(item => item.GetString()));
                 }
             }
+            Assert.Equal(method == "session.create" ? "create-config" : "resume-config", payload.GetProperty("configDirectory").GetString());
             Assert.False(payload.GetProperty("enableConfigDiscovery").GetBoolean());
             Assert.False(payload.GetProperty("hooks").GetProperty("enableRepositoryHooks").GetBoolean());
             Assert.False(payload.GetProperty("filesystem").TryGetProperty("additionalDirectories", out _));

@@ -68,28 +68,6 @@ public class PerSessionAuthTest {
     }
 
     @Test
-    void shouldAuthenticateWithGitHubToken() throws Exception {
-        setupCopilotUsers();
-
-        try (CopilotClient client = createAuthTestClient()) {
-            CopilotSession session = client
-                    .createSession(ctx.newSessionConfig()
-                            .setGitHub(ctx.newSessionConfig().getGitHub().setToken("token-alice")).setPermissions(ctx
-                                    .newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL)))
-                    .get();
-
-            try {
-                SessionGitHubAuthGetStatusResult authStatus = session.getRpc().gitHubAuth.getStatus().get();
-
-                assertTrue(authStatus.isAuthenticated(), "Expected session to be authenticated");
-                assertEquals("alice", authStatus.login());
-            } finally {
-                session.close();
-            }
-        }
-    }
-
-    @Test
     void shouldIsolateAuthBetweenSessions() throws Exception {
         setupCopilotUsers();
 

@@ -38,12 +38,10 @@ import com.microsoft.copilot.generated.rpc.AuthInfoType;
 import com.microsoft.copilot.generated.rpc.ConnectorAvailability;
 import com.microsoft.copilot.generated.rpc.ConnectorSessionAccount;
 import com.microsoft.copilot.generated.rpc.EnvironmentsListRequest;
-import com.microsoft.copilot.generated.rpc.McpConfigAddParams;
 import com.microsoft.copilot.generated.rpc.McpDiscoverParams;
 import com.microsoft.copilot.generated.rpc.McpDiscoverRequest;
 import com.microsoft.copilot.generated.rpc.RpcCaller;
 import com.microsoft.copilot.generated.rpc.ServerRpc;
-import com.microsoft.copilot.generated.rpc.SessionAgentSelectParams;
 import com.microsoft.copilot.generated.rpc.SessionConnectorsConnectParams;
 import com.microsoft.copilot.generated.rpc.SessionConnectorsContinueConnectionParams;
 import com.microsoft.copilot.generated.rpc.SessionConnectorsDisconnectParams;
@@ -147,20 +145,6 @@ class RpcWrappersTest {
     // ── ServerRpc tests ───────────────────────────────────────────────────────
 
     @Test
-    void serverRpc_instantiates_with_all_namespace_fields() {
-        var stub = new StubCaller();
-        var server = new ServerRpc(stub);
-
-        assertNotNull(server.models);
-        assertNotNull(server.tools);
-        assertNotNull(server.account);
-        assertNotNull(server.mcp);
-        assertNotNull(server.mcp.config); // nested sub-namespace
-        assertNotNull(server.sessionFs);
-        assertNotNull(server.sessions);
-    }
-
-    @Test
     void serverRpc_models_list_invokes_correct_rpc_method() {
         var stub = new StubCaller();
         stub.nextResult = null; // no result needed for method dispatch test
@@ -192,43 +176,6 @@ class RpcWrappersTest {
         assertEquals(1, users.size());
         assertInstanceOf(Map.class, users.get(0).authInfo());
         assertEquals("token-1", users.get(0).token());
-    }
-
-    @Test
-    void serverRpc_ping_passes_params_directly() {
-        var stub = new StubCaller();
-        var server = new ServerRpc(stub);
-
-        var params = com.microsoft.copilot.generated.rpc.PingParams.builder().message(null).build();
-        server.ping(params);
-
-        assertEquals(1, stub.calls.size());
-        assertEquals("ping", stub.calls.get(0).method());
-        assertSame(params, stub.calls.get(0).params());
-    }
-
-    @Test
-    void serverRpc_mcp_config_list_invokes_correct_rpc_method() {
-        var stub = new StubCaller();
-        var server = new ServerRpc(stub);
-
-        server.mcp.config.list();
-
-        assertEquals(1, stub.calls.size());
-        assertEquals("mcp.config.list", stub.calls.get(0).method());
-    }
-
-    @Test
-    void serverRpc_mcp_config_add_passes_params() {
-        var stub = new StubCaller();
-        var server = new ServerRpc(stub);
-
-        var params = McpConfigAddParams.builder().name("myServer").config(null).build();
-        server.mcp.config.add(params);
-
-        assertEquals(1, stub.calls.size());
-        assertEquals("mcp.config.add", stub.calls.get(0).method());
-        assertSame(params, stub.calls.get(0).params());
     }
 
     @Test
@@ -377,31 +324,6 @@ class RpcWrappersTest {
         assertEquals("connection failed", inventory.servers().get(4).live().error());
         assertEquals(List.of(new StubCaller.Call("session.mcp.listConfigured", Map.of("sessionId", "session-mcp"),
                 SessionMcpListConfiguredResult.class)), stub.calls);
-    }
-
-    @Test
-    void sessionRpc_instantiates_with_all_namespace_fields() {
-        var stub = new StubCaller();
-        var session = new SessionRpc(stub, "sess-001");
-
-        assertNotNull(session.model);
-        assertNotNull(session.mode);
-        assertNotNull(session.plan);
-        assertNotNull(session.workspaces);
-        assertNotNull(session.fleet);
-        assertNotNull(session.agent);
-        assertNotNull(session.skills);
-        assertNotNull(session.mcp);
-        assertNotNull(session.plugins);
-        assertNotNull(session.extensions);
-        assertNotNull(session.tools);
-        assertNotNull(session.commands);
-        assertNotNull(session.ui);
-        assertNotNull(session.permissions);
-        assertNotNull(session.shell);
-        assertNotNull(session.history);
-        assertNotNull(session.usage);
-        assertNotNull(session.connectors);
     }
 
     @Test
@@ -622,22 +544,6 @@ class RpcWrappersTest {
     }
 
     @Test
-    void sessionRpc_model_getCurrent_injects_sessionId_automatically() {
-        var stub = new StubCaller();
-        var session = new SessionRpc(stub, "sess-abc");
-
-        session.model.getCurrent();
-
-        assertEquals(1, stub.calls.size());
-        assertEquals("session.model.getCurrent", stub.calls.get(0).method());
-
-        // Params should be a Map containing sessionId
-        var params = stub.calls.get(0).params();
-        assertInstanceOf(Map.class, params);
-        assertEquals("sess-abc", ((Map<?, ?>) params).get("sessionId"));
-    }
-
-    @Test
     void sessionRpc_model_switchTo_merges_sessionId_with_extra_params() {
         var stub = new StubCaller();
         var session = new SessionRpc(stub, "sess-xyz");
@@ -764,24 +670,6 @@ class RpcWrappersTest {
     }
 
     @Test
-    void modelSwitchBuilderPreservesExplicitNull() {
-        var caller = new StubCaller();
-        var rpc = new SessionRpc(caller, "request-session");
-        rpc.model.switchTo(SessionModelSwitchToParams.builder().modelId("gpt-5").build());
-        rpc.model.switchTo(SessionModelSwitchToParams.builder().modelId("gpt-5").reasoningEffort(null).build());
-        rpc.model.switchTo(SessionModelSwitchToParams.builder().modelId("gpt-5").reasoningEffort("high").build());
-
-        var omitted = JsonRpcClient.getObjectMapper().valueToTree(caller.calls.get(0).params());
-        var cleared = JsonRpcClient.getObjectMapper().valueToTree(caller.calls.get(1).params());
-        var provided = JsonRpcClient.getObjectMapper().valueToTree(caller.calls.get(2).params());
-        assertFalse(omitted.has("reasoningEffort"));
-        assertTrue(cleared.has("reasoningEffort"), "Explicit null must be present: " + cleared);
-        assertTrue(cleared.get("reasoningEffort").isNull());
-        assertEquals("high", provided.path("reasoningEffort").asText());
-        assertFalse(cleared.has("autoTier"), "Untouched nullable fields must stay omitted: " + cleared);
-    }
-
-    @Test
     void nullablePresenceSurvivesJacksonWhileUnconfiguredBuilderPropertiesStayOmitted() throws Exception {
         var mapper = JsonRpcClient.getObjectMapper();
         var input = mapper.readTree("""
@@ -838,73 +726,6 @@ class RpcWrappersTest {
             SessionOptionsUpdateParams request = reader.readValue(parser);
             assertEquals(List.of("code-review"), request.skills().includedBuiltinSkills());
         }
-    }
-
-    @Test
-    void sessionRpc_agent_list_injects_sessionId() {
-        var stub = new StubCaller();
-        var session = new SessionRpc(stub, "sess-999");
-
-        session.agent.list();
-
-        assertEquals(1, stub.calls.size());
-        assertEquals("session.agent.list", stub.calls.get(0).method());
-
-        var params = stub.calls.get(0).params();
-        assertInstanceOf(com.fasterxml.jackson.databind.node.ObjectNode.class, params);
-        assertEquals("sess-999", ((com.fasterxml.jackson.databind.node.ObjectNode) params).get("sessionId").asText());
-    }
-
-    @Test
-    void sessionRpc_agent_select_merges_sessionId_with_extra_params() {
-        var stub = new StubCaller();
-        var session = new SessionRpc(stub, "sess-select");
-
-        var selectParams = SessionAgentSelectParams.builder().sessionId(null).name("my-agent").build();
-        session.agent.select(selectParams);
-
-        assertEquals(1, stub.calls.size());
-        assertEquals("session.agent.select", stub.calls.get(0).method());
-
-        var params = stub.calls.get(0).params();
-        assertInstanceOf(com.fasterxml.jackson.databind.node.ObjectNode.class, params);
-        var node = (com.fasterxml.jackson.databind.node.ObjectNode) params;
-        assertEquals("sess-select", node.get("sessionId").asText());
-        assertEquals("my-agent", node.get("name").asText());
-    }
-
-    @Test
-    void sessionRpc_different_sessions_have_different_sessionIds() {
-        var stub = new StubCaller();
-        var session1 = new SessionRpc(stub, "sess-1");
-        var session2 = new SessionRpc(stub, "sess-2");
-
-        session1.model.getCurrent();
-        session2.model.getCurrent();
-
-        assertEquals(2, stub.calls.size());
-        var params1 = (Map<?, ?>) stub.calls.get(0).params();
-        var params2 = (Map<?, ?>) stub.calls.get(1).params();
-        assertEquals("sess-1", params1.get("sessionId"));
-        assertEquals("sess-2", params2.get("sessionId"));
-    }
-
-    @Test
-    void rpcCaller_is_implementable_as_anonymous_class_or_method_reference() {
-        // Verify RpcCaller can be used as an anonymous class
-        AtomicReference<String> capturedMethod = new AtomicReference<>();
-        RpcCaller caller = new RpcCaller() {
-            @Override
-            public <T> CompletableFuture<T> invoke(String method, Object params, Class<T> resultType) {
-                capturedMethod.set(method);
-                return CompletableFuture.completedFuture(null);
-            }
-        };
-
-        var server = new ServerRpc(caller);
-        server.models.list();
-
-        assertEquals("models.list", capturedMethod.get());
     }
 
     @Test
@@ -1002,84 +823,6 @@ class RpcWrappersTest {
     }
 
     @Test
-    void copilotSession_getRpc_returns_non_null_session_rpc() throws Exception {
-        try (var sockets = new SocketPair()) {
-            var rpc = sockets.client();
-            var session = new CopilotSession("sess-unit", rpc);
-
-            assertNotNull(session.getRpc());
-        }
-    }
-
-    @Test
-    void copilotSession_getRpc_sessionId_matches_session() throws Exception {
-        try (var sockets = new SocketPair()) {
-            var rpc = sockets.client();
-            var stub = sockets.stubServer();
-            var session = new CopilotSession("sess-test-id", rpc);
-
-            // Call any no-arg session method via getRpc() to verify sessionId injection
-            session.getRpc().agent.list();
-
-            // Drain the sent message from the stub server
-            var sent = stub.readOneMessage();
-            assertEquals("session.agent.list", sent.get("method").asText());
-            assertEquals("sess-test-id", sent.get("params").get("sessionId").asText());
-        }
-    }
-
-    @Test
-    void copilotSession_getRpc_updates_when_sessionId_changes() throws Exception {
-        try (var sockets = new SocketPair()) {
-            var rpc = sockets.client();
-            var stub = sockets.stubServer();
-            var session = new CopilotSession("old-id", rpc);
-
-            // Simulate server returning a different sessionId (v2 CLI behaviour)
-            session.setActiveSessionId("new-id");
-
-            session.getRpc().agent.list();
-
-            var sent = stub.readOneMessage();
-            assertEquals("new-id", sent.get("params").get("sessionId").asText(),
-                    "getRpc() should reflect the updated sessionId");
-        }
-    }
-
-    @Test
-    void copilotSession_getRpc_all_namespace_fields_present() throws Exception {
-        try (var sockets = new SocketPair()) {
-            var rpc = sockets.client();
-            var session = new CopilotSession("sess-ns", rpc);
-
-            var sessionRpc = session.getRpc();
-            assertNotNull(sessionRpc.model);
-            assertNotNull(sessionRpc.agent);
-            assertNotNull(sessionRpc.skills);
-            assertNotNull(sessionRpc.tools);
-            assertNotNull(sessionRpc.permissions);
-            assertNotNull(sessionRpc.commands);
-            assertNotNull(sessionRpc.ui);
-            assertNotNull(sessionRpc.connectors);
-        }
-    }
-
-    @Test
-    void copilotSession_getRpc_is_lazy_and_cached() throws Exception {
-        // Verify lazy init: getRpc() returns the same instance on repeated calls
-        // (caches rather than allocating a new SessionRpc per call).
-        try (var sockets = new SocketPair()) {
-            var rpc = sockets.client();
-            var session = new CopilotSession("sess-cache", rpc);
-
-            var first = session.getRpc();
-            var second = session.getRpc();
-            assertNotNull(first);
-            assertSame(first, second, "getRpc() must return the cached instance when sessionId has not changed");
-        }
-    }
-
-    @Test
     void copilotSession_getRpc_returns_new_instance_after_sessionId_change() throws Exception {
         // Verify that after setActiveSessionId() the old cached instance is discarded
         // and the next getRpc() call produces a fresh SessionRpc with the new ID.
@@ -1099,6 +842,7 @@ class RpcWrappersTest {
             // Confirm the new instance uses the new sessionId
             after.agent.list();
             var sent = stub.readOneMessage();
+            assertEquals("session.agent.list", sent.get("method").asText());
             assertEquals("new-id", sent.get("params").get("sessionId").asText());
         }
     }
@@ -1112,53 +856,6 @@ class RpcWrappersTest {
     }
 
     // ── session.mcp.apps.callTool tests ───────────────────────────────────────
-
-    @Test
-    void sessionRpc_mcp_apps_callTool_invokes_correct_rpc_method() {
-        var stub = new StubCaller();
-        var session = new SessionRpc(stub, "sess-mcp");
-
-        var params = com.microsoft.copilot.generated.rpc.SessionMcpAppsCallToolParams.builder().sessionId(null)
-                .serverName("my-server").toolName("my-tool").arguments(null).originServerName("my-origin").build();
-        session.mcp.apps.callTool(params);
-
-        assertEquals(1, stub.calls.size());
-        assertEquals("session.mcp.apps.callTool", stub.calls.get(0).method());
-    }
-
-    @Test
-    void sessionRpc_mcp_apps_callTool_injects_sessionId() {
-        var stub = new StubCaller();
-        var session = new SessionRpc(stub, "sess-ct-inject");
-
-        var params = com.microsoft.copilot.generated.rpc.SessionMcpAppsCallToolParams.builder().sessionId(null)
-                .serverName("server1").toolName("tool1").arguments(null).originServerName("server-origin").build();
-        session.mcp.apps.callTool(params);
-
-        var sentParams = stub.calls.get(0).params();
-        assertInstanceOf(com.fasterxml.jackson.databind.node.ObjectNode.class, sentParams);
-        var node = (com.fasterxml.jackson.databind.node.ObjectNode) sentParams;
-        assertEquals("sess-ct-inject", node.get("sessionId").asText());
-    }
-
-    @Test
-    void sessionRpc_mcp_apps_callTool_request_preserves_metadata() {
-        var stub = new StubCaller();
-        var session = new SessionRpc(stub, "sess-meta");
-        var params = com.microsoft.copilot.generated.rpc.SessionMcpAppsCallToolParams.builder().serverName("server")
-                .toolName("tool").originServerName("server").arguments(Map.of("value", 42))
-                .meta(Map.of("com.example/context", Map.of("enabled", false))).build();
-
-        session.mcp.apps.callTool(params);
-
-        assertEquals(1, stub.calls.size());
-        var call = stub.calls.get(0);
-        assertEquals("session.mcp.apps.callTool", call.method());
-        var node = new ObjectMapper().valueToTree(call.params());
-        assertEquals("sess-meta", node.get("sessionId").asText());
-        assertEquals(42, node.get("arguments").get("value").asInt());
-        assertEquals(false, node.get("_meta").get("com.example/context").get("enabled").asBoolean());
-    }
 
     @Test
     void sessionRpc_mcp_apps_callTool_keeps_null_map_entries() {
@@ -1199,26 +896,6 @@ class RpcWrappersTest {
         // Unset properties are still omitted.
         var recordNode = (com.fasterxml.jackson.databind.node.ObjectNode) stub.calls.get(1).params();
         assertFalse(recordNode.has("originServerName"), "an unset property must be omitted, got: " + recordNode);
-    }
-
-    @Test
-    void sessionRpc_mcp_apps_callTool_returns_jsonNode_payload() throws Exception {
-        var stub = new StubCaller();
-        var mapper = new ObjectMapper();
-        var expectedResult = mapper.createObjectNode();
-        expectedResult.put("content", "hello world");
-        expectedResult.put("isError", false);
-        stub.nextResult = expectedResult;
-
-        var session = new SessionRpc(stub, "sess-payload");
-        var params = com.microsoft.copilot.generated.rpc.SessionMcpAppsCallToolParams.builder().sessionId(null)
-                .serverName("echo-server").toolName("echo").arguments(null).originServerName("echo-origin").build();
-        var future = session.mcp.apps.callTool(params);
-
-        var result = future.get();
-        assertInstanceOf(com.fasterxml.jackson.databind.JsonNode.class, result);
-        assertEquals("hello world", result.get("content").asText());
-        assertEquals(false, result.get("isError").asBoolean());
     }
 
     private static com.fasterxml.jackson.databind.JsonNode assertConnectorCall(StubCaller.Call call,

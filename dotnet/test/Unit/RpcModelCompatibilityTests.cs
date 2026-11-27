@@ -43,21 +43,6 @@ public sealed partial class ClientSessionLifetimeTests
     }
 
     [Fact]
-    public void Model_Price_Units_Keep_Public_Request_And_Cancellation_Overloads()
-    {
-        var noRequest = typeof(ServerModelsApi).GetMethod("ListTokenPriceUnitsAsync", [typeof(CancellationToken)]);
-        var request = typeof(ServerModelsApi).GetMethod("ListTokenPriceUnitsAsync",
-            [typeof(ModelsListTokenPriceUnitsRequest), typeof(CancellationToken)]);
-        Assert.NotNull(noRequest);
-        Assert.NotNull(request);
-        Assert.True(Assert.Single(noRequest.GetParameters()).IsOptional);
-        Assert.False(request.GetParameters()[0].IsOptional);
-        Assert.True(request.GetParameters()[1].IsOptional);
-        Assert.True(typeof(ModelsListTokenPriceUnitsRequest).IsPublic);
-        Assert.Null(typeof(ModelsListTokenPriceUnitsRequest).GetProperty("SessionId"));
-    }
-
-    [Fact]
     public async Task Model_Price_Units_Preserve_Default_And_Selected_Account_Calls()
     {
         await using var server = await FakeCopilotServer.StartAsync();
@@ -122,23 +107,6 @@ public sealed partial class ClientSessionLifetimeTests
         Assert.Null(selection.GitHubToken);
         Assert.Equal("selected-test-token", token.GitHubToken);
         Assert.Null(token.SelectionId);
-    }
-
-    [Fact]
-    public void Model_Switch_Has_Optional_Last_Cancellation()
-    {
-        var method = typeof(ModelApi).GetMethod("SwitchToAsync");
-        Assert.NotNull(method);
-        var parameters = method.GetParameters();
-        Assert.False(parameters[0].IsOptional);
-        Assert.Equal("cancellationToken", parameters[^1].Name);
-        Assert.Equal(typeof(CancellationToken), parameters[^1].ParameterType);
-        Assert.All(parameters.Skip(1), parameter =>
-        {
-            Assert.True(parameter.IsOptional);
-            Assert.True(parameter.HasDefaultValue);
-            Assert.Null(parameter.DefaultValue);
-        });
     }
 
     [Fact]

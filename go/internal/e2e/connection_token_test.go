@@ -10,26 +10,6 @@ import (
 
 func TestConnectionToken(t *testing.T) {
 	t.Parallel()
-	t.Run("explicit token round-trips successfully", func(t *testing.T) {
-		ctx := testharness.NewTestContext(t)
-		client := ctx.NewClient(func(opts *copilot.ClientOptions) {
-			useTCP(opts, 0, "right-token")
-		})
-		t.Cleanup(func() { client.ForceStop() })
-
-		if err := client.Start(t.Context()); err != nil {
-			t.Fatalf("Start failed: %v", err)
-		}
-
-		resp, err := client.Ping(t.Context(), "hi")
-		if err != nil {
-			t.Fatalf("Ping failed: %v", err)
-		}
-		if resp.Message != "pong: hi" {
-			t.Errorf("expected message 'pong: hi', got %q", resp.Message)
-		}
-	})
-
 	t.Run("auto-generated token round-trips successfully", func(t *testing.T) {
 		ctx := testharness.NewTestContext(t)
 		client := ctx.NewClient(func(opts *copilot.ClientOptions) {
@@ -50,7 +30,7 @@ func TestConnectionToken(t *testing.T) {
 		}
 	})
 
-	t.Run("sibling client with wrong token is rejected", func(t *testing.T) {
+	t.Run("sibling clients with wrong or no token are rejected", func(t *testing.T) {
 		ctx := testharness.NewTestContext(t)
 		good := ctx.NewClient(func(opts *copilot.ClientOptions) {
 			useTCP(opts, 0, "right-token")
@@ -79,27 +59,11 @@ func TestConnectionToken(t *testing.T) {
 		if !strings.Contains(err.Error(), "AUTHENTICATION_FAILED") {
 			t.Errorf("expected AUTHENTICATION_FAILED error, got: %v", err)
 		}
-	})
-
-	t.Run("sibling client with no token is rejected", func(t *testing.T) {
-		ctx := testharness.NewTestContext(t)
-		good := ctx.NewClient(func(opts *copilot.ClientOptions) {
-			useTCP(opts, 0, "right-token")
-		})
-		t.Cleanup(func() { good.ForceStop() })
-
-		if err := good.Start(t.Context()); err != nil {
-			t.Fatalf("good client Start failed: %v", err)
-		}
-		port := good.RuntimePort()
-		if port == 0 {
-			t.Fatalf("expected non-zero port from TCP mode client")
-		}
 
 		none := copilot.NewClient(&copilot.ClientOptions{Mode: copilot.ModeCodingAgent, Runtime: copilot.TCPConnection{Host: "localhost", Port: port}})
 		t.Cleanup(func() { none.ForceStop() })
 
-		err := none.Start(t.Context())
+		err = none.Start(t.Context())
 		if err == nil {
 			t.Fatalf("expected sibling client with no token to fail")
 		}

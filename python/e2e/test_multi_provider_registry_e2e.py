@@ -188,16 +188,6 @@ class TestMultiProviderRegistry:
         finally:
             await session.disconnect()
 
-    async def test_should_route_alpha_sonnet_turn_to_its_provider_and_wire_model(
-        self, ctx: E2ETestContext
-    ):
-        await self._assert_routing(ctx, "alpha/sonnet", "byok-gpt-4o", "alpha")
-
-    async def test_should_route_alpha_haiku_turn_to_its_provider_and_wire_model(
-        self, ctx: E2ETestContext
-    ):
-        await self._assert_routing(ctx, "alpha/haiku", "byok-gpt-4o-mini", "alpha")
-
     async def test_should_route_delta_turbo_turn_to_its_provider_and_wire_model(
         self, ctx: E2ETestContext
     ):

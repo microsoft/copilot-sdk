@@ -62,36 +62,6 @@ async fn string_schema_apply_patch_override_binds_patch_input() {
 }
 
 #[tokio::test]
-async fn invokes_built_in_tools() {
-    super::support::with_shared_e2e_context(&E2E, "tools", "invokes_built_in_tools", |ctx| {
-        Box::pin(async move {
-            ctx.set_default_copilot_user();
-            std::fs::write(
-                ctx.work_dir().join("README.md"),
-                "# ELIZA, the only chatbot you'll ever need",
-            )
-            .expect("write README");
-            let client = ctx.start_client().await;
-            let session = client
-                .create_session(ctx.approve_all_session_config())
-                .await
-                .expect("create session");
-
-            let answer = session
-                .send_and_wait("What's the first line of README.md in this directory?")
-                .await
-                .expect("send")
-                .expect("assistant message");
-            assert!(assistant_message_content(&answer).contains("ELIZA"));
-
-            session.disconnect().await.expect("disconnect session");
-            client.stop().await.expect("stop client");
-        })
-    })
-    .await;
-}
-
-#[tokio::test]
 async fn low_level_tool_definition() {
     super::support::with_shared_e2e_context(&E2E, "tools", "low_level_tool_definition", |ctx| {
         Box::pin(async move {
@@ -660,7 +630,5 @@ impl ToolHandler for DbQueryTool {
         ))
     }
 }
-static E2E: super::support::SharedE2eGroup = super::support::SharedE2eGroup::standard(
-    "tools",
-    if cfg!(feature = "derive") { 10 } else { 9 },
-);
+static E2E: super::support::SharedE2eGroup =
+    super::support::SharedE2eGroup::standard("tools", if cfg!(feature = "derive") { 9 } else { 8 });

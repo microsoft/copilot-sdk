@@ -102,13 +102,6 @@ func TestNewClient_modeEmptyRejectsWithoutStorage(t *testing.T) {
 	NewClient(&ClientOptions{Mode: ModeEmpty})
 }
 
-func TestNewClient_modeEmptyAcceptsBaseDirectory(t *testing.T) {
-	c := NewClient(&ClientOptions{Mode: ModeEmpty, Runtime: SpawnedStdioConnection{BaseDirectory: t.TempDir()}})
-	if c.options.Mode != ModeEmpty {
-		t.Errorf("expected ModeEmpty, got %q", c.options.Mode)
-	}
-}
-
 func TestNewClient_modeEmptyAcceptsTCPConnection(t *testing.T) {
 	c := NewClient(&ClientOptions{
 		Mode:    ModeEmpty,
@@ -129,13 +122,6 @@ func TestNewClient_requiresExplicitMode(t *testing.T) {
 			}()
 			NewClient(opts)
 		})
-	}
-}
-
-func TestNewClient_modeCodingAgent(t *testing.T) {
-	c := NewClient(&ClientOptions{Mode: ModeCodingAgent})
-	if c.options.Mode != ModeCodingAgent {
-		t.Errorf("expected coding-agent mode, got %q", c.options.Mode)
 	}
 }
 
@@ -234,52 +220,6 @@ func TestSystemMessageForMode_codingAgentPassthrough(t *testing.T) {
 	}
 }
 
-func TestApplyConfigDefaultsForMode_emptyDefaultsTelemetryFalse(t *testing.T) {
-	c := NewClient(&ClientOptions{Mode: ModeEmpty, Runtime: SpawnedStdioConnection{BaseDirectory: t.TempDir()}})
-	cfg := (&CreateSessionOptions{}).normalize()
-	c.applyConfigDefaultsForMode(cfg)
-	if cfg.EnableSessionTelemetry == nil || *cfg.EnableSessionTelemetry != false {
-		t.Errorf("expected telemetry default false in empty mode, got %v", cfg.EnableSessionTelemetry)
-	}
-}
-
-func TestApplyConfigDefaultsForMode_emptyDefaultsExperimentalModeFalse(t *testing.T) {
-	c := NewClient(&ClientOptions{Mode: ModeEmpty, Runtime: SpawnedStdioConnection{BaseDirectory: t.TempDir()}})
-	cfg := (&CreateSessionOptions{}).normalize()
-	c.applyConfigDefaultsForMode(cfg)
-	if cfg.EnableExperimentalMode == nil || *cfg.EnableExperimentalMode != false {
-		t.Errorf("expected experimental mode default false in empty mode, got %v", cfg.EnableExperimentalMode)
-	}
-}
-
-func TestApplyConfigDefaultsForMode_codingAgentLeavesExperimentalModeNil(t *testing.T) {
-	c := NewClient(&ClientOptions{Mode: ModeCodingAgent})
-	cfg := (&CreateSessionOptions{}).normalize()
-	c.applyConfigDefaultsForMode(cfg)
-	if cfg.EnableExperimentalMode != nil {
-		t.Errorf("non-empty mode must not default experimental mode")
-	}
-}
-
-func TestApplyConfigDefaultsForMode_emptyHonorsCallerTelemetry(t *testing.T) {
-	c := NewClient(&ClientOptions{Mode: ModeEmpty, Runtime: SpawnedStdioConnection{BaseDirectory: t.TempDir()}})
-	trueVal := true
-	cfg := (&CreateSessionOptions{GitHub: SessionGitHubOptions{TelemetryEnabled: &trueVal}}).normalize()
-	c.applyConfigDefaultsForMode(cfg)
-	if cfg.EnableSessionTelemetry == nil || *cfg.EnableSessionTelemetry != true {
-		t.Errorf("caller-supplied telemetry must win")
-	}
-}
-
-func TestApplyConfigDefaultsForMode_codingAgentLeavesNil(t *testing.T) {
-	c := NewClient(&ClientOptions{Mode: ModeCodingAgent})
-	cfg := (&CreateSessionOptions{}).normalize()
-	c.applyConfigDefaultsForMode(cfg)
-	if cfg.EnableSessionTelemetry != nil {
-		t.Errorf("non-empty mode must not default telemetry")
-	}
-}
-
 func TestApplyConfigDefaultsForMode_emptyDefaultsGranularFlags(t *testing.T) {
 	c := NewClient(&ClientOptions{Mode: ModeEmpty, Runtime: SpawnedStdioConnection{BaseDirectory: t.TempDir()}})
 	cfg := (&CreateSessionOptions{}).normalize()
@@ -311,14 +251,29 @@ func TestApplyConfigDefaultsForMode_emptyDefaultsGranularFlags(t *testing.T) {
 	if cfg.CustomAgentsLocalOnly == nil || !*cfg.CustomAgentsLocalOnly {
 		t.Errorf("expected CustomAgentsLocalOnly=true in empty mode, got %v", cfg.CustomAgentsLocalOnly)
 	}
+	if cfg.EnableSessionTelemetry == nil || *cfg.EnableSessionTelemetry != false {
+		t.Errorf("expected telemetry default false in empty mode, got %v", cfg.EnableSessionTelemetry)
+	}
+	if cfg.EnableExperimentalMode == nil || *cfg.EnableExperimentalMode != false {
+		t.Errorf("expected experimental mode default false in empty mode, got %v", cfg.EnableExperimentalMode)
+	}
+	if cfg.MCPOAuthTokenStorage != "in-memory" {
+		t.Errorf("expected MCPOAuthTokenStorage 'in-memory' in empty mode, got %q", cfg.MCPOAuthTokenStorage)
+	}
 }
 
 func TestApplyConfigDefaultsForMode_emptyHonorsCallerGranularFlags(t *testing.T) {
 	c := NewClient(&ClientOptions{Mode: ModeEmpty, Runtime: SpawnedStdioConnection{BaseDirectory: t.TempDir()}})
 	falseVal := false
 	trueVal := true
-	cfg := (&CreateSessionOptions{State: SessionStateOptions{SkipEmbeddingRetrieval: &falseVal, EmbeddingCacheStorage: String("persistent"), EnableCrossSessionStore: &trueVal, Memory: &MemoryConfiguration{Enabled: true}}, Instructions: CreateSessionInstructionOptions{OnDemandDiscovery: &trueVal}, Hooks: SessionHookOptions{EnableRepositoryHooks: &trueVal}, Git: SessionGitOptions{EnableHostGitOperations: &trueVal}, Skills: SessionSkillOptions{Enabled: &trueVal}, Agents: SessionAgentOptions{LocalDiscoveryOnly: &falseVal}}).normalize()
+	cfg := (&CreateSessionOptions{State: SessionStateOptions{SkipEmbeddingRetrieval: &falseVal, EmbeddingCacheStorage: String("persistent"), EnableCrossSessionStore: &trueVal, Memory: &MemoryConfiguration{Enabled: true}}, Instructions: CreateSessionInstructionOptions{OnDemandDiscovery: &trueVal}, Hooks: SessionHookOptions{EnableRepositoryHooks: &trueVal}, Git: SessionGitOptions{EnableHostGitOperations: &trueVal}, Skills: SessionSkillOptions{Enabled: &trueVal}, Agents: SessionAgentOptions{LocalDiscoveryOnly: &falseVal}, GitHub: SessionGitHubOptions{TelemetryEnabled: &trueVal}, MCP: SessionMCPOptions{OAuthTokenStorage: "persistent"}}).normalize()
 	c.applyConfigDefaultsForMode(cfg)
+	if cfg.EnableSessionTelemetry == nil || *cfg.EnableSessionTelemetry != true {
+		t.Errorf("caller-supplied telemetry must win")
+	}
+	if cfg.MCPOAuthTokenStorage != "persistent" {
+		t.Errorf("caller-supplied MCPOAuthTokenStorage must win, got %q", cfg.MCPOAuthTokenStorage)
+	}
 	if *cfg.SkipEmbeddingRetrieval != false {
 		t.Errorf("caller-supplied SkipEmbeddingRetrieval must win")
 	}
@@ -376,6 +331,15 @@ func TestApplyConfigDefaultsForMode_codingAgentLeavesGranularFlagsNil(t *testing
 	if cfg.CustomAgentsLocalOnly != nil {
 		t.Errorf("non-empty mode must not default CustomAgentsLocalOnly")
 	}
+	if cfg.EnableSessionTelemetry != nil {
+		t.Errorf("non-empty mode must not default telemetry")
+	}
+	if cfg.EnableExperimentalMode != nil {
+		t.Errorf("non-empty mode must not default experimental mode")
+	}
+	if cfg.MCPOAuthTokenStorage != "" {
+		t.Errorf("non-empty mode must not default MCPOAuthTokenStorage, got %q", cfg.MCPOAuthTokenStorage)
+	}
 }
 
 func TestApplyResumeDefaultsForMode_customAgentsLocalOnly(t *testing.T) {
@@ -391,33 +355,6 @@ func TestApplyResumeDefaultsForMode_customAgentsLocalOnly(t *testing.T) {
 	c.applyResumeDefaultsForMode(cfg)
 	if cfg.CustomAgentsLocalOnly == nil || *cfg.CustomAgentsLocalOnly {
 		t.Errorf("caller-supplied CustomAgentsLocalOnly must win")
-	}
-}
-
-func TestApplyConfigDefaultsForMode_emptyDefaultsMCPOAuthTokenStorage(t *testing.T) {
-	c := NewClient(&ClientOptions{Mode: ModeEmpty, Runtime: SpawnedStdioConnection{BaseDirectory: t.TempDir()}})
-	cfg := (&CreateSessionOptions{}).normalize()
-	c.applyConfigDefaultsForMode(cfg)
-	if cfg.MCPOAuthTokenStorage != "in-memory" {
-		t.Errorf("expected MCPOAuthTokenStorage 'in-memory' in empty mode, got %q", cfg.MCPOAuthTokenStorage)
-	}
-}
-
-func TestApplyConfigDefaultsForMode_emptyHonorsCallerMCPOAuthTokenStorage(t *testing.T) {
-	c := NewClient(&ClientOptions{Mode: ModeEmpty, Runtime: SpawnedStdioConnection{BaseDirectory: t.TempDir()}})
-	cfg := (&CreateSessionOptions{MCP: SessionMCPOptions{OAuthTokenStorage: "persistent"}}).normalize()
-	c.applyConfigDefaultsForMode(cfg)
-	if cfg.MCPOAuthTokenStorage != "persistent" {
-		t.Errorf("caller-supplied MCPOAuthTokenStorage must win, got %q", cfg.MCPOAuthTokenStorage)
-	}
-}
-
-func TestApplyConfigDefaultsForMode_codingAgentLeavesMCPOAuthTokenStorageEmpty(t *testing.T) {
-	c := NewClient(&ClientOptions{Mode: ModeCodingAgent})
-	cfg := (&CreateSessionOptions{}).normalize()
-	c.applyConfigDefaultsForMode(cfg)
-	if cfg.MCPOAuthTokenStorage != "" {
-		t.Errorf("non-empty mode must not default MCPOAuthTokenStorage, got %q", cfg.MCPOAuthTokenStorage)
 	}
 }
 

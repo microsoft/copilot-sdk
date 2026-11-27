@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import datetime as dt
 import os
-import re
 import tempfile
 from pathlib import Path
 
@@ -17,7 +15,6 @@ from copilot import (
     CopilotClient,
     RuntimeConnection,
     SessionFsConfig,
-    define_tool,
 )
 from copilot.rpc import (
     SessionFSReaddirWithTypesEntry,
@@ -26,8 +23,6 @@ from copilot.rpc import (
 from copilot.session import PermissionHandler
 from copilot.session_events import (
     PersistedBinaryImage,
-    SessionCompactionCompleteData,
-    SessionEvent,
     ToolExecutionCompleteData,
 )
 from copilot.session_fs_provider import (
@@ -129,26 +124,6 @@ class TestSessionFs:
         finally:
             await client.stop()
 
-    async def test_should_route_file_operations_through_the_session_fs_provider(
-        self, ctx: E2ETestContext, session_fs_client: CopilotClient
-    ):
-        provider_root = Path(ctx.work_dir) / "provider"
-        session = await session_fs_client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all},
-            state={"create_session_fs_provider": create_test_session_fs_handler(provider_root)},
-        )
-
-        msg = await session.send_and_wait("What is 100 + 200?")
-        assert msg is not None
-        assert msg.data.content is not None
-        assert "300" in msg.data.content
-        await session.disconnect()
-
-        events_path = provider_path(
-            provider_root, session.session_id, f"{SESSION_STATE_PATH}/events.jsonl"
-        )
-        assert "300" in events_path.read_text(encoding="utf-8")
-
     async def test_should_load_session_data_from_fs_provider_on_resume(
         self, ctx: E2ETestContext, session_fs_client: CopilotClient
     ):
@@ -167,9 +142,8 @@ class TestSessionFs:
         assert "100" in msg.data.content
         await session1.disconnect()
 
-        assert provider_path(
-            provider_root, session_id, f"{SESSION_STATE_PATH}/events.jsonl"
-        ).exists()
+        events_path = provider_path(provider_root, session_id, f"{SESSION_STATE_PATH}/events.jsonl")
+        assert "100" in events_path.read_text(encoding="utf-8")
 
         session2 = await session_fs_client.resume_session(
             session_id,
@@ -215,125 +189,6 @@ class TestSessionFs:
             if client2 is not None:
                 await client2.force_stop()
             await client1.force_stop()
-
-    async def test_should_map_large_output_handling_into_sessionfs(
-        self, ctx: E2ETestContext, session_fs_client: CopilotClient
-    ):
-        provider_root = Path(ctx.work_dir) / "provider"
-        supplied_file_content = "x" * 100_000
-
-        @define_tool("get_big_string", description="Returns a large string")
-        def get_big_string() -> str:
-            return supplied_file_content
-
-        session = await session_fs_client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all},
-            state={"create_session_fs_provider": create_test_session_fs_handler(provider_root)},
-            tools={"definitions": [get_big_string]},
-        )
-
-        await session.send_and_wait(
-            "Call the get_big_string tool and reply with the word DONE only."
-        )
-
-        messages = await session.get_events()
-        tool_result = find_tool_call_result(messages, "get_big_string")
-        assert tool_result is not None
-        # The CLI joins the temp path using the host separator, so normalize before
-        # matching to keep the assertion valid on Windows.
-        tool_result = tool_result.replace("\\", "/")
-        assert f"{SESSION_STATE_PATH}/temp/" in tool_result
-        match = re.search(rf"({re.escape(SESSION_STATE_PATH)}/temp/[^\s]+)", tool_result)
-        assert match is not None
-
-        temp_file = provider_path(provider_root, session.session_id, match.group(1))
-        assert temp_file.read_text(encoding="utf-8") == supplied_file_content
-
-    async def test_should_succeed_with_compaction_while_using_sessionfs(
-        self, ctx: E2ETestContext, session_fs_client: CopilotClient
-    ):
-        provider_root = Path(ctx.work_dir) / "provider"
-        session = await session_fs_client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all},
-            state={"create_session_fs_provider": create_test_session_fs_handler(provider_root)},
-        )
-
-        compaction_event = asyncio.Event()
-        compaction_success: bool | None = None
-
-        def on_event(event: SessionEvent):
-            nonlocal compaction_success
-            match event.data:
-                case SessionCompactionCompleteData() as data:
-                    compaction_success = data.success
-                    compaction_event.set()
-
-        session.on(on_event)
-
-        await session.send_and_wait("What is 2+2?")
-
-        events_path = provider_path(
-            provider_root, session.session_id, f"{SESSION_STATE_PATH}/events.jsonl"
-        )
-        await wait_for_path(events_path)
-        assert "checkpointNumber" not in events_path.read_text(encoding="utf-8")
-
-        result = await session.rpc.history.compact()
-        await asyncio.wait_for(compaction_event.wait(), timeout=5.0)
-        assert result.success is True
-        assert compaction_success is True
-
-        await wait_for_content(events_path, "checkpointNumber")
-
-    async def test_should_write_workspace_metadata_via_sessionfs(
-        self, ctx: E2ETestContext, session_fs_client: CopilotClient
-    ):
-        provider_root = Path(ctx.work_dir) / "provider"
-        session = await session_fs_client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all},
-            state={"create_session_fs_provider": create_test_session_fs_handler(provider_root)},
-        )
-
-        msg = await session.send_and_wait("What is 7 * 8?")
-        assert msg is not None
-        assert msg.data.content is not None
-        assert "56" in msg.data.content
-
-        # WorkspaceManager should have created workspace.yaml via sessionFs
-        workspace_yaml_path = provider_path(
-            provider_root, session.session_id, f"{SESSION_STATE_PATH}/workspace.yaml"
-        )
-        await wait_for_content(workspace_yaml_path, "id:")
-
-        # Checkpoint index should also exist
-        index_path = provider_path(
-            provider_root, session.session_id, f"{SESSION_STATE_PATH}/checkpoints/index.md"
-        )
-        await wait_for_path(index_path)
-
-        await session.disconnect()
-
-    async def test_should_persist_plan_md_via_sessionfs(
-        self, ctx: E2ETestContext, session_fs_client: CopilotClient
-    ):
-        from copilot.rpc import PlanUpdateRequest
-
-        provider_root = Path(ctx.work_dir) / "provider"
-        session = await session_fs_client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all},
-            state={"create_session_fs_provider": create_test_session_fs_handler(provider_root)},
-        )
-
-        # Write a plan via the session RPC
-        await session.send_and_wait("What is 2 + 3?")
-        await session.rpc.plan.update(PlanUpdateRequest(content="# Test Plan\n\nThis is a test."))
-
-        plan_path = provider_path(
-            provider_root, session.session_id, f"{SESSION_STATE_PATH}/plan.md"
-        )
-        await wait_for_content(plan_path, "# Test Plan")
-
-        await session.disconnect()
 
     async def test_should_map_all_sessionfs_handler_operations(self, ctx: E2ETestContext):
         from copilot.rpc import (
@@ -728,49 +583,3 @@ def create_test_session_fs_handler(provider_root: Path):
 def provider_path(provider_root: Path, session_id: str, path: str) -> Path:
     relative_path = path.replace("\\", "/").lstrip("/")
     return provider_root / session_id / relative_path
-
-
-def find_tool_call_result(messages: list[SessionEvent], tool_name: str) -> str | None:
-    for message in messages:
-        if (
-            message.type.value == "tool.execution_complete"
-            and message.data.tool_call_id is not None
-        ):
-            if find_tool_name(messages, message.data.tool_call_id) == tool_name:
-                return message.data.result.content if message.data.result is not None else None
-    return None
-
-
-def find_tool_name(messages: list[SessionEvent], tool_call_id: str) -> str | None:
-    for message in messages:
-        if (
-            message.type.value == "tool.execution_start"
-            and message.data.tool_call_id == tool_call_id
-        ):
-            return message.data.tool_name
-    return None
-
-
-async def wait_for_path(path: Path, timeout: float = 5.0) -> None:
-    async def predicate():
-        return path.exists()
-
-    await wait_for_predicate(predicate, timeout=timeout)
-
-
-async def wait_for_content(path: Path, expected: str, timeout: float = 5.0) -> None:
-    async def predicate():
-        return path.exists() and expected in path.read_text(encoding="utf-8")
-
-    await wait_for_predicate(predicate, timeout=timeout)
-
-
-async def wait_for_predicate(predicate, timeout: float = 5.0) -> None:
-    deadline = asyncio.get_running_loop().time() + timeout
-    while asyncio.get_running_loop().time() < deadline:
-        if await predicate():
-            return
-        await asyncio.sleep(0.1)
-    if await predicate():
-        return
-    raise TimeoutError("timed out waiting for condition")

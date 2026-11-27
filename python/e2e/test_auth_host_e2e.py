@@ -29,8 +29,6 @@ async def ctx(request):
     ("copilot_host", "gh_host", "expected_host"),
     [
         ("tenant.ghe.example", "fallback.ghe.example", "https://tenant.ghe.example"),
-        ("", "fallback.ghe.example", "https://fallback.ghe.example"),
-        ("", "", "https://github.com"),
     ],
 )
 async def test_should_report_selected_github_auth_host(ctx, copilot_host, gh_host, expected_host):

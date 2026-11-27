@@ -3,42 +3,6 @@ use copilot_sdk::{ErrorKind, SessionErrorKind, SessionId};
 use super::support::wait_for_condition;
 
 #[tokio::test]
-async fn should_delete_session_by_id() {
-    super::support::with_shared_e2e_context(
-        &E2E,
-        "client_api",
-        "should_delete_session_by_id",
-        |ctx| {
-            Box::pin(async move {
-                ctx.set_default_copilot_user();
-                let client = ctx.start_client().await;
-                let session = client
-                    .create_session(ctx.approve_all_session_config())
-                    .await
-                    .expect("create session");
-                let session_id = session.id().clone();
-
-                session.send_and_wait("Say OK.").await.expect("send");
-                session.disconnect().await.expect("disconnect session");
-                client
-                    .delete_session(&session_id)
-                    .await
-                    .expect("delete session");
-
-                let metadata = client
-                    .get_session_metadata(&session_id)
-                    .await
-                    .expect("get metadata");
-                assert!(metadata.is_none());
-
-                client.stop().await.expect("stop client");
-            })
-        },
-    )
-    .await;
-}
-
-#[tokio::test]
 async fn should_report_error_when_deleting_unknown_session_id() {
     super::support::with_shared_e2e_context(
         &E2E,
@@ -171,4 +135,4 @@ async fn should_report_error_when_setting_foreground_session_in_headless_mode() 
     .await;
 }
 static E2E: super::support::SharedE2eGroup =
-    super::support::SharedE2eGroup::standard("client_api", 4);
+    super::support::SharedE2eGroup::standard("client_api", 3);

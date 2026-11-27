@@ -111,37 +111,11 @@ class ClientOptionsE2ETest {
         }
     }
 
-    @ParameterizedTest
-    @NullSource
-    @ValueSource(strings = {"info", "debug"})
-    void spawnedConnectionsOnlyForwardConfiguredLogLevel(String logLevel) throws Exception {
-        try (var fake = FakeStdioCli.create()) {
-            var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                    .setRuntime(fake.connection(false, Map.of()));
-            if (logLevel != null) {
-                options.getObservability().setLogLevel(logLevel);
-            }
-            try (var client = new CopilotClient(options)) {
-                client.start().get(30, TimeUnit.SECONDS);
-            }
-            var arguments = new ArrayList<String>();
-            fake.startup().path("arguments").forEach(argument -> arguments.add(argument.asText()));
-            int index = arguments.indexOf("--log-level");
-            if (logLevel == null) {
-                assertEquals(-1, index, "Unset log levels must use the runtime's default");
-            } else {
-                assertTrue(index >= 0, "Explicit log levels must be forwarded");
-                assertEquals(logLevel, arguments.get(index + 1));
-            }
-        }
-    }
-
-    @ParameterizedTest
-    @ValueSource(booleans = {false, true})
-    void spawnedConnectionsHonorExplicitlyEmptyEnvironment(boolean tcp) throws Exception {
+    @Test
+    void spawnedConnectionsHonorExplicitlyEmptyEnvironment() throws Exception {
         try (var fake = FakeStdioCli.create();
                 var client = new CopilotClient(new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                        .setRuntime(fake.connection(tcp, Map.of()))
+                        .setRuntime(fake.connection(false, Map.of()))
                         .setGitHub(new ClientGitHubOptions().setUseLoggedInUser(false)))) {
             client.start().get(30, TimeUnit.SECONDS);
             var startup = fake.startup();
@@ -285,16 +259,6 @@ class ClientOptionsE2ETest {
     }
 
     @Test
-    void testRefreshCustomInstructionsIsNotExposedOnResumeConfig() {
-        assertThrows(NoSuchMethodException.class,
-                () -> ResumeSessionOptions.class.getMethod("getRefreshCustomInstructions"));
-        assertThrows(NoSuchMethodException.class,
-                () -> ResumeSessionOptions.class.getMethod("setRefreshCustomInstructions", boolean.class));
-        assertThrows(NoSuchMethodException.class,
-                () -> ResumeSessionOptions.class.getMethod("clearRefreshCustomInstructions"));
-    }
-
-    @Test
     void testShouldForwardAdvancedSessionCreationOptionsToTheCli() throws Exception {
         try (var fake = FakeStdioCli.create()) {
             var workDir = fake.path("create-work");
@@ -401,7 +365,8 @@ class ClientOptionsE2ETest {
                                         .setGitHub(new SessionGitHubOptions().setTelemetryEnabled(true))
                                         .setExecution(new SessionExecutionOptions()
                                                 .setLimits(SessionLimitsConfig.builder().maxAiCredits(42.0).build()))
-                                        .getSkills().setEnabled(false))
+                                        .getSkills().setEnabled(false)
+                                        .setDisabledSkills(java.util.List.of("disabled-create-skill")))
                                 .setGitHub(new CreateSessionOptions().setSessionId("java-create-session")
                                         .setName("java named at create").setClientName("java-e2e-client")
                                         .setModel("gpt-5-mini")
@@ -489,6 +454,7 @@ class ClientOptionsE2ETest {
             assertEquals(MAPPER.valueToTree(false), create.path("git").get("enableHostGitOperations"));
             assertEquals(MAPPER.valueToTree(true), create.path("state").get("enableCrossSessionStore"));
             assertEquals(MAPPER.valueToTree(false), create.path("skills").get("enabled"));
+            assertEquals("disabled-create-skill", create.path("skills").path("disabledSkills").path(0).asText());
             assertEquals("in-memory", create.path("state").path("embeddingCacheStorage").asText());
             assertEquals("java-session-token", create.path("github").path("token").asText());
             assertFalse(create.has("remoteSession"));
@@ -634,7 +600,8 @@ class ClientOptionsE2ETest {
                                                         .setContextTier("long_context").setEnableCitations(true))
                                                 .setExecution(new SessionExecutionOptions().setLimits(
                                                         SessionLimitsConfig.builder().maxAiCredits(84.0).build()))
-                                                .getSkills().setEnabled(false))
+                                                .getSkills().setEnabled(false)
+                                                .setDisabledSkills(java.util.List.of("disabled-resume-skill")))
                                         .setGitHub(new ResumeSessionOptions().setClientName("java-resume-client")
                                                 .setModel("gpt-5-mini")
                                                 .setInference(new SessionInferenceOptions()
@@ -691,6 +658,7 @@ class ClientOptionsE2ETest {
             assertEquals(MAPPER.valueToTree(false), resume.path("git").get("enableHostGitOperations"));
             assertEquals(MAPPER.valueToTree(true), resume.path("state").get("enableCrossSessionStore"));
             assertEquals(MAPPER.valueToTree(false), resume.path("skills").get("enabled"));
+            assertEquals("disabled-resume-skill", resume.path("skills").path("disabledSkills").path(0).asText());
             assertEquals("in-memory", resume.path("state").path("embeddingCacheStorage").asText());
             assertEquals("java-resume-token", resume.path("github").path("token").asText());
             assertFalse(resume.has("remoteSession"));

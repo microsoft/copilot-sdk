@@ -27,7 +27,11 @@ async def test_grouped_options_preserve_wire_values_and_callback_ownership(resum
     client = CopilotClient(mode="coding-agent", runtime=RuntimeConnection.for_tcp("localhost", 1))
     client._client = runtime
     options = {
-        "tools": {"definitions": [], "available_tools": []},
+        "tools": {
+            "definitions": [],
+            "available_tools": ["allowed_tool", "excluded_tool"],
+            "excluded_tools": ["excluded_tool"],
+        },
         "events": {"streaming": False},
         "filesystem": {"additional_directories": [], "track_file_changes": False},
         "mcp": {"servers": {}, "disabled_servers": []},
@@ -45,7 +49,11 @@ async def test_grouped_options_preserve_wire_values_and_callback_ownership(resum
     try:
         method, payload = runtime.requests[0]
         assert method == ("session.resume" if resume else "session.create")
-        assert payload["tools"] == {"definitions": [], "availableTools": []}
+        assert payload["tools"] == {
+            "definitions": [],
+            "availableTools": ["allowed_tool", "excluded_tool"],
+            "excludedTools": ["excluded_tool"],
+        }
         assert payload["events"]["streaming"] is False
         assert payload["filesystem"] == {"additionalDirectories": [], "trackFileChanges": False}
         assert payload["mcp"] == {"servers": {}, "disabledServers": [], "envValueMode": "direct"}

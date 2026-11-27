@@ -32,81 +32,22 @@ class TestHooks:
         assert resumed.session_id == session_id
         await resumed.disconnect()
 
-    async def test_should_invoke_pretooluse_hook_when_model_runs_a_tool(self, ctx: E2ETestContext):
-        """Test that preToolUse hook is invoked when model runs a tool"""
-        pre_tool_use_inputs = []
-        invocation_session_ids = []
-
-        async def on_pre_tool_use(input_data, invocation):
-            pre_tool_use_inputs.append(input_data)
-            invocation_session_ids.append(invocation["session_id"])
-            # Allow the tool to run
-            return {"permissionDecision": "allow"}
-
-        session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all},
-            hooks={"handlers": {"on_pre_tool_use": on_pre_tool_use}},
-        )
-
-        # Create a file for the model to read
-        write_file(ctx.work_dir, "hello.txt", "Hello from the test!")
-
-        await session.send_and_wait("Read the contents of hello.txt and tell me what it says")
-
-        # Should have received at least one preToolUse hook call
-        assert len(pre_tool_use_inputs) > 0
-        assert all(session_id == session.session_id for session_id in invocation_session_ids)
-
-        # Should have received the tool name
-        assert any(inp.get("toolName") for inp in pre_tool_use_inputs)
-
-        await session.disconnect()
-
-    async def test_should_invoke_posttooluse_hook_after_model_runs_a_tool(
-        self, ctx: E2ETestContext
-    ):
-        """Test that postToolUse hook is invoked after model runs a tool"""
-        post_tool_use_inputs = []
-        invocation_session_ids = []
-
-        async def on_post_tool_use(input_data, invocation):
-            post_tool_use_inputs.append(input_data)
-            invocation_session_ids.append(invocation["session_id"])
-            return None
-
-        session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all},
-            hooks={"handlers": {"on_post_tool_use": on_post_tool_use}},
-        )
-
-        # Create a file for the model to read
-        write_file(ctx.work_dir, "world.txt", "World from the test!")
-
-        await session.send_and_wait("Read the contents of world.txt and tell me what it says")
-
-        # Should have received at least one postToolUse hook call
-        assert len(post_tool_use_inputs) > 0
-        assert all(session_id == session.session_id for session_id in invocation_session_ids)
-
-        # Should have received the tool name and result
-        assert any(inp.get("toolName") for inp in post_tool_use_inputs)
-        assert any(inp.get("toolResult") is not None for inp in post_tool_use_inputs)
-
-        await session.disconnect()
-
     async def test_should_invoke_both_pretooluse_and_posttooluse_hooks_for_a_single_tool_call(
         self, ctx: E2ETestContext
     ):
         """Test that both preToolUse and postToolUse hooks fire for the same tool call"""
         pre_tool_use_inputs = []
         post_tool_use_inputs = []
+        invocation_session_ids = []
 
         async def on_pre_tool_use(input_data, invocation):
             pre_tool_use_inputs.append(input_data)
+            invocation_session_ids.append(invocation["session_id"])
             return {"permissionDecision": "allow"}
 
         async def on_post_tool_use(input_data, invocation):
             post_tool_use_inputs.append(input_data)
+            invocation_session_ids.append(invocation["session_id"])
             return None
 
         session = await ctx.client.create_session(
@@ -126,12 +67,14 @@ class TestHooks:
         # Both hooks should have been called
         assert len(pre_tool_use_inputs) > 0
         assert len(post_tool_use_inputs) > 0
+        assert all(session_id == session.session_id for session_id in invocation_session_ids)
+        assert any(inp.get("toolResult") is not None for inp in post_tool_use_inputs)
 
         # The same tool should appear in both
         pre_tool_names = [inp.get("toolName") for inp in pre_tool_use_inputs]
         post_tool_names = [inp.get("toolName") for inp in post_tool_use_inputs]
         common_tool = next((name for name in pre_tool_names if name in post_tool_names), None)
-        assert common_tool is not None
+        assert common_tool
 
         await session.disconnect()
 

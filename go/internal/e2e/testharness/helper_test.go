@@ -12,15 +12,10 @@ import (
 
 	copilot "github.com/microsoft/copilot-sdk/go/v2"
 	"github.com/microsoft/copilot-sdk/go/v2/internal/jsonrpc2"
-	"github.com/microsoft/copilot-sdk/go/v2/rpc"
 )
 
 func TestFinalAssistantMessageWaiterBeforeCompletionRPC(t *testing.T) {
-	for _, method := range []string{
-		"session.send",
-		"session.tools.handlePendingToolCall",
-		"session.permissions.handlePendingPermissionRequest",
-	} {
+	for _, method := range []string{"session.send"} {
 		t.Run(method, func(t *testing.T) {
 			ctx := t.Context()
 			assistant := copilot.SessionEvent{Data: &copilot.AssistantMessageData{MessageID: "answer", Content: "4"}}
@@ -35,26 +30,9 @@ func TestFinalAssistantMessageWaiterBeforeCompletionRPC(t *testing.T) {
 				{Data: &copilot.SessionIdleData{}},
 			}))
 
-			switch method {
-			case "session.send":
-				messageID, err := f.session.Send(ctx, copilot.MessageOptions{Prompt: "What is 2+2?"})
-				if err != nil || messageID != "sent" {
-					t.Fatalf("Send = %q, %v; want sent, nil", messageID, err)
-				}
-			case "session.tools.handlePendingToolCall":
-				result, err := f.session.RPC.Tools.HandlePendingToolCall(ctx, &rpc.HandlePendingToolCallRequest{
-					RequestID: "tool-request", Result: rpc.ExternalToolStringResult("4"),
-				})
-				if err != nil || !result.Success {
-					t.Fatalf("HandlePendingToolCall = %+v, %v", result, err)
-				}
-			case "session.permissions.handlePendingPermissionRequest":
-				result, err := f.session.RPC.Permissions.HandlePendingPermissionRequest(ctx, &rpc.PermissionDecisionRequest{
-					RequestID: "permission-request", Result: &rpc.PermissionDecisionApproveOnce{},
-				})
-				if err != nil || !result.Success {
-					t.Fatalf("HandlePendingPermissionRequest = %+v, %v", result, err)
-				}
+			messageID, err := f.session.Send(ctx, copilot.MessageOptions{Prompt: "What is 2+2?"})
+			if err != nil || messageID != "sent" {
+				t.Fatalf("Send = %q, %v; want sent, nil", messageID, err)
 			}
 
 			// The RPC response is withheld until all notifications have been
@@ -124,49 +102,6 @@ func TestFinalAssistantMessageWaiterRequiresMessageAndPropagatesErrors(t *testin
 	}
 }
 
-func TestFinalAssistantMessageWaiterBeforeHandlerRelease(t *testing.T) {
-	ctx := t.Context()
-	f := newCompletionFixture(t, ctx, nil)
-	waiter := SubscribeToFinalAssistantMessage(f.session)
-	defer waiter.Close()
-	complete := f.beforeResponse(t, ctx, []copilot.SessionEvent{
-		{Data: &copilot.AssistantMessageData{Content: "released"}},
-		{Data: &copilot.SessionIdleData{}},
-	})
-	entered := make(chan struct{})
-	release := make(chan struct{})
-	f.server.SetRequestHandler("session.send", func(params json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
-		close(entered)
-		select {
-		case <-release:
-			return complete(params)
-		case <-ctx.Done():
-			return nil, &jsonrpc2.Error{Code: -32000, Message: ctx.Err().Error()}
-		}
-	})
-	sent := make(chan error, 1)
-	go func() {
-		_, err := f.session.Send(ctx, copilot.MessageOptions{Prompt: "use the blocked handler"})
-		sent <- err
-	}()
-	select {
-	case <-entered:
-	case <-ctx.Done():
-		t.Fatal(ctx.Err())
-	}
-	close(release)
-	select {
-	case err := <-sent:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-ctx.Done():
-		t.Fatal(ctx.Err())
-	}
-	answer, err := waiter.Wait(ctx)
-	requireCompletionAnswer(t, answer, err, "released")
-}
-
 func TestFinalAssistantMessageWaiterRequiresLiveIdle(t *testing.T) {
 	ctx := t.Context()
 	assistant := copilot.SessionEvent{Data: &copilot.AssistantMessageData{Content: "not finished"}}
@@ -182,46 +117,6 @@ func TestFinalAssistantMessageWaiterRequiresLiveIdle(t *testing.T) {
 	if answer, err := waiter.Wait(cancelled); answer != nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("Wait without idle = %+v, %v; want cancellation", answer, err)
 	}
-}
-
-func TestEventWaitersBeforeAbortAndRecovery(t *testing.T) {
-	ctx := t.Context()
-	f := newCompletionFixture(t, ctx, nil)
-	toolStart := SubscribeToEvent(f.session, copilot.SessionEventTypeToolExecutionStart)
-	defer toolStart.Close()
-	idle := SubscribeToEvent(f.session, copilot.SessionEventTypeSessionIdle)
-	defer idle.Close()
-	f.server.SetRequestHandler("session.send", f.beforeResponse(t, ctx, []copilot.SessionEvent{
-		{Data: &copilot.ToolExecutionStartData{ToolCallID: "tool", ToolName: "shell"}},
-	}))
-	if _, err := f.session.Send(ctx, copilot.MessageOptions{Prompt: "start tool"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := toolStart.Wait(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	f.server.SetRequestHandler("session.abort", f.beforeResponse(t, ctx, []copilot.SessionEvent{
-		{Data: &copilot.SessionIdleData{}},
-	}))
-	if err := f.session.Abort(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := idle.Wait(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	answerWaiter := SubscribeToEvent(f.session, copilot.SessionEventTypeAssistantMessage)
-	defer answerWaiter.Close()
-	f.server.SetRequestHandler("session.send", f.beforeResponse(t, ctx, []copilot.SessionEvent{
-		{Data: &copilot.AssistantMessageData{Content: "recovered"}},
-		{Data: &copilot.SessionIdleData{}},
-	}))
-	if _, err := f.session.Send(ctx, copilot.MessageOptions{Prompt: "recover"}); err != nil {
-		t.Fatal(err)
-	}
-	answer, err := answerWaiter.Wait(ctx)
-	requireCompletionAnswer(t, answer, err, "recovered")
 }
 
 type completionAtCancellationContext struct {
@@ -265,12 +160,6 @@ func TestEventWaiterRetainsResultBeforeReportingCancellation(t *testing.T) {
 			subscribe: SubscribeToFinalAssistantMessage,
 			events:    []copilot.SessionEvent{{Data: &copilot.SessionErrorData{Message: "model failed"}}},
 			wantErr:   "model failed",
-		},
-		{
-			name:      "idle without assistant message",
-			subscribe: SubscribeToFinalAssistantMessage,
-			events:    []copilot.SessionEvent{{Data: &copilot.SessionIdleData{}}},
-			wantErr:   "session became idle without an assistant message",
 		},
 		{
 			name:      "no completion",

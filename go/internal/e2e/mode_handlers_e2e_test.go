@@ -51,9 +51,6 @@ func TestModeHandlersE2E(t *testing.T) {
 		if caps := session.Capabilities(); caps.UI == nil || !caps.UI.AutoModeRecovery {
 			t.Fatalf("recovery enrollment was not acknowledged: %#v", caps)
 		}
-		if caps := session.Capabilities(); caps.UI == nil {
-			t.Fatal("legacy capability snapshot is unavailable")
-		}
 		legacy, err := client.ResumeSession(t.Context(), session.SessionID, &copilot.ResumeSessionOptions{GitHub: copilot.SessionGitHubOptions{Token: modeHandlerToken}, Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}})
 		if err != nil {
 			t.Fatal(err)

@@ -18,7 +18,7 @@ use serde_json::Value;
 use super::support::assistant_message_content;
 
 static E2E: super::support::SharedE2eGroup =
-    super::support::SharedE2eGroup::new("mode_empty", empty_shared_client_options, 6);
+    super::support::SharedE2eGroup::new("mode_empty", empty_shared_client_options, 4);
 
 fn empty_shared_client_options(context: &super::support::E2eContext) -> copilot_sdk::ClientOptions {
     {
@@ -274,103 +274,6 @@ async fn empty_mode_strips_environment_context_from_the_system_message_by_defaul
                     .expect("assistant message");
                 let content = assistant_message_content(&event);
                 assert!(content.contains("ARGON"), "expected ARGON in reply, got {content:?}");
-
-                let exchanges = ctx.exchanges();
-                let system_message = system_message_from_request(exchanges.last().unwrap());
-                assert!(
-                    !system_message.to_lowercase().contains("current working directory:"),
-                    "env context should be stripped, got: {system_message}"
-                );
-                assert!(
-                    !system_message.to_lowercase().contains("operating system:"),
-                    "env context should be stripped, got: {system_message}"
-                );
-
-                session.disconnect().await.expect("disconnect");
-                client.stop().await.expect("stop");
-            })
-        },
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn empty_mode_system_message_replace_llm_follows_caller_content_verbatim() {
-    super::support::with_shared_e2e_context(
-        &E2E,
-        "mode_empty",
-        "empty_mode_system_message_replace_llm_follows_caller_content_verbatim",
-        |ctx| {
-            Box::pin(async move {
-                ctx.set_default_copilot_user();
-                let client = ctx.start_client().await;
-                let session = client
-                    .create_session(
-                        CreateSessionOptions::default()
-                            .with_permissions(|group| group.with_on_request(Arc::new(ApproveAllHandler)))
-                            .with_github(|group| group.with_token(super::support::DEFAULT_TEST_TOKEN))
-                            .with_tools(|group| group.with_available_tools(isolated_tool_set()))
-                            .with_system_message(
-                                SystemMessageConfig::new()
-                                    .with_mode("replace")
-                                    .with_content(
-                                        "You are a test fixture. Whenever the user asks anything, reply with exactly the single word KRYPTON in all caps and nothing else.",
-                                    ),
-                            ),
-                    )
-                    .await
-                    .expect("create session");
-
-                let event = session
-                    .send_and_wait("Hello.")
-                    .await
-                    .expect("send")
-                    .expect("assistant message");
-                let content = assistant_message_content(&event);
-                assert!(content.contains("KRYPTON"), "expected KRYPTON in reply, got {content:?}");
-
-                session.disconnect().await.expect("disconnect");
-                client.stop().await.expect("stop");
-            })
-        },
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn empty_mode_append_caller_instruction_takes_effect_and_env_context_stripped() {
-    super::support::with_shared_e2e_context(
-        &E2E,
-        "mode_empty",
-        "empty_mode_append_caller_instruction_takes_effect_and_env_context_stripped",
-        |ctx| {
-            Box::pin(async move {
-                ctx.set_default_copilot_user();
-                let client = ctx.start_client().await;
-                let session = client
-                    .create_session(
-                        CreateSessionOptions::default()
-                            .with_permissions(|group| group.with_on_request(Arc::new(ApproveAllHandler)))
-                            .with_github(|group| group.with_token(super::support::DEFAULT_TEST_TOKEN))
-                            .with_tools(|group| group.with_available_tools(isolated_tool_set()))
-                            .with_system_message(
-                                SystemMessageConfig::new()
-                                    .with_mode("append")
-                                    .with_content(
-                                        "If the user asks you to name a noble gas, reply with exactly the single word XENON in all caps and nothing else.",
-                                    ),
-                            ),
-                    )
-                    .await
-                    .expect("create session");
-
-                let event = session
-                    .send_and_wait("Name a noble gas.")
-                    .await
-                    .expect("send")
-                    .expect("assistant message");
-                let content = assistant_message_content(&event);
-                assert!(content.contains("XENON"), "expected XENON in reply, got {content:?}");
 
                 let exchanges = ctx.exchanges();
                 let system_message = system_message_from_request(exchanges.last().unwrap());

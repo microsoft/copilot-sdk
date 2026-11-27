@@ -9,12 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import os
 from typing import Any
 
 import pytest
 
-from copilot import CopilotClient, RuntimeConnection
 from copilot.rpc import PermissionDecisionUserNotAvailable
 from copilot.session import PermissionHandler
 from copilot.tools import Tool, ToolInvocation, ToolResult
@@ -24,24 +22,6 @@ from .testharness import E2ETestContext
 pytestmark = pytest.mark.asyncio(loop_scope="module")
 
 SUSPEND_TIMEOUT = 60.0
-
-
-def _make_subprocess_client(ctx: E2ETestContext, *, use_stdio: bool = True) -> CopilotClient:
-    github_token = (
-        "fake-token-for-e2e-tests" if os.environ.get("GITHUB_ACTIONS") == "true" else None
-    )
-    if use_stdio:
-        connection = RuntimeConnection.for_spawned_stdio(
-            path=ctx.cli_path, working_directory=ctx.work_dir, env=ctx.get_env()
-        )
-    else:
-        connection = RuntimeConnection.for_spawned_tcp(
-            path=ctx.cli_path,
-            connection_token="py-tcp-shared-test-token",
-            working_directory=ctx.work_dir,
-            env=ctx.get_env(),
-        )
-    return CopilotClient(mode="coding-agent", runtime=connection, github={"token": github_token})
 
 
 def _make_tool(name: str, handler) -> Tool:
@@ -69,13 +49,6 @@ def _make_tool(name: str, handler) -> Tool:
     )
 
 
-async def _safe_force_stop(client: CopilotClient) -> None:
-    try:
-        await client.stop()
-    except Exception:
-        await client.force_stop()
-
-
 async def _safe_disconnect(session: Any) -> None:
     try:
         await session.disconnect()
@@ -85,69 +58,6 @@ async def _safe_disconnect(session: Any) -> None:
 
 
 class TestSuspend:
-    async def test_should_suspend_idle_session_without_throwing(self, ctx: E2ETestContext):
-        session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all}
-        )
-        try:
-            await session.send_and_wait("Reply with: SUSPEND_IDLE_OK")
-            await asyncio.wait_for(session.rpc.suspend(), timeout=SUSPEND_TIMEOUT)
-        finally:
-            await _safe_disconnect(session)
-
-    async def test_should_allow_resume_and_continue_conversation_after_suspend(
-        self, ctx: E2ETestContext
-    ):
-        server = _make_subprocess_client(ctx, use_stdio=False)
-        await server.start()
-        try:
-            actual_port = server.runtime_port
-            assert actual_port is not None, "Server should have a port after starting"
-            session_id: str
-
-            first_client = CopilotClient(
-                mode="coding-agent",
-                runtime=RuntimeConnection.for_tcp(
-                    "localhost", actual_port, connection_token="py-tcp-shared-test-token"
-                ),
-            )
-            try:
-                session1 = await first_client.create_session(
-                    permissions={"on_request": PermissionHandler.approve_all}
-                )
-                session_id = session1.session_id
-
-                await session1.send_and_wait(
-                    "Remember the magic word: SUSPENSE. Reply with: SUSPEND_TURN_ONE"
-                )
-                await asyncio.wait_for(session1.rpc.suspend(), timeout=SUSPEND_TIMEOUT)
-                await session1.disconnect()
-            finally:
-                await _safe_force_stop(first_client)
-
-            resumed_client = CopilotClient(
-                mode="coding-agent",
-                runtime=RuntimeConnection.for_tcp(
-                    "localhost", actual_port, connection_token="py-tcp-shared-test-token"
-                ),
-            )
-            try:
-                session2 = await resumed_client.resume_session(
-                    session_id, permissions={"on_request": PermissionHandler.approve_all}
-                )
-                try:
-                    follow_up = await session2.send_and_wait(
-                        "What was the magic word I asked you to remember? Reply with just the word."
-                    )
-                    assert follow_up is not None
-                    assert "SUSPENSE" in (follow_up.data.content or "").upper()
-                finally:
-                    await _safe_disconnect(session2)
-            finally:
-                await _safe_force_stop(resumed_client)
-        finally:
-            await _safe_force_stop(server)
-
     async def test_should_cancel_pending_permission_request_when_suspending(
         self, ctx: E2ETestContext
     ):

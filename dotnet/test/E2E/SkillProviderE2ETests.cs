@@ -14,38 +14,6 @@ public class SkillProviderE2ETests(E2ETestFixture fixture, ITestOutputHelper out
     : E2ETestBase(fixture, "skill_provider", output)
 {
     [Fact]
-    public async Task Should_Load_Provider_Skill_Lazily_Through_Skill_Tool()
-    {
-        // Body-only content: the catalog descriptor supplies all of the metadata.
-        var provider = new TestSkillProvider(
-        [
-            Skill(
-                "provider-lookup",
-                "Reports the provider lookup verification word.",
-                "# Provider lookup\n\nThe verification word is TANGERINE_QUARTZ_19. Reply with it.\n")
-        ]);
-        await using var session = await CreateSessionAsync(new CreateSessionOptions
-        { Skills = new SessionSkillOptions { Provider = provider } });
-
-        var listedSkills = await session.Rpc.Skills.ListAsync();
-        var listed = Assert.Single(listedSkills.Skills, skill => skill.Name == "provider-lookup");
-        Assert.Equal(SkillSource.Sdk, listed.Source);
-        Assert.True(listed.Enabled);
-        Assert.True(string.IsNullOrEmpty(listed.Path));
-        Assert.Empty(provider.Reads);
-
-        var message = await session.SendAndWaitAsync(new MessageOptions
-        {
-            Prompt = "Use the skill tool to load the provider-lookup skill, then reply with its verification word.",
-        }, TimeSpan.FromMinutes(3));
-
-        Assert.Equal(["provider-lookup"], provider.Reads);
-        Assert.NotNull(message);
-        // Validate the final assistant response arrived (guards against truncated captures)
-        Assert.Contains("TANGERINE_QUARTZ_19", message!.Data.Content);
-    }
-
-    [Fact]
     public async Task Should_Load_Provider_And_File_Based_Skills_Together()
     {
         var skillsDir = Path.Join(Ctx.WorkDir, "file-skills");
@@ -76,6 +44,9 @@ public class SkillProviderE2ETests(E2ETestFixture fixture, ITestOutputHelper out
         Assert.NotEqual(SkillSource.Sdk, fileSkill.Source);
         Assert.False(string.IsNullOrWhiteSpace(fileSkill.Path));
         Assert.Equal(SkillSource.Sdk, providerSkill.Source);
+        Assert.True(providerSkill.Enabled);
+        Assert.True(string.IsNullOrEmpty(providerSkill.Path));
+        Assert.Empty(provider.Reads);
 
         var message = await session.SendAndWaitAsync(new MessageOptions
         {

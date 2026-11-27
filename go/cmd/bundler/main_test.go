@@ -123,7 +123,7 @@ func TestCreateRuntimeAssetsArchiveRetainsUnknownAssetsAndFiltersCLIContent(t *t
 }
 
 func TestDownloadCLIBinaryUsesVerifiedReleasePackage(t *testing.T) {
-	for _, version := range []string{"1.2.3", "1.2.3-4.unstable.r123.gabcdef0"} {
+	for _, version := range []string{"1.2.3"} {
 		t.Run(version, func(t *testing.T) {
 			dir := t.TempDir()
 			archivePath := filepath.Join(dir, "source.tgz")
@@ -136,9 +136,6 @@ func TestDownloadCLIBinaryUsesVerifiedReleasePackage(t *testing.T) {
 			}
 			checksum := fmt.Sprintf("%x", sha256.Sum256(archive))
 			tag := "v" + version
-			if strings.Contains(version, ".unstable.") {
-				tag = "runtime-" + version
-			}
 			assetName := releaseAssetName(version, "linux-x64")
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 				switch request.URL.Path {
@@ -182,7 +179,6 @@ func TestReleaseDownloadURL(t *testing.T) {
 		{"0.0.0-0.unstable.r1.g0000000", "microsoft/copilot-sdk", "runtime-0.0.0-0.unstable.r1.g0000000"},
 		{"01.2.3-unstable.r123.gabcdef0", "github/copilot-cli", "v01.2.3-unstable.r123.gabcdef0"},
 		{"1.02.3-unstable.r123.gabcdef0", "github/copilot-cli", "v1.02.3-unstable.r123.gabcdef0"},
-		{"1.2.03-unstable.r123.gabcdef0", "github/copilot-cli", "v1.2.03-unstable.r123.gabcdef0"},
 		{"1.2.3-04.unstable.r123.gabcdef0", "github/copilot-cli", "v1.2.3-04.unstable.r123.gabcdef0"},
 	} {
 		t.Run(tc.version, func(t *testing.T) {

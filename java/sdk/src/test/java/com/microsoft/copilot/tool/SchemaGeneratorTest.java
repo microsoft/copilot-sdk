@@ -236,372 +236,93 @@ public class SchemaGeneratorTest {
     // --- Type mapping tests ---
 
     @Test
-    void stringType() {
-        String source = """
-                public class TestStringHolder {
-                    public String schemaTargetString() { return null; }
-                }
-                """;
-        List<String> schemas = compileAndCapture(source);
-        assertContainsSchema(schemas, "schemaTargetString", "Map.of(\"type\", \"string\")");
+    void memberTypeMappings() {
+        // One compilation covers every member type mapping:
+        // {method, return type, expected schema source}
+        String[][] rows = {{"schemaTargetString", "String", "Map.of(\"type\", \"string\")"},
+                {"schemaTargetInt", "int", "Map.of(\"type\", \"integer\")"},
+                {"schemaTargetInteger", "Integer", "Map.of(\"type\", \"integer\")"},
+                {"schemaTargetLong", "long", "Map.of(\"type\", \"integer\")"},
+                {"schemaTargetDouble", "double", "Map.of(\"type\", \"number\")"},
+                {"schemaTargetFloat", "float", "Map.of(\"type\", \"number\")"},
+                {"schemaTargetBoolean", "boolean", "Map.of(\"type\", \"boolean\")"},
+                {"schemaTargetBooleanBoxed", "Boolean", "Map.of(\"type\", \"boolean\")"},
+                {"schemaTargetByte", "Byte", "Map.of(\"type\", \"integer\")"},
+                {"schemaTargetShort", "Short", "Map.of(\"type\", \"integer\")"},
+                {"schemaTargetChar", "Character", "Map.of(\"type\", \"string\")"},
+                {"schemaTargetArray", "String[]",
+                        "Map.of(\"type\", \"array\", \"items\", Map.of(\"type\", \"string\"))"},
+                {"schemaTargetList", "List<String>",
+                        "Map.of(\"type\", \"array\", \"items\", Map.of(\"type\", \"string\"))"},
+                {"schemaTargetMap", "Map<String, String>",
+                        "Map.of(\"type\", \"object\", \"additionalProperties\", Map.of(\"type\", \"string\"))"},
+                {"schemaTargetMapObject", "Map<String, Object>", "Map.of(\"type\", \"object\")"},
+                {"schemaTargetMapBool", "Map<String, Boolean>",
+                        "Map.of(\"type\", \"object\", \"additionalProperties\", Map.of(\"type\", \"boolean\"))"},
+                {"schemaTargetMapLong", "Map<String, Long>",
+                        "Map.of(\"type\", \"object\", \"additionalProperties\", Map.of(\"type\", \"integer\"))"},
+                {"schemaTargetNestedMap", "Map<String, List<String>>",
+                        "Map.of(\"type\", \"object\", \"additionalProperties\", "
+                                + "Map.of(\"type\", \"array\", \"items\", Map.of(\"type\", \"string\")))"},
+                {"schemaTargetOptional", "Optional<String>", "Map.of(\"type\", \"string\")"},
+                {"schemaTargetOptionalInt", "OptionalInt", "Map.of(\"type\", \"integer\")"},
+                {"schemaTargetOptionalLong", "OptionalLong", "Map.of(\"type\", \"integer\")"},
+                {"schemaTargetOptionalDouble", "OptionalDouble", "Map.of(\"type\", \"number\")"},
+                {"schemaTargetUuid", "UUID", "Map.of(\"type\", \"string\", \"format\", \"uuid\")"},
+                {"schemaTargetDateTime", "OffsetDateTime", "Map.of(\"type\", \"string\", \"format\", \"date-time\")"},
+                {"schemaTargetLocalDateTime", "LocalDateTime",
+                        "Map.of(\"type\", \"string\", \"format\", \"date-time\")"},
+                {"schemaTargetInstant", "Instant", "Map.of(\"type\", \"string\", \"format\", \"date-time\")"},
+                {"schemaTargetZonedDateTime", "ZonedDateTime",
+                        "Map.of(\"type\", \"string\", \"format\", \"date-time\")"},
+                {"schemaTargetLocalDate", "LocalDate", "Map.of(\"type\", \"string\", \"format\", \"date\")"},
+                {"schemaTargetLocalTime", "LocalTime", "Map.of(\"type\", \"string\", \"format\", \"time\")"},
+                {"schemaTargetObject", "Object", "Map.of()"}};
+        StringBuilder source = new StringBuilder("import java.util.*;\nimport java.time.*;\n")
+                .append("public class TestMemberTypesHolder {\n");
+        for (String[] row : rows) {
+            String value = switch (row[1]) {
+                case "boolean" -> "false";
+                case "int", "long", "double", "float", "short", "byte", "char" -> "0";
+                default -> "null";
+            };
+            source.append("    public ").append(row[1]).append(' ').append(row[0]).append("() { return ").append(value)
+                    .append("; }\n");
+        }
+        source.append("}\n");
+        List<String> schemas = compileAndCapture(source.toString());
+        List<String> missing = new ArrayList<>();
+        for (String[] row : rows) {
+            String expected = row[0] + "=" + row[2];
+            if (!schemas.contains(expected)) {
+                missing.add(expected);
+            }
+        }
+        assertEquals(List.of(), missing, "Captured: " + schemas);
     }
 
     @Test
-    void intPrimitiveType() {
-        String source = """
-                public class TestIntHolder {
-                    public int schemaTargetInt() { return 0; }
-                }
-                """;
-        List<String> schemas = compileAndCapture(source);
-        assertContainsSchema(schemas, "schemaTargetInt", "Map.of(\"type\", \"integer\")");
-    }
-
-    @Test
-    void integerBoxedType() {
-        String source = """
-                public class TestIntegerHolder {
-                    public Integer schemaTargetInteger() { return null; }
-                }
-                """;
-        List<String> schemas = compileAndCapture(source);
-        assertContainsSchema(schemas, "schemaTargetInteger", "Map.of(\"type\", \"integer\")");
-    }
-
-    @Test
-    void longType() {
-        String source = """
-                public class TestLongHolder {
-                    public long schemaTargetLong() { return 0L; }
-                }
-                """;
-        List<String> schemas = compileAndCapture(source);
-        assertContainsSchema(schemas, "schemaTargetLong", "Map.of(\"type\", \"integer\")");
-    }
-
-    @Test
-    void doubleType() {
-        String source = """
-                public class TestDoubleHolder {
-                    public double schemaTargetDouble() { return 0.0; }
-                }
-                """;
-        List<String> schemas = compileAndCapture(source);
-        assertContainsSchema(schemas, "schemaTargetDouble", "Map.of(\"type\", \"number\")");
-    }
-
-    @Test
-    void floatType() {
-        String source = """
-                public class TestFloatHolder {
-                    public float schemaTargetFloat() { return 0.0f; }
-                }
-                """;
-        List<String> schemas = compileAndCapture(source);
-        assertContainsSchema(schemas, "schemaTargetFloat", "Map.of(\"type\", \"number\")");
-    }
-
-    @Test
-    void booleanPrimitiveType() {
-        String source = """
-                public class TestBooleanHolder {
-                    public boolean schemaTargetBoolean() { return false; }
-                }
-                """;
-        List<String> schemas = compileAndCapture(source);
-        assertContainsSchema(schemas, "schemaTargetBoolean", "Map.of(\"type\", \"boolean\")");
-    }
-
-    @Test
-    void booleanBoxedType() {
-        String source = """
-                public class TestBooleanBoxedHolder {
-                    public Boolean schemaTargetBooleanBoxed() { return null; }
-                }
-                """;
-        List<String> schemas = compileAndCapture(source);
-        assertContainsSchema(schemas, "schemaTargetBooleanBoxed", "Map.of(\"type\", \"boolean\")");
-    }
-
-    @Test
-    void byteBoxedType() {
-        String source = """
-                public class TestByteHolder {
-                    public Byte schemaTargetByte() { return null; }
-                }
-                """;
-        List<String> schemas = compileAndCapture(source);
-        assertContainsSchema(schemas, "schemaTargetByte", "Map.of(\"type\", \"integer\")");
-    }
-
-    @Test
-    void shortBoxedType() {
-        String source = """
-                public class TestShortHolder {
-                    public Short schemaTargetShort() { return null; }
-                }
-                """;
-        List<String> schemas = compileAndCapture(source);
-        assertContainsSchema(schemas, "schemaTargetShort", "Map.of(\"type\", \"integer\")");
-    }
-
-    @Test
-    void characterBoxedType() {
-        String source = """
-                public class TestCharHolder {
-                    public Character schemaTargetChar() { return null; }
-                }
-                """;
-        List<String> schemas = compileAndCapture(source);
-        assertContainsSchema(schemas, "schemaTargetChar", "Map.of(\"type\", \"string\")");
-    }
-
-    @Test
-    void stringArrayType() {
-        String source = """
-                public class TestArrayHolder {
-                    public String[] schemaTargetArray() { return null; }
-                }
-                """;
-        List<String> schemas = compileAndCapture(source);
-        assertContainsSchema(schemas, "schemaTargetArray",
-                "Map.of(\"type\", \"array\", \"items\", Map.of(\"type\", \"string\"))");
-    }
-
-    @Test
-    void enumType() {
-        String source = """
+    void enumAndRecordTypes() {
+        List<String> schemas = compileAndCapture("""
                 public enum TestEnumColor { RED, GREEN, BLUE }
-                """;
-        List<String> schemas = compileAndCapture(source);
-        assertContainsSchema(schemas, "TestEnumColor",
-                "Map.of(\"type\", \"string\", \"enum\", List.of(\"RED\", \"GREEN\", \"BLUE\"))");
-    }
-
-    @Test
-    void listOfStringType() {
-        String source = """
-                import java.util.List;
-                public class TestListHolder {
-                    public List<String> schemaTargetList() { return null; }
-                }
-                """;
-        List<String> schemas = compileAndCapture(source);
-        assertContainsSchema(schemas, "schemaTargetList",
-                "Map.of(\"type\", \"array\", \"items\", Map.of(\"type\", \"string\"))");
-    }
-
-    @Test
-    void mapStringStringType() {
-        String source = """
-                import java.util.Map;
-                public class TestMapHolder {
-                    public Map<String, String> schemaTargetMap() { return null; }
-                }
-                """;
-        List<String> schemas = compileAndCapture(source);
-        assertContainsSchema(schemas, "schemaTargetMap",
-                "Map.of(\"type\", \"object\", \"additionalProperties\", Map.of(\"type\", \"string\"))");
-    }
-
-    @Test
-    void mapStringObjectType() {
-        String source = """
-                import java.util.Map;
-                public class TestMapObjectHolder {
-                    public Map<String, Object> schemaTargetMapObject() { return null; }
-                }
-                """;
-        List<String> schemas = compileAndCapture(source);
-        assertContainsSchema(schemas, "schemaTargetMapObject", "Map.of(\"type\", \"object\")");
-    }
-
-    @Test
-    void mapStringBooleanType() {
-        String source = """
-                import java.util.Map;
-                public class TestMapBoolHolder {
-                    public Map<String, Boolean> schemaTargetMapBool() { return null; }
-                }
-                """;
-        List<String> schemas = compileAndCapture(source);
-        assertContainsSchema(schemas, "schemaTargetMapBool",
-                "Map.of(\"type\", \"object\", \"additionalProperties\", Map.of(\"type\", \"boolean\"))");
-    }
-
-    @Test
-    void mapStringLongType() {
-        String source = """
-                import java.util.Map;
-                public class TestMapLongHolder {
-                    public Map<String, Long> schemaTargetMapLong() { return null; }
-                }
-                """;
-        List<String> schemas = compileAndCapture(source);
-        assertContainsSchema(schemas, "schemaTargetMapLong",
-                "Map.of(\"type\", \"object\", \"additionalProperties\", Map.of(\"type\", \"integer\"))");
-    }
-
-    @Test
-    void optionalStringType() {
-        String source = """
-                import java.util.Optional;
-                public class TestOptionalHolder {
-                    public Optional<String> schemaTargetOptional() { return null; }
-                }
-                """;
-        List<String> schemas = compileAndCapture(source);
-        assertContainsSchema(schemas, "schemaTargetOptional", "Map.of(\"type\", \"string\")");
-    }
-
-    @Test
-    void optionalIntType() {
-        String source = """
-                import java.util.OptionalInt;
-                public class TestOptionalIntHolder {
-                    public OptionalInt schemaTargetOptionalInt() { return null; }
-                }
-                """;
-        List<String> schemas = compileAndCapture(source);
-        assertContainsSchema(schemas, "schemaTargetOptionalInt", "Map.of(\"type\", \"integer\")");
-    }
-
-    @Test
-    void optionalLongType() {
-        String source = """
-                import java.util.OptionalLong;
-                public class TestOptionalLongHolder {
-                    public OptionalLong schemaTargetOptionalLong() { return null; }
-                }
-                """;
-        List<String> schemas = compileAndCapture(source);
-        assertContainsSchema(schemas, "schemaTargetOptionalLong", "Map.of(\"type\", \"integer\")");
-    }
-
-    @Test
-    void optionalDoubleType() {
-        String source = """
-                import java.util.OptionalDouble;
-                public class TestOptionalDoubleHolder {
-                    public OptionalDouble schemaTargetOptionalDouble() { return null; }
-                }
-                """;
-        List<String> schemas = compileAndCapture(source);
-        assertContainsSchema(schemas, "schemaTargetOptionalDouble", "Map.of(\"type\", \"number\")");
-    }
-
-    @Test
-    void uuidType() {
-        String source = """
-                import java.util.UUID;
-                public class TestUuidHolder {
-                    public UUID schemaTargetUuid() { return null; }
-                }
-                """;
-        List<String> schemas = compileAndCapture(source);
-        assertContainsSchema(schemas, "schemaTargetUuid", "Map.of(\"type\", \"string\", \"format\", \"uuid\")");
-    }
-
-    @Test
-    void offsetDateTimeType() {
-        String source = """
-                import java.time.OffsetDateTime;
-                public class TestDateTimeHolder {
-                    public OffsetDateTime schemaTargetDateTime() { return null; }
-                }
-                """;
-        List<String> schemas = compileAndCapture(source);
-        assertContainsSchema(schemas, "schemaTargetDateTime",
-                "Map.of(\"type\", \"string\", \"format\", \"date-time\")");
-    }
-
-    @Test
-    void localDateTimeType() {
-        String source = """
-                import java.time.LocalDateTime;
-                public class TestLocalDateTimeHolder {
-                    public LocalDateTime schemaTargetLocalDateTime() { return null; }
-                }
-                """;
-        List<String> schemas = compileAndCapture(source);
-        assertContainsSchema(schemas, "schemaTargetLocalDateTime",
-                "Map.of(\"type\", \"string\", \"format\", \"date-time\")");
-    }
-
-    @Test
-    void instantType() {
-        String source = """
-                import java.time.Instant;
-                public class TestInstantHolder {
-                    public Instant schemaTargetInstant() { return null; }
-                }
-                """;
-        List<String> schemas = compileAndCapture(source);
-        assertContainsSchema(schemas, "schemaTargetInstant", "Map.of(\"type\", \"string\", \"format\", \"date-time\")");
-    }
-
-    @Test
-    void zonedDateTimeType() {
-        String source = """
-                import java.time.ZonedDateTime;
-                public class TestZonedDateTimeHolder {
-                    public ZonedDateTime schemaTargetZonedDateTime() { return null; }
-                }
-                """;
-        List<String> schemas = compileAndCapture(source);
-        assertContainsSchema(schemas, "schemaTargetZonedDateTime",
-                "Map.of(\"type\", \"string\", \"format\", \"date-time\")");
-    }
-
-    @Test
-    void localDateType() {
-        String source = """
-                import java.time.LocalDate;
-                public class TestLocalDateHolder {
-                    public LocalDate schemaTargetLocalDate() { return null; }
-                }
-                """;
-        List<String> schemas = compileAndCapture(source);
-        assertContainsSchema(schemas, "schemaTargetLocalDate", "Map.of(\"type\", \"string\", \"format\", \"date\")");
-    }
-
-    @Test
-    void localTimeType() {
-        String source = """
-                import java.time.LocalTime;
-                public class TestLocalTimeHolder {
-                    public LocalTime schemaTargetLocalTime() { return null; }
-                }
-                """;
-        List<String> schemas = compileAndCapture(source);
-        assertContainsSchema(schemas, "schemaTargetLocalTime", "Map.of(\"type\", \"string\", \"format\", \"time\")");
-    }
-
-    @Test
-    void recordType() {
-        String source = """
+                """, """
                 public record TestRecordPerson(String name, int age, boolean active) {}
-                """;
-        List<String> schemas = compileAndCapture(source);
-        String expected = "Map.of(\"type\", \"object\", \"properties\", "
-                + "Map.ofEntries(Map.entry(\"name\", Map.of(\"type\", \"string\")), "
-                + "Map.entry(\"age\", Map.of(\"type\", \"integer\")), "
-                + "Map.entry(\"active\", Map.of(\"type\", \"boolean\"))), "
-                + "\"required\", List.of(\"name\", \"age\", \"active\"))";
-        assertContainsSchema(schemas, "TestRecordPerson", expected);
-    }
-
-    @Test
-    void recordWithOptionalField() {
-        String source = """
+                """, """
                 import java.util.Optional;
                 public record TestRecordWithOptional(String name, Optional<String> nickname) {}
-                """;
-        List<String> schemas = compileAndCapture(source);
-        String expected = "Map.of(\"type\", \"object\", \"properties\", "
-                + "Map.ofEntries(Map.entry(\"name\", Map.of(\"type\", \"string\")), "
-                + "Map.entry(\"nickname\", Map.of(\"type\", \"string\"))), " + "\"required\", List.of(\"name\"))";
-        assertContainsSchema(schemas, "TestRecordWithOptional", expected);
+                """);
+        assertContainsSchema(schemas, "TestEnumColor",
+                "Map.of(\"type\", \"string\", \"enum\", List.of(\"RED\", \"GREEN\", \"BLUE\"))");
+        assertContainsSchema(schemas, "TestRecordPerson",
+                "Map.of(\"type\", \"object\", \"properties\", "
+                        + "Map.ofEntries(Map.entry(\"name\", Map.of(\"type\", \"string\")), "
+                        + "Map.entry(\"age\", Map.of(\"type\", \"integer\")), "
+                        + "Map.entry(\"active\", Map.of(\"type\", \"boolean\"))), "
+                        + "\"required\", List.of(\"name\", \"age\", \"active\"))");
+        assertContainsSchema(schemas, "TestRecordWithOptional",
+                "Map.of(\"type\", \"object\", \"properties\", "
+                        + "Map.ofEntries(Map.entry(\"name\", Map.of(\"type\", \"string\")), "
+                        + "Map.entry(\"nickname\", Map.of(\"type\", \"string\"))), \"required\", List.of(\"name\"))");
     }
 
     @Test
@@ -655,82 +376,6 @@ public class SchemaGeneratorTest {
         assertTrue(schema.contains("Map.entry(\"verbose\", Map.of(\"type\", \"boolean\"))"),
                 "Should have verbose property: " + schema);
         assertTrue(schema.contains("\"required\", List.of("), "Should have required list: " + schema);
-    }
-
-    @Test
-    void generatedSourceIsValidJava() {
-        // Verify that generated schema source code compiles when embedded in a method
-        // body
-        String source = """
-                import java.util.List;
-                import java.util.Map;
-                import java.util.Optional;
-                public class TestValidJavaHolder {
-                    public String schemaTargetStr() { return null; }
-                    public List<String> schemaTargetListStr() { return null; }
-                    public Map<String, String> schemaTargetMapStr() { return null; }
-                    public Optional<String> schemaTargetOpt() { return null; }
-                }
-                """;
-        List<String> schemas = compileAndCapture(source);
-        assertFalse(schemas.isEmpty());
-
-        // Build a Java source that uses the generated schema expressions
-        StringBuilder validationSource = new StringBuilder();
-        validationSource.append("import java.util.Map;\n");
-        validationSource.append("import java.util.List;\n");
-        validationSource.append("public class SchemaValidation {\n");
-        validationSource.append("    @SuppressWarnings(\"unchecked\")\n");
-        validationSource.append("    public void validate() {\n");
-        for (int i = 0; i < schemas.size(); i++) {
-            String schema = schemas.get(i);
-            String schemaExpr = schema.substring(schema.indexOf('=') + 1);
-            validationSource.append("        Object s" + i + " = " + schemaExpr + ";\n");
-        }
-        validationSource.append("    }\n");
-        validationSource.append("}\n");
-
-        // Compile the validation source to verify syntactic validity
-        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
-        DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
-        List<JavaFileObject> compilationUnits = List
-                .of(new InMemorySource("SchemaValidation", validationSource.toString()));
-
-        try (StandardJavaFileManager fm = createFileManager(compiler, diagnostics)) {
-            JavaCompiler.CompilationTask task = compiler.getTask(null, fm, diagnostics, null, null, compilationUnits);
-            boolean success = task.call();
-
-            assertTrue(success, "Generated schema source code is not valid Java: " + diagnostics.getDiagnostics()
-                    + "\nSource:\n" + validationSource);
-        } catch (IOException e) {
-            fail("Failed to create file manager: " + e.getMessage());
-        }
-    }
-
-    @Test
-    void nestedMapListType() {
-        String source = """
-                import java.util.List;
-                import java.util.Map;
-                public class TestNestedHolder {
-                    public Map<String, List<String>> schemaTargetNestedMap() { return null; }
-                }
-                """;
-        List<String> schemas = compileAndCapture(source);
-        String expected = "Map.of(\"type\", \"object\", \"additionalProperties\", "
-                + "Map.of(\"type\", \"array\", \"items\", Map.of(\"type\", \"string\")))";
-        assertContainsSchema(schemas, "schemaTargetNestedMap", expected);
-    }
-
-    @Test
-    void objectType() {
-        String source = """
-                public class TestObjectHolder {
-                    public Object schemaTargetObject() { return null; }
-                }
-                """;
-        List<String> schemas = compileAndCapture(source);
-        assertContainsSchema(schemas, "schemaTargetObject", "Map.of()");
     }
 
     @Test

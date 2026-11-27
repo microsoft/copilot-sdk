@@ -148,6 +148,8 @@ async fn run_isolated_helper(
         // helper, whatever the session's tools or host-Git setting; a host that wants zero child
         // processes must turn it off.
         .env("USE_TGREP", "false")
+        // Loopback requests bypass network callbacks, so disable OS proxy discovery directly.
+        .env("COPILOT_SYSTEM_PROXY", "false")
         // The native HTTP stack reads process proxy settings. Loopback requests skip the SDK
         // resolver callback, so inherit the replay fixture's bypasses before OS proxy discovery.
         .env("NO_PROXY", no_proxy)

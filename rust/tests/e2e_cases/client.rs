@@ -1,4 +1,4 @@
-use copilot_sdk::{RuntimeConnection, SpawnedTcpRuntimeOptions};
+use copilot_sdk::{RuntimeConnection, SpawnedProcessOptions, SpawnedTcpRuntimeOptions};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -28,48 +28,7 @@ async fn should_start_ping_and_stop_stdio_client() {
             assert_eq!(response.message, "pong: hello from rust");
             assert!(!response.timestamp.is_empty());
 
-            client.stop().await.expect("stop client");
-        })
-    })
-    .await;
-}
-
-#[tokio::test]
-async fn should_start_ping_and_stop_tcp_client() {
-    with_e2e_context("client", "should_start_ping_and_stop_tcp_client", |ctx| {
-        Box::pin(async move {
-            let client = Client::start(ctx.client_options_with_transport(
-                RuntimeConnection::SpawnedTcp(SpawnedTcpRuntimeOptions {
-                    process: Default::default(),
-                    port: 0,
-                    connection_token: Some("tcp-e2e-token".to_string()),
-                }),
-            ))
-            .await
-            .expect("start TCP client");
-            let timings = client.startup_timings().expect("startup timings");
-            assert!(timings.program_resolve_ms.is_none());
-            assert!(timings.process_spawn_ms.is_some());
-            assert!(timings.port_wait_ms.is_some());
-            assert!(timings.total_ms >= timings.transport_setup_ms);
-            assert!(timings.total_ms >= timings.handshake_ms);
-
-            let response = client.ping(Some("tcp hello")).await.expect("ping");
-            assert_eq!(response.message, "pong: tcp hello");
-
-            client.stop().await.expect("stop client");
-        })
-    })
-    .await;
-}
-
-#[tokio::test]
-async fn should_get_status() {
-    with_e2e_context("client", "should_get_status", |ctx| {
-        Box::pin(async move {
-            let client = ctx.start_client().await;
             let status = client.get_status().await.expect("status");
-
             assert!(!status.version.is_empty());
             assert!(status.protocol_version > 0);
 
@@ -80,23 +39,42 @@ async fn should_get_status() {
 }
 
 #[tokio::test]
-async fn should_get_authenticated_status() {
-    with_e2e_context("client", "should_get_authenticated_status", |ctx| {
-        Box::pin(async move {
-            ctx.set_default_copilot_user();
-            let client = Client::start(
-                ctx.client_options_with_github_token(super::support::DEFAULT_TEST_TOKEN),
-            )
-            .await
-            .expect("start client");
-            let status = client.get_auth_status().await.expect("auth status");
+async fn should_start_ping_and_stop_tcp_client() {
+    for args in [
+        vec![],
+        vec!["--host", "::1"],
+        vec!["--host=0.0.0.0"],
+        vec!["--host=::"],
+    ] {
+        with_e2e_context("client", "should_start_ping_and_stop_tcp_client", |ctx| {
+            Box::pin(async move {
+                let client = Client::start(ctx.client_options_with_transport(
+                    RuntimeConnection::SpawnedTcp(SpawnedTcpRuntimeOptions {
+                        process: SpawnedProcessOptions {
+                            args: args.iter().map(|arg| (*arg).into()).collect(),
+                            ..Default::default()
+                        },
+                        port: 0,
+                        connection_token: Some("tcp-e2e-token".to_string()),
+                    }),
+                ))
+                .await
+                .unwrap_or_else(|error| panic!("start TCP client with {args:?}: {error}"));
+                let timings = client.startup_timings().expect("startup timings");
+                assert!(timings.program_resolve_ms.is_none());
+                assert!(timings.process_spawn_ms.is_some());
+                assert!(timings.port_wait_ms.is_some());
+                assert!(timings.total_ms >= timings.transport_setup_ms);
+                assert!(timings.total_ms >= timings.handshake_ms);
 
-            assert!(status.is_authenticated);
+                let response = client.ping(Some("tcp hello")).await.expect("ping");
+                assert_eq!(response.message, "pong: tcp hello");
 
-            client.stop().await.expect("stop client");
+                client.stop().await.expect("stop client");
+            })
         })
-    })
-    .await;
+        .await;
+    }
 }
 
 #[tokio::test]
@@ -154,6 +132,9 @@ async fn should_list_models_when_authenticated() {
             )
             .await
             .expect("start client");
+            let status = client.get_auth_status().await.expect("auth status");
+            assert!(status.is_authenticated);
+
             let models = client.list_models().await.expect("list models");
 
             assert!(
@@ -190,6 +171,10 @@ async fn listmodels_withcustomhandler_callshandler() {
                 assert_eq!(models.len(), 1);
                 assert_eq!(models[0].id, "custom-handler-model");
 
+                let cached = client.list_models().await.expect("list models cached");
+                assert_eq!(calls.load(Ordering::SeqCst), 1);
+                assert_eq!(cached[0].id, models[0].id);
+
                 client.stop().await.expect("stop client");
             })
         },
@@ -213,36 +198,6 @@ async fn should_not_throw_when_disposing_session_after_stopping_client() {
 
                 client.stop().await.expect("stop client");
                 drop(session);
-            })
-        },
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn listmodels_withcustomhandler_cachesresults() {
-    with_e2e_context(
-        "client",
-        "listmodels_withcustomhandler_cachesresults",
-        |ctx| {
-            Box::pin(async move {
-                let handler = CountingModelsHandler::default();
-                let calls = Arc::clone(&handler.calls);
-                let client = Client::start(
-                    ctx.client_options()
-                        .with_models(|group| group.with_list_models_handler(handler))
-                        .with_github(|group| group.with_use_logged_in_user(false)),
-                )
-                .await
-                .expect("start client");
-
-                let first = client.list_models().await.expect("list models first");
-                let second = client.list_models().await.expect("list models second");
-
-                assert_eq!(calls.load(Ordering::SeqCst), 1);
-                assert_eq!(first[0].id, second[0].id);
-
-                client.stop().await.expect("stop client");
             })
         },
     )

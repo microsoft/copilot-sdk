@@ -11,9 +11,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.Map;
+
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.function.Executable;
 
 import com.microsoft.copilot.generated.AssistantMessageEvent;
 import com.microsoft.copilot.rpc.MessageOptions;
@@ -24,8 +27,8 @@ import com.microsoft.copilot.rpc.PermissionHandler;
  *
  * <p>
  * Verifies that all public methods that interact with session state throw
- * IllegalStateException when invoked after close(), and that close() itself is
- * idempotent.
+ * IllegalStateException when invoked after close(), that identity accessors
+ * remain available, and that close() itself is idempotent.
  * </p>
  */
 @Tag("e2e")
@@ -45,332 +48,45 @@ public class ClosedSessionGuardTest {
         }
     }
 
-    /**
-     * Verifies that send(String) throws IllegalStateException after session is
-     * terminated.
-     */
     @Test
-    void testSendStringThrowsAfterTermination() throws Exception {
+    void closedSessionRejectsOperationsAndKeepsIdentity() throws Exception {
         ctx.configureForTest("session", "should_receive_session_events");
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig().setPermissions(
-                    ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))).get();
-            session.close();
-
-            IllegalStateException thrown = assertThrows(IllegalStateException.class, () -> {
-                session.send("test message");
-            });
-            assertTrue(thrown.getMessage().contains("closed"), "Exception message should mention session is closed");
-        }
-    }
-
-    /**
-     * Verifies that send(MessageOptions) throws IllegalStateException after session
-     * is terminated.
-     */
-    @Test
-    void testSendOptionsThrowsAfterTermination() throws Exception {
-        ctx.configureForTest("session", "should_receive_session_events");
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig().setPermissions(
-                    ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))).get();
-            session.close();
-
-            IllegalStateException thrown = assertThrows(IllegalStateException.class, () -> {
-                session.send(new MessageOptions().setPrompt("test message"));
-            });
-            assertTrue(thrown.getMessage().contains("closed"), "Exception message should mention session is closed");
-        }
-    }
-
-    /**
-     * Verifies that sendAndWait(String) throws IllegalStateException after session
-     * is terminated.
-     */
-    @Test
-    void testSendAndWaitStringThrowsAfterTermination() throws Exception {
-        ctx.configureForTest("session", "should_receive_session_events");
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig().setPermissions(
-                    ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))).get();
-            session.close();
-
-            IllegalStateException thrown = assertThrows(IllegalStateException.class, () -> {
-                session.sendAndWait("test message");
-            });
-            assertTrue(thrown.getMessage().contains("closed"), "Exception message should mention session is closed");
-        }
-    }
-
-    /**
-     * Verifies that sendAndWait(MessageOptions) throws IllegalStateException after
-     * session is terminated.
-     */
-    @Test
-    void testSendAndWaitOptionsThrowsAfterTermination() throws Exception {
-        ctx.configureForTest("session", "should_receive_session_events");
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig().setPermissions(
-                    ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))).get();
-            session.close();
-
-            IllegalStateException thrown = assertThrows(IllegalStateException.class, () -> {
-                session.sendAndWait(new MessageOptions().setPrompt("test message"));
-            });
-            assertTrue(thrown.getMessage().contains("closed"), "Exception message should mention session is closed");
-        }
-    }
-
-    /**
-     * Verifies that sendAndWait(MessageOptions, long) throws IllegalStateException
-     * after session is terminated.
-     */
-    @Test
-    void testSendAndWaitWithTimeoutThrowsAfterTermination() throws Exception {
-        ctx.configureForTest("session", "should_receive_session_events");
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig().setPermissions(
-                    ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))).get();
-            session.close();
-
-            IllegalStateException thrown = assertThrows(IllegalStateException.class, () -> {
-                session.sendAndWait(new MessageOptions().setPrompt("test message"), 5000);
-            });
-            assertTrue(thrown.getMessage().contains("closed"), "Exception message should mention session is closed");
-        }
-    }
-
-    /**
-     * Verifies that on(Consumer) throws IllegalStateException after session is
-     * terminated.
-     */
-    @Test
-    void testOnConsumerThrowsAfterTermination() throws Exception {
-        ctx.configureForTest("session", "should_receive_session_events");
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig().setPermissions(
-                    ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))).get();
-            session.close();
-
-            IllegalStateException thrown = assertThrows(IllegalStateException.class, () -> {
-                session.on(evt -> {
-                    // Handler should never be registered
-                });
-            });
-            assertTrue(thrown.getMessage().contains("closed"), "Exception message should mention session is closed");
-        }
-    }
-
-    /**
-     * Verifies that on(Class, Consumer) throws IllegalStateException after session
-     * is terminated.
-     */
-    @Test
-    void testOnTypedConsumerThrowsAfterTermination() throws Exception {
-        ctx.configureForTest("session", "should_receive_session_events");
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig().setPermissions(
-                    ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))).get();
-            session.close();
-
-            IllegalStateException thrown = assertThrows(IllegalStateException.class, () -> {
-                session.on(AssistantMessageEvent.class, msg -> {
-                    // Handler should never be registered
-                });
-            });
-            assertTrue(thrown.getMessage().contains("closed"), "Exception message should mention session is closed");
-        }
-    }
-
-    /**
-     * Verifies that getMessages() throws IllegalStateException after session is
-     * terminated.
-     */
-    @Test
-    void testGetMessagesThrowsAfterTermination() throws Exception {
-        ctx.configureForTest("session", "should_receive_session_events");
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig().setPermissions(
-                    ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))).get();
-            session.close();
-
-            IllegalStateException thrown = assertThrows(IllegalStateException.class, () -> {
-                session.getMessages();
-            });
-            assertTrue(thrown.getMessage().contains("closed"), "Exception message should mention session is closed");
-        }
-    }
-
-    /**
-     * Verifies that abort() throws IllegalStateException after session is
-     * terminated.
-     */
-    @Test
-    void testAbortThrowsAfterTermination() throws Exception {
-        ctx.configureForTest("session", "should_receive_session_events");
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig().setPermissions(
-                    ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))).get();
-            session.close();
-
-            IllegalStateException thrown = assertThrows(IllegalStateException.class, () -> {
-                session.abort();
-            });
-            assertTrue(thrown.getMessage().contains("closed"), "Exception message should mention session is closed");
-        }
-    }
-
-    /**
-     * Verifies that setEventErrorHandler() throws IllegalStateException after
-     * session is terminated.
-     */
-    @Test
-    void testSetEventErrorHandlerThrowsAfterTermination() throws Exception {
-        ctx.configureForTest("session", "should_receive_session_events");
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig().setPermissions(
-                    ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))).get();
-            session.close();
-
-            IllegalStateException thrown = assertThrows(IllegalStateException.class, () -> {
-                session.setEventErrorHandler((event, ex) -> {
-                    // Handler should never be set
-                });
-            });
-            assertTrue(thrown.getMessage().contains("closed"), "Exception message should mention session is closed");
-        }
-    }
-
-    /**
-     * Verifies that setEventErrorPolicy() throws IllegalStateException after
-     * session is terminated.
-     */
-    @Test
-    void testSetEventErrorPolicyThrowsAfterTermination() throws Exception {
-        ctx.configureForTest("session", "should_receive_session_events");
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig().setPermissions(
-                    ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))).get();
-            session.close();
-
-            IllegalStateException thrown = assertThrows(IllegalStateException.class, () -> {
-                session.setEventErrorPolicy(EventErrorPolicy.SUPPRESS_AND_LOG_ERRORS);
-            });
-            assertTrue(thrown.getMessage().contains("closed"), "Exception message should mention session is closed");
-        }
-    }
-
-    /**
-     * Verifies that getSessionId() still works after session is terminated (it's
-     * just a field read).
-     */
-    @Test
-    void testGetSessionIdWorksAfterTermination() throws Exception {
-        ctx.configureForTest("session", "should_receive_session_events");
-
         try (CopilotClient client = ctx.createClient()) {
             CopilotSession session = client.createSession(ctx.newSessionConfig().setPermissions(
                     ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))).get();
             String sessionIdBeforeClose = session.getSessionId();
-            session.close();
-
-            String sessionIdAfterClose = session.getSessionId();
-            assertEquals(sessionIdBeforeClose, sessionIdAfterClose, "Session ID should remain accessible after close");
-        }
-    }
-
-    /**
-     * Verifies that getWorkspacePath() still works after session is terminated
-     * (it's just a field read).
-     */
-    @Test
-    void testGetWorkspacePathWorksAfterTermination() throws Exception {
-        ctx.configureForTest("session", "should_receive_session_events");
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig().setPermissions(
-                    ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))).get();
             String pathBeforeClose = session.getWorkspacePath();
-            session.close();
-
-            String pathAfterClose = session.getWorkspacePath();
-            assertEquals(pathBeforeClose, pathAfterClose, "Workspace path should remain accessible after close");
-        }
-    }
-
-    /**
-     * Verifies that close() is idempotent and can be called multiple times safely.
-     */
-    @Test
-    void testCloseIsIdempotent() throws Exception {
-        ctx.configureForTest("session", "should_receive_session_events");
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig().setPermissions(
-                    ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))).get();
-
-            // First close should succeed
-            assertDoesNotThrow(() -> session.close());
-
-            // Second close should also succeed (no-op)
-            assertDoesNotThrow(() -> session.close());
-
-            // Third close should also succeed (no-op)
-            assertDoesNotThrow(() -> session.close());
-        }
-    }
-
-    /**
-     * Verifies that try-with-resources double-close scenario works correctly.
-     */
-    @Test
-    void testTryWithResourcesDoubleClose() throws Exception {
-        ctx.configureForTest("session", "should_receive_session_events");
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig().setPermissions(
-                    ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))).get();
 
             try (session) {
-                // Manual close within try-with-resources
                 session.close();
-                // Automatic close will happen at end of block
             } // Second close happens here
+            assertDoesNotThrow(() -> session.close());
 
-            // Should be able to verify it's closed
-            assertThrows(IllegalStateException.class, () -> {
-                session.send("test");
+            Map<String, Executable> operations = Map.ofEntries(Map.entry("send(String)", () -> session.send("test")),
+                    Map.entry("send(MessageOptions)", () -> session.send(new MessageOptions().setPrompt("test"))),
+                    Map.entry("sendAndWait(String)", () -> session.sendAndWait("test")),
+                    Map.entry("sendAndWait(MessageOptions)",
+                            () -> session.sendAndWait(new MessageOptions().setPrompt("test"))),
+                    Map.entry("sendAndWait(MessageOptions, long)",
+                            () -> session.sendAndWait(new MessageOptions().setPrompt("test"), 5000)),
+                    Map.entry("on(Consumer)", () -> session.on(evt -> {
+                    })), Map.entry("on(Class, Consumer)", () -> session.on(AssistantMessageEvent.class, msg -> {
+                    })), Map.entry("getMessages", () -> session.getMessages()),
+                    Map.entry("abort", () -> session.abort()),
+                    Map.entry("setEventErrorHandler", () -> session.setEventErrorHandler((event, ex) -> {
+                    })),
+                    Map.entry("setEventErrorPolicy",
+                            () -> session.setEventErrorPolicy(EventErrorPolicy.SUPPRESS_AND_LOG_ERRORS)),
+                    Map.entry("setModel(String)", () -> session.setModel("gpt-4.1")));
+            operations.forEach((name, operation) -> {
+                IllegalStateException thrown = assertThrows(IllegalStateException.class, operation, name);
+                assertTrue(thrown.getMessage().contains("closed"), name + " should mention session is closed");
             });
-        }
-    }
 
-    /**
-     * Verifies that setModel() throws IllegalStateException after session is
-     * terminated.
-     */
-    @Test
-    void testSetModelThrowsAfterTermination() throws Exception {
-        ctx.configureForTest("session", "should_receive_session_events");
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig().setPermissions(
-                    ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL))).get();
-            session.close();
-
-            assertThrows(IllegalStateException.class, () -> {
-                session.setModel("gpt-4.1");
-            });
+            assertEquals(sessionIdBeforeClose, session.getSessionId(),
+                    "Session ID should remain accessible after close");
+            assertEquals(pathBeforeClose, session.getWorkspacePath(),
+                    "Workspace path should remain accessible after close");
         }
     }
 }

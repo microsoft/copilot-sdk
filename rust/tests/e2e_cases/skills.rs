@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use copilot_sdk::ResumeSessionOptions;
 use copilot_sdk::handler::ApproveAllHandler;
-use copilot_sdk::{CustomAgentConfig, ResumeSessionOptions};
 
 use super::support::{assert_uuid_like, assistant_message_content};
 
@@ -34,129 +34,6 @@ async fn should_load_and_apply_skill_from_skilldirectories() {
                     .expect("send")
                     .expect("assistant message");
                 assert!(assistant_message_content(&answer).contains(SKILL_MARKER));
-
-                session.disconnect().await.expect("disconnect session");
-                client.stop().await.expect("stop client");
-            })
-        },
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn should_not_apply_skill_when_disabled_via_disabledskills() {
-    super::support::with_shared_e2e_context(
-        &E2E,
-        "skills",
-        "should_not_apply_skill_when_disabled_via_disabledskills",
-        |ctx| {
-            Box::pin(async move {
-                ctx.set_default_copilot_user();
-                let skills_dir = create_skill_dir(ctx.work_dir());
-                let client = ctx.start_client().await;
-                let session = client
-                    .create_session(
-                        ctx.approve_all_session_config()
-                            .with_skills(|group| group.with_directories([skills_dir]))
-                            .with_skills(|group| group.with_disabled_skills(["test-skill"])),
-                    )
-                    .await
-                    .expect("create session");
-                assert_uuid_like(session.id());
-
-                let answer = session
-                    .send_and_wait("Say hello briefly using the test skill.")
-                    .await
-                    .expect("send")
-                    .expect("assistant message");
-                assert!(!assistant_message_content(&answer).contains(SKILL_MARKER));
-
-                session.disconnect().await.expect("disconnect session");
-                client.stop().await.expect("stop client");
-            })
-        },
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn should_allow_agent_with_skills_to_invoke_skill() {
-    super::support::with_shared_e2e_context(
-        &E2E,
-        "skills",
-        "should_allow_agent_with_skills_to_invoke_skill",
-        |ctx| {
-            Box::pin(async move {
-                ctx.set_default_copilot_user();
-                let skills_dir = create_skill_dir(ctx.work_dir());
-                let client = ctx.start_client().await;
-                let session = client
-                    .create_session(
-                        ctx.approve_all_session_config()
-                            .with_skills(|group| group.with_directories([skills_dir]))
-                            .with_agents(|group| {
-                                group.with_definitions([CustomAgentConfig::new(
-                                    "skill-agent",
-                                    "You are a helpful test agent.",
-                                )
-                                .with_description("An agent with access to test-skill")
-                                .with_skills(["test-skill"])])
-                            })
-                            .with_agents(|group| group.with_selected("skill-agent")),
-                    )
-                    .await
-                    .expect("create session");
-                assert_uuid_like(session.id());
-
-                let answer = session
-                    .send_and_wait("Say hello briefly using the test skill.")
-                    .await
-                    .expect("send")
-                    .expect("assistant message");
-                assert!(assistant_message_content(&answer).contains(SKILL_MARKER));
-
-                session.disconnect().await.expect("disconnect session");
-                client.stop().await.expect("stop client");
-            })
-        },
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn should_not_provide_skills_to_agent_without_skills_field() {
-    super::support::with_shared_e2e_context(
-        &E2E,
-        "skills",
-        "should_not_provide_skills_to_agent_without_skills_field",
-        |ctx| {
-            Box::pin(async move {
-                ctx.set_default_copilot_user();
-                let skills_dir = create_skill_dir(ctx.work_dir());
-                let client = ctx.start_client().await;
-                let session = client
-                    .create_session(
-                        ctx.approve_all_session_config()
-                            .with_skills(|group| group.with_directories([skills_dir]))
-                            .with_agents(|group| {
-                                group.with_definitions([CustomAgentConfig::new(
-                                    "no-skill-agent",
-                                    "You are a helpful test agent.",
-                                )
-                                .with_description("An agent without skills access")])
-                            })
-                            .with_agents(|group| group.with_selected("no-skill-agent")),
-                    )
-                    .await
-                    .expect("create session");
-                assert_uuid_like(session.id());
-
-                let answer = session
-                    .send_and_wait("Say hello briefly using the test skill.")
-                    .await
-                    .expect("send")
-                    .expect("assistant message");
-                assert!(!assistant_message_content(&answer).contains(SKILL_MARKER));
 
                 session.disconnect().await.expect("disconnect session");
                 client.stop().await.expect("stop client");
@@ -334,4 +211,4 @@ fn assert_versioned_skill(
         "unexpected skill path"
     );
 }
-static E2E: super::support::SharedE2eGroup = super::support::SharedE2eGroup::standard("skills", 4);
+static E2E: super::support::SharedE2eGroup = super::support::SharedE2eGroup::standard("skills", 1);

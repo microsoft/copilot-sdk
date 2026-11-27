@@ -1680,7 +1680,7 @@ fn parse_http_url(url: &str) -> std::io::Result<(String, u16)> {
     Ok((host.to_string(), port))
 }
 
-fn node_program() -> &'static str {
+pub fn node_program() -> &'static str {
     if cfg!(windows) { "node.exe" } else { "node" }
 }
 

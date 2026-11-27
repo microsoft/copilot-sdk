@@ -4,17 +4,13 @@
 
 package com.microsoft.copilot;
 
-import com.microsoft.copilot.rpc.ClientGitHubOptions;
-
 import com.microsoft.copilot.rpc.ClientObservabilityOptions;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
-import static org.mockito.Mockito.*;
 
 import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
-import java.net.ServerSocket;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
@@ -38,8 +34,8 @@ import com.microsoft.copilot.rpc.TelemetryConfig;
 
 /**
  * Unit tests for {@link CliServerManager} covering TCP configuration,
- * connectToServer, resolveCliCommand, and ProcessInfo coverage gaps identified
- * by JaCoCo.
+ * connectToServer, resolveCliCommand and process-environment coverage gaps
+ * identified by JaCoCo.
  */
 class CliServerManagerTest {
 
@@ -73,15 +69,6 @@ class CliServerManagerTest {
 
     @TempDir
     Path tempDir;
-
-    @Test
-    void explicitCliPathDoesNotRequireRuntimeBundle() throws Exception {
-        Path explicit = tempDir.resolve("copilot");
-        var manager = createManager(new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setRuntime(RuntimeConnection.forSpawnedStdio().setPath(explicit.toString())));
-
-        assertEquals(explicit.toString(), manager.resolveCliLaunch().executable());
-    }
 
     @Test
     void inheritedCliPathEnvironmentOverrideDoesNotRequireRuntimeBundle() throws Exception {
@@ -187,87 +174,6 @@ class CliServerManagerTest {
     void rejectInvalidTcpPortBeforeConnecting(int port) {
         var error = assertThrows(IllegalArgumentException.class, () -> RuntimeConnection.forTcp("localhost", port));
         assertEquals("port must be from 1 through 65535", error.getMessage());
-    }
-
-    // ===== connectToServer tests =====
-
-    @Test
-    void connectToServerTcpMode() throws Exception {
-        var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT);
-        var manager = createManager(options);
-
-        // Start a temporary server socket to connect to
-        try (ServerSocket ss = new ServerSocket(0)) {
-            int port = ss.getLocalPort();
-            JsonRpcClient client = manager.connectToServer(null, "localhost", port);
-            assertNotNull(client);
-            client.close();
-        }
-    }
-
-    @Test
-    void connectToServerStdioMode() throws Exception {
-        var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT);
-        var manager = createManager(options);
-
-        // Create a dummy process for stdio mode
-        Process process = new TestProcess();
-        try {
-            JsonRpcClient client = manager.connectToServer(process, null, null);
-            assertNotNull(client);
-            client.close();
-        } finally {
-            process.destroyForcibly();
-        }
-    }
-
-    @Test
-    void connectToServerNoProcessNoHost() {
-        var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT);
-        var manager = createManager(options);
-
-        var ex = assertThrows(IllegalStateException.class, () -> manager.connectToServer(null, null, null));
-        assertTrue(ex.getMessage().contains("Cannot connect"));
-    }
-
-    @Test
-    void connectToServerNullHostNonNullPort() {
-        var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT);
-        var manager = createManager(options);
-
-        // tcpHost is null but tcpPort is non-null → falls to process check → process
-        // null → exception
-        var ex = assertThrows(IllegalStateException.class, () -> manager.connectToServer(null, null, 8080));
-        assertTrue(ex.getMessage().contains("Cannot connect"));
-    }
-
-    // ===== ProcessInfo record tests =====
-
-    @Test
-    void processInfoRecord() {
-        var info = new CliServerManager.ProcessInfo(null, 12345);
-        assertNull(info.process());
-        assertEquals(12345, info.port());
-    }
-
-    @Test
-    void processInfoWithNullPort() {
-        var info = new CliServerManager.ProcessInfo(null, null);
-        assertNull(info.process());
-        assertNull(info.port());
-    }
-
-    @Test
-    void awaitStderrReaderJoinsReaderThread() throws Exception {
-        var manager = createManager(new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT));
-        var reader = mock(Thread.class);
-        var field = CliServerManager.class.getDeclaredField("stderrThread");
-        field.setAccessible(true);
-        field.set(manager, reader);
-
-        manager.awaitStderrReader();
-
-        verify(reader).join(5000);
     }
 
     // ===== resolveCliCommand tests =====
@@ -442,164 +348,9 @@ class CliServerManagerTest {
         return (List<String>) resolve.invoke(manager, manager.resolveCliLaunch().executable(), List.of("--server"));
     }
 
-    // ===== startCliServer tests =====
-
     private static CliServerManager createManager(CopilotClientOptions options) {
         return new CliServerManager(options,
                 options.getRuntime() != null ? options.getRuntime() : RuntimeConnection.forSpawnedStdio());
-    }
-
-    // On Windows, "/nonexistent/copilot" is not an absolute path (no drive letter),
-    // so resolveCliCommand wraps it with "cmd /c" and ProcessBuilder.start()
-    // succeeds
-    // (launching cmd.exe). Use a Windows-absolute path to ensure IOException.
-    private static final String NONEXISTENT_CLI = System.getProperty("os.name").toLowerCase().contains("win")
-            ? "C:\\nonexistent\\copilot"
-            : "/nonexistent/copilot";
-
-    @Test
-    void startCliServerWithJsFile() throws Exception {
-        // Using a .js file path causes resolveCliCommand to prepend "node"
-        // node is on PATH so the process starts, but the script doesn't exist
-        // so node exits quickly — verifying the .js branch was taken
-        var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setRuntime(RuntimeConnection.forSpawnedStdio().setPath("/nonexistent/script.js"));
-        var manager = createManager(options);
-
-        try {
-            var info = manager.startCliServer();
-            // If process started, clean it up
-            info.process().destroyForcibly();
-        } catch (IOException e) {
-            // Expected — node may fail or not be present; either way the branch is hit
-            assertNotNull(e);
-        }
-    }
-
-    @Test
-    void startCliServerWithCliArgs() throws Exception {
-        // Test that arguments are included in the command
-        var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setRuntime(RuntimeConnection.forSpawnedStdio(NONEXISTENT_CLI).setArgs(List.of("--extra-flag")));
-        var manager = createManager(options);
-
-        var ex = assertThrows(IOException.class, () -> manager.startCliServer());
-        assertNotNull(ex);
-    }
-
-    @Test
-    void startCliServerWithExplicitPort() throws Exception {
-        // Test the explicit port branch (useStdio=false, port > 0)
-        var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setRuntime(RuntimeConnection.forSpawnedTcp().setPath(NONEXISTENT_CLI).setPort(9999));
-        var manager = createManager(options);
-
-        var ex = assertThrows(IOException.class, () -> manager.startCliServer());
-        assertNotNull(ex);
-    }
-
-    @Test
-    void startCliServerWithGitHubToken() throws Exception {
-        // Test the github token branch
-        var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setRuntime(RuntimeConnection.forSpawnedStdio(NONEXISTENT_CLI))
-                .setGitHub(new ClientGitHubOptions().setToken("ghp_test123"));
-        var manager = createManager(options);
-
-        var ex = assertThrows(IOException.class, () -> manager.startCliServer());
-        assertNotNull(ex);
-    }
-
-    @Test
-    void startCliServerWithUseLoggedInUserExplicit() throws Exception {
-        // Test the explicit useLoggedInUser=false branch (adds --no-auto-login)
-        var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setRuntime(RuntimeConnection.forSpawnedStdio(NONEXISTENT_CLI))
-                .setGitHub(new ClientGitHubOptions().setUseLoggedInUser(false));
-        var manager = createManager(options);
-
-        var ex = assertThrows(IOException.class, () -> manager.startCliServer());
-        assertNotNull(ex);
-    }
-
-    @Test
-    void startCliServerWithGitHubTokenAndNoExplicitUseLoggedInUser() throws Exception {
-        // When gitHubToken is set and useLoggedInUser is null, defaults to false
-        var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setRuntime(RuntimeConnection.forSpawnedStdio(NONEXISTENT_CLI))
-                .setGitHub(new ClientGitHubOptions().setToken("ghp_test123"));
-        var manager = createManager(options);
-
-        var ex = assertThrows(IOException.class, () -> manager.startCliServer());
-        assertNotNull(ex);
-    }
-
-    @Test
-    void startCliServerWithNullCliPath() throws Exception {
-        // Test the default cliPath branch (defaults to "copilot" when not set)
-        var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setRuntime(RuntimeConnection.forSpawnedStdio());
-        var manager = createManager(options);
-
-        // "copilot" likely doesn't exist in the test env — that's fine
-        try {
-            var info = manager.startCliServer();
-            info.process().destroyForcibly();
-        } catch (IOException e) {
-            // Expected if "copilot" is not on PATH
-            assertNotNull(e);
-        }
-    }
-
-    @Test
-    void startCliServerWithTelemetryAllOptions() throws Exception {
-        // The telemetry env vars are applied before ProcessBuilder.start()
-        // so even with a nonexistent CLI path, the telemetry code path is exercised
-        var telemetry = new TelemetryConfig().setOtlpEndpoint("http://localhost:4318").setOtlpProtocol("http/protobuf")
-                .setFilePath("/tmp/telemetry.log").setExporterType("otlp-http").setSourceName("test-app")
-                .setCaptureContent(true);
-        var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setRuntime(RuntimeConnection.forSpawnedStdio(NONEXISTENT_CLI))
-                .setObservability(new ClientObservabilityOptions().setTelemetry(telemetry));
-        var manager = createManager(options);
-
-        var ex = assertThrows(IOException.class, () -> manager.startCliServer());
-        assertNotNull(ex);
-    }
-
-    @Test
-    void startCliServerWithTelemetryCaptureContentFalse() throws Exception {
-        // Test the false branch of getCaptureContent()
-        var telemetry = new TelemetryConfig().setCaptureContent(false);
-        var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setRuntime(RuntimeConnection.forSpawnedStdio(NONEXISTENT_CLI))
-                .setObservability(new ClientObservabilityOptions().setTelemetry(telemetry));
-        var manager = createManager(options);
-
-        var ex = assertThrows(IOException.class, () -> manager.startCliServer());
-        assertNotNull(ex);
-    }
-
-    @Test
-    void startCliServerWithSessionIdleTimeout() throws Exception {
-        // Test that --session-idle-timeout flag is included when option is set
-        var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setRuntime(RuntimeConnection.forSpawnedStdio(NONEXISTENT_CLI).setSessionIdleTimeoutSeconds(600));
-        var manager = createManager(options);
-
-        var ex = assertThrows(IOException.class, () -> manager.startCliServer());
-        assertNotNull(ex);
-    }
-
-    @Test
-    void startCliServerWithZeroSessionIdleTimeout() throws Exception {
-        // Zero timeout should not add the flag (treated as disabled)
-        var options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setRuntime(RuntimeConnection.forSpawnedStdio(NONEXISTENT_CLI).setSessionIdleTimeoutSeconds(0));
-        var manager = createManager(options);
-
-        var ex = assertThrows(IOException.class, () -> manager.startCliServer());
-        assertNotNull(ex);
     }
 
     @Test

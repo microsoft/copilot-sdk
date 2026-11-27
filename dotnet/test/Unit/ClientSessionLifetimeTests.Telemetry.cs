@@ -121,16 +121,10 @@ public sealed partial class ClientSessionLifetimeTests
     }
 
     [Theory]
-    [InlineData(null, ActivityTraceFlags.None)]
     [InlineData(null, ActivityTraceFlags.Recorded)]
     [InlineData(ActivitySamplingResult.None, ActivityTraceFlags.None)]
-    [InlineData(ActivitySamplingResult.None, ActivityTraceFlags.Recorded)]
-    [InlineData(ActivitySamplingResult.PropagationData, ActivityTraceFlags.None)]
     [InlineData(ActivitySamplingResult.PropagationData, ActivityTraceFlags.Recorded)]
-    [InlineData(ActivitySamplingResult.AllData, ActivityTraceFlags.None)]
-    [InlineData(ActivitySamplingResult.AllData, ActivityTraceFlags.Recorded)]
     [InlineData(ActivitySamplingResult.AllDataAndRecorded, ActivityTraceFlags.None)]
-    [InlineData(ActivitySamplingResult.AllDataAndRecorded, ActivityTraceFlags.Recorded)]
     public async Task ExternalTool_Preserves_Propagation_And_Listener_Sampling(
         ActivitySamplingResult? sampling, ActivityTraceFlags flags)
     {

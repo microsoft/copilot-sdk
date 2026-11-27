@@ -12,16 +12,6 @@ namespace Microsoft.Copilot.Test.E2E;
 public class ElicitationE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
     : E2ETestBase(fixture, "elicitation", output)
 {
-    [Fact]
-    public async Task Defaults_Capabilities_When_Not_Provided()
-    {
-        var session = await CreateSessionAsync(new CreateSessionOptions
-        { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
-
-        // Default capabilities should exist (even if empty)
-        Assert.NotNull(session.Capabilities);
-        await session.DisposeAsync();
-    }
 
     [Fact]
     public async Task Elicitation_Throws_When_Capability_Is_Missing()
@@ -69,118 +59,41 @@ public class ElicitationE2ETests(E2ETestFixture fixture, ITestOutputHelper outpu
     }
 
     [Fact]
-    public async Task Sends_RequestElicitation_When_Handler_Provided()
+    public async Task Convenience_Methods_Map_Handler_Results()
     {
-        var session = await CreateSessionAsync(new CreateSessionOptions
-        { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll }, Interaction = new SessionInteractionOptions { OnElicitationRequest = _ => Task.FromResult(new ElicitationResult { Action = UIElicitationResponseAction.Accept, Content = new Dictionary<string, object>(), }) } });
+        var confirmResponses = new Queue<ElicitationResult>([
+            new ElicitationResult { Action = UIElicitationResponseAction.Accept, Content = new Dictionary<string, object> { ["confirmed"] = true }, },
+            new ElicitationResult { Action = UIElicitationResponseAction.Decline, },
+        ]);
 
-        // Session should be created successfully with requestElicitation=true
-        Assert.NotNull(session);
-        Assert.NotNull(session.SessionId);
-        await session.DisposeAsync();
-    }
-
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task Should_Report_Elicitation_Capability_Based_On_Handler_Presence(bool hasHandler)
-    {
-        var config = new CreateSessionOptions
-        {
-            Permissions = new SessionPermissionOptions
-            {
-                OnRequest = PermissionHandler.ApproveAll
-            }
-        };
-
-        if (hasHandler)
-        {
-            config.Interaction.OnElicitationRequest = _ => Task.FromResult(new ElicitationResult
-            {
-                Action = UIElicitationResponseAction.Accept,
-                Content = new Dictionary<string, object>(),
-            });
-        }
-
-        var session = await CreateSessionAsync(config);
-        Assert.Equal(hasHandler, session.Capabilities.Ui?.Elicitation == true);
-        await session.DisposeAsync();
-    }
-
-    [Fact]
-    public async Task Session_Without_ElicitationHandler_Creates_Successfully()
-    {
-        var session = await CreateSessionAsync(new CreateSessionOptions
-        { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
-
-        // requestElicitation was false (no handler)
-        Assert.NotNull(session);
-        await session.DisposeAsync();
-    }
-
-    [Fact]
-    public async Task ConfirmAsync_Returns_True_When_Handler_Accepts()
-    {
         var session = await CreateSessionAsync(new CreateSessionOptions
         {
             Interaction = new SessionInteractionOptions
             {
                 OnElicitationRequest = context =>
-        {
-            Assert.Equal("Confirm?", context.Message);
-            Assert.Contains("confirmed", context.RequestedSchema!.Properties.Keys);
-            return Task.FromResult(new ElicitationResult { Action = UIElicitationResponseAction.Accept, Content = new Dictionary<string, object> { ["confirmed"] = true }, });
-        }
+                {
+                    switch (context.Message)
+                    {
+                        case "Confirm?":
+                            Assert.Contains("confirmed", context.RequestedSchema!.Properties.Keys);
+                            return Task.FromResult(confirmResponses.Dequeue());
+                        case "Choose":
+                            Assert.Contains("selection", context.RequestedSchema!.Properties.Keys);
+                            return Task.FromResult(new ElicitationResult { Action = UIElicitationResponseAction.Accept, Content = new Dictionary<string, object> { ["selection"] = "beta" }, });
+                        case "Enter value":
+                            Assert.Contains("value", context.RequestedSchema!.Properties.Keys);
+                            return Task.FromResult(new ElicitationResult { Action = UIElicitationResponseAction.Accept, Content = new Dictionary<string, object> { ["value"] = "typed value" }, });
+                        default:
+                            throw new InvalidOperationException($"Unexpected elicitation message: {context.Message}");
+                    }
+                }
             }
         });
 
         Assert.True(session.Capabilities.Ui?.Elicitation);
         Assert.True(await session.Ui.ConfirmAsync("Confirm?"));
-    }
-
-    [Fact]
-    public async Task ConfirmAsync_Returns_False_When_Handler_Declines()
-    {
-        var session = await CreateSessionAsync(new CreateSessionOptions
-        { Interaction = new SessionInteractionOptions { OnElicitationRequest = _ => Task.FromResult(new ElicitationResult { Action = UIElicitationResponseAction.Decline, }) } });
-
         Assert.False(await session.Ui.ConfirmAsync("Confirm?"));
-    }
-
-    [Fact]
-    public async Task SelectAsync_Returns_Selected_Option()
-    {
-        var session = await CreateSessionAsync(new CreateSessionOptions
-        {
-            Interaction = new SessionInteractionOptions
-            {
-                OnElicitationRequest = context =>
-        {
-            Assert.Equal("Choose", context.Message);
-            Assert.Contains("selection", context.RequestedSchema!.Properties.Keys);
-            return Task.FromResult(new ElicitationResult { Action = UIElicitationResponseAction.Accept, Content = new Dictionary<string, object> { ["selection"] = "beta" }, });
-        }
-            }
-        });
-
         Assert.Equal("beta", await session.Ui.SelectAsync("Choose", ["alpha", "beta"]));
-    }
-
-    [Fact]
-    public async Task InputAsync_Returns_Freeform_Value()
-    {
-        var session = await CreateSessionAsync(new CreateSessionOptions
-        {
-            Interaction = new SessionInteractionOptions
-            {
-                OnElicitationRequest = context =>
-        {
-            Assert.Equal("Enter value", context.Message);
-            Assert.Contains("value", context.RequestedSchema!.Properties.Keys);
-            return Task.FromResult(new ElicitationResult { Action = UIElicitationResponseAction.Accept, Content = new Dictionary<string, object> { ["value"] = "typed value" }, });
-        }
-            }
-        });
 
         var result = await session.Ui.InputAsync("Enter value", new UiInputOptions
         {
@@ -297,180 +210,5 @@ public class ElicitationE2ETests(E2ETestFixture fixture, ITestOutputHelper outpu
             tag => Assert.Equal("b", tag.GetString()));
         Assert.Equal(2.5, Assert.IsType<JsonElement>(result.Content["ratio"]).GetDouble());
         Assert.Equal(9.99m, Assert.IsType<JsonElement>(result.Content["price"]).GetDecimal());
-    }
-
-    [Fact]
-    public void SessionCapabilities_Types_Are_Properly_Structured()
-    {
-        var capabilities = new SessionCapabilities
-        {
-            Ui = new SessionUiCapabilities
-            {
-                Elicitation = true
-            }
-        };
-
-        Assert.NotNull(capabilities.Ui);
-        Assert.True(capabilities.Ui.Elicitation);
-
-        // Test with null UI
-        var emptyCapabilities = new SessionCapabilities();
-        Assert.Null(emptyCapabilities.Ui);
-    }
-
-    [Fact]
-    public void ElicitationSchema_Types_Are_Properly_Structured()
-    {
-        var schema = new ElicitationSchema
-        {
-            Type = "object",
-            Properties = new Dictionary<string, object>
-            {
-                ["name"] = new Dictionary<string, object> { ["type"] = "string", ["minLength"] = 1 },
-                ["confirmed"] = new Dictionary<string, object> { ["type"] = "boolean", ["default"] = true },
-            },
-            Required = ["name"],
-        };
-
-        Assert.Equal("object", schema.Type);
-        Assert.Equal(2, schema.Properties.Count);
-        Assert.Single(schema.Required!);
-    }
-
-    [Fact]
-    public void ElicitationParams_Types_Are_Properly_Structured()
-    {
-        var ep = new ElicitationParams
-        {
-            Message = "Enter your name",
-            RequestedSchema = new ElicitationSchema
-            {
-                Properties = new Dictionary<string, object>
-                {
-                    ["name"] = new Dictionary<string, object> { ["type"] = "string" },
-                },
-            },
-        };
-
-        Assert.Equal("Enter your name", ep.Message);
-        Assert.NotNull(ep.RequestedSchema);
-    }
-
-    [Fact]
-    public void ElicitationResult_Types_Are_Properly_Structured()
-    {
-        var result = new ElicitationResult
-        {
-            Action = UIElicitationResponseAction.Accept,
-            Content = new Dictionary<string, object> { ["name"] = "Alice" },
-        };
-
-        Assert.Equal(UIElicitationResponseAction.Accept, result.Action);
-        Assert.NotNull(result.Content);
-        Assert.Equal("Alice", result.Content!["name"]);
-
-        var declined = new ElicitationResult
-        {
-            Action = UIElicitationResponseAction.Decline,
-        };
-        Assert.Null(declined.Content);
-    }
-
-    [Fact]
-    public void InputOptions_Has_All_Properties()
-    {
-        var options = new UiInputOptions
-        {
-            Title = "Email Address",
-            Description = "Enter your email",
-            MinLength = 5,
-            MaxLength = 100,
-            Format = "email",
-            Default = "user@example.com",
-        };
-
-        Assert.Equal("Email Address", options.Title);
-        Assert.Equal("Enter your email", options.Description);
-        Assert.Equal(5, options.MinLength);
-        Assert.Equal(100, options.MaxLength);
-        Assert.Equal("email", options.Format);
-        Assert.Equal("user@example.com", options.Default);
-    }
-
-    [Fact]
-    public void ElicitationContext_Has_All_Properties()
-    {
-        var context = new ElicitationContext
-        {
-            SessionId = "session-42",
-            Message = "Pick a color",
-            RequestedSchema = new ElicitationSchema
-            {
-                Properties = new Dictionary<string, object>
-                {
-                    ["color"] = new Dictionary<string, object> { ["type"] = "string", ["enum"] = new[] { "red", "blue" } },
-                },
-            },
-            Mode = ElicitationRequestedMode.Form,
-            ElicitationSource = "mcp-server",
-            Url = null,
-        };
-
-        Assert.Equal("session-42", context.SessionId);
-        Assert.Equal("Pick a color", context.Message);
-        Assert.NotNull(context.RequestedSchema);
-        Assert.Equal(ElicitationRequestedMode.Form, context.Mode);
-        Assert.Equal("mcp-server", context.ElicitationSource);
-        Assert.Null(context.Url);
-    }
-
-    [Fact]
-    public async Task Session_Config_OnElicitationRequest_Is_Cloned()
-    {
-        Func<ElicitationContext, Task<ElicitationResult>> handler = _ => Task.FromResult(new ElicitationResult
-        {
-            Action = UIElicitationResponseAction.Cancel,
-        });
-
-        var config = new CreateSessionOptions
-        {
-            Permissions = new SessionPermissionOptions
-            {
-                OnRequest = PermissionHandler.ApproveAll
-            },
-            Interaction = new SessionInteractionOptions
-            {
-                OnElicitationRequest = handler
-            }
-        };
-
-        var clone = config.Clone();
-
-        Assert.Same(handler, clone.Interaction.OnElicitationRequest);
-    }
-
-    [Fact]
-    public void Resume_Config_OnElicitationRequest_Is_Cloned()
-    {
-        Func<ElicitationContext, Task<ElicitationResult>> handler = _ => Task.FromResult(new ElicitationResult
-        {
-            Action = UIElicitationResponseAction.Cancel,
-        });
-
-        var config = new ResumeSessionOptions
-        {
-            Permissions = new SessionPermissionOptions
-            {
-                OnRequest = PermissionHandler.ApproveAll
-            },
-            Interaction = new SessionInteractionOptions
-            {
-                OnElicitationRequest = handler
-            }
-        };
-
-        var clone = config.Clone();
-
-        Assert.Same(handler, clone.Interaction.OnElicitationRequest);
     }
 }

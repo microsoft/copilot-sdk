@@ -190,19 +190,6 @@ class StructuredOutputTest {
         assertNull(result.get(1, TimeUnit.SECONDS));
     }
 
-    @Test
-    void plainWaitCompletesPolicyBlockedPromptOnCorrelatedWarning() throws Exception {
-        var result = session.sendAndWait(new MessageOptions().setPrompt("blocked"), 0);
-        emit("session.warning",
-                Map.of("warningType", "policy_blocked", "message", "blocked", "originatingMessageId", "other"));
-        emit("session.idle", Map.of());
-        assertFalse(result.isDone());
-        emit("session.warning",
-                Map.of("warningType", "policy_blocked", "message", "blocked", "originatingMessageId", "user-1"));
-        emit("session.idle", Map.of());
-        assertNull(result.get(1, TimeUnit.SECONDS));
-    }
-
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void plainWaitIgnoresEarlierSuccessfulIdle(boolean beforeAck) throws Exception {

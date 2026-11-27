@@ -41,7 +41,7 @@ import com.microsoft.copilot.rpc.RuntimeConnection;
 class E2ETestContextTest {
 
     @Test
-    void pathlessChildConnectionsUseThePreparedExecutable() throws Exception {
+    void ownedContextPreparesTheExecutableAndTelemetryProxy() throws Exception {
         try (E2ETestContext ctx = E2ETestContext.create()) {
             var stdio = RuntimeConnection.forSpawnedStdio();
             var tcp = RuntimeConnection.forSpawnedTcp();
@@ -51,6 +51,19 @@ class E2ETestContextTest {
                     assertEquals(ctx.getCliPath(), connection == stdio ? stdio.getPath() : tcp.getPath());
                 }
             }
+            var http = HttpClient.newHttpClient();
+            var userRequest = HttpRequest.newBuilder(URI.create(ctx.getProxyUrl() + "/copilot_internal/user"))
+                    .header("Authorization", "Bearer " + ctx.getEnvironment().get("GH_TOKEN")).build();
+            var userResponse = http.send(userRequest, HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, userResponse.statusCode());
+            var telemetryEndpoint = new ObjectMapper().readTree(userResponse.body()).path("endpoints").path("telemetry")
+                    .asText();
+            assertEquals(ctx.getProxyUrl(), telemetryEndpoint);
+            var telemetryRequest = HttpRequest.newBuilder(URI.create(telemetryEndpoint + "/telemetry"))
+                    .POST(HttpRequest.BodyPublishers.ofString("{}\n")).build();
+            var telemetryResponse = http.send(telemetryRequest, HttpResponse.BodyHandlers.ofString());
+            assertEquals(204, telemetryResponse.statusCode());
+            assertEquals("", telemetryResponse.body());
         }
     }
 
@@ -551,25 +564,6 @@ class E2ETestContextTest {
             return false;
         }, 0, 50, "readiness timed out"));
         assertEquals("buffered probe failed", failure.getMessage());
-    }
-
-    @Test
-    void defaultTelemetryEndpointUsesTheOwnedProxy() throws Exception {
-        try (E2ETestContext ctx = E2ETestContext.create()) {
-            var client = HttpClient.newHttpClient();
-            var userRequest = HttpRequest.newBuilder(URI.create(ctx.getProxyUrl() + "/copilot_internal/user"))
-                    .header("Authorization", "Bearer " + ctx.getEnvironment().get("GH_TOKEN")).build();
-            var userResponse = client.send(userRequest, HttpResponse.BodyHandlers.ofString());
-            assertEquals(200, userResponse.statusCode());
-            var telemetryEndpoint = new ObjectMapper().readTree(userResponse.body()).path("endpoints").path("telemetry")
-                    .asText();
-            assertEquals(ctx.getProxyUrl(), telemetryEndpoint);
-            var telemetryRequest = HttpRequest.newBuilder(URI.create(telemetryEndpoint + "/telemetry"))
-                    .POST(HttpRequest.BodyPublishers.ofString("{}\n")).build();
-            var telemetryResponse = client.send(telemetryRequest, HttpResponse.BodyHandlers.ofString());
-            assertEquals(204, telemetryResponse.statusCode());
-            assertEquals("", telemetryResponse.body());
-        }
     }
 
     @Test

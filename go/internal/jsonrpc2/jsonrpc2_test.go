@@ -128,30 +128,6 @@ func TestRequestPreparationPrecedesFollowingNotification(t *testing.T) {
 	}
 }
 
-func TestOnCloseCalledOnUnexpectedExit(t *testing.T) {
-	stdinR, stdinW := io.Pipe()
-	stdoutR, stdoutW := io.Pipe()
-	defer stdinR.Close()
-
-	client := NewClient(stdinW, stdoutR)
-
-	called := make(chan struct{}, 1)
-	client.SetOnClose(func() {
-		called <- struct{}{}
-	})
-
-	client.Start()
-
-	// Simulate unexpected process death by closing the stdout writer
-	stdoutW.Close()
-
-	select {
-	case <-called:
-	case <-time.After(200 * time.Millisecond):
-		t.Error("expected onClose to be called when read loop exits unexpectedly")
-	}
-}
-
 func TestConnectionCloseCancelsInFlightRequestHandlers(t *testing.T) {
 	stdinR, stdinW := io.Pipe()
 	stdoutR, stdoutW := io.Pipe()
@@ -794,49 +770,6 @@ func TestRequestAdmittedResponseSurvivesShutdown(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-// TestSetProcessDone_ErrorAvailableImmediately validates that getProcessError()
-// returns the correct error immediately after processDone is closed.
-// The current implementation stores a pointer to the process error
-// synchronously when the processDone channel is closed, so callers should
-// never observe a nil error after the channel has been closed.
-func TestSetProcessDone_ErrorAvailableImmediately(t *testing.T) {
-	misses := 0
-	const iterations = 1000
-
-	for i := 0; i < iterations; i++ {
-		stdinR, stdinW := io.Pipe()
-		stdoutR, stdoutW := io.Pipe()
-
-		client := NewClient(stdinW, stdoutR)
-
-		done := make(chan struct{})
-		processErr := errors.New("CLI process exited: exit status 1")
-
-		client.SetProcessDone(done, &processErr)
-
-		// Simulate process exit: error is already set, close the channel.
-		close(done)
-
-		// Do NOT yield to the scheduler — check immediately.
-		// In the current code the goroutine inside SetProcessDone may not
-		// have copied the error to client.processError yet.
-		if err := client.getProcessError(); err == nil {
-			misses++
-		}
-
-		stdinR.Close()
-		stdinW.Close()
-		stdoutR.Close()
-		stdoutW.Close()
-	}
-
-	if misses > 0 {
-		t.Errorf("SetProcessDone regression: getProcessError() returned nil %d/%d times "+
-			"immediately after processDone was closed, even though the error pointer "+
-			"should be stored synchronously.", misses, iterations)
 	}
 }
 

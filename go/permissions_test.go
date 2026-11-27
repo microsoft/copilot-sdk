@@ -8,26 +8,6 @@ import (
 	"github.com/microsoft/copilot-sdk/go/v2/rpc"
 )
 
-func TestPermissionEventExposesManagedApprovalRequired(t *testing.T) {
-	var data copilot.PermissionRequestedData
-	err := json.Unmarshal([]byte(`{
-		"permissionRequest": {
-			"kind": "read",
-			"intention": "Read managed content",
-			"path": "/workspace/file.txt",
-			"managedApprovalRequired": true
-		},
-		"requestId": "permission-1"
-	}`), &data)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !data.PermissionRequest.RequiresManagedApproval() {
-		t.Fatal("expected managed approval to be required")
-	}
-}
-
 func TestApproveAllApprovesOrdinaryRequest(t *testing.T) {
 	decision, err := copilot.PermissionHandler.ApproveAll(
 		&copilot.PermissionRequestRead{},

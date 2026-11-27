@@ -98,6 +98,7 @@ func TestSystemMessageTransformE2E(t *testing.T) {
 						return currentContent + "\nAlways end your reply with TRANSFORM_MARKER", nil
 					},
 				},
+				"code_change_rules": {Action: copilot.SectionActionRemove},
 			},
 		},
 		})
@@ -130,55 +131,10 @@ func TestSystemMessageTransformE2E(t *testing.T) {
 		if !strings.Contains(systemMessage, "TRANSFORM_MARKER") {
 			t.Errorf("Expected system message to contain TRANSFORM_MARKER, got %q", systemMessage)
 		}
+		if strings.Contains(systemMessage, "<code_change_instructions>") {
+			t.Errorf("Expected code_change_rules section to be removed, got %q", systemMessage)
+		}
 
 		_ = assistantMessage
-	})
-
-	t.Run("should_work_with_static_overrides_and_transforms_together", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		var mu sync.Mutex
-		transformCalled := false
-
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, SystemMessage: &copilot.SystemMessageConfig{
-			Mode: "customize",
-			Sections: map[string]copilot.SectionOverride{
-				"safety": {
-					Action: copilot.SectionActionRemove,
-				},
-				"identity": {
-					Transform: func(currentContent string) (string, error) {
-						mu.Lock()
-						transformCalled = true
-						mu.Unlock()
-						return currentContent, nil
-					},
-				},
-			},
-		},
-		})
-		if err != nil {
-			t.Fatalf("Failed to create session: %v", err)
-		}
-
-		testFile := filepath.Join(ctx.WorkDir, "combo.txt")
-		err = os.WriteFile(testFile, []byte("Combo test!"), 0644)
-		if err != nil {
-			t.Fatalf("Failed to write test file: %v", err)
-		}
-
-		_, err = session.SendAndWait(t.Context(), copilot.MessageOptions{
-			Prompt: "Read the contents of combo.txt and tell me what it says",
-		})
-		if err != nil {
-			t.Fatalf("Failed to send message: %v", err)
-		}
-
-		mu.Lock()
-		defer mu.Unlock()
-
-		if !transformCalled {
-			t.Error("Expected identity transform callback to be invoked")
-		}
 	})
 }

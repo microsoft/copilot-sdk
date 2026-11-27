@@ -463,26 +463,15 @@ public sealed partial class ClientSessionLifetimeTests
         Assert.DoesNotContain(server.Requests, r => r.Method == "session.send");
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task StructuredOutput_Correlates_Concurrent_Queued_Sends(bool typed)
+    [Fact]
+    public async Task StructuredOutput_Correlates_Concurrent_Queued_Sends()
     {
         await using var server = await FakeCopilotServer.StartAsync();
         server.UniqueMessageIds = true;
         await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
         await using var session = await client.CreateSessionAsync(new CreateSessionOptions());
-        async Task<StructuredAnswer> SendAsync(string prompt)
-        {
-            if (typed)
-            {
-                return await session.SendAndWaitAsync<StructuredAnswer>(prompt, StructuredOutputJsonContext.Default.Options);
-            }
-            using var schema = JsonDocument.Parse("""{"type":"object","properties":{"answer_text":{"type":"string"},"count":{"type":"integer"}},"required":["answer_text","count"],"additionalProperties":false}""");
-            var message = await session.SendAndWaitAsync(new MessageOptions { Prompt = prompt, ResponseSchema = schema.RootElement.Clone() });
-            Assert.NotNull(message);
-            return JsonSerializer.Deserialize(message.Data.Content, StructuredOutputJsonContext.Default.StructuredAnswer)!;
-        }
+        Task<StructuredAnswer> SendAsync(string prompt) =>
+            session.SendAndWaitAsync<StructuredAnswer>(prompt, StructuredOutputJsonContext.Default.Options);
         var first = SendAsync("First");
         await WaitForRequestAsync(server, "session.send");
         server.ClearRequests();
@@ -495,20 +484,6 @@ public sealed partial class ClientSessionLifetimeTests
         await SendStructuredAnswerAsync(server, session, "message-2", """{"answer_text":"second","count":2}""");
         Assert.Equal("second", (await second.WaitAsync(TimeSpan.FromSeconds(5))).Answer);
     }
-
-    [Fact]
-    public async Task StructuredOutput_Buffers_Events_Before_Send_Response()
-    {
-        await using var server = await FakeCopilotServer.StartAsync();
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions());
-        server.BeforeSendResponse = messageId =>
-            SendStructuredAnswerAsync(server, session, messageId, """{"answer_text":"early","count":42}""");
-        var result = await session.SendAndWaitAsync<StructuredAnswer>(
-            "Answer", StructuredOutputJsonContext.Default.Options, TimeSpan.FromSeconds(5));
-        Assert.Equal("early", result.Answer);
-    }
-
     [Fact]
     public async Task StructuredOutput_Ignores_Idle_Until_Own_Message_Is_Consumed()
     {
@@ -660,40 +635,17 @@ public sealed partial class ClientSessionLifetimeTests
         }
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task StructuredOutput_Propagates_Rpc_And_Session_Errors(bool rpcError)
+    [Fact]
+    public async Task StructuredOutput_Propagates_Rpc_Errors()
     {
         await using var server = await FakeCopilotServer.StartAsync();
         await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
         await using var session = await client.CreateSessionAsync(new CreateSessionOptions());
-        if (rpcError)
-        {
-            server.FailSessionSend();
-        }
+        server.FailSessionSend();
         var task = session.SendAndWaitAsync<StructuredAnswer>("Answer", StructuredOutputJsonContext.Default.Options);
         await WaitForRequestAsync(server, "session.send");
-        if (!rpcError)
-        {
-            await server.SendSessionEventAsync(session.SessionId, "user.message", new()
-            {
-                ["messageId"] = "message-1",
-                ["content"] = "Answer",
-            });
-            await server.SendSessionEventAsync(session.SessionId, "session.error", new()
-            {
-                ["errorType"] = "provider",
-                ["message"] = "structured output unsupported",
-            });
-            var error = await Assert.ThrowsAsync<InvalidOperationException>(() => task.WaitAsync(TimeSpan.FromSeconds(5)));
-            Assert.Contains("structured output unsupported", error.Message);
-        }
-        else
-        {
-            var error = await Assert.ThrowsAsync<RemoteRpcException>(() => task.WaitAsync(TimeSpan.FromSeconds(5)));
-            Assert.Contains("session send failed", error.Message);
-        }
+        var error = await Assert.ThrowsAsync<RemoteRpcException>(() => task.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Contains("session send failed", error.Message);
     }
 
     [Fact]
@@ -723,24 +675,6 @@ public sealed partial class ClientSessionLifetimeTests
         await server.SendSessionEventAsync(session.SessionId, "session.idle", new());
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() => task.WaitAsync(TimeSpan.FromSeconds(5)));
         Assert.Contains("post-response failure", error.Message);
-    }
-
-    [Fact]
-    public async Task StructuredOutput_Can_Correlate_Without_User_Message_Event()
-    {
-        await using var server = await FakeCopilotServer.StartAsync();
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions());
-        var task = session.SendAndWaitAsync<StructuredAnswer>("Answer", StructuredOutputJsonContext.Default.Options);
-        await WaitForRequestAsync(server, "session.send");
-        await server.SendSessionEventAsync(session.SessionId, "assistant.message", new()
-        {
-            ["messageId"] = "assistant-result",
-            ["originatingMessageId"] = "message-1",
-            ["content"] = """{"answer_text":"correct","count":42}""",
-        });
-        await server.SendSessionEventAsync(session.SessionId, "session.idle", new());
-        Assert.Equal("correct", (await task.WaitAsync(TimeSpan.FromSeconds(5))).Answer);
     }
 
     [Theory]

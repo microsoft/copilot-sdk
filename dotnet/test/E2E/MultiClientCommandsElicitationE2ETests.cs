@@ -134,42 +134,6 @@ public class MultiClientCommandsElicitationE2ETests
     }
 
     [Fact]
-    public async Task Capabilities_Changed_Fires_When_Second_Client_Joins_With_Elicitation_Handler()
-    {
-        // Client1 creates session without elicitation
-        var session1 = await Ctx.CreateSessionAsync(Client1, new CreateSessionOptions
-        { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
-        Assert.True(session1.Capabilities.Ui?.Elicitation != true,
-            "Session without elicitation handler should not have elicitation capability");
-
-        // Listen for capabilities.changed event
-        var capChangedTcs = new TaskCompletionSource<CapabilitiesChangedEvent>(
-            TaskCreationOptions.RunContinuationsAsynchronously);
-
-        using var sub = session1.On<SessionEvent>(evt =>
-        {
-            if (evt is CapabilitiesChangedEvent capEvt)
-            {
-                capChangedTcs.TrySetResult(capEvt);
-            }
-        });
-
-        // Client2 joins WITH elicitation handler — triggers capabilities.changed
-        var session2 = await Ctx.ResumeSessionAsync(Client2, session1.SessionId, new ResumeSessionOptions
-        { SuppressResumeEvent = true, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll }, Interaction = new SessionInteractionOptions { OnElicitationRequest = _ => Task.FromResult(new ElicitationResult { Action = Rpc.UIElicitationResponseAction.Accept, Content = new Dictionary<string, object>(), }) } });
-
-        var capEvent = await capChangedTcs.Task.WaitAsync(TimeSpan.FromSeconds(15));
-
-        Assert.NotNull(capEvent.Data.Ui);
-        Assert.True(capEvent.Data.Ui!.Elicitation);
-
-        // Client1's capabilities should have been auto-updated
-        Assert.True(session1.Capabilities.Ui?.Elicitation == true);
-
-        await session2.DisposeAsync();
-    }
-
-    [Fact]
     public async Task Capabilities_Changed_Fires_When_Elicitation_Provider_Disconnects()
     {
         // Client1 creates session without elicitation

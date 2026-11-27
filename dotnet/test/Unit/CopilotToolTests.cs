@@ -21,6 +21,7 @@ public class CopilotToolTests
             {
                 OverridesBuiltInTool = true,
                 SkipPermission = true,
+                IsTerminal = true,
                 Defer = CopilotToolDefer.Auto
             });
 
@@ -32,38 +33,21 @@ public class CopilotToolTests
         Assert.True((bool)skipPermission!);
         Assert.True(function.AdditionalProperties.TryGetValue("defer", out var defer));
         Assert.Equal(CopilotToolDefer.Auto, defer);
-    }
-
-    [Fact]
-    public void DefineTool_Sets_IsTerminal_Metadata()
-    {
-        var function = CopilotTool.DefineTool(
-            ReturnsOk,
-            new CopilotToolOptions
-            {
-                IsTerminal = true
-            });
-
         Assert.True(function.AdditionalProperties.TryGetValue("is_terminal", out var isTerminal));
         Assert.True((bool)isTerminal!);
     }
 
     [Fact]
-    public void DefineTool_Omits_IsTerminal_When_Not_Set()
-    {
-        var function = CopilotTool.DefineTool(ReturnsOk);
-
-        Assert.False(function.AdditionalProperties.ContainsKey("is_terminal"));
-    }
-
-    [Fact]
-    public void DefineTool_Omits_Copilot_Metadata_When_Flags_Are_False()
+    public void DefineTool_Omits_Copilot_Metadata_When_Unset()
     {
         var function = CopilotTool.DefineTool(ReturnsOk);
 
         Assert.False(function.AdditionalProperties.ContainsKey("is_override"));
         Assert.False(function.AdditionalProperties.ContainsKey("skip_permission"));
         Assert.False(function.AdditionalProperties.ContainsKey("defer"));
+        Assert.False(function.AdditionalProperties.ContainsKey("is_terminal"));
+        Assert.False(function.AdditionalProperties.ContainsKey("metadata"));
+        Assert.False(function.AdditionalProperties.ContainsKey("namespace"));
     }
 
     [Fact]
@@ -86,21 +70,6 @@ public class CopilotToolTests
         Assert.Same(metadata, value);
     }
 
-    [Fact]
-    public void DefineTool_Omits_Metadata_When_Unset()
-    {
-        var function = CopilotTool.DefineTool(ReturnsOk);
-
-        Assert.False(function.AdditionalProperties.ContainsKey("metadata"));
-    }
-
-    [Fact]
-    public void Namespace_Uses_Sdk_Facing_Type()
-    {
-        Assert.Equal("Microsoft.Copilot.ToolNamespace",
-            typeof(CopilotToolOptions).GetProperty(nameof(CopilotToolOptions.Namespace))!.PropertyType.FullName);
-    }
-
     [Theory]
     [InlineData(null)]
     [InlineData("Edit Word documents")]
@@ -113,46 +82,6 @@ public class CopilotToolTests
 
         Assert.Same(toolNamespace, function.AdditionalProperties["namespace"]);
         Assert.False(function.AdditionalProperties.ContainsKey("defer"));
-    }
-
-    [Fact]
-    public void DefineTool_Omits_Namespace_When_Unset()
-    {
-        var function = CopilotTool.DefineTool(ReturnsOk);
-
-        Assert.False(function.AdditionalProperties.ContainsKey("namespace"));
-    }
-
-    [Fact]
-    public void DefineTool_Accepts_Lambda_Handlers_Without_Casts()
-    {
-        var function = CopilotTool.DefineTool((string value) => value, factoryOptions: new() { Name = "echo", Description = "Echo a value" });
-
-        Assert.Equal("echo", function.Name);
-    }
-
-    [Fact]
-    public async Task DefineTool_Binds_ToolInvocation_And_Excludes_It_From_Schema()
-    {
-        var function = CopilotTool.DefineTool(
-            (string value, ToolInvocation invocation) => $"{value}:{invocation.ToolName}",
-            factoryOptions: new() { Name = "echo", Description = "Echo a value" });
-
-        var schema = function.JsonSchema.GetRawText();
-        Assert.Contains("\"value\"", schema);
-        Assert.DoesNotContain("\"invocation\"", schema);
-
-        using var document = JsonDocument.Parse("\"hello\"");
-        var result = await function.InvokeAsync(new AIFunctionArguments
-        {
-            ["value"] = document.RootElement.Clone(),
-            Context = new Dictionary<object, object?>
-            {
-                [typeof(ToolInvocation)] = new ToolInvocation { ToolName = "echo" }
-            }
-        });
-
-        Assert.Equal("hello:echo", Assert.IsType<JsonElement>(result).GetString());
     }
 
     [Fact]

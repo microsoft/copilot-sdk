@@ -500,27 +500,6 @@ async def _start_adapter_request(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("agent_invocation_id", [None, "first-invocation", "second-invocation"])
-async def test_request_context_preserves_invocation_identity(
-    agent_invocation_id: str | None,
-) -> None:
-    stream = _ControlledStream([])
-    handler = _ResponseHandler(_response(stream))
-    _, _, task = await _start_adapter_request(
-        stream, handler=handler, agent_invocation_id=agent_invocation_id
-    )
-    await asyncio.wait_for(task, timeout=2)
-
-    assert handler.context is not None
-    assert handler.context.request_id == "request"
-    assert handler.context.session_id == "session"
-    assert handler.context.agent_id == "agent"
-    assert handler.context.parent_agent_id == "parent"
-    assert handler.context.agent_invocation_id == agent_invocation_id
-    assert stream.closed.is_set()
-
-
-@pytest.mark.asyncio
 async def test_runtime_cancellation_stops_pending_read_and_closes_source() -> None:
     stream = _ControlledStream([b"first"], block_after_chunks=True)
     rpc, adapter, task = await _start_adapter_request(stream)

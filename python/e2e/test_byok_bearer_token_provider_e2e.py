@@ -15,16 +15,14 @@ Like the other ``copilot_request_*`` tests, this one installs a client-global
 ``CopilotRequestHandler`` instead of using the CAPI proxy: the handler
 fabricates the bootstrap (catalog/policy) responses and intercepts the
 runtime's outbound BYOK request in-process, capturing the ``Authorization``
-header and returning a synthetic ``404``. It validates, against a real runtime:
- 1. the callback's token reaches the model request as ``Authorization: Bearer <token>``;
- 2. the runtime re-acquires a token per request (no runtime-side caching);
- 3. per-provider dispatch routes each provider's turn to its own callback, and
-    the resulting token reaches that provider's endpoint.
+header and returning a synthetic ``404``. It validates the Python callback
+binding against a real runtime: per-provider dispatch routes each provider's
+turn to its own callback with the forwarded provider name and session id, and
+the resulting token reaches that provider's endpoint. Runtime per-request
+re-acquisition is owned by the Node.js E2E.
 """
 
 from __future__ import annotations
-
-import re
 
 import httpx
 import pytest
@@ -42,8 +40,6 @@ pytestmark = pytest.mark.asyncio(loop_scope="module")
 # client-global request interceptor fully answers any request aimed at a
 # ``.invalid`` host, so they only need to be syntactically valid, non-resolving
 # URLs. Distinct hosts let the per-provider test assert routing by host.
-PRIMARY_HOST = "byok-endpoint.invalid"
-PRIMARY_BASE_URL = f"https://{PRIMARY_HOST}/v1"
 RED_HOST = "byok-red.invalid"
 RED_BASE_URL = f"https://{RED_HOST}/v1"
 BLUE_HOST = "byok-blue.invalid"
@@ -84,10 +80,6 @@ class _CapturingRequestHandler(CopilotRequestHandler):
 
     def reset(self) -> None:
         self.captures.clear()
-
-    def auth_headers(self) -> list[str]:
-        """The ``Authorization`` headers captured across BYOK requests, in order."""
-        return [auth for (_host, auth) in self.captures if auth is not None]
 
     def auth_header_for_host(self, host: str) -> str | None:
         """The ``Authorization`` header captured for requests aimed at ``host``."""
@@ -136,71 +128,6 @@ async def _run_turn(client, providers, models, selection_id: str, prompt: str) -
 
 
 class TestByokBearerTokenProvider:
-    async def test_applies_the_callbacks_token_as_the_authorization_header(self, bearer_fixture):
-        client, handler = bearer_fixture
-        handler.reset()
-
-        sentinel = "sentinel-bearer-token-abc123"
-        calls = 0
-
-        async def get_bearer_token(args) -> str:
-            nonlocal calls
-            calls += 1
-            return sentinel
-
-        providers = [
-            {
-                "name": "mi",
-                "type": "openai",
-                "wire_api": "completions",
-                "base_url": PRIMARY_BASE_URL,
-                "bearer_token_provider": get_bearer_token,
-            }
-        ]
-        models = [{"id": "default", "provider": "mi", "wire_model": "byok-gpt-4o"}]
-
-        await _run_turn(client, providers, models, "mi/default", "What is 5+5?")
-
-        # The runtime acquired a token via the callback and applied it verbatim
-        # as the bearer credential on the outbound model request.
-        assert f"Bearer {sentinel}" in handler.auth_headers()
-        assert calls >= 1
-
-    async def test_reacquires_a_fresh_token_for_each_request(self, bearer_fixture):
-        client, handler = bearer_fixture
-        handler.reset()
-
-        calls = 0
-
-        async def get_bearer_token(args) -> str:
-            nonlocal calls
-            calls += 1
-            # A distinct token per acquisition proves the runtime re-invokes the
-            # callback per request rather than caching a previous token.
-            return f"rotating-token-{calls}"
-
-        providers = [
-            {
-                "name": "mi",
-                "type": "openai",
-                "wire_api": "completions",
-                "base_url": PRIMARY_BASE_URL,
-                "bearer_token_provider": get_bearer_token,
-            }
-        ]
-        models = [{"id": "default", "provider": "mi", "wire_model": "byok-gpt-4o"}]
-
-        await _run_turn(client, providers, models, "mi/default", "What is 1+1?")
-        await _run_turn(client, providers, models, "mi/default", "What is 2+2?")
-
-        # Each outbound request carries a freshly-acquired, distinct token.
-        auths = handler.auth_headers()
-        assert len(auths) >= 2
-        assert re.match(r"^Bearer rotating-token-\d+$", auths[0])
-        assert re.match(r"^Bearer rotating-token-\d+$", auths[1])
-        assert auths[0] != auths[1]
-        assert calls >= 2
-
     async def test_dispatches_token_acquisition_per_provider(self, bearer_fixture):
         client, handler = bearer_fixture
         handler.reset()

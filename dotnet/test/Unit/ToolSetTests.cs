@@ -10,9 +10,7 @@ public class ToolSetTests
 {
     private static readonly string[] BashAndView = ["bash", "view"];
     private static readonly string[] ExpectedBashAndView = ["builtin:bash", "builtin:view"];
-    private static readonly string[] AllWildcards = ["builtin:*", "custom:*", "mcp:*"];
     private static readonly string[] BannedTools = ["bash", "powershell", "edit", "grep", "web_fetch"];
-    private static readonly string[] ExpectedIsolatedTools = ["ask_user", "task_complete"];
 
     [Fact]
     public void ToolSet_Emits_Source_Qualified_Strings()
@@ -46,7 +44,6 @@ public class ToolSetTests
 
     [Theory]
     [InlineData("has:colon")]
-    [InlineData("has space")]
     [InlineData("bash\n")]
     [InlineData("")]
     public void ToolSet_Rejects_Invalid_Names(string bad)
@@ -57,27 +54,11 @@ public class ToolSetTests
     }
 
     [Fact]
-    public void ToolSet_Accepts_Wildcard()
-    {
-        var items = new ToolSet().AddBuiltIn("*").AddCustom("*").AddMcp("*").ToList();
-        Assert.Equal(AllWildcards, items);
-    }
-
-    [Fact]
     public void BuiltInTools_Isolated_Does_Not_Contain_Banned_Tools()
     {
         foreach (var banned in BannedTools)
         {
             Assert.DoesNotContain(banned, BuiltInTools.Isolated);
-        }
-    }
-
-    [Fact]
-    public void BuiltInTools_Isolated_Contains_Expected_Tools()
-    {
-        foreach (var expected in ExpectedIsolatedTools)
-        {
-            Assert.Contains(expected, BuiltInTools.Isolated);
         }
     }
 

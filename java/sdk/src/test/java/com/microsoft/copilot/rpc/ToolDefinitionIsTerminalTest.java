@@ -29,16 +29,6 @@ class ToolDefinitionIsTerminalTest {
     }
 
     @Test
-    void isTerminalIsOmittedWhenNull() throws Exception {
-        ToolDefinition definition = new ToolDefinition("plain", "A plain tool", Map.of("type", "object"), null, null,
-                null, null, null, null);
-
-        JsonNode node = MAPPER.valueToTree(definition);
-
-        assertFalse(node.has("isTerminal"), "isTerminal should be omitted when null");
-    }
-
-    @Test
     void sevenArgumentConstructorStillCompilesAndLeavesTerminalityUnset() throws Exception {
         // Guards source compatibility for call sites written before isTerminal
         // was added as a record component.

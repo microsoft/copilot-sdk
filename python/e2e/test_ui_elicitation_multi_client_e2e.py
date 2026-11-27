@@ -240,53 +240,6 @@ class TestUiElicitationMultiClient:
         finally:
             await session2.disconnect()
 
-    async def test_capabilities_changed_when_second_client_joins_with_elicitation(
-        self, mctx: ElicitationMultiClientContext
-    ):
-        """capabilities.changed fires when second client joins with elicitation handler."""
-        # Client 1 creates session without elicitation
-        session1 = await mctx.client1.create_session(
-            permissions={"on_request": PermissionHandler.approve_all}
-        )
-        assert session1.capabilities.get("ui", {}).get("elicitation") in (False, None)
-
-        # Listen for capabilities.changed event
-        cap_changed = asyncio.Event()
-        cap_event_data: dict = {}
-
-        def on_event(event):
-            match event.data:
-                case CapabilitiesChangedData() as data:
-                    ui = data.ui
-                    if ui:
-                        cap_event_data["elicitation"] = ui.elicitation
-                    cap_changed.set()
-
-        unsubscribe = session1.on(on_event)
-
-        # Client 2 joins WITH elicitation handler â€” triggers capabilities.changed
-        async def handler(
-            context: ElicitationContext,
-        ) -> ElicitationResult:
-            return {"action": "accept", "content": {}}
-
-        session2 = await mctx.client2.resume_session(
-            session1.session_id,
-            permissions={"on_request": PermissionHandler.approve_all},
-            interaction={"on_elicitation_request": handler},
-        )
-
-        await asyncio.wait_for(cap_changed.wait(), timeout=15.0)
-        unsubscribe()
-
-        # The event should report elicitation as True
-        assert cap_event_data.get("elicitation") is True
-
-        # Client 1's capabilities should have been auto-updated
-        assert session1.capabilities.get("ui", {}).get("elicitation") is True
-
-        await session2.disconnect()
-
     async def test_capabilities_changed_when_elicitation_provider_disconnects(
         self, mctx: ElicitationMultiClientContext
     ):

@@ -10,9 +10,8 @@ from copilot.session import CopilotSession
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("admitted", [False, True], ids=["before-admission", "after-admission"])
 @pytest.mark.parametrize("detach_success", [True, False], ids=["detach-ok", "detach-error"])
-async def test_timeout_e2e_cleanup_without_idle(monkeypatch, admitted, detach_success):
+async def test_timeout_e2e_cleanup_without_idle(monkeypatch, detach_success):
     # Import the E2E body without preparing or launching a runtime.
     monkeypatch.setenv("COPILOT_CLI_PATH", __file__)
     from e2e import test_session_e2e
@@ -40,8 +39,7 @@ async def test_timeout_e2e_cleanup_without_idle(monkeypatch, admitted, detach_su
         assert params["sessionId"] == session.session_id
         if method == "session.sendAndWait":
             assert params["prompt"] == "Run 'sleep 2 && echo done'"
-            if admitted:
-                active_work = asyncio.create_task(asyncio.Event().wait())
+            active_work = asyncio.create_task(asyncio.Event().wait())
             # Expire the SDK wait at a controlled admission boundary.
             timeout_context.reschedule(asyncio.get_running_loop().time())
             try:
@@ -66,17 +64,16 @@ async def test_timeout_e2e_cleanup_without_idle(monkeypatch, admitted, detach_su
             await asyncio.wait_for(body, timeout=5)
             assert detached
             assert session._destroyed
-            assert active_work is None or active_work.done()
+            assert active_work is not None and active_work.done()
         else:
             with pytest.raises(RuntimeError, match="Failed to detach.*detach failed"):
                 await asyncio.wait_for(body, timeout=5)
             assert not detached
             assert not session._destroyed
-            assert active_work is None or not active_work.done()
+            assert active_work is not None and not active_work.done()
 
         assert timeout_context.expired()
         assert request_cancelled
-        assert (active_work is not None) == admitted
         assert not session._response_waits
         assert not session._event_handlers
         assert [call.args[0] for call in client.request.await_args_list] == [

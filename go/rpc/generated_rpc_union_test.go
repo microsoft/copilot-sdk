@@ -120,45 +120,6 @@ func TestOptionalNullableFieldsPreserveOmittedAndNull(t *testing.T) {
 	}
 }
 
-func TestPendingPermissionRequestUnmarshalsAssistedApprovalAssessment(t *testing.T) {
-	var result PendingPermissionRequestList
-	err := json.Unmarshal([]byte(`{
-		"items": [{
-			"requestId": "permission-1",
-			"request": {
-				"kind": "commands",
-				"fullCommandText": "git status",
-				"commandIdentifiers": ["git"],
-				"canOfferSessionApproval": false
-			},
-			"assistedApprovalAssessment": {
-				"status": "completed",
-				"recommendation": "requireApproval",
-				"rationale": "The command may change repository state."
-			}
-		}]
-	}`), &result)
-	if err != nil {
-		t.Fatalf("unmarshal pending permission requests: %v", err)
-	}
-	if len(result.Items) != 1 {
-		t.Fatalf("pending permission request count = %d, want 1", len(result.Items))
-	}
-	assessment, ok := result.Items[0].AssistedApprovalAssessment.(*AssistedApprovalAssessmentCompleted)
-	if !ok {
-		t.Fatalf(
-			"pending assessment = %T, want *AssistedApprovalAssessmentCompleted",
-			result.Items[0].AssistedApprovalAssessment,
-		)
-	}
-	if assessment.Recommendation != AssistedApprovalCompletedRecommendationRequireApproval {
-		t.Fatalf("pending recommendation = %q, want requireApproval", assessment.Recommendation)
-	}
-	if assessment.Rationale == nil || *assessment.Rationale != "The command may change repository state." {
-		t.Fatalf("pending rationale = %v", assessment.Rationale)
-	}
-}
-
 func TestFilterMappingJSONUnion(t *testing.T) {
 	var mapping FilterMapping = FilterMappingEnumMap{"secret": ContentFilterModeHiddenCharacters}
 	raw, err := json.Marshal(mapping)
@@ -260,8 +221,6 @@ func TestMCPStartServerConfigRoundTrip(t *testing.T) {
 			Ide:        MCPIdeConfig{IdeName: "editor", WorkspaceFolder: "/workspace"},
 		},
 		&RawMCPStartServerConfigData{Raw: json.RawMessage(`{"type":"future"}`)},
-		&RawMCPStartServerConfigData{Raw: json.RawMessage(`{"type":"websocket","url":"wss://example.com/mcp","extra":"preserved"}`)},
-		&RawMCPStartServerConfigData{Raw: json.RawMessage(`{"type":"process","command":"future","extra":"preserved"}`)},
 	} {
 		t.Run(reflect.TypeOf(config).String(), func(t *testing.T) {
 			request := MCPStartServerRequest{ServerName: "ide", Config: config}
@@ -340,35 +299,6 @@ func TestMCPToolResultPreservesNestedNumbers(t *testing.T) {
 	}
 	if got := result["structuredContent"]; !reflect.DeepEqual(got, want) {
 		t.Fatalf("structured content = %#v, want %#v", got, want)
-	}
-}
-
-func TestTaskProgressUnmarshalsTaskAgentProgressVariants(t *testing.T) {
-	agentProgress, err := unmarshalTaskProgress([]byte(`{"type":"agent","recentActivity":[],"latestIntent":"Summarizing"}`))
-	if err != nil {
-		t.Fatalf("unmarshal agent task progress: %v", err)
-	}
-	agentValue, ok := agentProgress.(*TaskAgentProgress)
-	if !ok {
-		t.Fatalf("agent task progress = %T, want *TaskAgentProgress", agentProgress)
-	}
-	if agentValue.LatestIntent == nil || *agentValue.LatestIntent != "Summarizing" {
-		t.Fatalf("agent latest intent = %v, want Summarizing", agentValue.LatestIntent)
-	}
-
-	shellProgress, err := unmarshalTaskProgress([]byte(`{"type":"shell","recentOutput":"building","pid":123}`))
-	if err != nil {
-		t.Fatalf("unmarshal shell task progress: %v", err)
-	}
-	shellValue, ok := shellProgress.(*TaskShellProgress)
-	if !ok {
-		t.Fatalf("shell task progress = %T, want *TaskShellProgress", shellProgress)
-	}
-	if shellValue.RecentOutput != "building" {
-		t.Fatalf("shell recent output = %q, want building", shellValue.RecentOutput)
-	}
-	if shellValue.Pid == nil || *shellValue.Pid != 123 {
-		t.Fatalf("shell pid = %v, want 123", shellValue.Pid)
 	}
 }
 

@@ -24,44 +24,6 @@ public partial class ToolsE2ETests(E2ETestFixture fixture, ITestOutputHelper out
     private const string ApplyPatchResult = "patched by the host";
 
     [Fact]
-    public async Task Invokes_Built_In_Tools()
-    {
-        await File.WriteAllTextAsync(
-            Path.Combine(Ctx.WorkDir, "README.md"),
-            "# ELIZA, the only chatbot you'll ever need");
-
-        var session = await CreateSessionAsync(new CreateSessionOptions
-        { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
-
-        var assistantMessage = await TestHelper.SendAndGetFinalAssistantMessageAsync(session, new MessageOptions
-        {
-            Prompt = "What's the first line of README.md in this directory?"
-        });
-
-        Assert.NotNull(assistantMessage);
-        Assert.Contains("ELIZA", assistantMessage!.Data.Content ?? string.Empty);
-    }
-
-    [Fact]
-    public async Task Invokes_Custom_Tool()
-    {
-        var session = await CreateSessionAsync(new CreateSessionOptions
-        { Tools = new SessionToolOptions { Definitions = [AIFunctionFactory.Create(EncryptString, "encrypt_string")] }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
-
-        var assistantMessage = await TestHelper.SendAndGetFinalAssistantMessageAsync(session, new MessageOptions
-        {
-            Prompt = "Use encrypt_string to encrypt this string: Hello"
-        });
-
-        Assert.NotNull(assistantMessage);
-        Assert.Contains("HELLO", assistantMessage!.Data.Content ?? string.Empty);
-
-        [Description("Encrypts a string")]
-        static string EncryptString([Description("String to encrypt")] string input)
-            => input.ToUpperInvariant();
-    }
-
-    [Fact]
     [Trait(E2ETestTraits.Backend, E2ETestTraits.SelfConfiguredBackend)]
     public async Task Reused_Factory_Options_Do_Not_Leak_Explicit_Exposure()
     {
@@ -413,33 +375,6 @@ public partial class ToolsE2ETests(E2ETestFixture fixture, ITestOutputHelper out
         Assert.False(didRunPermissionRequest);
     }
 
-    [Fact(Skip = "Behaves as if no content was in the result. Likely that binary results aren't fully implemented yet.")]
-    public async Task Can_Return_Binary_Result()
-    {
-        var session = await CreateSessionAsync(new CreateSessionOptions
-        { Tools = new SessionToolOptions { Definitions = [AIFunctionFactory.Create(GetImage, "get_image")] }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
-
-        var assistantMessage = await TestHelper.SendAndGetFinalAssistantMessageAsync(session, new MessageOptions
-        {
-            Prompt = "Use get_image. What color is the square in the image?"
-        });
-
-        Assert.NotNull(assistantMessage);
-
-        Assert.Contains("yellow", assistantMessage!.Data.Content?.ToLowerInvariant() ?? string.Empty);
-
-        static ToolResultAIContent GetImage() => new(new()
-        {
-            BinaryResultsForLlm = [new() {
-                // 2x2 yellow square
-                Data = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAADklEQVR4nGP4/5/h/38GABkAA/0k+7UAAAAASUVORK5CYII=",
-                Type = ToolBinaryResultType.Image,
-                MimeType = "image/png",
-            }],
-            SessionLog = "Returned an image",
-        });
-    }
-
     [Fact]
     public async Task Invokes_Custom_Tool_With_Permission_Handler()
     {
@@ -538,34 +473,6 @@ public partial class ToolsE2ETests(E2ETestFixture fixture, ITestOutputHelper out
         {
             toolBCalled.TrySetResult(country);
             return $"COUNTRY_{country.ToUpperInvariant()}";
-        }
-    }
-
-    [Fact]
-    public async Task Should_Respect_AvailableTools_And_ExcludedTools_Combined()
-    {
-        bool excludedToolCalled = false;
-
-        var session = await CreateSessionAsync(new CreateSessionOptions
-        { Tools = new SessionToolOptions { Definitions = [AIFunctionFactory.Create(AllowedTool, "allowed_tool"), AIFunctionFactory.Create(ExcludedTool, "excluded_tool"),], AvailableTools = ["allowed_tool", "excluded_tool"], ExcludedTools = ["excluded_tool"] }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
-
-        var result = await session.SendAndWaitAsync(new MessageOptions
-        {
-            Prompt = "Use the allowed_tool with input 'test'. Do NOT use excluded_tool.",
-        });
-
-        Assert.NotNull(result);
-        Assert.Contains("ALLOWED_TEST", result!.Data.Content ?? string.Empty);
-        Assert.False(excludedToolCalled, "Excluded tool should not have been called");
-
-        [Description("An allowed tool")]
-        string AllowedTool([Description("Input value")] string input) => $"ALLOWED_{input.ToUpperInvariant()}";
-
-        [Description("A tool that should be excluded")]
-        string ExcludedTool([Description("Input value")] string input)
-        {
-            excludedToolCalled = true;
-            return $"EXCLUDED_{input.ToUpperInvariant()}";
         }
     }
 

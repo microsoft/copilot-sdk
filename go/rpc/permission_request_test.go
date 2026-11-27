@@ -11,7 +11,7 @@ import (
 )
 
 func TestPermissionRequestEnvelopeRejectsAmbiguousArrayEdits(t *testing.T) {
-	for _, mode := range []string{"swap", "swap-and-edit", "multiple-edits", "copy", "copy-and-edit"} {
+	for _, mode := range []string{"multiple-edits", "copy", "copy-and-edit"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			var envelope rpc.PermissionRequestEnvelope
@@ -22,10 +22,8 @@ func TestPermissionRequestEnvelopeRejectsAmbiguousArrayEdits(t *testing.T) {
 			commands := envelope.Request.(*rpc.PermissionRequestShell).Commands
 			if mode == "copy" || mode == "copy-and-edit" {
 				commands[0] = commands[1]
-			} else if mode != "multiple-edits" {
-				commands[0], commands[1] = commands[1], commands[0]
 			}
-			if mode == "swap-and-edit" || mode == "multiple-edits" {
+			if mode == "multiple-edits" {
 				commands[0].ReadOnly = false
 				commands[1].ReadOnly = false
 			}

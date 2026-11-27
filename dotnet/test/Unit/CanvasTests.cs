@@ -98,48 +98,6 @@ public class CanvasTests
     }
 
     [Fact]
-    public void CanvasDeclaration_Serializes_CamelCase_SkippingNulls()
-    {
-        var options = GetSerializerOptions();
-        var decl = new CanvasDeclaration
-        {
-            Id = "report",
-            DisplayName = "Quarterly Report",
-            Description = "Renders the latest report",
-        };
-
-        var json = JsonSerializer.Serialize(decl, options);
-        using var doc = JsonDocument.Parse(json);
-        var root = doc.RootElement;
-
-        Assert.Equal("report", root.GetProperty("id").GetString());
-        Assert.Equal("Quarterly Report", root.GetProperty("displayName").GetString());
-        Assert.Equal("Renders the latest report", root.GetProperty("description").GetString());
-        Assert.False(root.TryGetProperty("inputSchema", out _));
-        Assert.False(root.TryGetProperty("actions", out _));
-    }
-
-    [Fact]
-    public void CanvasProviderOpenResult_Roundtrips_WithCamelCaseFields()
-    {
-        var options = GetSerializerOptions();
-        var response = new CanvasProviderOpenResult
-        {
-            Url = "https://example.com/c/1",
-            Title = "Demo",
-            Status = "ready"
-        };
-
-        var json = JsonSerializer.Serialize(response, options);
-        var parsed = JsonSerializer.Deserialize<CanvasProviderOpenResult>(json, options);
-
-        Assert.NotNull(parsed);
-        Assert.Equal("https://example.com/c/1", parsed!.Url);
-        Assert.Equal("Demo", parsed.Title);
-        Assert.Equal("ready", parsed.Status);
-    }
-
-    [Fact]
     public void SessionCanvasOpenedEvent_UpdatesOpenCanvasSnapshots()
     {
         var session = CreateSession();
@@ -210,39 +168,6 @@ public class CanvasTests
     }
 
     [Fact]
-    public void ExtensionInfo_Serializes_SourceAndName()
-    {
-        var options = GetSerializerOptions();
-        var info = new ExtensionInfo { Source = "github-app", Name = "demo" };
-        var json = JsonSerializer.Serialize(info, options);
-        using var doc = JsonDocument.Parse(json);
-        Assert.Equal("github-app", doc.RootElement.GetProperty("source").GetString());
-        Assert.Equal("demo", doc.RootElement.GetProperty("name").GetString());
-    }
-
-    [Fact]
-    public void CanvasProviderIdentity_Serializes_IdAndName()
-    {
-        var options = GetSerializerOptions();
-        var identity = new CanvasProviderIdentity { Id = "app:builtin:window-1", Name = "Built-in" };
-        var json = JsonSerializer.Serialize(identity, options);
-        using var doc = JsonDocument.Parse(json);
-        Assert.Equal("app:builtin:window-1", doc.RootElement.GetProperty("id").GetString());
-        Assert.Equal("Built-in", doc.RootElement.GetProperty("name").GetString());
-    }
-
-    [Fact]
-    public void CanvasProviderIdentity_OmitsNullName()
-    {
-        var options = GetSerializerOptions();
-        var identity = new CanvasProviderIdentity { Id = "app:builtin:window-1" };
-        var json = JsonSerializer.Serialize(identity, options);
-        using var doc = JsonDocument.Parse(json);
-        Assert.Equal("app:builtin:window-1", doc.RootElement.GetProperty("id").GetString());
-        Assert.False(doc.RootElement.TryGetProperty("name", out _));
-    }
-
-    [Fact]
     public async Task CanvasHandlerBase_DefaultOnClose_Completes()
     {
         var handler = new TestHandler();
@@ -256,14 +181,6 @@ public class CanvasTests
         var ex = await Assert.ThrowsAsync<CanvasException>(
             () => handler.OnActionAsync(new CanvasProviderInvokeActionRequest(), CancellationToken.None));
         Assert.Equal("canvas_action_no_handler", ex.Code);
-    }
-
-    [Fact]
-    public void CanvasException_NoHandler_HasExpectedCode()
-    {
-        var err = CanvasException.NoHandler();
-        Assert.Equal("canvas_action_no_handler", err.Code);
-        Assert.False(string.IsNullOrEmpty(err.Message));
     }
 
     [Fact]

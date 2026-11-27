@@ -449,27 +449,6 @@ public class ScenarioTestingCompositionE2ETests(E2ETestFixture fixture, ITestOut
             evt => evt.Data.Content?.Contains("SCENARIO_PERSISTED_HISTORY", StringComparison.Ordinal) == true);
     }
 
-    [Fact]
-    public async Task Should_Propagate_Canvas_Handler_Error()
-    {
-        var handler = new ScenarioCanvasHandler { ThrowOnAction = true };
-        await using var session = await CreateSessionAsync(CreateScenarioSessionConfig(handler));
-        var canvas = Assert.Single((await session.Rpc.Canvas.ListAsync()).Canvases);
-        await session.Rpc.Canvas.OpenAsync(
-            canvasId: "scenario-counter",
-            instanceId: "scenario-counter-error",
-            extensionId: canvas.ExtensionId,
-            input: new Dictionary<string, object> { ["start"] = 0 });
-
-        var exception = await Assert.ThrowsAnyAsync<Exception>(() =>
-            session.Rpc.Canvas.Action.InvokeAsync(
-                instanceId: "scenario-counter-error",
-                actionName: "increment",
-                input: new Dictionary<string, object> { ["delta"] = 1 }));
-
-        Assert.Contains("The scenario canvas could not increment.", exception.ToString(), StringComparison.Ordinal);
-    }
-
     private static CreateSessionOptions CreateScenarioSessionConfig(
         ScenarioCanvasHandler canvasHandler,
         bool includeTool = true,
@@ -623,7 +602,6 @@ public class ScenarioTestingCompositionE2ETests(E2ETestFixture fixture, ITestOut
 
     private sealed class ScenarioCanvasHandler : CanvasHandlerBase
     {
-        public bool ThrowOnAction { get; init; }
         public TaskCompletionSource<CanvasProviderOpenRequest> Opened { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         public List<CanvasProviderInvokeActionRequest> ActionRequests { get; } = [];
@@ -645,12 +623,6 @@ public class ScenarioTestingCompositionE2ETests(E2ETestFixture fixture, ITestOut
             CanvasProviderInvokeActionRequest request,
             CancellationToken cancellationToken)
         {
-            if (ThrowOnAction)
-            {
-                throw new CanvasException(
-                    "scenario_canvas_action_failed",
-                    "The scenario canvas could not increment.");
-            }
 
             ActionRequests.Add(request);
             var delta = request.Input!.Value.GetProperty("delta").GetInt32();

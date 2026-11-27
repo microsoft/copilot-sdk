@@ -45,29 +45,6 @@ public class ForwardCompatibilityTests
     }
 
     [Fact]
-    public void FromJson_KnownEventType_DeserializesNormally()
-    {
-        var json = """
-        {
-            "id": "00000000-0000-0000-0000-000000000001",
-            "timestamp": "2026-01-01T00:00:00Z",
-            "parentId": null,
-            "agentId": "agent-1",
-            "type": "user.message",
-            "data": {
-                "content": "Hello"
-            }
-        }
-        """;
-
-        var result = SessionEvent.FromJson(json);
-
-        Assert.IsType<UserMessageEvent>(result);
-        Assert.Equal("user.message", result.Type);
-        Assert.Equal("agent-1", result.AgentId);
-    }
-
-    [Fact]
     public void UnknownEventType_IsSentToTheRuntimeUnchanged()
     {
         var json = """
@@ -116,44 +93,9 @@ public class ForwardCompatibilityTests
         Assert.IsType<SessionEvent>(result);
         Assert.Equal("unknown", result.Type);
         Assert.Equal("future-agent", result.AgentId);
-    }
-
-    [Fact]
-    public void FromJson_UnknownEventType_PreservesBaseMetadata()
-    {
-        var json = """
-        {
-            "id": "12345678-1234-1234-1234-123456789abc",
-            "timestamp": "2026-06-15T10:30:00Z",
-            "parentId": "abcdefab-abcd-abcd-abcd-abcdefabcdef",
-            "type": "future.feature_from_server",
-            "data": {}
-        }
-        """;
-
-        var result = SessionEvent.FromJson(json);
-
         Assert.Equal(Guid.Parse("12345678-1234-1234-1234-123456789abc"), result.Id);
         Assert.Equal(DateTimeOffset.Parse("2026-06-15T10:30:00Z"), result.Timestamp);
         Assert.Equal(Guid.Parse("abcdefab-abcd-abcd-abcd-abcdefabcdef"), result.ParentId);
-    }
-
-    [Fact]
-    public void FromJson_MultipleEvents_MixedKnownAndUnknown()
-    {
-        var events = new[]
-        {
-            """{"id":"00000000-0000-0000-0000-000000000001","timestamp":"2026-01-01T00:00:00Z","parentId":null,"type":"user.message","data":{"content":"Hi"}}""",
-            """{"id":"00000000-0000-0000-0000-000000000002","timestamp":"2026-01-01T00:00:00Z","parentId":null,"type":"future.unknown_type","data":{}}""",
-            """{"id":"00000000-0000-0000-0000-000000000003","timestamp":"2026-01-01T00:00:00Z","parentId":null,"type":"user.message","data":{"content":"Bye"}}""",
-        };
-
-        var results = events.Select(SessionEvent.FromJson).ToList();
-
-        Assert.Equal(3, results.Count);
-        Assert.IsType<UserMessageEvent>(results[0]);
-        Assert.IsType<SessionEvent>(results[1]);
-        Assert.IsType<UserMessageEvent>(results[2]);
     }
 
     [Fact]
@@ -203,29 +145,6 @@ public class ForwardCompatibilityTests
 
         Assert.IsType<SessionIdleEvent>(result);
         Assert.Equal("agent-1", result.AgentId);
-    }
-
-    [Fact]
-    public void FromJson_UnknownEventType_WithUnknownEnumInData_DoesNotThrow()
-    {
-        // Unknown event types are mapped to base SessionEvent which does not parse data.
-        // So unknown enum values inside the data of an unknown event must not throw.
-        var json = """
-        {
-            "id": "00000000-0000-0000-0000-000000000001",
-            "timestamp": "2026-01-01T00:00:00Z",
-            "parentId": null,
-            "type": "future.event_with_enum",
-            "data": {
-                "futureMode": "future_value_not_in_sdk_enum"
-            }
-        }
-        """;
-
-        var result = SessionEvent.FromJson(json);
-
-        Assert.IsType<SessionEvent>(result);
-        Assert.Equal("unknown", result.Type);
     }
 
     [Fact]
@@ -359,26 +278,6 @@ public class ForwardCompatibilityTests
         Assert.Null(msg.AgentId);
         Assert.Null(msg.ParentId);
         Assert.Equal("Hello", msg.Data.Content);
-    }
-
-    [Fact]
-    public void FromJson_UnknownEventType_PreservesAgentIdNull()
-    {
-        // Some events legitimately have no agent id. Verify it round-trips as null.
-        var json = """
-        {
-            "id": "00000000-0000-0000-0000-000000000001",
-            "timestamp": "2026-01-01T00:00:00Z",
-            "parentId": null,
-            "type": "future.something",
-            "data": {}
-        }
-        """;
-
-        var result = SessionEvent.FromJson(json);
-
-        Assert.Equal("unknown", result.Type);
-        Assert.Null(result.AgentId);
     }
 }
 

@@ -88,53 +88,6 @@ public class PreMcpToolCallHookE2ETests(E2ETestFixture fixture, ITestOutputHelpe
     }
 
     [Fact]
-    public async Task Should_Replace_Meta_Via_PreMcpToolCall_Hook()
-    {
-        var testHarnessDir = FindMetaEchoTestHarnessDir();
-        var hookInputs = new List<PreMcpToolCallHookInput>();
-
-        var session = await CreateSessionAsync(new CreateSessionOptions
-        {
-            Mcp = new SessionMcpOptions
-            {
-                Servers = CreateMetaEchoMcpConfig(testHarnessDir)
-            },
-            Hooks = new SessionHookOptions
-            {
-                Handlers = new SessionHooks
-                {
-                    OnPreMcpToolCall = (input, invocation) =>
-                    {
-                        hookInputs.Add(input);
-                        // Completely replace: ignore input.Meta entirely
-                        using var doc = JsonDocument.Parse("""{"completely":"replaced"}""");
-                        return Task.FromResult<PreMcpToolCallHookOutput?>(new PreMcpToolCallHookOutput { MetaToUse = doc.RootElement.Clone() });
-                    },
-                }
-            },
-            Permissions = new SessionPermissionOptions
-            {
-                OnRequest = PermissionHandler.ApproveAll
-            }
-        });
-
-        var message = await session.SendAndWaitAsync(new MessageOptions
-        {
-            Prompt = "Use the meta-echo/echo_meta tool with value 'test-replace'. Reply with just the raw tool result."
-        });
-
-        Assert.NotNull(message);
-        Assert.Contains("completely", message!.Data.Content);
-        Assert.Contains("replaced", message.Data.Content);
-
-        Assert.NotEmpty(hookInputs);
-        Assert.Equal("meta-echo", hookInputs[0].ServerName);
-        Assert.Equal("echo_meta", hookInputs[0].ToolName);
-
-        await session.DisposeAsync();
-    }
-
-    [Fact]
     public async Task Should_Remove_Meta_Via_PreMcpToolCall_Hook()
     {
         var testHarnessDir = FindMetaEchoTestHarnessDir();

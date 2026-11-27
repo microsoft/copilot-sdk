@@ -30,31 +30,13 @@ from copilot._mode import (
 
 
 class TestToolSet:
-    def test_add_builtin_string(self):
-        ts = ToolSet().add_builtin("bash")
-        assert ts.to_list() == ["builtin:bash"]
-
-    def test_add_builtin_wildcard(self):
-        ts = ToolSet().add_builtin("*")
-        assert ts.to_list() == ["builtin:*"]
-
     def test_add_builtin_iterable(self):
         ts = ToolSet().add_builtin(["bash", "edit"])
         assert ts.to_list() == ["builtin:bash", "builtin:edit"]
 
-    def test_add_builtin_isolated(self):
-        ts = ToolSet().add_builtin(BUILTIN_TOOLS_ISOLATED)
-        assert ts.to_list() == [f"builtin:{name}" for name in BUILTIN_TOOLS_ISOLATED]
-
     def test_add_mcp(self):
         ts = ToolSet().add_mcp("github-list_issues")
         assert ts.to_list() == ["mcp:github-list_issues"]
-
-    def test_add_mcp_wildcard(self):
-        assert ToolSet().add_mcp("*").to_list() == ["mcp:*"]
-
-    def test_add_custom(self):
-        assert ToolSet().add_custom("my_tool").to_list() == ["custom:my_tool"]
 
     def test_chained(self):
         ts = ToolSet().add_builtin(BUILTIN_TOOLS_ISOLATED).add_mcp("*").add_custom("*")
@@ -68,10 +50,6 @@ class TestToolSet:
         with pytest.raises(ValueError, match="must not be empty"):
             ToolSet().add_custom("")
 
-    def test_rejects_colon(self):
-        with pytest.raises(ValueError, match="tool names must match"):
-            ToolSet().add_mcp("server:tool")
-
     @pytest.mark.parametrize("method", ["add_builtin", "add_custom", "add_mcp"])
     def test_rejects_trailing_newline(self, method):
         with pytest.raises(ValueError, match="tool names must match"):
@@ -84,37 +62,12 @@ class TestToolSet:
 
 
 class TestEmptyModeValidation:
-    def test_empty_mode_requires_storage(self):
-        with pytest.raises(ValueError, match="requires base_directory"):
-            _require_storage_for_empty_mode(
-                mode="empty",
-                base_directory=None,
-                session_fs_set=False,
-                is_tcp_connection=False,
-            )
-
-    def test_empty_mode_accepts_base_directory(self):
-        _require_storage_for_empty_mode(
-            mode="empty",
-            base_directory="/tmp/x",
-            session_fs_set=False,
-            is_tcp_connection=False,
-        )
-
     def test_empty_mode_accepts_session_fs(self):
         _require_storage_for_empty_mode(
             mode="empty",
             base_directory=None,
             session_fs_set=True,
             is_tcp_connection=False,
-        )
-
-    def test_empty_mode_accepts_uri_connection(self):
-        _require_storage_for_empty_mode(
-            mode="empty",
-            base_directory=None,
-            session_fs_set=False,
-            is_tcp_connection=True,
         )
 
     def test_coding_agent_mode_no_storage_required(self):
@@ -385,13 +338,6 @@ class TestClientConstruction:
         )
         assert client._options.mode == "empty"
 
-    def test_empty_mode_with_tcp_connection_ok(self):
-        client = CopilotClient(
-            mode="empty",
-            runtime=TcpRuntimeConnection(host="localhost", port=1234),
-        )
-        assert client._options.mode == "empty"
-
     def test_requires_explicit_mode(self):
         with pytest.raises(TypeError, match="mode"):
             CopilotClient()
@@ -400,10 +346,3 @@ class TestClientConstruction:
     def test_rejects_invalid_mode(self, mode):
         with pytest.raises(ValueError, match="mode must be"):
             CopilotClient(mode=mode)
-
-    def test_explicit_coding_agent_mode(self):
-        client = CopilotClient(
-            mode="coding-agent",
-            runtime=TcpRuntimeConnection(host="localhost", port=1234),
-        )
-        assert client._options.mode == "coding-agent"

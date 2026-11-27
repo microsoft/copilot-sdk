@@ -9,7 +9,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.io.IOException;
-import java.lang.reflect.Modifier;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -54,12 +53,5 @@ class CapiProxyTest {
                 Files.deleteIfExists(directory);
             }
         }
-    }
-
-    @Test
-    void proxyInstancesShareHttpClientResources() throws Exception {
-        var field = CapiProxy.class.getDeclaredField("HTTP_CLIENT");
-        assertTrue(Modifier.isStatic(field.getModifiers()),
-                "E2E contexts must not retain one HttpClient selector manager per test class");
     }
 }

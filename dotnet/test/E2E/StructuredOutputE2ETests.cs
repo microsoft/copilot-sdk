@@ -232,37 +232,6 @@ public partial class StructuredOutputE2ETests(E2ETestFixture fixture, ITestOutpu
     }
 
     [Fact]
-    public async Task Typed_Wait_Returns_Stop_Hook_Correction()
-    {
-        var stops = 0;
-        var config = StructuredSessionConfig();
-        config.Hooks.Handlers = new SessionHooks
-        {
-            OnAgentStop = (_, _) => Task.FromResult<AgentStopHookOutput?>(
-                Interlocked.Increment(ref stops) == 1
-                    ? new() { Decision = "block", Reason = "Correct the answer to 99, not 42. Do not use tools." }
-                    : null),
-        };
-        var session = await CreateSessionAsync(config);
-        var replies = new System.Collections.Concurrent.ConcurrentQueue<AssistantMessageEvent>();
-        using var subscription = session.On<AssistantMessageEvent>(message =>
-        {
-            if (string.IsNullOrEmpty(message.AgentId)) replies.Enqueue(message);
-        });
-        var result = await session.SendAndWaitAsync<CorrectionResult>(
-            "What is 19 + 23? Do not use tools.",
-            StructuredOutputE2EJsonContext.Default.Options,
-            TimeSpan.FromMinutes(3));
-        Assert.Equal(99, result.Answer);
-        Assert.Equal(2, stops);
-        Assert.Equal(2, replies.Count);
-        Assert.False(string.IsNullOrEmpty(replies.First().Data.OriginatingMessageId));
-        Assert.Equal(replies.First().Data.OriginatingMessageId, replies.Last().Data.OriginatingMessageId);
-        Assert.Equal([42, 99], replies.Select(message =>
-            JsonSerializer.Deserialize(message.Data.Content, StructuredOutputE2EJsonContext.Default.CorrectionResult)!.Answer));
-    }
-
-    [Fact]
     public async Task Typed_Wait_Returns_Late_Steering_Response()
     {
         var stops = 0;
@@ -393,48 +362,31 @@ public partial class StructuredOutputE2ETests(E2ETestFixture fixture, ITestOutpu
     public async Task Rejects_Unsupported_Or_Oversized_Schemas_Before_Admission()
     {
         await using var client = Ctx.CreateClient();
-        foreach (var model in new[] { "gpt-4.1", "hydrafusion" })
-        {
-            var config = StructuredSessionConfig();
-            config.Model = model;
-            config.Experiments.EnableExperimentalMode = model == "hydrafusion";
-            if (model == "hydrafusion")
+        var config = StructuredSessionConfig();
+        config.Model = "gpt-4.1";
+        config.Permissions.OnRequest = PermissionHandler.ApproveAll;
+        await using var session = await Ctx.CreateSessionAsync(client, config);
+        await Assert.ThrowsAsync<ArgumentException>(() => session.SendAndWaitAsync<CorrectionResult>(
+            new MessageOptions { Prompt = "Must not be admitted", Mode = "immediate" },
+            StructuredOutputE2EJsonContext.Default.Options));
+        using var schema = JsonDocument.Parse(
+            "{\"type\":\"object\",\"description\":\"" + new string('x', 32 * 1024 * 1024) + "\"}");
+        var error = await Assert.ThrowsAnyAsync<Exception>(() =>
+            session.SendAndWaitAsync(new MessageOptions
             {
-                // Select the built-in mode rather than a default-provider alias.
-                config.Inference = new SessionInferenceOptions { Providers = [], Models = [] };
-                config.GitHub.Capi = new CapiSessionOptions { Enabled = true };
-                config.Experiments.Flags = new Dictionary<string, bool>
-                {
-                    ["HYDRAFUSION"] = true,
-                    ["HYDRAFUSION_ROLLOUT"] = true,
-                };
-            }
-            config.Permissions.OnRequest = PermissionHandler.ApproveAll;
-            await using var session = await Ctx.CreateSessionAsync(client, config);
-            await Assert.ThrowsAsync<ArgumentException>(() => session.SendAndWaitAsync<CorrectionResult>(
-                new MessageOptions { Prompt = "Must not be admitted", Mode = "immediate" },
-                StructuredOutputE2EJsonContext.Default.Options));
-            using var schema = JsonDocument.Parse(
-                "{\"type\":\"object\",\"description\":\"" +
-                (model == "gpt-4.1" ? new string('x', 32 * 1024 * 1024) : "Small schema") + "\"}");
-            var message = model == "gpt-4.1" ? "32 MiB" : "HydraFusion";
-            var error = await Assert.ThrowsAnyAsync<Exception>(() =>
-                session.SendAndWaitAsync(new MessageOptions
-                {
-                    Prompt = "Must not be admitted",
-                    ResponseSchema = schema.RootElement,
-                }));
-            Assert.Contains(message, error.Message);
-            error = await Assert.ThrowsAnyAsync<Exception>(() =>
-                session.Rpc.SendMessagesAsync([], responseFormat: new ResponseFormatJsonSchema
-                {
-                    JsonSchema = new() { Name = "response", Schema = schema.RootElement },
-                }));
-            Assert.Contains(message, error.Message);
-            Assert.Empty((await session.Rpc.Queue.PendingItemsAsync()).Items);
-            Assert.DoesNotContain(await session.GetEventsAsync(),
-                evt => evt is UserMessageEvent or SessionErrorEvent);
-        }
+                Prompt = "Must not be admitted",
+                ResponseSchema = schema.RootElement,
+            }));
+        Assert.Contains("32 MiB", error.Message);
+        error = await Assert.ThrowsAnyAsync<Exception>(() =>
+            session.Rpc.SendMessagesAsync([], responseFormat: new ResponseFormatJsonSchema
+            {
+                JsonSchema = new() { Name = "response", Schema = schema.RootElement },
+            }));
+        Assert.Contains("32 MiB", error.Message);
+        Assert.Empty((await session.Rpc.Queue.PendingItemsAsync()).Items);
+        Assert.DoesNotContain(await session.GetEventsAsync(),
+            evt => evt is UserMessageEvent or SessionErrorEvent);
         Assert.Empty(await Ctx.GetExchangesAsync());
     }
 

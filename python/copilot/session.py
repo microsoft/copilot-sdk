@@ -18,6 +18,7 @@ import pathlib
 import threading
 import time
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -257,10 +258,97 @@ def _consume_task_exception(task: asyncio.Task[Any]) -> None:
         task.exception()
 
 
-_handler_dispatches: dict[asyncio.Task[Any], asyncio.Task[Any]] = {}
+# Inherited context alone does not make a child task own its caller's dispatch.
+_DispatchResolver = Callable[[], asyncio.Task[Any] | None]
+_handler_dispatch: ContextVar[
+    tuple[asyncio.Task[Any] | None, _DispatchResolver, CopilotSession] | None
+] = ContextVar("copilot_handler_dispatch", default=None)
 
 
-async def _run_handler(handler: Callable[..., Any], *args: Any) -> Any:
+def _handler_awaits(handler: asyncio.Task[Any], task: asyncio.Task[Any]) -> bool:
+    pending: list[asyncio.Future[Any]] = [handler]
+    visited = set()
+    while pending:
+        awaiting = pending.pop()
+        if awaiting is task:
+            return True
+        # A completed wait can remain linked until the handler resumes.
+        if awaiting.done() or awaiting in visited:
+            continue
+        visited.add(awaiting)
+        if not isinstance(awaiting, asyncio.Task):
+            # gather waits on its children through a Future rather than a Task.
+            pending.extend(getattr(awaiting, "_children", ()))
+            # shield's outer Future retains the inner wait through its callback.
+            for callback, _context in getattr(awaiting, "_callbacks", None) or ():
+                if (
+                    inspect.isfunction(callback)
+                    and callback.__code__ in asyncio.shield.__code__.co_consts
+                ):
+                    inner = inspect.getclosurevars(callback).nonlocals.get("inner")
+                    if isinstance(inner, asyncio.Future):
+                        pending.append(inner)
+            continue
+        awaited = awaiting.get_coro()
+        waiter = getattr(awaiting, "_fut_waiter", None)
+        if isinstance(waiter, asyncio.Future):
+            pending.append(waiter)
+        while inspect.iscoroutine(awaited):
+            frame = awaited.cr_frame
+            # These operations suspend on completion Futures without links to their tasks.
+            if frame is not None and isinstance(waiter, asyncio.Future) and not waiter.done():
+                if awaited.cr_code is asyncio.wait_for.__code__:
+                    future = frame.f_locals.get("fut")
+                    if isinstance(future, asyncio.Future):
+                        pending.append(future)
+                elif awaited.cr_code is asyncio.wait.__code__:
+                    pending.extend(
+                        future
+                        for future in frame.f_locals.get("fs", ())
+                        if isinstance(future, asyncio.Future)
+                    )
+                elif awaited.cr_code is asyncio.TaskGroup.__aexit__.__code__:
+                    group = frame.f_locals.get("self")
+                    if isinstance(group, asyncio.TaskGroup):
+                        pending.extend(getattr(group, "_tasks", ()))
+            awaited = awaited.cr_await
+    return False
+
+
+def _capture_handler_dispatch(session: CopilotSession | None = None) -> _DispatchResolver | None:
+    owner = _handler_dispatch.get()
+    current = asyncio.current_task()
+    if owner is None or current is None:
+        return None
+    handler, resolve_dispatch, owner_session = owner
+    if session is not None and owner_session is not session:
+        return None
+    if handler is None or not _handler_awaits(handler, current):
+        return None
+
+    # A gather sibling can release the handler while session.detach is in flight.
+    def resolve() -> asyncio.Task[Any] | None:
+        return resolve_dispatch() if _handler_awaits(handler, current) else None
+
+    return resolve
+
+
+async def _await_handler_shutdown(
+    operation: Callable[[], Awaitable[None]], resolve_dispatch: _DispatchResolver | None
+) -> None:
+    owner = _handler_dispatch.get()
+    token = _handler_dispatch.set(
+        (asyncio.current_task(), resolve_dispatch, owner[2])
+        if resolve_dispatch and owner is not None
+        else None
+    )
+    try:
+        await operation()
+    finally:
+        _handler_dispatch.reset(token)
+
+
+async def _run_handler(session: CopilotSession, handler: Callable[..., Any], *args: Any) -> Any:
     """Call a user handler, awaiting its result, in a task of its own.
 
     A handler that cancels its own task then fails like any other handler instead
@@ -271,17 +359,14 @@ async def _run_handler(handler: Callable[..., Any], *args: Any) -> Any:
     dispatch = asyncio.current_task()
 
     async def invoke() -> Any:
-        handler_task = asyncio.current_task()
-        if handler_task is not None and dispatch is not None:
-            _handler_dispatches[handler_task] = dispatch
+        token = _handler_dispatch.set((asyncio.current_task(), lambda: dispatch, session))
         try:
             result = handler(*args)
             if inspect.isawaitable(result):
                 result = await result
             return result
         finally:
-            if handler_task is not None:
-                _handler_dispatches.pop(handler_task, None)
+            _handler_dispatch.reset(token)
 
     return await asyncio.create_task(invoke())
 
@@ -2120,7 +2205,7 @@ class _BearerTokenProviderAdapter:
             "provider_name": provider_name,
             "session_id": params.session_id,
         }
-        result = await _run_handler(callback, args)
+        result = await _run_handler(self._session, callback, args)
         return ProviderTokenAcquireResult(token=cast(str, result))
 
 
@@ -2256,17 +2341,20 @@ class CopilotSession:
         if callback is not None:
             callback()
 
-    def _cancel_pending_external_tools(self) -> None:
+    def _cancel_pending_external_tools(
+        self, initiating_dispatch: asyncio.Task[Any] | None = None
+    ) -> None:
         pending_external_tools = list(self._pending_external_tools.values())
         self._pending_external_tools.clear()
         current_task = asyncio.current_task()
         # A handler shutting down its client must not cancel its own awaiting dispatch.
-        dispatch = _handler_dispatches.get(current_task) if current_task is not None else None
+        resolve_dispatch = _capture_handler_dispatch(self)
+        dispatch = initiating_dispatch or (resolve_dispatch() if resolve_dispatch else None)
         for task in pending_external_tools:
             if task is not current_task and task is not dispatch:
                 task.cancel()
 
-    def _mark_disconnected(self) -> None:
+    def _mark_disconnected(self, initiating_dispatch: asyncio.Task[Any] | None = None) -> None:
         with self._event_handlers_lock:
             if self._destroyed:
                 return
@@ -2276,7 +2364,7 @@ class CopilotSession:
             fail()
         self._response_waits.clear()
         self._fail_structured_waits()
-        self._cancel_pending_external_tools()
+        self._cancel_pending_external_tools(initiating_dispatch)
         with self._tool_handlers_lock:
             self._tool_handlers.clear()
         self._clear_skill_provider()
@@ -3399,7 +3487,7 @@ class CopilotSession:
             with trace_context(traceparent, tracestate):
                 handler_start = time.perf_counter()
                 try:
-                    result = await _run_handler(handler, invocation)
+                    result = await _run_handler(self, handler, invocation)
                 finally:
                     # A handler can retain its invocation; release the session.
                     _release_progress_reporter(invocation)
@@ -3562,7 +3650,7 @@ class CopilotSession:
                 invocation["assisted_approval_assessment"] = assisted_approval_assessment
             if program_tool_call_id is not None:
                 invocation["program_tool_call_id"] = program_tool_call_id
-            result = await _run_handler(handler, permission_request, invocation)
+            result = await _run_handler(self, handler, permission_request, invocation)
             log_timing(
                 logger,
                 logging.DEBUG,
@@ -3624,7 +3712,7 @@ class CopilotSession:
             handler_start = time.perf_counter()
             result = cast(
                 McpAuthHandlerResult,
-                await _run_handler(handler, request, {"sessionId": self.session_id}),
+                await _run_handler(self, handler, request, {"sessionId": self.session_id}),
             )
             log_timing(
                 logger,
@@ -3704,7 +3792,7 @@ class CopilotSession:
                 args=args,
             )
             handler_start = time.perf_counter()
-            await _run_handler(handler, ctx)
+            await _run_handler(self, handler, ctx)
             log_timing(
                 logger,
                 logging.DEBUG,
@@ -3758,7 +3846,7 @@ class CopilotSession:
 
         try:
             handler_start = time.perf_counter()
-            result = cast(ElicitationHandlerResult, await _run_handler(handler, context))
+            result = cast(ElicitationHandlerResult, await _run_handler(self, handler, context))
             log_timing(
                 logger,
                 logging.DEBUG,
@@ -4169,7 +4257,9 @@ class CopilotSession:
             request_id = request.get("requestId")
             if isinstance(request_id, str) and request_id:
                 typed_request["requestId"] = request_id
-            result = await _run_handler(handler, typed_request, {"session_id": self.session_id})
+            result = await _run_handler(
+                self, handler, typed_request, {"session_id": self.session_id}
+            )
             log_timing(
                 logger,
                 logging.DEBUG,
@@ -4383,7 +4473,7 @@ class CopilotSession:
             callback = callbacks.get(section_id) if callbacks else None
             if callback:
                 try:
-                    transformed = await _run_handler(callback, content)
+                    transformed = await _run_handler(self, callback, content)
                     # A callback that returns no value leaves the section unchanged.
                     result[section_id] = {
                         "content": content if transformed is None else str(transformed)
@@ -4464,7 +4554,9 @@ class CopilotSession:
             # specific TypedDict variant from the runtime ``dict``.
             input_data = cast(Any, transformed)
             with trace_context(transformed.get("traceparent"), transformed.get("tracestate")):
-                result = await _run_handler(handler, input_data, {"session_id": self.session_id})
+                result = await _run_handler(
+                    self, handler, input_data, {"session_id": self.session_id}
+                )
             if isinstance(result, dict):
                 modified_result = result.get("modifiedResult")
                 if isinstance(modified_result, ToolResult):

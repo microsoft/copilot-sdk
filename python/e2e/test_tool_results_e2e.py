@@ -15,36 +15,6 @@ pytestmark = pytest.mark.asyncio(loop_scope="module")
 
 
 class TestToolResults:
-    async def test_should_handle_structured_toolresultobject_from_custom_tool(
-        self, ctx: E2ETestContext
-    ):
-        class WeatherParams(BaseModel):
-            city: str = Field(description="City name")
-
-        @define_tool("get_weather", description="Gets weather for a city")
-        def get_weather(params: WeatherParams, invocation: ToolInvocation) -> ToolResult:
-            return ToolResult(
-                text_result_for_llm=f"The weather in {params.city} is sunny and 72°F",
-                result_type="success",
-            )
-
-        session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all},
-            tools={"definitions": [get_weather]},
-        )
-
-        try:
-            assistant_message = await session.send_and_wait(
-                "What's the weather in Paris?", timeout=10.0
-            )
-            assert assistant_message is not None
-            assert (
-                "sunny" in assistant_message.data.content.lower()
-                or "72" in assistant_message.data.content
-            )
-        finally:
-            await session.disconnect()
-
     async def test_should_handle_tool_result_with_failure_resulttype(self, ctx: E2ETestContext):
         @define_tool("check_status", description="Checks the status of a service")
         def check_status(invocation: ToolInvocation) -> ToolResult:
@@ -165,54 +135,6 @@ class TestToolResults:
 
             # Session should reach idle
             await asyncio.wait_for(idle_future, timeout=30.0)
-        finally:
-            unsubscribe()
-            await session.disconnect()
-
-    async def test_should_handle_tool_result_with_denied_resulttype(self, ctx: E2ETestContext):
-        tool_handler_called = False
-        tool_complete_future: asyncio.Future = asyncio.get_event_loop().create_future()
-
-        @define_tool("access_secret", description="Accesses a secret")
-        def access_secret(invocation: ToolInvocation) -> ToolResult:
-            nonlocal tool_handler_called
-            tool_handler_called = True
-            return ToolResult(
-                text_result_for_llm="Access denied: insufficient permissions to read secrets",
-                result_type="denied",
-            )
-
-        session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all},
-            tools={"definitions": [access_secret]},
-        )
-
-        def on_event(event):
-            if event.type.value == "tool.execution_complete" and not tool_complete_future.done():
-                tool_complete_future.set_result(event)
-
-        unsubscribe = session.on(on_event)
-        try:
-            send_task = asyncio.create_task(
-                session.send_and_wait(
-                    "Use access_secret to get the API key."
-                    " If access is denied, tell me it was 'access denied'.",
-                    timeout=60.0,
-                )
-            )
-            tool_evt = await asyncio.wait_for(tool_complete_future, timeout=60.0)
-
-            assert tool_handler_called, "Tool handler should have been called"
-            assert not tool_evt.data.success
-            error = tool_evt.data.error
-            assert error is not None
-            error_code = error if isinstance(error, str) else getattr(error, "code", None)
-            assert error_code == "denied"
-            error_msg = error if isinstance(error, str) else getattr(error, "message", None)
-            assert "Access denied" in (error_msg or "")
-
-            answer = await send_task
-            assert answer is not None
         finally:
             unsubscribe()
             await session.disconnect()

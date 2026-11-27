@@ -29,10 +29,15 @@ public class PermissionRequestResultTest {
             .build();
 
     @Test
-    void testApproveOnce() {
-        var result = PermissionRequestResult.approveOnce();
-        assertEquals("approve-once", result.getKind());
-        assertNull(result.getFeedback());
+    void testFactoryKindsAndFeedback() {
+        assertEquals("approve-once", PermissionRequestResult.approveOnce().getKind());
+        assertEquals("user-not-available", PermissionRequestResult.userNotAvailable().getKind());
+        assertEquals("no-result", PermissionRequestResult.noResult().getKind());
+        var reject = PermissionRequestResult.reject(null);
+        assertEquals("reject", reject.getKind());
+        assertNull(reject.getFeedback());
+        assertNull(PermissionRequestResult.userNotAvailable().getFeedback());
+        assertNull(PermissionRequestResult.noResult().getFeedback());
     }
 
     @Test
@@ -45,34 +50,7 @@ public class PermissionRequestResultTest {
         assertEquals("approve-read-only-for-session", json.get("kind").asText());
         assertEquals("/outside/reference", json.get("directories").get(0).asText());
         assertFalse(json.has("locationKey"));
-    }
-
-    @Test
-    void testRejectWithFeedback() {
-        var result = PermissionRequestResult.reject("Not allowed");
-        assertEquals("reject", result.getKind());
-        assertEquals("Not allowed", result.getFeedback());
-    }
-
-    @Test
-    void testRejectWithoutFeedback() {
-        var result = PermissionRequestResult.reject(null);
-        assertEquals("reject", result.getKind());
-        assertNull(result.getFeedback());
-    }
-
-    @Test
-    void testUserNotAvailable() {
-        var result = PermissionRequestResult.userNotAvailable();
-        assertEquals("user-not-available", result.getKind());
-        assertNull(result.getFeedback());
-    }
-
-    @Test
-    void testNoResult() {
-        var result = PermissionRequestResult.noResult();
-        assertEquals("no-result", result.getKind());
-        assertNull(result.getFeedback());
+        assertFalse(json.has("feedback"));
     }
 
     @Test
@@ -81,13 +59,6 @@ public class PermissionRequestResultTest {
         var json = MAPPER.writeValueAsString(result);
         assertTrue(json.contains("\"feedback\":\"Unsafe operation\""));
         assertTrue(json.contains("\"kind\":\"reject\""));
-    }
-
-    @Test
-    void testFeedbackNotSerializedWhenNull() throws Exception {
-        var result = PermissionRequestResult.approveOnce();
-        var json = MAPPER.writeValueAsString(result);
-        assertFalse(json.contains("feedback"));
     }
 
     @Test

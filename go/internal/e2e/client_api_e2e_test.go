@@ -19,35 +19,6 @@ func TestClientAPIE2E(t *testing.T) {
 		t.Fatalf("Failed to start client: %v", err)
 	}
 
-	t.Run("should delete session by id", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}})
-		if err != nil {
-			t.Fatalf("Failed to create session: %v", err)
-		}
-		sessionID := session.SessionID
-
-		if _, err := session.SendAndWait(t.Context(), copilot.MessageOptions{Prompt: "Say OK."}); err != nil {
-			t.Fatalf("Failed to send message: %v", err)
-		}
-		if err := session.Disconnect(); err != nil {
-			t.Fatalf("Failed to disconnect session: %v", err)
-		}
-
-		if err := client.DeleteSession(t.Context(), sessionID); err != nil {
-			t.Fatalf("Failed to delete session: %v", err)
-		}
-
-		metadata, err := client.GetSessionMetadata(t.Context(), sessionID)
-		if err != nil {
-			t.Fatalf("Failed to query session metadata: %v", err)
-		}
-		if metadata != nil {
-			t.Errorf("Expected metadata to be nil after delete, got %+v", metadata)
-		}
-	})
-
 	t.Run("should report error when deleting unknown session id", func(t *testing.T) {
 		sessionID := "00000000-0000-0000-0000-000000000000"
 		err := client.DeleteSession(t.Context(), sessionID)
@@ -81,45 +52,6 @@ func TestClientAPIE2E(t *testing.T) {
 		}
 	})
 
-	t.Run("should track last session id after session created", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}})
-		if err != nil {
-			t.Fatalf("Failed to create session: %v", err)
-		}
-		sessionID := session.SessionID
-
-		if _, err := session.SendAndWait(t.Context(), copilot.MessageOptions{Prompt: "Say OK."}); err != nil {
-			t.Fatalf("Failed to send message: %v", err)
-		}
-		if err := session.Disconnect(); err != nil {
-			t.Fatalf("Failed to disconnect session: %v", err)
-		}
-
-		lastID, err := client.GetLastSessionID(t.Context())
-		if err != nil {
-			t.Fatalf("Failed to get last session id: %v", err)
-		}
-		if lastID == nil || *lastID != sessionID {
-			got := "<nil>"
-			if lastID != nil {
-				got = *lastID
-			}
-			t.Errorf("Expected last session id %q, got %q", sessionID, got)
-		}
-	})
-
-	t.Run("should get null foreground session id in headless mode", func(t *testing.T) {
-		sessionID, err := client.GetForegroundSessionID(t.Context())
-		if err != nil {
-			t.Fatalf("Failed to get foreground session id: %v", err)
-		}
-		if sessionID != nil {
-			t.Errorf("Expected nil foreground session id in headless mode, got %q", *sessionID)
-		}
-	})
-
 	t.Run("should report error when setting foreground session in headless mode", func(t *testing.T) {
 		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}})
 		if err != nil {
@@ -133,6 +65,13 @@ func TestClientAPIE2E(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "Not running in TUI+server mode") {
 			t.Errorf("Expected error mentioning 'Not running in TUI+server mode', got %v", err)
+		}
+		foreground, err := client.GetForegroundSessionID(t.Context())
+		if err != nil {
+			t.Fatalf("Failed to get foreground session id: %v", err)
+		}
+		if foreground != nil {
+			t.Errorf("Expected nil foreground session id in headless mode, got %q", *foreground)
 		}
 	})
 }

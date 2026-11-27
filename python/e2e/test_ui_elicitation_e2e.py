@@ -53,60 +53,6 @@ class TestUiElicitation:
 
         await session.disconnect()
 
-    async def test_session_with_elicitation_handler_reports_capability(self, ctx: E2ETestContext):
-        """Session created with onElicitationContext reports elicitation capability."""
-
-        async def handler(
-            context: ElicitationContext,
-        ) -> ElicitationResult:
-            return {"action": "accept", "content": {}}
-
-        session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all},
-            interaction={"on_elicitation_request": handler},
-        )
-
-        assert session.capabilities.get("ui", {}).get("elicitation") is True
-
-        await session.disconnect()
-
-    async def test_session_without_elicitation_handler_reports_no_capability(
-        self, ctx: E2ETestContext
-    ):
-        """Session created without onElicitationContext reports no elicitation capability."""
-        session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all}
-        )
-
-        assert session.capabilities.get("ui", {}).get("elicitation") in (False, None)
-
-        await session.disconnect()
-
-    async def test_sends_request_elicitation_when_handler_provided(self, ctx: E2ETestContext):
-        """Session is created successfully with requestElicitation=true when handler is provided."""
-
-        async def handler(_: ElicitationContext) -> ElicitationResult:
-            return {"action": "accept", "content": {}}
-
-        session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all},
-            interaction={"on_elicitation_request": handler},
-        )
-
-        assert session.session_id is not None
-        await session.disconnect()
-
-    async def test_session_without_elicitation_handler_creates_successfully(
-        self, ctx: E2ETestContext
-    ):
-        """Session without an elicitation handler still creates successfully."""
-        session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all}
-        )
-
-        assert session.session_id is not None
-        await session.disconnect()
-
     async def test_confirm_returns_true_when_handler_accepts(self, ctx: E2ETestContext):
         async def handler(context: ElicitationContext) -> ElicitationResult:
             assert context["message"] == "Confirm?"

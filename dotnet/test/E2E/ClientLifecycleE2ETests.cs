@@ -1,8 +1,9 @@
-﻿/*---------------------------------------------------------------------------------------------
+/*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
 using Microsoft.Copilot.Rpc;
+using System.Text.Json;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -22,19 +23,6 @@ public class ClientLifecycleE2ETests(E2ETestFixture fixture, ITestOutputHelper o
                 created.TrySetResult(evt);
             }
         });
-
-        await using var session = await CreateSessionAsync();
-        var evt = await created.Task.WaitAsync(TimeSpan.FromSeconds(10));
-
-        Assert.IsType<SessionCreatedEvent>(evt);
-        Assert.Equal(session.SessionId, evt.SessionId);
-    }
-
-    [Fact]
-    public async Task Should_Filter_Session_Lifecycle_Events_By_Type()
-    {
-        var created = new TaskCompletionSource<SessionLifecycleEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var subscription = Client.OnLifecycle<SessionCreatedEvent>(evt => created.TrySetResult(evt));
 
         await using var session = await CreateSessionAsync();
         var evt = await created.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -75,6 +63,58 @@ public class ClientLifecycleE2ETests(E2ETestFixture fixture, ITestOutputHelper o
             client.Dispose();
         }
         Assert.Throws<ObjectDisposedException>(() => client.Rpc);
+    }
+
+    [Fact]
+    public async Task Stop_Detaches_Both_Real_Sessions_Before_Releasing_Either_Reply()
+    {
+        var direct = RuntimeConnection.ForSpawnedStdio();
+        await using var resumedClient = Ctx.CreateClient(new CopilotClientOptions
+        {
+            Mode = CopilotClientMode.CodingAgent,
+            Runtime = direct,
+            GitHub = new ClientGitHubOptions { UseLoggedInUser = false },
+        }, autoInjectGitHubToken: false);
+        var witness = Path.Combine(Ctx.WorkDir, "detached.json");
+        var relay = Path.Combine(FindTestHarnessDir(), "stdio-detach-gate.cjs");
+        await using var client = Ctx.CreateClient(new CopilotClientOptions
+        {
+            Mode = CopilotClientMode.CodingAgent,
+            Runtime = RuntimeConnection.ForSpawnedStdio("node", [relay, direct.Path!, witness]),
+            GitHub = new ClientGitHubOptions { UseLoggedInUser = false },
+        }, autoInjectGitHubToken: false);
+
+        var permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll };
+        var ids = new List<string>();
+        for (var i = 0; i < 2; i++)
+        {
+            var session = await Ctx.CreateSessionAsync(client, new CreateSessionOptions
+            {
+                EnableConfigDiscovery = false,
+                Permissions = permissions,
+            });
+            ids.Add(session.SessionId);
+            await session.Rpc.History.ImportConversationAsync([
+                new HistoryImportConversationEventUserMessage { Data = new() { Content = session.SessionId } },
+            ]);
+        }
+        await client.StopAsync();
+        using var detached = JsonDocument.Parse(File.ReadAllText(witness));
+        Assert.Equal(ids.OrderBy(id => id, StringComparer.Ordinal),
+            detached.RootElement.EnumerateArray().Select(id => id.GetString()!).OrderBy(id => id, StringComparer.Ordinal));
+
+        foreach (var id in ids)
+        {
+            var session = await Ctx.ResumeSessionAsync(resumedClient, id, new ResumeSessionOptions
+            {
+                WorkingDirectory = Ctx.WorkDir,
+                EnableConfigDiscovery = false,
+                Permissions = permissions,
+            });
+            var message = Assert.Single((await session.GetEventsAsync()).OfType<UserMessageEvent>());
+            Assert.Equal(id, message.Data.Content);
+        }
+        await resumedClient.StopAsync();
     }
 
     [Fact]

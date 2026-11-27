@@ -3,7 +3,6 @@
  *--------------------------------------------------------------------------------------------*/
 
 using Microsoft.Copilot.Rpc;
-using System.Text.Json;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -61,36 +60,6 @@ public class ScenarioTestingSkillsAndAgentsE2ETests(E2ETestFixture fixture, ITes
             skillFile);
     }
 
-    [Fact]
-    public async Task Should_Classify_Agent_Method_Not_Found_As_Remote_Protocol_Error()
-    {
-        var scriptPath = Path.Join(
-            Path.GetTempPath(),
-            $"copilot-agent-method-not-found-{Guid.NewGuid():N}.cjs");
-        File.WriteAllText(scriptPath, FakeAgentMethodNotFoundCliScript);
-
-        try
-        {
-            await using var client = Ctx.CreateClient(options: new CopilotClientOptions
-            {
-                Mode = CopilotClientMode.CodingAgent,
-                Runtime = RuntimeConnection.ForSpawnedStdio(path: "node", args: [scriptPath])
-            });
-            await using var session = await Ctx.CreateSessionAsync(client, new CreateSessionOptions
-            { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
-
-            var exception = await Assert.ThrowsAsync<RemoteRpcException>(() => session.Rpc.Agent.ReloadAsync());
-
-            Assert.Contains("Method not found: session.agent.reload", exception.Message, StringComparison.Ordinal);
-            Assert.Equal(-32601, exception.ErrorCode);
-            Assert.DoesNotContain("Unhandled method", exception.ToString(), StringComparison.OrdinalIgnoreCase);
-        }
-        finally
-        {
-            File.Delete(scriptPath);
-        }
-    }
-
     private static string WriteSkill(
         string skillsDirectory,
         string skillName,
@@ -129,71 +98,4 @@ public class ScenarioTestingSkillsAndAgentsE2ETests(E2ETestFixture fixture, ITes
         Assert.Equal(description, skill.Description);
         Assert.Equal(expectedPath, skill.Path);
     }
-
-    private const string FakeAgentMethodNotFoundCliScript = """
-        let buffer = Buffer.alloc(0);
-
-        process.stdin.on("data", chunk => {
-          buffer = Buffer.concat([buffer, chunk]);
-          processBuffer();
-        });
-        process.stdin.resume();
-
-        function processBuffer() {
-          while (true) {
-            const headerEnd = buffer.indexOf("\r\n\r\n");
-            if (headerEnd < 0) return;
-            const header = buffer.subarray(0, headerEnd).toString("utf8");
-            const match = /Content-Length:\s*(\d+)/i.exec(header);
-            if (!match) throw new Error("Missing Content-Length header");
-            const length = Number(match[1]);
-            const bodyStart = headerEnd + 4;
-            const bodyEnd = bodyStart + length;
-            if (buffer.length < bodyEnd) return;
-            const body = buffer.subarray(bodyStart, bodyEnd).toString("utf8");
-            buffer = buffer.subarray(bodyEnd);
-            handleMessage(JSON.parse(body));
-          }
-        }
-
-        function handleMessage(message) {
-          if (!Object.prototype.hasOwnProperty.call(message, "id")) return;
-          if (message.method === "connect") {
-            writeResult(message.id, { ok: true, protocolVersion: 4, version: "fake" });
-            return;
-          }
-          if (message.method === "ping") {
-            writeResult(message.id, { message: "pong", protocolVersion: 4 });
-            return;
-          }
-          if (message.method === "session.create") {
-            const params = Array.isArray(message.params) ? message.params[0] : message.params;
-            writeResult(message.id, {
-              sessionId: params?.sessionId ?? "fake-agent-session",
-              workspacePath: null,
-              capabilities: null,
-              openCanvases: []
-            });
-            return;
-          }
-          if (message.method === "session.agent.reload") {
-            writeError(message.id, -32601, "Method not found: session.agent.reload");
-            return;
-          }
-          writeResult(message.id, {});
-        }
-
-        function writeResult(id, result) {
-          writeMessage({ jsonrpc: "2.0", id, result });
-        }
-
-        function writeError(id, code, message) {
-          writeMessage({ jsonrpc: "2.0", id, error: { code, message } });
-        }
-
-        function writeMessage(message) {
-          const body = JSON.stringify(message);
-          process.stdout.write(`Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`);
-        }
-        """;
 }

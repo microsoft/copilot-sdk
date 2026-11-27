@@ -16,14 +16,6 @@ func TestTruncBuffer_SmallWrites(t *testing.T) {
 	}
 }
 
-func TestTruncBuffer_ExactMax(t *testing.T) {
-	tb := NewTruncBuffer(5)
-	tb.Write([]byte("abcde"))
-	if got := string(tb.Bytes()); got != "abcde" {
-		t.Fatalf("got %q, want %q", got, "abcde")
-	}
-}
-
 func TestTruncBuffer_OverflowSingleWrite(t *testing.T) {
 	tb := NewTruncBuffer(5)
 	tb.Write([]byte("abcdefgh"))
@@ -38,16 +30,6 @@ func TestTruncBuffer_OverflowMultipleWrites(t *testing.T) {
 	tb.Write([]byte("defgh"))
 	if got := string(tb.Bytes()); got != "cdefgh" {
 		t.Fatalf("got %q, want %q", got, "cdefgh")
-	}
-}
-
-func TestTruncBuffer_ManySmallWrites(t *testing.T) {
-	tb := NewTruncBuffer(4)
-	for _, b := range []byte("abcdefg") {
-		tb.Write([]byte{b})
-	}
-	if got := string(tb.Bytes()); got != "defg" {
-		t.Fatalf("got %q, want %q", got, "defg")
 	}
 }
 

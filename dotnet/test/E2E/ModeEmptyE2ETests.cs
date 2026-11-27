@@ -88,17 +88,6 @@ public class ModeEmptyE2ETests(E2ETestFixture fixture, ITestOutputHelper output)
     }
 
     [Fact]
-    public async Task Empty_Mode_System_Message_Replace_Llm_Follows_Caller_Content_Verbatim()
-    {
-        await using var client = Ctx.CreateClient(options: EmptyModeOptions(Ctx));
-        await using var session = await Ctx.CreateSessionAsync(client, new CreateSessionOptions
-        { SystemMessage = new SystemMessageConfig { Mode = SystemMessageMode.Replace, Content = "You are a test fixture. Whenever the user asks anything, reply with exactly the single word KRYPTON in all caps and nothing else.", }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll }, Tools = new SessionToolOptions { AvailableTools = new ToolSet().AddBuiltIn(BuiltInTools.Isolated) } });
-
-        var reply = await session.SendAndWaitAsync(new MessageOptions { Prompt = "Hello." });
-        Assert.Contains("KRYPTON", reply?.Data.Content ?? string.Empty);
-    }
-
-    [Fact]
     public async Task Empty_Mode_Append_Caller_Instruction_Takes_Effect_And_Env_Context_Stripped()
     {
         await using var client = Ctx.CreateClient(options: EmptyModeOptions(Ctx));

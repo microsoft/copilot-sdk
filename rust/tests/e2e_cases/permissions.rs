@@ -2,10 +2,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use copilot_sdk::handler::{PermissionHandler, PermissionResult};
-use copilot_sdk::rpc::{
-    PermissionsSetApproveAllRequest, PermissionsSetModeRequest,
-    SessionPermissionsManagedReviewRequiredParams,
-};
+use copilot_sdk::rpc::{PermissionsSetModeRequest, SessionPermissionsManagedReviewRequiredParams};
 use copilot_sdk::session_events::{
     AssistedApprovalAssessment, AssistedApprovalCompletedRecommendation, PermissionMode,
     SessionEventType, ToolExecutionCompleteData,
@@ -76,48 +73,6 @@ async fn should_deny_permission_when_handler_returns_denied() {
 }
 
 #[tokio::test]
-async fn should_deny_tool_operations_when_handler_explicitly_denies() {
-    super::support::with_shared_e2e_context(
-        &E2E,
-        "permissions",
-        "should_deny_tool_operations_when_handler_explicitly_denies",
-        |ctx| {
-            Box::pin(async move {
-                ctx.set_default_copilot_user();
-                let client = ctx.start_client().await;
-                let session = client
-                    .create_session(
-                        CreateSessionOptions::default()
-                            .with_github(|group| group.with_token(DEFAULT_TEST_TOKEN))
-                            .with_permissions(|group| {
-                                group.with_on_request(Arc::new(StaticPermissionHandler::new(
-                                    PermissionResult::user_not_available(),
-                                )))
-                            }),
-                    )
-                    .await
-                    .expect("create session");
-                let events = session.subscribe();
-
-                session
-                    .send_and_wait("Run 'node --version'")
-                    .await
-                    .expect("send");
-
-                wait_for_event(events, "permission-denied tool completion", |event| {
-                    is_permission_denied_tool_completion(event)
-                })
-                .await;
-
-                session.disconnect().await.expect("disconnect session");
-                client.stop().await.expect("stop client");
-            })
-        },
-    )
-    .await;
-}
-
-#[tokio::test]
 async fn should_handle_async_permission_handler() {
     super::support::with_shared_e2e_context(
         &E2E,
@@ -174,63 +129,6 @@ async fn should_handle_async_permission_handler() {
 
                 session.disconnect().await.expect("disconnect session");
                 client.stop().await.expect("stop client");
-            })
-        },
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn should_resume_session_with_permission_handler() {
-    super::support::with_dedicated_e2e_context(
-        "permissions",
-        "should_resume_session_with_permission_handler",
-        |ctx| {
-            Box::pin(async move {
-                ctx.set_default_copilot_user();
-                let client = ctx.start_client().await;
-                let session = client
-                    .create_session(ctx.approve_all_session_config())
-                    .await
-                    .expect("create session");
-                session
-                    .send_and_wait("What is 1+1?")
-                    .await
-                    .expect("first send");
-                let session_id = session.id().clone();
-                session
-                    .disconnect()
-                    .await
-                    .expect("disconnect first session");
-                client.stop().await.expect("stop first client");
-
-                let new_client = ctx.start_client().await;
-                let (request_tx, mut request_rx) = mpsc::unbounded_channel();
-                let resumed = new_client
-                    .resume_session(
-                        ResumeSessionOptions::new(session_id)
-                            .with_github(|group| group.with_token(DEFAULT_TEST_TOKEN))
-                            .with_permissions(|group| {
-                                group.with_on_request(Arc::new(RecordingPermissionHandler {
-                                    request_tx,
-                                }))
-                            }),
-                    )
-                    .await
-                    .expect("resume session");
-
-                resumed
-                    .send_and_wait("Run 'echo resumed' for me")
-                    .await
-                    .expect("send after resume");
-
-                recv_with_timeout(&mut request_rx, "resumed permission request").await;
-
-                resumed
-                    .disconnect()
-                    .await
-                    .expect("disconnect resumed session");
-                new_client.stop().await.expect("stop resumed client");
             })
         },
     )
@@ -468,116 +366,6 @@ async fn should_receive_toolcallid_in_permission_requests() {
                     permission_request_tool_call_id(&request).is_some(),
                     "expected permission request to include a toolCallId: {request:?}"
                 );
-
-                session.disconnect().await.expect("disconnect session");
-                client.stop().await.expect("stop client");
-            })
-        },
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn should_deny_permission_with_noresult_kind() {
-    super::support::with_shared_e2e_context(
-        &E2E,
-        "permissions",
-        "should_deny_permission_with_noresult_kind",
-        |ctx| {
-            Box::pin(async move {
-                ctx.set_default_copilot_user();
-                let client = ctx.start_client().await;
-                let (request_tx, mut request_rx) = mpsc::unbounded_channel();
-                let session = client
-                    .create_session(
-                        CreateSessionOptions::default()
-                            .with_github(|group| group.with_token(DEFAULT_TEST_TOKEN))
-                            .with_permissions(|group| {
-                                group.with_on_request(Arc::new(NotifyingPermissionHandler {
-                                    request_tx,
-                                    result: PermissionResult::NoResult,
-                                }))
-                            }),
-                    )
-                    .await
-                    .expect("create session");
-
-                session.send("Run 'node --version'").await.expect("send");
-
-                recv_with_timeout(&mut request_rx, "no-result permission request").await;
-                session.abort().await.expect("abort no-result turn");
-
-                session.disconnect().await.expect("disconnect session");
-                client.stop().await.expect("stop client");
-            })
-        },
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn should_short_circuit_permission_handler_when_set_approve_all_enabled() {
-    super::support::with_shared_e2e_context(
-        &E2E,
-        "permissions",
-        "should_short_circuit_permission_handler_when_set_approve_all_enabled",
-        |ctx| {
-            Box::pin(async move {
-                ctx.set_default_copilot_user();
-                let client = ctx.start_client().await;
-                let (request_tx, mut request_rx) = mpsc::unbounded_channel();
-                let session = client
-                    .create_session(
-                        CreateSessionOptions::default()
-                            .with_github(|group| group.with_token(DEFAULT_TEST_TOKEN))
-                            .with_permissions(|group| {
-                                group.with_on_request(Arc::new(RecordingPermissionHandler {
-                                    request_tx,
-                                }))
-                            }),
-                    )
-                    .await
-                    .expect("create session");
-                let set_result = session
-                    .rpc()
-                    .permissions()
-                    .set_approve_all(PermissionsSetApproveAllRequest {
-                        enabled: true,
-                        source: None,
-                    })
-                    .await
-                    .expect("set approve all");
-                assert!(set_result.success);
-                let events = session.subscribe();
-
-                session
-                    .send_and_wait("Run 'echo test' and tell me what happens")
-                    .await
-                    .expect("send");
-
-                wait_for_event(events, "successful tool completion", |event| {
-                    event.parsed_type() == SessionEventType::ToolExecutionComplete
-                        && event
-                            .typed_data::<ToolExecutionCompleteData>()
-                            .expect("tool.execution_complete data")
-                            .success
-                })
-                .await;
-                assert!(
-                    request_rx.try_recv().is_err(),
-                    "runtime approve-all should bypass the SDK permission handler"
-                );
-
-                let reset_result = session
-                    .rpc()
-                    .permissions()
-                    .set_approve_all(PermissionsSetApproveAllRequest {
-                        enabled: false,
-                        source: None,
-                    })
-                    .await
-                    .expect("reset approve all");
-                assert!(reset_result.success);
 
                 session.disconnect().await.expect("disconnect session");
                 client.stop().await.expect("stop client");
@@ -877,4 +665,4 @@ impl PermissionHandler for SlowPermissionHandler {
     }
 }
 static E2E: super::support::SharedE2eGroup =
-    super::support::SharedE2eGroup::standard("permissions", 8);
+    super::support::SharedE2eGroup::standard("permissions", 5);

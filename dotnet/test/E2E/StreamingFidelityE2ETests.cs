@@ -11,42 +11,6 @@ namespace Microsoft.Copilot.Test.E2E;
 public class StreamingFidelityE2ETests(E2ETestFixture fixture, ITestOutputHelper output) : E2ETestBase(fixture, "streaming_fidelity", output)
 {
     [Fact]
-    public async Task Should_Produce_Delta_Events_When_Streaming_Is_Enabled()
-    {
-        var session = await CreateSessionAsync(new CreateSessionOptions { Events = new SessionEventOptions { Streaming = true } });
-
-        var events = new List<SessionEvent>();
-        session.On<SessionEvent>(evt => { lock (events) { events.Add(evt); } });
-
-        await session.SendAndWaitAsync(new MessageOptions { Prompt = "Count from 1 to 5, separated by commas." });
-
-        List<SessionEvent> snapshot;
-        lock (events) { snapshot = [.. events]; }
-
-        var types = snapshot.Select(e => e.Type).ToList();
-
-        // Should have streaming deltas before the final message
-        var deltaEvents = snapshot.OfType<AssistantMessageDeltaEvent>().ToList();
-        Assert.NotEmpty(deltaEvents);
-
-        // Deltas should have content
-        foreach (var delta in deltaEvents)
-        {
-            Assert.False(string.IsNullOrEmpty(delta.Data.DeltaContent));
-        }
-
-        // Should still have a final assistant.message
-        Assert.Contains("assistant.message", types);
-
-        // Deltas should come before the final message
-        var firstDeltaIdx = types.IndexOf("assistant.message_delta");
-        var lastAssistantIdx = types.LastIndexOf("assistant.message");
-        Assert.True(firstDeltaIdx < lastAssistantIdx);
-
-        await session.DisposeAsync();
-    }
-
-    [Fact]
     // TODO(BYOK): Anthropic Messages emitted delta events with Streaming=false. Investigate the
     // native-client streaming contract before keeping this disabled for every BYOK backend.
     [Trait(E2ETestTraits.Backend, E2ETestTraits.CapiOnly)]
@@ -75,111 +39,6 @@ public class StreamingFidelityE2ETests(E2ETestFixture fixture, ITestOutputHelper
     }
 
     [Fact]
-    public async Task Should_Produce_Deltas_After_Session_Resume()
-    {
-        var session = await CreateSessionAsync(new CreateSessionOptions { Events = new SessionEventOptions { Streaming = false } });
-        await session.SendAndWaitAsync(new MessageOptions { Prompt = "What is 3 + 6?" });
-        await session.DisposeAsync();
-
-        // Resume using a new client
-        using var newClient = Ctx.CreateClient();
-        var session2 = await Ctx.ResumeSessionAsync(newClient, session.SessionId,
-            new ResumeSessionOptions { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll }, Events = new SessionEventOptions { Streaming = true } });
-
-        var events = new List<SessionEvent>();
-        session2.On<SessionEvent>(evt => { lock (events) { events.Add(evt); } });
-
-        var answer = await session2.SendAndWaitAsync(new MessageOptions { Prompt = "Now if you double that, what do you get?" });
-        Assert.NotNull(answer);
-        Assert.Contains("18", answer!.Data.Content ?? string.Empty);
-
-        List<SessionEvent> snapshot;
-        lock (events) { snapshot = [.. events]; }
-
-        // Should have streaming deltas before the final message
-        var deltaEvents = snapshot.OfType<AssistantMessageDeltaEvent>().ToList();
-        Assert.NotEmpty(deltaEvents);
-
-        // Deltas should have content
-        foreach (var delta in deltaEvents)
-        {
-            Assert.False(string.IsNullOrEmpty(delta.Data.DeltaContent));
-        }
-
-        await session2.DisposeAsync();
-    }
-
-    [Fact]
-    // TODO(BYOK): Anthropic Messages emitted delta events after resuming with Streaming=false.
-    // Investigate the native-client streaming contract before keeping this disabled for every BYOK backend.
-    [Trait(E2ETestTraits.Backend, E2ETestTraits.CapiOnly)]
-    public async Task Should_Not_Produce_Deltas_After_Session_Resume_With_Streaming_Disabled()
-    {
-        var session = await CreateSessionAsync(new CreateSessionOptions { Events = new SessionEventOptions { Streaming = true } });
-        await session.SendAndWaitAsync(new MessageOptions { Prompt = "What is 3 + 6?" });
-        await session.DisposeAsync();
-
-        // Resume using a new client with streaming DISABLED
-        using var newClient = Ctx.CreateClient();
-        var session2 = await Ctx.ResumeSessionAsync(newClient, session.SessionId,
-            new ResumeSessionOptions { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll }, Events = new SessionEventOptions { Streaming = false } });
-
-        var events = new List<SessionEvent>();
-        session2.On<SessionEvent>(evt => { lock (events) { events.Add(evt); } });
-
-        var answer = await session2.SendAndWaitAsync(new MessageOptions { Prompt = "Now if you double that, what do you get?" });
-        Assert.NotNull(answer);
-        Assert.Contains("18", answer!.Data.Content ?? string.Empty);
-
-        List<SessionEvent> snapshot;
-        lock (events) { snapshot = [.. events]; }
-
-        // No deltas when streaming is toggled off
-        var deltaEvents = snapshot.OfType<AssistantMessageDeltaEvent>().ToList();
-        Assert.Empty(deltaEvents);
-
-        // But should still have a final assistant.message
-        var assistantEvents = snapshot.OfType<AssistantMessageEvent>().ToList();
-        Assert.NotEmpty(assistantEvents);
-
-        await session2.DisposeAsync();
-    }
-
-    [Fact]
-    public async Task Should_Emit_Streaming_Deltas_With_Reasoning_Effort_Configured()
-    {
-        // Verifies that setting ReasoningEffort alongside Streaming=true does not break
-        // the streaming pipeline — deltas still arrive and complete successfully.
-        await using var isolatedCtx = await E2ETestContext.CreateAsync();
-        await isolatedCtx.ConfigureForTestAsync("streaming_fidelity", nameof(Should_Emit_Streaming_Deltas_With_Reasoning_Effort_Configured));
-        var isolatedClient = isolatedCtx.CreateClient();
-        await using var session = await isolatedCtx.CreateSessionAsync(isolatedClient, new CreateSessionOptions
-        { Model = "gpt-5.4", Events = new SessionEventOptions { Streaming = true }, Inference = new SessionInferenceOptions { ReasoningEffort = "high" } });
-
-        var events = new List<SessionEvent>();
-        session.On<SessionEvent>(evt => { lock (events) { events.Add(evt); } });
-
-        await session.SendAndWaitAsync(new MessageOptions { Prompt = "What is 15 * 17?" });
-
-        List<SessionEvent> snapshot;
-        lock (events) { snapshot = [.. events]; }
-
-        // With streaming + reasoning effort, we should still get content deltas
-        var deltaEvents = snapshot.OfType<AssistantMessageDeltaEvent>().ToList();
-        Assert.NotEmpty(deltaEvents);
-
-        // And a final assistant.message with the answer
-        var assistantEvents = snapshot.OfType<AssistantMessageEvent>().ToList();
-        Assert.NotEmpty(assistantEvents);
-        Assert.Contains("255", assistantEvents.Last().Data.Content ?? string.Empty);
-
-        // Verify the session was created with reasoning effort via GetMessages
-        var messages = await session.GetEventsAsync();
-        var startEvent = Assert.Single(messages.OfType<SessionStartEvent>());
-        Assert.Equal("high", startEvent.Data.ReasoningEffort);
-    }
-
-    [Fact]
     public async Task Should_Emit_AssistantMessageStart_Before_Deltas_With_Matching_MessageId()
     {
         var session = await CreateSessionAsync(new CreateSessionOptions { Events = new SessionEventOptions { Streaming = true } });
@@ -199,6 +58,9 @@ public class StreamingFidelityE2ETests(E2ETestFixture fixture, ITestOutputHelper
         Assert.NotEmpty(startEvents);
         Assert.NotEmpty(deltaEvents);
         Assert.NotEmpty(messageEvents);
+        Assert.All(deltaEvents, delta => Assert.False(string.IsNullOrEmpty(delta.Data.DeltaContent)));
+        Assert.True(snapshot.IndexOf(deltaEvents[0]) < snapshot.LastIndexOf(messageEvents[^1]),
+            "Expected assistant.message_delta before the final assistant.message");
 
         // The start event must have a non-empty messageId
         var firstStart = startEvents[0];

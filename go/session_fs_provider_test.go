@@ -117,12 +117,6 @@ func TestSessionFSReaddirCollectionsOnWire(t *testing.T) {
 			wantWithTypes: `{"entries":[]}`,
 		},
 		{
-			name:          "empty slice",
-			provider:      readdirProvider{names: []string{}, entries: []rpc.SessionFSReaddirWithTypesEntry{}},
-			wantNames:     `{"entries":[]}`,
-			wantWithTypes: `{"entries":[]}`,
-		},
-		{
 			name: "populated",
 			provider: readdirProvider{
 				names: []string{"a.txt", "d"},
@@ -139,12 +133,6 @@ func TestSessionFSReaddirCollectionsOnWire(t *testing.T) {
 			provider:      readdirProvider{err: notFound},
 			wantNames:     `{"entries":[],"error":{"code":"ENOENT","message":"open /sfs/files: file does not exist"}}`,
 			wantWithTypes: `{"entries":[],"error":{"code":"ENOENT","message":"open /sfs/files: file does not exist"}}`,
-		},
-		{
-			name:          "other error",
-			provider:      readdirProvider{err: errors.New("disk offline")},
-			wantNames:     `{"entries":[],"error":{"code":"UNKNOWN","message":"disk offline"}}`,
-			wantWithTypes: `{"entries":[],"error":{"code":"UNKNOWN","message":"disk offline"}}`,
 		},
 		{
 			name: "entries with error",

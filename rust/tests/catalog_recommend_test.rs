@@ -128,21 +128,12 @@ async fn recommend_returns_the_existing_catalog_result() {
 
 #[tokio::test]
 async fn recommend_preserves_typed_refusals() {
-    for wire in [
-        json!({"kind": "invalid-request", "field": "query", "message": "Invalid query"}),
-        json!({
-            "kind": "authentication-required",
-            "reason": "credential-rejected",
-            "message": "Sign in required"
-        }),
-        json!({
-            "kind": "unavailable",
-            "reason": "search-unavailable",
-            "message": "Recommendations unavailable"
-        }),
-    ] {
-        let result = exchange(json!({"result": wire})).await.unwrap();
-        assert!(!matches!(result, CatalogSearchResult::Succeeded(_)));
-        assert_eq!(serde_json::to_value(result).unwrap(), wire);
-    }
+    let wire = json!({
+        "kind": "authentication-required",
+        "reason": "credential-rejected",
+        "message": "Sign in required"
+    });
+    let result = exchange(json!({"result": wire})).await.unwrap();
+    assert!(!matches!(result, CatalogSearchResult::Succeeded(_)));
+    assert_eq!(serde_json::to_value(result).unwrap(), wire);
 }

@@ -164,6 +164,9 @@ from .session import (
     ToolSearchConfig,
     TranscriptRecoveryReport,
     UserInputHandler,
+    _await_handler_shutdown,
+    _capture_handler_dispatch,
+    _handler_awaits,
     _PermissionHandlerFn,
     _tools_to_wire_definitions,
 )
@@ -2609,7 +2612,7 @@ class CopilotClient:
         self._on_github_telemetry = options.on_github_telemetry
 
         # Resolve connection-mode-specific state.
-        self._actual_host: str = "localhost"
+        self._actual_host: str = "127.0.0.1"
         self._is_external_server: bool = isinstance(connection, TcpRuntimeConnection)
         self._cli_path_source: str | None = None
         self._ffi_host: FfiRuntimeHost | None = None
@@ -3106,6 +3109,8 @@ class CopilotClient:
 
     async def _stop(self) -> None:
         errors: list[StopError] = []
+        resolve_dispatch = _capture_handler_dispatch()
+        initiating_dispatch = resolve_dispatch() if resolve_dispatch else None
         if self._entra_token_adapter is not None:
             self._entra_token_adapter.close_connection()
         if self._installation_confirmation_adapter is not None:
@@ -3121,6 +3126,10 @@ class CopilotClient:
         with self._sessions_lock:
             self._session_admission_closed = True
             sessions_to_destroy = list(self._sessions.values())
+        if not any(
+            _capture_handler_dispatch(session) is not None for session in sessions_to_destroy
+        ):
+            initiating_dispatch = None
         self._cancel_pending_shell_authentication_requests()
         # Preserve a tool handler's awaiting dispatch before detach runs in child tasks.
         for session in sessions_to_destroy:
@@ -3134,7 +3143,8 @@ class CopilotClient:
         async def disconnect_session(session: CopilotSession) -> StopError | None:
             try:
                 await asyncio.wait_for(
-                    session.disconnect(), timeout=max(0.0, detach_deadline - loop.time())
+                    _await_handler_shutdown(session.disconnect, resolve_dispatch),
+                    timeout=max(0.0, detach_deadline - loop.time()),
                 )
                 return None
             except TimeoutError:
@@ -3151,7 +3161,7 @@ class CopilotClient:
                 )
                 return StopError(message=f"Failed to disconnect session {session.session_id}: {e}")
             finally:
-                session._mark_disconnected()
+                session._mark_disconnected(resolve_dispatch() if resolve_dispatch else None)
 
         try:
             session_errors = await asyncio.gather(
@@ -3163,6 +3173,11 @@ class CopilotClient:
                 session._mark_disconnected()
             with self._sessions_lock:
                 self._sessions.clear()
+            # A successor callback can await shutdown after the original handler returns.
+            if initiating_dispatch is not None and not _handler_awaits(
+                initiating_dispatch, cast(asyncio.Task[Any], asyncio.current_task())
+            ):
+                initiating_dispatch.cancel()
         with self._github_token_providers_lock:
             self._github_token_providers.clear()
 
@@ -6396,7 +6411,25 @@ class CopilotClient:
                 raise RuntimeError(f"Copilot CLI not found at {original_path}")
 
         # Start with user-provided args, then add SDK-managed args
-        args = list(conn.args) + [
+        args = list(conn.args)
+        if isinstance(conn, SpawnedTcpRuntimeConnection):
+            host = "127.0.0.1"
+            user_args = iter(args)
+            for arg in user_args:
+                if arg == "--host":
+                    host = next(user_args, host)
+                elif arg.startswith("--host="):
+                    host = arg[len("--host=") :]
+            # Winsock rejects wildcard destinations, unlike wildcard bind addresses.
+            try:
+                bind_address = ipaddress.ip_address(host)
+            except ValueError:
+                pass
+            else:
+                if bind_address.is_unspecified:
+                    host = "127.0.0.1" if bind_address.version == 4 else "::1"
+            self._actual_host = host
+        args += [
             "--headless",
             "--no-auto-update",
         ]

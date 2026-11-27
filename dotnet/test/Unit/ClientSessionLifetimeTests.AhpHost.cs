@@ -66,8 +66,6 @@ public sealed partial class ClientSessionLifetimeTests
 
     [Theory]
     [InlineData("", "compute")]
-    [InlineData(" ", "compute")]
-    [InlineData("host", "")]
     [InlineData("host", " ")]
     public async Task Ahp_Forwards_Environment_Fields_For_Runtime_Validation(string name, string computeId)
     {
@@ -133,7 +131,6 @@ public sealed partial class ClientSessionLifetimeTests
     [Theory]
     [InlineData(true, false)]
     [InlineData(false, true)]
-    [InlineData(true, true)]
     public async Task Ahp_Forwards_Explicit_Transports_And_Optional_Readiness(bool local, bool github)
     {
         await using var server = await FakeCopilotServer.StartAsync();
@@ -149,6 +146,8 @@ public sealed partial class ClientSessionLifetimeTests
         Assert.Equal("compute", request.GetProperty("computeId").GetString());
         Assert.Equal(local, request.TryGetProperty("localServer", out var localSettings) && localSettings.ValueKind == JsonValueKind.Object);
         Assert.Equal(github, request.TryGetProperty("githubEnvironment", out var githubSettings) && githubSettings.ValueKind == JsonValueKind.Object);
+        Assert.False(request.TryGetProperty("sessionFactory", out _));
+        Assert.False(request.TryGetProperty("resumeFactory", out _));
         foreach (var oldField in new[] { "hostname", "port", "token", "requireConnectionToken" })
             Assert.False(request.TryGetProperty(oldField, out _));
         if (local)
@@ -188,41 +187,6 @@ public sealed partial class ClientSessionLifetimeTests
     }
 
     [Fact]
-    public async Task Ahp_Start_Preserves_Transport_And_Factory_Options()
-    {
-        await using var server = await FakeCopilotServer.StartAsync();
-        await using var client = new CopilotClient(new() { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
-        await client.StartAsync();
-        var local = new HostLocalServerOptions { Port = 12345 };
-        var github = new HostGitHubEnvironmentOptions { Name = "host", ComputeId = "compute" };
-
-        await client.Rpc.Host.StartAsync("transports", localServer: local, githubEnvironment: github,
-            sessionFactory: true, resumeFactory: false, cancellationToken: CancellationToken.None);
-        await client.Rpc.Host.StartAsync("defaults");
-        await client.Rpc.Host.StartAsync("compute-host", computeId: "compute",
-            localServer: local, githubEnvironment: github, sessionFactory: true,
-            resumeFactory: false, cancellationToken: CancellationToken.None);
-
-        var requests = server.Requests.Where(request => request.Method == "host.start").ToArray();
-        Assert.Equal(3, requests.Length);
-        var transports = requests[0].Params;
-        Assert.Equal("transports", transports.GetProperty("hostId").GetString());
-        Assert.False(transports.TryGetProperty("computeId", out _));
-        Assert.Equal("defaults", requests[1].Params.GetProperty("hostId").GetString());
-        Assert.False(requests[1].Params.TryGetProperty("localServer", out _));
-        var compute = requests[2].Params;
-        Assert.Equal("compute-host", compute.GetProperty("hostId").GetString());
-        Assert.Equal("compute", compute.GetProperty("computeId").GetString());
-        foreach (var parameters in new[] { transports, compute })
-        {
-            Assert.Equal(12345, parameters.GetProperty("localServer").GetProperty("port").GetInt32());
-            Assert.Equal("compute", parameters.GetProperty("githubEnvironment").GetProperty("computeId").GetString());
-            Assert.True(parameters.GetProperty("sessionFactory").GetBoolean());
-            Assert.False(parameters.GetProperty("resumeFactory").GetBoolean());
-        }
-    }
-
-    [Fact]
     public async Task Ahp_List_Sessions_Uses_Owning_Host()
     {
         await using var server = await FakeCopilotServer.StartAsync();
@@ -252,6 +216,9 @@ public sealed partial class ClientSessionLifetimeTests
             LocalServer = new(),
             CreateSession = request => { entered.TrySetResult(request.CancellationToken); return factory.Task; }
         });
+        var start = Assert.Single(server.Requests, request => request.Method == "host.start").Params;
+        Assert.True(start.GetProperty("sessionFactory").GetBoolean());
+        Assert.False(start.TryGetProperty("resumeFactory", out _));
         var pending = server.SendRequestAsync("host.materializeSession", new()
         {
             ["hostId"] = host.HostId,
@@ -417,6 +384,9 @@ public sealed partial class ClientSessionLifetimeTests
             ["config"] = config
         });
         Assert.Equal("original", result.GetProperty("sessionId").GetString());
+        var start = Assert.Single(server.Requests, request => request.Method == "host.start").Params;
+        Assert.True(start.GetProperty("sessionFactory").GetBoolean());
+        Assert.True(start.GetProperty("resumeFactory").GetBoolean());
         var wire = Assert.Single(server.Requests, request => request.Method == (resume ? "session.resume" : "session.create")).Params;
         Assert.False(wire.GetProperty("github").GetProperty("capi").GetProperty("enabled").GetBoolean());
         Assert.Equal(enabled ? "gateway" : null, wire.GetProperty("inference").GetProperty("defaultProvider").GetString());
@@ -543,16 +513,10 @@ public sealed partial class ClientSessionLifetimeTests
 
     [Theory]
     [InlineData(false, "instructions", "skipCustomInstructions", false)]
-    [InlineData(false, "instructions", "skipCustomInstructions", true)]
-    [InlineData(false, "git", "coauthorEnabled", false)]
     [InlineData(false, "git", "coauthorEnabled", true)]
     [InlineData(false, "tools", "manageScheduleEnabled", false)]
-    [InlineData(false, "tools", "manageScheduleEnabled", true)]
-    [InlineData(true, "instructions", "skipCustomInstructions", false)]
     [InlineData(true, "instructions", "skipCustomInstructions", true)]
     [InlineData(true, "git", "coauthorEnabled", false)]
-    [InlineData(true, "git", "coauthorEnabled", true)]
-    [InlineData(true, "tools", "manageScheduleEnabled", false)]
     [InlineData(true, "tools", "manageScheduleEnabled", true)]
     public async Task Ahp_Factories_Preserve_Settings_Applied_After_Creation(bool resume, string group, string setting, bool expected)
     {

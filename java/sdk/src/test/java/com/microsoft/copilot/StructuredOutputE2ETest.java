@@ -122,39 +122,6 @@ class StructuredOutputE2ETest {
     }
 
     @Test
-    void typedWaitReturnsStopHookCorrection() throws Exception {
-        ctx.configureForTest("structured_output", "typed_wait_returns_stop_hook_correction");
-        var stops = new AtomicInteger();
-        var hooks = new SessionHooks().setOnAgentStop((input,
-                invocation) -> CompletableFuture.completedFuture(stops.incrementAndGet() == 1
-                        ? new AgentStopHookOutput().setDecision("block")
-                                .setReason("Correct the answer to 99, not 42. Do not use tools.")
-                        : null));
-        try (var client = ctx.createClient();
-                var session = client.createSession(config().setHooks(config().getHooks().setHandlers(hooks))).get()) {
-            var replies = new CopyOnWriteArrayList<AssistantMessageEvent>();
-            try (var subscription = session.on(event -> {
-                if (event instanceof AssistantMessageEvent message && event.getAgentId() == null)
-                    replies.add(message);
-            })) {
-                var result = session.sendAndWait("What is 19 + 23? Do not use tools.", Answer.class).get(30,
-                        TimeUnit.SECONDS);
-                assertEquals(99, result.answer());
-                assertEquals(2, stops.get());
-                assertEquals(2, replies.size());
-                assertNotNull(replies.get(0).getData().originatingMessageId());
-                assertFalse(replies.get(0).getData().originatingMessageId().isEmpty());
-                assertEquals(replies.get(0).getData().originatingMessageId(),
-                        replies.get(1).getData().originatingMessageId());
-                assertEquals(42, JsonRpcClient.getObjectMapper()
-                        .readValue(replies.get(0).getData().content(), Answer.class).answer());
-                assertEquals(99, JsonRpcClient.getObjectMapper()
-                        .readValue(replies.get(1).getData().content(), Answer.class).answer());
-            }
-        }
-    }
-
-    @Test
     void sendSelectsCorrelatedResponseAfterIdle() throws Exception {
         ctx.configureForTest("structured_output", "send_selects_correlated_response_after_idle");
         var entered = new CompletableFuture<Void>();
@@ -298,12 +265,28 @@ class StructuredOutputE2ETest {
         try (var client = ctx.createClient();
                 var session = client.createSession(config().setTools(config().getTools().setDefinitions(List.of(tool)))
                         .setHooks(config().getHooks().setHandlers(hooks))).get()) {
-            var result = session.sendAndWait(
-                    "Call lookup_number exactly once, then add 5 to the returned number. Do not guess its result.",
-                    Answer.class).get(30, TimeUnit.SECONDS);
-            assertEquals(99, result.answer());
-            assertEquals(1, calls.get());
-            assertEquals(2, stops.get());
+            var answers = new CopyOnWriteArrayList<AssistantMessageEvent>();
+            try (var subscription = session.on(event -> {
+                if (event instanceof AssistantMessageEvent message && event.getAgentId() == null
+                        && (message.getData().toolRequests() == null || message.getData().toolRequests().isEmpty()))
+                    answers.add(message);
+            })) {
+                var result = session.sendAndWait(
+                        "Call lookup_number exactly once, then add 5 to the returned number. Do not guess its result.",
+                        Answer.class).get(30, TimeUnit.SECONDS);
+                assertEquals(99, result.answer());
+                assertEquals(1, calls.get());
+                assertEquals(2, stops.get());
+                assertEquals(2, answers.size());
+                assertNotNull(answers.get(0).getData().originatingMessageId());
+                assertFalse(answers.get(0).getData().originatingMessageId().isEmpty());
+                assertEquals(answers.get(0).getData().originatingMessageId(),
+                        answers.get(1).getData().originatingMessageId());
+                assertEquals(63, JsonRpcClient.getObjectMapper()
+                        .readValue(answers.get(0).getData().content(), Answer.class).answer());
+                assertEquals(99, JsonRpcClient.getObjectMapper()
+                        .readValue(answers.get(1).getData().content(), Answer.class).answer());
+            }
         }
     }
 

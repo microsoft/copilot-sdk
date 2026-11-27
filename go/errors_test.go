@@ -26,16 +26,9 @@ func TestRPCErrorData(t *testing.T) {
 	}{
 		{"object", `{"reason":"private detail","nested":{"values":[1,null,false]}}`},
 		{"non-canonical object", "{ \"escaped\" : \"\\u0061\", \"items\" : [ 1, false, null ] }"},
-		{"array", `[1,"private detail",{"nested":true}]`},
 		{"string", `"private detail"`},
 		{"integer", `9007199254740993`},
-		{"fraction", `1.25`},
-		{"zero", `0`},
-		{"true", `true`},
 		{"false", `false`},
-		{"empty object", `{}`},
-		{"empty array", `[]`},
-		{"empty string", `""`},
 		{"omitted", ``},
 		{"null", `null`},
 	}

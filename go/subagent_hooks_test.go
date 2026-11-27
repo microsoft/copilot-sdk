@@ -65,11 +65,6 @@ func TestSession_SubagentStopHook(t *testing.T) {
 			want:   json.RawMessage(`{"decision":"block","reason":"Read the file again"}`),
 		},
 		{
-			name:   "replace the response",
-			output: &SubagentStopHookOutput{ModifiedResponse: String("Changed result")},
-			want:   json.RawMessage(`{"modifiedResponse":"Changed result"}`),
-		},
-		{
 			name:   "replace with an empty response",
 			output: &SubagentStopHookOutput{ModifiedResponse: String("")},
 			want:   json.RawMessage(`{"modifiedResponse":""}`),

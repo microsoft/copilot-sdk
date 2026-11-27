@@ -116,7 +116,6 @@ func TestDiscoveryCompatibilityOnWire(t *testing.T) {
 	server.Start()
 	api := NewServerRPC(client)
 	session := NewSessionRPC(client, "compatibility-session")
-	serverList := api.Plugins.List
 	sessionList := session.Plugins.List
 	directory := "/workspace"
 	cases := []struct {
@@ -124,7 +123,6 @@ func TestDiscoveryCompatibilityOnWire(t *testing.T) {
 		call func() error
 		want map[string]any
 	}{
-		{"server method value", func() error { _, err := serverList(t.Context(), nil); return err }, map[string]any{}},
 		{"nil plugin options", func() error { _, err := api.Plugins.List(t.Context(), nil); return err }, map[string]any{}},
 		{"plugin options", func() error {
 			_, err := api.Plugins.List(t.Context(), &PluginsListRequest{WorkingDirectory: &directory})

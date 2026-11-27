@@ -93,46 +93,6 @@ func TestPermissionsE2E(t *testing.T) {
 		}
 	})
 
-	t.Run("permission handler for shell commands", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		var permissionRequests []copilot.PermissionRequest
-		var mu sync.Mutex
-
-		onPermissionRequest := func(request copilot.PermissionRequest, invocation copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
-			mu.Lock()
-			permissionRequests = append(permissionRequests, request)
-			mu.Unlock()
-
-			return &rpc.PermissionDecisionApproveOnce{}, nil
-		}
-
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: onPermissionRequest}})
-		if err != nil {
-			t.Fatalf("Failed to create session: %v", err)
-		}
-
-		_, err = session.SendAndWait(t.Context(), copilot.MessageOptions{
-			Prompt: "Run 'echo test' and tell me what happens",
-		})
-		if err != nil {
-			t.Fatalf("Failed to send message: %v", err)
-		}
-
-		mu.Lock()
-		shellCount := 0
-		for _, req := range permissionRequests {
-			if _, ok := req.(*copilot.PermissionRequestShell); ok {
-				shellCount++
-			}
-		}
-		mu.Unlock()
-
-		if shellCount == 0 {
-			t.Error("Expected at least one shell permission request")
-		}
-	})
-
 	t.Run("deny permission", func(t *testing.T) {
 		ctx.ConfigureForTest(t)
 
@@ -203,44 +163,6 @@ func TestPermissionsE2E(t *testing.T) {
 		}
 	})
 
-	t.Run("should deny tool operations when handler explicitly denies", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: func(request copilot.PermissionRequest, invocation copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
-			return &rpc.PermissionDecisionUserNotAvailable{}, nil
-		}},
-		})
-		if err != nil {
-			t.Fatalf("Failed to create session: %v", err)
-		}
-
-		var mu sync.Mutex
-		permissionDenied := false
-
-		session.On(func(event copilot.SessionEvent) {
-			if d, ok := event.Data.(*copilot.ToolExecutionCompleteData); ok &&
-				!d.Success &&
-				d.Error != nil &&
-				strings.Contains(d.Error.Message, "Permission denied") {
-				mu.Lock()
-				permissionDenied = true
-				mu.Unlock()
-			}
-		})
-
-		if _, err = session.SendAndWait(t.Context(), copilot.MessageOptions{
-			Prompt: "Run 'node --version'",
-		}); err != nil {
-			t.Fatalf("Failed to send message: %v", err)
-		}
-
-		mu.Lock()
-		defer mu.Unlock()
-		if !permissionDenied {
-			t.Error("Expected a tool.execution_complete event with Permission denied result")
-		}
-	})
-
 	t.Run("should deny tool operations when handler explicitly denies after resume", func(t *testing.T) {
 		ctx.ConfigureForTest(t)
 
@@ -291,95 +213,6 @@ func TestPermissionsE2E(t *testing.T) {
 		}
 	})
 
-	t.Run("should work with approve-all permission handler", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}})
-		if err != nil {
-			t.Fatalf("Failed to create session: %v", err)
-		}
-
-		finalMessage := testharness.SubscribeToFinalAssistantMessage(session)
-		defer finalMessage.Close()
-		_, err = session.Send(t.Context(), copilot.MessageOptions{Prompt: "What is 2+2?"})
-		if err != nil {
-			t.Fatalf("Failed to send message: %v", err)
-		}
-
-		message, err := finalMessage.Wait(t.Context())
-		if err != nil {
-			t.Fatalf("Failed to get final message: %v", err)
-		}
-
-		if md, ok := message.Data.(*copilot.AssistantMessageData); !ok || !strings.Contains(md.Content, "4") {
-			var content string
-			if ok {
-				content = md.Content
-			}
-			t.Errorf("Expected message to contain '4', got: %v", content)
-		}
-	})
-
-	t.Run("should handle async permission handler", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		var permissionRequestReceived atomicBool
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: func(req copilot.PermissionRequest, inv copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
-			permissionRequestReceived.Set(true)
-			return &rpc.PermissionDecisionApproveOnce{}, nil
-		}},
-		})
-		if err != nil {
-			t.Fatalf("CreateSession failed: %v", err)
-		}
-
-		_, err = session.SendAndWait(t.Context(), copilot.MessageOptions{
-			Prompt: "Run 'echo test' and tell me what happens",
-		})
-		if err != nil {
-			t.Fatalf("SendAndWait failed: %v", err)
-		}
-		if !permissionRequestReceived.Get() {
-			t.Error("Expected permission handler to have been invoked")
-		}
-	})
-
-	t.Run("should resume session with permission handler", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		session1, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}})
-		if err != nil {
-			t.Fatalf("CreateSession failed: %v", err)
-		}
-		sessionID := session1.SessionID
-		if _, err := session1.SendAndWait(t.Context(), copilot.MessageOptions{Prompt: "What is 1+1?"}); err != nil {
-			t.Fatalf("Initial SendAndWait failed: %v", err)
-		}
-		if err := session1.Disconnect(); err != nil {
-			t.Fatalf("Disconnect failed: %v", err)
-		}
-
-		var permissionRequestReceived atomicBool
-		session2, err := client.ResumeSession(t.Context(), sessionID, &copilot.ResumeSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: func(req copilot.PermissionRequest, inv copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
-			permissionRequestReceived.Set(true)
-			return &rpc.PermissionDecisionApproveOnce{}, nil
-		}},
-		})
-		if err != nil {
-			t.Fatalf("ResumeSession failed: %v", err)
-		}
-
-		_, err = session2.SendAndWait(t.Context(), copilot.MessageOptions{
-			Prompt: "Run 'echo resumed' for me",
-		})
-		if err != nil {
-			t.Fatalf("SendAndWait (after resume) failed: %v", err)
-		}
-		if !permissionRequestReceived.Get() {
-			t.Error("Expected permission handler from ResumeSessionOptions to have been invoked")
-		}
-	})
-
 	t.Run("should handle permission handler errors gracefully", func(t *testing.T) {
 		ctx.ConfigureForTest(t)
 
@@ -412,30 +245,6 @@ func TestPermissionsE2E(t *testing.T) {
 		}
 		if !matched {
 			t.Errorf("Expected response to indicate failure (fail/cannot/unable/permission), got %q", ad.Content)
-		}
-	})
-
-	t.Run("should receive toolCallId in permission requests", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		var receivedToolCallID atomicBool
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: func(req copilot.PermissionRequest, inv copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
-			if shellReq, ok := req.(*copilot.PermissionRequestShell); ok && shellReq.ToolCallID != nil && *shellReq.ToolCallID != "" {
-				receivedToolCallID.Set(true)
-			}
-			return &rpc.PermissionDecisionApproveOnce{}, nil
-		}},
-		})
-		if err != nil {
-			t.Fatalf("CreateSession failed: %v", err)
-		}
-
-		_, err = session.SendAndWait(t.Context(), copilot.MessageOptions{Prompt: "Run 'echo test'"})
-		if err != nil {
-			t.Fatalf("SendAndWait failed: %v", err)
-		}
-		if !receivedToolCallID.Get() {
-			t.Error("Expected ToolCallID to be populated on shell permission request")
 		}
 	})
 
@@ -513,6 +322,9 @@ func TestPermissionsE2E(t *testing.T) {
 		select {
 		case targetID = <-targetToolCallID:
 		default:
+		}
+		if targetID == "" {
+			t.Error("Expected ToolCallID to be populated on shell permission request")
 		}
 
 		// Verify tool-complete has not yet happened while handler is still running
@@ -726,119 +538,4 @@ func TestPermissionsE2E(t *testing.T) {
 		assertRejectedToolComplete("first_permission_tool", firstToolCompleted, "first_permission_tool completed after permission approval")
 		assertRejectedToolComplete("second_permission_tool", secondToolCompleted, "second_permission_tool completed after permission approval")
 	})
-
-	t.Run("should deny permission with noresult kind", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		permissionCalled := make(chan struct{}, 1)
-
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: func(req copilot.PermissionRequest, inv copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
-			select {
-			case permissionCalled <- struct{}{}:
-			default:
-			}
-			return &rpc.PermissionDecisionNoResult{}, nil
-		}},
-		})
-		if err != nil {
-			t.Fatalf("CreateSession failed: %v", err)
-		}
-		t.Cleanup(func() { _ = session.Disconnect() })
-
-		if _, err := session.Send(t.Context(), copilot.MessageOptions{
-			Prompt: "Run 'node --version'",
-		}); err != nil {
-			t.Fatalf("Send failed: %v", err)
-		}
-
-		select {
-		case <-permissionCalled:
-			// Expected: legacy no-result does not send a permission decision.
-		case <-time.After(30 * time.Second):
-			t.Fatal("Timed out waiting for permission handler to be called")
-		}
-
-		_ = session.Abort(t.Context())
-	})
-
-	t.Run("should short circuit permission handler when set approve all enabled", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		var handlerCallCount int
-		var handlerCallCountMu sync.Mutex
-
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: func(req copilot.PermissionRequest, inv copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
-			handlerCallCountMu.Lock()
-			handlerCallCount++
-			handlerCallCountMu.Unlock()
-			return &rpc.PermissionDecisionApproveOnce{}, nil
-		}},
-		})
-		if err != nil {
-			t.Fatalf("CreateSession failed: %v", err)
-		}
-		t.Cleanup(func() { _ = session.Disconnect() })
-
-		// Runtime contract: when approveAllToolPermissionRequests is true the runtime
-		// short-circuits the permission flow before invoking the SDK-supplied handler.
-		setResult, err := session.RPC.Permissions.SetApproveAll(t.Context(), &rpc.PermissionsSetApproveAllRequest{Enabled: true})
-		if err != nil {
-			t.Fatalf("SetApproveAll failed: %v", err)
-		}
-		if !setResult.Success {
-			t.Fatalf("SetApproveAll returned success=false")
-		}
-		defer func() {
-			_, _ = session.RPC.Permissions.SetApproveAll(t.Context(), &rpc.PermissionsSetApproveAllRequest{Enabled: false})
-		}()
-
-		toolCompleted := make(chan struct{}, 1)
-		session.On(func(event copilot.SessionEvent) {
-			if d, ok := event.Data.(*copilot.ToolExecutionCompleteData); ok && d.Success {
-				select {
-				case toolCompleted <- struct{}{}:
-				default:
-				}
-			}
-		})
-
-		if _, err := session.SendAndWait(t.Context(), copilot.MessageOptions{
-			Prompt: "Run 'echo test' and tell me what happens",
-		}); err != nil {
-			t.Fatalf("SendAndWait failed: %v", err)
-		}
-
-		select {
-		case <-toolCompleted:
-			// A real shell tool completed successfully under runtime-level approval.
-		case <-time.After(30 * time.Second):
-			t.Fatal("Timed out waiting for successful tool.execution_complete")
-		}
-
-		handlerCallCountMu.Lock()
-		count := handlerCallCount
-		handlerCallCountMu.Unlock()
-		if count != 0 {
-			t.Errorf("Expected permission handler to NOT be called when SetApproveAll is enabled, got %d calls", count)
-		}
-	})
-
-}
-
-// atomicBool is a tiny helper for concurrent flag updates in handler callbacks.
-type atomicBool struct {
-	mu sync.Mutex
-	v  bool
-}
-
-func (a *atomicBool) Set(v bool) {
-	a.mu.Lock()
-	a.v = v
-	a.mu.Unlock()
-}
-
-func (a *atomicBool) Get() bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.v
 }

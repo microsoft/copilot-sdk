@@ -65,72 +65,6 @@ func TestToolsE2E(t *testing.T) {
 		}
 	})
 
-	t.Run("invokes built-in tools", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		// Write a test file
-		err := os.WriteFile(filepath.Join(ctx.WorkDir, "README.md"), []byte("# ELIZA, the only chatbot you'll ever need"), 0644)
-		if err != nil {
-			t.Fatalf("Failed to write test file: %v", err)
-		}
-
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}})
-		if err != nil {
-			t.Fatalf("Failed to create session: %v", err)
-		}
-
-		finalMessage := testharness.SubscribeToFinalAssistantMessage(session)
-		defer finalMessage.Close()
-		_, err = session.Send(t.Context(), copilot.MessageOptions{Prompt: "What's the first line of README.md in this directory?"})
-		if err != nil {
-			t.Fatalf("Failed to send message: %v", err)
-		}
-
-		answer, err := finalMessage.Wait(t.Context())
-		if err != nil {
-			t.Fatalf("Failed to get assistant message: %v", err)
-		}
-
-		if md, ok := answer.Data.(*copilot.AssistantMessageData); !ok || !strings.Contains(md.Content, "ELIZA") {
-			t.Errorf("Expected answer to contain 'ELIZA', got %v", answer.Data)
-		}
-	})
-
-	t.Run("invokes custom tool", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		type EncryptParams struct {
-			Input string `json:"input" jsonschema:"String to encrypt"`
-		}
-
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Tools: copilot.SessionToolOptions{Definitions: []copilot.Tool{
-			copilot.DefineTool("encrypt_string", "Encrypts a string",
-				func(params EncryptParams, inv copilot.ToolInvocation) (string, error) {
-					return strings.ToUpper(params.Input), nil
-				}),
-		}},
-		})
-		if err != nil {
-			t.Fatalf("Failed to create session: %v", err)
-		}
-
-		finalMessage := testharness.SubscribeToFinalAssistantMessage(session)
-		defer finalMessage.Close()
-		_, err = session.Send(t.Context(), copilot.MessageOptions{Prompt: "Use encrypt_string to encrypt this string: Hello"})
-		if err != nil {
-			t.Fatalf("Failed to send message: %v", err)
-		}
-
-		answer, err := finalMessage.Wait(t.Context())
-		if err != nil {
-			t.Fatalf("Failed to get assistant message: %v", err)
-		}
-
-		if md, ok := answer.Data.(*copilot.AssistantMessageData); !ok || !strings.Contains(md.Content, "HELLO") {
-			t.Errorf("Expected answer to contain 'HELLO', got %v", answer.Data)
-		}
-	})
-
 	t.Run("low_level_tool_definition", func(t *testing.T) {
 		ctx.ConfigureForTest(t)
 
@@ -520,51 +454,6 @@ func TestToolsE2E(t *testing.T) {
 			if !strings.Contains(md.Content, "COUNTRY_FRANCE") {
 				t.Errorf("Expected content to contain 'COUNTRY_FRANCE', got %q", md.Content)
 			}
-		}
-	})
-
-	t.Run("should respect availabletools and excludedtools combined", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		type InputParams struct {
-			Input string `json:"input" jsonschema:"Input value"`
-		}
-
-		excludedToolCalled := false
-
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Tools: copilot.SessionToolOptions{Definitions: []copilot.Tool{
-			copilot.DefineTool("allowed_tool", "An allowed tool",
-				func(params InputParams, inv copilot.ToolInvocation) (string, error) {
-					return "ALLOWED_" + strings.ToUpper(params.Input), nil
-				}),
-			copilot.DefineTool("excluded_tool", "A tool that should be excluded",
-				func(params InputParams, inv copilot.ToolInvocation) (string, error) {
-					excludedToolCalled = true
-					return "EXCLUDED_" + strings.ToUpper(params.Input), nil
-				}),
-		}, AvailableTools: []string{"allowed_tool", "excluded_tool"}, ExcludedTools: []string{"excluded_tool"}},
-		})
-		if err != nil {
-			t.Fatalf("Failed to create session: %v", err)
-		}
-
-		answer, err := session.SendAndWait(t.Context(), copilot.MessageOptions{
-			Prompt: "Use the allowed_tool with input 'test'. Do NOT use excluded_tool.",
-		})
-		if err != nil {
-			t.Fatalf("SendAndWait failed: %v", err)
-		}
-
-		if answer == nil {
-			t.Error("Expected non-nil assistant message")
-		} else if md, ok := answer.Data.(*copilot.AssistantMessageData); !ok {
-			t.Error("Expected AssistantMessageData")
-		} else if !strings.Contains(md.Content, "ALLOWED_TEST") {
-			t.Errorf("Expected content to contain 'ALLOWED_TEST', got %q", md.Content)
-		}
-
-		if excludedToolCalled {
-			t.Error("Excluded tool should not have been called")
 		}
 	})
 

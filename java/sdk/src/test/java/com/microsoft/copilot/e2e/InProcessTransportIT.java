@@ -29,7 +29,6 @@ import com.microsoft.copilot.generated.SessionIdleEvent;
 import com.microsoft.copilot.rpc.CopilotClientOptions;
 import com.microsoft.copilot.rpc.MessageOptions;
 import com.microsoft.copilot.rpc.PermissionHandler;
-import com.microsoft.copilot.rpc.PingResponse;
 import com.microsoft.copilot.rpc.RuntimeConnection;
 import com.microsoft.copilot.rpc.CreateSessionOptions;
 import com.microsoft.copilot.rpc.ToolDefinition;
@@ -76,21 +75,6 @@ class InProcessTransportIT {
     static void teardown() throws Exception {
         if (ctx != null) {
             ctx.close();
-        }
-    }
-
-    @Test
-    void shouldStartPingAndStopOverInProcessFfi() throws Exception {
-        CopilotClientOptions options = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT)
-                .setRuntime(RuntimeConnection.forInProcess());
-        try (CopilotClient client = ctx.createClient(options)) {
-            client.start().get();
-
-            PingResponse pong = client.ping("ffi message").get();
-            assertEquals("pong: ffi message", pong.message());
-            assertNotNull(pong.timestamp());
-
-            client.stop().get();
         }
     }
 

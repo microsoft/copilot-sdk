@@ -1668,9 +1668,10 @@ impl JsonRpcClient {
                 | "feedback.upload.read"
                 | "taskAnalytics.classifyTrajectory"
                 | "session.resume"
+                | "host.telemetry.prepare"
         );
-        let retain_callback_on_drop =
-            method == "session.delete" && matches!(mode, ResponseMode::Parsed(Some(_)));
+        let retain_callback_on_drop = matches!(method, "session.delete" | "host.telemetry.prepare")
+            && matches!(mode, ResponseMode::Parsed(Some(_)));
         let frame = encode_frame(&request)?;
         let method = request.method;
         let (tx, rx) = oneshot::channel();
@@ -1733,8 +1734,7 @@ impl JsonRpcClient {
             );
             return Err(error);
         }
-        // Deletion cannot be cancelled by dropping its awaiter. Its reply must
-        // still retire held events if the submitted request succeeds.
+        // These replies still own cleanup after the caller abandons its wait.
         guard.retain_callback = retain_callback_on_drop;
 
         Ok(async move {
@@ -1949,7 +1949,7 @@ impl Drop for JsonRpcClient {
 }
 
 /// RAII guard that ends a pending request's wait if its owning future is
-/// dropped. Deletion callbacks survive until the reply or connection teardown;
+/// dropped. Cleanup callbacks survive until the reply or connection teardown;
 /// other entries are removed. Disarmed when response handling owns cleanup.
 struct PendingGuard {
     map: Arc<RwLock<HashMap<u64, PendingRequest>>>,
@@ -1969,33 +1969,35 @@ impl Drop for PendingGuard {
     fn drop(&mut self) {
         if self.armed {
             let mut map = self.map.write();
-            if self.retain_callback {
-                if let Some(request) = map.get_mut(&self.id) {
-                    request.sender.take();
-                }
-                return;
-            }
             // An entry an uncorrelated rejection kept for its inline callback
             // (no caller left) stays until its response or the connection's end.
-            if map
+            let removed = if self.retain_callback {
+                map.get_mut(&self.id)
+                    .and_then(|request| request.sender.take())
+                    .is_some()
+            } else if map
                 .get(&self.id)
                 .is_some_and(|request| request.sender.is_some())
             {
                 map.remove(&self.id);
-                drop(map);
-                if let Some(writer) = &self.cancel_wait
-                    && let Err(error) = JsonRpcClient::enqueue_message(
-                        writer,
-                        &JsonRpcNotification {
-                            jsonrpc: "2.0".to_owned(),
-                            method: "$/cancelRequest".to_owned(),
-                            params: Some(serde_json::json!({ "id": self.id })),
-                        },
-                        None,
-                    )
-                {
-                    warn!(%error, "Failed to cancel request");
-                }
+                true
+            } else {
+                false
+            };
+            drop(map);
+            if removed
+                && let Some(writer) = &self.cancel_wait
+                && let Err(error) = JsonRpcClient::enqueue_message(
+                    writer,
+                    &JsonRpcNotification {
+                        jsonrpc: "2.0".to_owned(),
+                        method: "$/cancelRequest".to_owned(),
+                        params: Some(serde_json::json!({ "id": self.id })),
+                    },
+                    None,
+                )
+            {
+                warn!(%error, "Failed to cancel request");
             }
         }
     }

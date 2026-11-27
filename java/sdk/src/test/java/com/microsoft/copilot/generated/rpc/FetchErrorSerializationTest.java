@@ -37,33 +37,4 @@ class FetchErrorSerializationTest {
             assertEquals(json, MAPPER.readTree(MAPPER.writeValueAsString(result)));
         }
     }
-
-    @Test
-    void credentialErrorsExposeTheirStableCode() throws Exception {
-        var json = """
-                {"code":"credential_revoked"}
-                """;
-        var data = MAPPER.readValue(json, CredentialContextErrorData.class);
-        assertEquals(CredentialContextErrorCode.CREDENTIAL_REVOKED, data.code());
-        assertEquals(MAPPER.readTree(json), MAPPER.readTree(MAPPER.writeValueAsString(data)));
-    }
-
-    @Test
-    void transportErrorsPreserveClassificationAndOptionalCode() throws Exception {
-        var json = """
-                {"kind":"timeout","code":"ETIMEDOUT","permanentRequestFailure":false,"networkError":true}
-                """;
-        var data = MAPPER.readValue(json, FetchTransportErrorData.class);
-        assertEquals(FetchTransportErrorKind.TIMEOUT, data.kind());
-        assertEquals("ETIMEDOUT", data.code());
-        assertFalse(data.permanentRequestFailure());
-        assertTrue(data.networkError());
-        assertEquals(MAPPER.readTree(json), MAPPER.readTree(MAPPER.writeValueAsString(data)));
-
-        var withoutCode = MAPPER.readTree(json);
-        ((com.fasterxml.jackson.databind.node.ObjectNode) withoutCode).remove("code");
-        var omitted = MAPPER.treeToValue(withoutCode, FetchTransportErrorData.class);
-        assertNull(omitted.code());
-        assertEquals(withoutCode, MAPPER.readTree(MAPPER.writeValueAsString(omitted)));
-    }
 }

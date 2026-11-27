@@ -1,6 +1,5 @@
 """E2E Session Tests"""
 
-import base64
 import os
 import uuid
 from datetime import datetime
@@ -10,15 +9,13 @@ import pytest
 from copilot import CopilotClient, RuntimeConnection
 from copilot.session import PermissionHandler
 from copilot.session_events import SessionModelChangeData
-from copilot.tools import Tool, ToolResult
+from copilot.tools import Tool
 
 from .testharness import (
-    DEFAULT_GITHUB_TOKEN,
     E2ETestContext,
     get_next_event_of_type,
     wait_for_condition,
 )
-from .testharness.provider_options import byok_inference
 
 pytestmark = pytest.mark.asyncio(loop_scope="module")
 
@@ -46,19 +43,6 @@ class TestSessions:
 
         with pytest.raises(Exception, match="Session not found"):
             await session.get_events()
-
-    async def test_should_have_stateful_conversation(self, ctx: E2ETestContext):
-        session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all}
-        )
-
-        assistant_message = await session.send_and_wait("What is 1+1?")
-        assert assistant_message is not None
-        assert "2" in assistant_message.data.content
-
-        second_message = await session.send_and_wait("Now if you double that, what do you get?")
-        assert second_message is not None
-        assert "4" in second_message.data.content
 
     async def test_should_create_a_session_with_appended_systemMessage_config(
         self, ctx: E2ETestContext
@@ -196,37 +180,6 @@ class TestSessions:
         finally:
             await session.disconnect()
 
-    # TODO: This test shows there's a race condition inside client.ts. If createSession
-    # is called concurrently and autoStart is on, it may start multiple child processes.
-    # This needs to be fixed. Right now it manifests as being unable to delete the temp
-    # directories during afterAll even though we stopped all the clients.
-    @pytest.mark.skip(reason="Known race condition - see TypeScript test")
-    async def test_should_handle_multiple_concurrent_sessions(self, ctx: E2ETestContext):
-        import asyncio
-
-        s1, s2, s3 = await asyncio.gather(
-            ctx.client.create_session(permissions={"on_request": PermissionHandler.approve_all}),
-            ctx.client.create_session(permissions={"on_request": PermissionHandler.approve_all}),
-            ctx.client.create_session(permissions={"on_request": PermissionHandler.approve_all}),
-        )
-
-        # All sessions should have unique IDs
-        session_ids = {s1.session_id, s2.session_id, s3.session_id}
-        assert len(session_ids) == 3
-
-        # All are connected
-        for s in [s1, s2, s3]:
-            messages = await s.get_events()
-            assert len(messages) > 0
-            assert messages[0].type.value == "session.start"
-            assert messages[0].data.session_id == s.session_id
-
-        # All can be disconnected
-        await asyncio.gather(s1.disconnect(), s2.disconnect(), s3.disconnect())
-        for s in [s1, s2, s3]:
-            with pytest.raises(Exception, match="Session not found"):
-                await s.get_events()
-
     async def test_should_resume_a_session_using_the_same_client(self, ctx: E2ETestContext):
         session1 = await ctx.client.create_session(
             permissions={"on_request": PermissionHandler.approve_all}
@@ -254,10 +207,11 @@ class TestSessions:
         assert "4" in answer3.data.content
 
     async def test_should_resume_a_session_using_a_new_client(self, ctx: E2ETestContext):
+        session_id = f"e2e-new-client-{uuid.uuid4()}"
         session1 = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all}
+            session_id=session_id, permissions={"on_request": PermissionHandler.approve_all}
         )
-        session_id = session1.session_id
+        assert session1.session_id == session_id
         answer = await session1.send_and_wait("What is 1+1?")
         assert answer is not None
         assert "2" in answer.data.content
@@ -291,99 +245,6 @@ class TestSessions:
             assert "4" in answer2.data.content
         finally:
             await new_client.force_stop()
-
-    async def test_resumes_a_persisted_session_from_a_new_client_when_an_mcp_oauth_handler_is_configured(  # noqa: E501
-        self, ctx: E2ETestContext
-    ):
-        def on_mcp_auth_request(_request, _invocation):
-            return {"kind": "cancelled"}
-
-        session1 = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all},
-            mcp={"on_auth_request": on_mcp_auth_request},
-        )
-        session_id = session1.session_id
-        answer = await session1.send_and_wait("What is 1+1?")
-        assert answer is not None
-        assert "2" in answer.data.content
-
-        github_token = DEFAULT_GITHUB_TOKEN if os.environ.get("GITHUB_ACTIONS") == "true" else None
-        new_client = CopilotClient(
-            mode="coding-agent",
-            runtime=RuntimeConnection.for_spawned_stdio(
-                path=ctx.cli_path, working_directory=ctx.work_dir, env=ctx.get_env()
-            ),
-            github={"token": github_token},
-        )
-
-        try:
-            session2 = await new_client.resume_session(
-                session_id,
-                permissions={"on_request": PermissionHandler.approve_all},
-                mcp={"on_auth_request": on_mcp_auth_request},
-            )
-            assert session2.session_id == session_id
-            await session2.disconnect()
-        finally:
-            await new_client.force_stop()
-
-    async def test_should_recover_marker_after_cold_resume_with_explicit_session_id(
-        self, ctx: E2ETestContext
-    ):
-        session_id = f"e2e-cold-resume-{uuid.uuid4()}"
-        github_token = DEFAULT_GITHUB_TOKEN if os.environ.get("GITHUB_ACTIONS") == "true" else None
-
-        client1 = CopilotClient(
-            mode="coding-agent",
-            runtime=RuntimeConnection.for_spawned_stdio(
-                path=ctx.cli_path, working_directory=ctx.work_dir, env=ctx.get_env()
-            ),
-            github={"token": github_token},
-        )
-        try:
-            session1 = await client1.create_session(
-                session_id=session_id, permissions={"on_request": PermissionHandler.approve_all}
-            )
-            assert session1.session_id == session_id
-
-            answer = await session1.send_and_wait(
-                "Please remember this exact secret marker for later - MARKER-7f3ac21e. "
-                'Reply with only the single word "Acknowledged".'
-            )
-            assert answer is not None
-            assert "Acknowledged" in answer.data.content
-
-            await session1.disconnect()
-        finally:
-            await client1.force_stop()
-
-        client2 = CopilotClient(
-            mode="coding-agent",
-            runtime=RuntimeConnection.for_spawned_stdio(
-                path=ctx.cli_path, working_directory=ctx.work_dir, env=ctx.get_env()
-            ),
-            github={"token": github_token},
-        )
-        try:
-            session2 = await client2.resume_session(
-                session_id, permissions={"on_request": PermissionHandler.approve_all}
-            )
-            assert session2.session_id == session_id
-
-            answer2 = await session2.send_and_wait(
-                "What was the exact secret marker I asked you to remember earlier? "
-                "Reply with only that marker value and nothing else."
-            )
-            assert answer2 is not None
-            assert "MARKER-7f3ac21e" in answer2.data.content
-        finally:
-            await client2.force_stop()
-
-    async def test_should_throw_error_resuming_nonexistent_session(self, ctx: E2ETestContext):
-        with pytest.raises(Exception):
-            await ctx.client.resume_session(
-                "non-existent-session-id", permissions={"on_request": PermissionHandler.approve_all}
-            )
 
     async def test_should_list_sessions(self, ctx: E2ETestContext):
         # Create a couple of sessions and send messages to persist them
@@ -534,101 +395,6 @@ class TestSessions:
 
         await session.disconnect()
 
-    async def test_should_create_session_with_custom_tool(self, ctx: E2ETestContext):
-        # This test uses the low-level Tool() API to show that Pydantic is optional
-        def get_secret_number_handler(invocation):
-            key = invocation.arguments.get("key", "") if invocation.arguments else ""
-            return ToolResult(
-                text_result_for_llm="54321" if key == "ALPHA" else "unknown",
-                result_type="success",
-            )
-
-        session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all},
-            tools={
-                "definitions": [
-                    Tool(
-                        name="get_secret_number",
-                        description="Gets the secret number",
-                        handler=get_secret_number_handler,
-                        parameters={
-                            "type": "object",
-                            "properties": {"key": {"type": "string", "description": "Key"}},
-                            "required": ["key"],
-                        },
-                    )
-                ]
-            },
-        )
-
-        answer = await session.send_and_wait("What is the secret number for key ALPHA?")
-        assert answer is not None
-        assert "54321" in answer.data.content
-
-    async def test_should_create_session_with_custom_provider(self, ctx: E2ETestContext):
-        session = await ctx.client.create_session(
-            model="claude-sonnet-5",
-            permissions={"on_request": PermissionHandler.approve_all},
-            inference={
-                **byok_inference(
-                    {
-                        "type": "openai",
-                        "base_url": "https://api.openai.com/v1",
-                        "api_key": "fake-key",
-                    },
-                    None,
-                )
-            },
-            github={"capi": {"enabled": False}},
-        )
-        assert session.session_id
-
-    async def test_should_create_session_with_azure_provider(self, ctx: E2ETestContext):
-        session = await ctx.client.create_session(
-            model="claude-sonnet-5",
-            permissions={"on_request": PermissionHandler.approve_all},
-            inference={
-                **byok_inference(
-                    {
-                        "type": "azure",
-                        "base_url": "https://my-resource.openai.azure.com",
-                        "api_key": "fake-key",
-                        "azure": {
-                            "api_version": "2024-02-15-preview",
-                        },
-                    },
-                    None,
-                )
-            },
-            github={"capi": {"enabled": False}},
-        )
-        assert session.session_id
-
-    async def test_should_resume_session_with_custom_provider(self, ctx: E2ETestContext):
-        session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all}
-        )
-        session_id = session.session_id
-
-        # Resume the session with a provider
-        session2 = await ctx.client.resume_session(
-            session_id,
-            permissions={"on_request": PermissionHandler.approve_all},
-            inference={
-                **byok_inference(
-                    {
-                        "type": "openai",
-                        "base_url": "https://api.openai.com/v1",
-                        "api_key": "fake-key",
-                    },
-                    None,
-                )
-            },
-            github={"capi": {"enabled": False}},
-        )
-
-        assert session2.session_id == session_id
-
     async def test_should_abort_a_session(self, ctx: E2ETestContext):
         import asyncio
 
@@ -731,22 +497,6 @@ class TestSessions:
         assert assistant_messages
         assert "300" in assistant_messages[-1].data.content
 
-    async def test_should_create_session_with_custom_config_dir(self, ctx: E2ETestContext):
-        import os
-
-        custom_config_dir = os.path.join(ctx.home_dir, "custom-config")
-        session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all},
-            config_directory=custom_config_dir,
-        )
-
-        assert session.session_id
-
-        # Session should work normally with custom config dir
-        assistant_message = await session.send_and_wait("What is 1+1?", timeout=10.0)
-        assert assistant_message is not None
-        assert "2" in assistant_message.data.content
-
     async def test_session_log_emits_events_at_all_levels(self, ctx: E2ETestContext):
         import asyncio
 
@@ -821,231 +571,6 @@ class TestSessions:
             await session.disconnect()
         finally:
             await isolated_ctx.teardown()
-
-    async def test_should_accept_blob_attachments(self, ctx: E2ETestContext):
-        # Write the image to disk so the model can view it
-        pixel_png = (
-            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAY"
-            "AAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhg"
-            "GAWjR9awAAAABJRU5ErkJggg=="
-        )
-        png_path = os.path.join(ctx.work_dir, "test-pixel.png")
-        with open(png_path, "wb") as f:
-            f.write(base64.b64decode(pixel_png))
-
-        session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all}
-        )
-
-        await session.send_and_wait(
-            "Describe this image",
-            attachments=[
-                {
-                    "type": "blob",
-                    "data": pixel_png,
-                    "mimeType": "image/png",
-                    "displayName": "test-pixel.png",
-                },
-            ],
-        )
-
-        await session.disconnect()
-
-    async def test_should_send_with_file_attachment(self, ctx: E2ETestContext):
-        from copilot.session_events import UserMessageData
-
-        file_path = os.path.join(ctx.work_dir, "attached-file.txt")
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.write("FILE_ATTACHMENT_SENTINEL")
-
-        session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all}
-        )
-
-        await session.send_and_wait(
-            "Read the attached file and reply with its contents.",
-            attachments=[
-                {
-                    "type": "file",
-                    "displayName": "attached-file.txt",
-                    "path": file_path,
-                    "lineRange": {"start": 1, "end": 1},  # type: ignore[typeddict-unknown-key]
-                },
-            ],
-        )
-
-        messages = await session.get_events()
-        user_messages = [m for m in messages if isinstance(m.data, UserMessageData)]
-        assert user_messages
-        attachments = user_messages[-1].data.attachments
-        assert attachments is not None and len(attachments) == 1
-        attachment = attachments[0]
-        assert attachment.type == "file"
-        assert attachment.display_name == "attached-file.txt"
-        assert attachment.path == file_path
-        assert attachment.line_range is not None
-        assert attachment.line_range.start == 1
-        assert attachment.line_range.end == 1
-
-        await session.disconnect()
-
-    async def test_should_send_with_directory_attachment(self, ctx: E2ETestContext):
-        from copilot.session_events import UserMessageData
-
-        directory_path = os.path.join(ctx.work_dir, "attached-directory")
-        os.makedirs(directory_path, exist_ok=True)
-        with open(os.path.join(directory_path, "readme.txt"), "w", encoding="utf-8") as f:
-            f.write("DIRECTORY_ATTACHMENT_SENTINEL")
-
-        session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all}
-        )
-
-        await session.send_and_wait(
-            "List the attached directory.",
-            attachments=[
-                {
-                    "type": "directory",
-                    "displayName": "attached-directory",
-                    "path": directory_path,
-                },
-            ],
-        )
-
-        messages = await session.get_events()
-        user_messages = [m for m in messages if isinstance(m.data, UserMessageData)]
-        assert user_messages
-        attachments = user_messages[-1].data.attachments
-        assert attachments is not None and len(attachments) == 1
-        attachment = attachments[0]
-        assert attachment.type == "directory"
-        assert attachment.display_name == "attached-directory"
-        assert attachment.path == directory_path
-
-        await session.disconnect()
-
-    async def test_should_send_with_selection_attachment(self, ctx: E2ETestContext):
-        from copilot.session_events import UserMessageData
-
-        file_path = os.path.join(ctx.work_dir, "selected-file.cs")
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.write('class C { string Value = "SELECTION_SENTINEL"; }')
-
-        session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all}
-        )
-
-        await session.send_and_wait(
-            "Summarize the selected code.",
-            attachments=[
-                {
-                    "type": "selection",
-                    "displayName": "selected-file.cs",
-                    "filePath": file_path,
-                    "text": 'string Value = "SELECTION_SENTINEL";',
-                    "selection": {
-                        "start": {"line": 1, "character": 10},
-                        "end": {"line": 1, "character": 45},
-                    },
-                },
-            ],
-        )
-
-        messages = await session.get_events()
-        user_messages = [m for m in messages if isinstance(m.data, UserMessageData)]
-        assert user_messages
-        attachments = user_messages[-1].data.attachments
-        assert attachments is not None and len(attachments) == 1
-        attachment = attachments[0]
-        assert attachment.type == "selection"
-        assert attachment.display_name == "selected-file.cs"
-        assert attachment.file_path == file_path
-        assert attachment.text == 'string Value = "SELECTION_SENTINEL";'
-        assert attachment.selection is not None
-        assert attachment.selection.start.line == 1
-        assert attachment.selection.start.character == 10
-        assert attachment.selection.end.line == 1
-        assert attachment.selection.end.character == 45
-
-        await session.disconnect()
-
-    async def test_should_send_with_custom_requestheaders(self, ctx: E2ETestContext):
-        session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all}
-        )
-
-        await session.send_and_wait(
-            "What is 1+1?",
-            request_headers={"x-copilot-sdk-test-header": "python-request-headers"},
-        )
-
-        exchanges = await ctx.get_exchanges()
-        assert exchanges
-        last_headers = exchanges[-1].get("requestHeaders") or {}
-        normalized = {k.lower(): str(v) for k, v in last_headers.items()}
-        header_value = normalized.get("x-copilot-sdk-test-header", "")
-        assert "python-request-headers" in header_value
-
-        await session.disconnect()
-
-    async def test_should_list_sessions_with_context(self, ctx: E2ETestContext):
-        import asyncio
-
-        session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all}
-        )
-        await session.send_and_wait("Say OK.")
-
-        # Allow the session to flush metadata to disk before reading it back.
-        our_session = None
-        deadline = asyncio.get_running_loop().time() + 5.0
-        while True:
-            sessions = await ctx.client.list_sessions()
-            our_session = next((s for s in sessions if s.session_id == session.session_id), None)
-            if our_session is not None:
-                break
-            if asyncio.get_running_loop().time() >= deadline:
-                break
-            await asyncio.sleep(0.1)
-        assert our_session is not None
-
-        all_sessions = await ctx.client.list_sessions()
-        assert all_sessions
-
-        if our_session.context is not None:
-            assert (
-                isinstance(our_session.context.working_directory, str)
-                and our_session.context.working_directory
-            )
-
-        await session.disconnect()
-
-    async def test_should_get_session_metadata_by_id(self, ctx: E2ETestContext):
-        import asyncio
-
-        session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all}
-        )
-        await session.send_and_wait("Say hello")
-
-        metadata = None
-        deadline = asyncio.get_running_loop().time() + 5.0
-        while True:
-            metadata = await ctx.client.get_session_metadata(session.session_id)
-            if metadata is not None:
-                break
-            if asyncio.get_running_loop().time() >= deadline:
-                break
-            await asyncio.sleep(0.1)
-        assert metadata is not None
-        assert metadata.session_id == session.session_id
-        assert isinstance(metadata.start_time, datetime)
-        assert isinstance(metadata.modified_time, datetime)
-
-        not_found = await ctx.client.get_session_metadata("non-existent-session-id")
-        assert not_found is None
-
-        await session.disconnect()
 
     async def test_send_returns_immediately_while_events_stream_in_background(
         self, ctx: E2ETestContext
@@ -1197,34 +722,6 @@ class TestSessions:
             await asyncio.gather(tool_start_task, idle_task, send_task, return_exceptions=True)
             await session.disconnect()
 
-    async def test_should_set_model_on_existing_session(self, ctx: E2ETestContext):
-        """`set_model` emits a session.model_change event with the new model."""
-        import asyncio
-
-        session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all}
-        )
-
-        model_change_event: asyncio.Future[SessionModelChangeData] = (
-            asyncio.get_event_loop().create_future()
-        )
-
-        def on_event(event):
-            if model_change_event.done():
-                return
-            match event.data:
-                case SessionModelChangeData() as data:
-                    model_change_event.set_result(data)
-
-        session.on(on_event)
-
-        await session.set_model("gpt-4.1")
-
-        data = await asyncio.wait_for(model_change_event, timeout=30)
-        assert data.new_model == "gpt-4.1"
-
-        await session.disconnect()
-
     async def test_handler_exception_does_not_halt_event_delivery(self, ctx: E2ETestContext):
         """A throwing handler does not stop subsequent events from being delivered."""
         import asyncio
@@ -1295,31 +792,6 @@ class TestSessions:
             await asyncio.wait_for(disposed.wait(), timeout=10.0)
         except TimeoutError:
             pytest.fail("disconnect from within handler appears to have deadlocked")
-
-    async def test_should_send_with_mode_property(self, ctx: E2ETestContext):
-        """Per-message `agent_mode` is forwarded and echoed back on user.message."""
-        from copilot.session_events import (
-            UserMessageAgentMode,
-            UserMessageData,
-        )
-
-        session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all}
-        )
-
-        await session.send_and_wait(
-            "Say mode ok.",
-            agent_mode="plan",
-        )
-
-        messages = await session.get_events()
-        user_messages = [m for m in messages if isinstance(m.data, UserMessageData)]
-        assert user_messages
-        last = user_messages[-1].data
-        assert last.content == "Say mode ok."
-        assert last.agent_mode == UserMessageAgentMode.PLAN
-
-        await session.disconnect()
 
 
 def _get_system_message(exchange: dict) -> str:

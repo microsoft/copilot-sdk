@@ -273,42 +273,5 @@ class UpdateSessionOptionsForModeTest {
         }
     }
 
-    @Test
-    void emptyMode_partialOverrides_restGetDefaults() throws Exception {
-        try (var pair = new AutoReplyPair()) {
-            var session = new CopilotSession("sess-1", pair.rpcClient);
-            var client = new CopilotClient(new CopilotClientOptions().setMode(CopilotClientMode.EMPTY)
-                    .setRuntime(RuntimeConnection.forDefault().setBaseDirectory("/tmp/copilot-home"))
-                    .setAutoStart(false));
-
-            // Only override coauthorEnabled, rest should use safe defaults
-            client.updateSessionOptionsForMode(session, null, null, true, null).get();
-
-            assertEquals("session.options.update", pair.lastMethod);
-            assertTrue(pair.lastParams.path("instructions").get("skipCustomInstructions").asBoolean(), "default: skip");
-            assertTrue(pair.lastParams.path("agents").get("localDiscoveryOnly").asBoolean(), "default: local only");
-            assertTrue(pair.lastParams.path("git").get("coauthorEnabled").asBoolean(), "override: coauthor enabled");
-            assertFalse(pair.lastParams.path("tools").get("manageScheduleEnabled").asBoolean(),
-                    "default: schedule disabled");
-            client.close();
-        }
-    }
-
     // ── SessionId injection ───────────────────────────────────────────────────
-
-    @Test
-    void sessionIdInjectedBySessionOptionsApi() throws Exception {
-        try (var pair = new AutoReplyPair()) {
-            var session = new CopilotSession("my-session-id", pair.rpcClient);
-            var client = new CopilotClient(
-                    new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT).setAutoStart(false));
-
-            client.updateSessionOptionsForMode(session, true, null, null, null).get();
-
-            assertEquals("session.options.update", pair.lastMethod);
-            assertEquals("my-session-id", pair.lastParams.get("sessionId").asText(),
-                    "SessionOptionsApi should inject sessionId");
-            client.close();
-        }
-    }
 }

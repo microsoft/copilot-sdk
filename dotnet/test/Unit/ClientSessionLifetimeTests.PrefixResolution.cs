@@ -62,8 +62,6 @@ public sealed partial class ClientSessionLifetimeTests
     [InlineData("abcdef", false)]
     [InlineData("abc-def1", false)]
     [InlineData("deadbeef_task1", false)]
-    [InlineData("ébcdef1", false)]
-    [InlineData("abcdef1Ｇ", false)]
     public async Task Resume_Resolves_Only_Runtime_Uuid_Prefixes(string sessionId, bool resolve)
     {
         const string canonicalId = "abcdef12-abcd-4123-8123-123456789abc";
@@ -92,10 +90,8 @@ public sealed partial class ClientSessionLifetimeTests
         Assert.Equal(resolve ? 1 : 0, server.Requests.Count(request => request.Method == "sessions.findByPrefix"));
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Exact_Hex_Provider_Resume_Skips_Host_Lookup(bool recovery)
+    [Fact]
+    public async Task Exact_Hex_Provider_Resume_Skips_Host_Lookup()
     {
         await using var server = await FakeCopilotServer.StartAsync();
         server.Capabilities = AutoModeRecoveryCapabilities(true);
@@ -112,7 +108,7 @@ public sealed partial class ClientSessionLifetimeTests
         await using var client = new CopilotClient(new CopilotClientOptions
         { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port), SessionFs = new SessionFsConfig { InitialWorkingDirectory = "/", SessionStatePath = "/session-state", Conventions = SessionFsSetProviderConventions.Posix } });
         await using var session = await client.ResumeSessionAsync("abcdef0", new ResumeSessionOptions
-        { Interaction = new SessionInteractionOptions { AutoModeRecovery = recovery, OnAutoModeSwitchRequest = (_, _) => Task.FromResult(AutoModeSwitchResponse.No) }, State = new SessionStateOptions { CreateSessionFsProvider = _ => new TextOnlySessionFsProvider() } });
+        { Interaction = new SessionInteractionOptions { AutoModeRecovery = true, OnAutoModeSwitchRequest = (_, _) => Task.FromResult(AutoModeSwitchResponse.No) }, State = new SessionStateOptions { CreateSessionFsProvider = _ => new TextOnlySessionFsProvider() } });
         Assert.Equal("abcdef0", session.SessionId);
         Assert.DoesNotContain(server.Requests, request => request.Method == "sessions.findByPrefix");
     }

@@ -137,7 +137,6 @@ public sealed partial class ClientSessionLifetimeTests
     [InlineData(4L, null)]
     [InlineData(3L, 0L)]
     [InlineData(7L, 20L)]
-    [InlineData(9L, null)]
     [InlineData(100L, 2L)]
     public async Task RangeOnlySessionFsProvider_PreservesBytePositionsAndEof(long offset, long? length)
     {

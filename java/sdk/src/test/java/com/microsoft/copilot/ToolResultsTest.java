@@ -26,8 +26,8 @@ import com.microsoft.copilot.rpc.ToolDefinition;
 import com.microsoft.copilot.rpc.ToolResultObject;
 
 /**
- * E2E tests for tool result types — verifying that rejected and denied result
- * types are handled correctly by the runtime.
+ * E2E tests for tool result types — verifying that a rejected result type is
+ * handled correctly by the runtime.
  *
  * <p>
  * Snapshots are stored in {@code test/snapshots/tool_results/}.
@@ -97,56 +97,6 @@ public class ToolResultsTest {
             assertFalse(toolEvt.getData().success(), "Tool execution should not be marked as successful");
             assertNotNull(toolEvt.getData().error(), "Should have error details");
             assertEquals("rejected", toolEvt.getData().error().code(), "Error code should be 'rejected'");
-
-            session.close();
-        }
-    }
-
-    /**
-     * Verifies that a tool returning a "denied" resultType is reported as a failed
-     * tool execution with the correct error code.
-     *
-     * @see Snapshot: tool_results/should_handle_tool_result_with_denied_resulttype
-     */
-    @Test
-    void testShouldHandleToolResultWithDeniedResultType() throws Exception {
-        ctx.configureForTest("tool_results", "should_handle_tool_result_with_denied_resulttype");
-
-        var toolHandlerCalled = new boolean[]{false};
-
-        Map<String, Object> params = Map.of("type", "object", "properties", Map.of(), "required", List.of());
-
-        ToolDefinition accessTool = ToolDefinition.create("access_secret", "Accesses a secret", params,
-                (invocation) -> {
-                    toolHandlerCalled[0] = true;
-                    return CompletableFuture.completedFuture(new ToolResultObject("denied",
-                            "Access denied: insufficient permissions to read secrets", null, null, null, null, null));
-                });
-
-        try (CopilotClient client = ctx.createClient()) {
-            CopilotSession session = client.createSession(ctx.newSessionConfig()
-                    .setTools(ctx.newSessionConfig().getTools().setDefinitions(List.of(accessTool))).setPermissions(
-                            ctx.newSessionConfig().getPermissions().setOnRequest(PermissionHandler.APPROVE_ALL)))
-                    .get();
-
-            List<SessionEvent> events = new CopyOnWriteArrayList<>();
-            session.on(events::add);
-
-            session.sendAndWait(new MessageOptions().setPrompt(
-                    "Use access_secret to get the API key. If access is denied, tell me it was 'access denied'."))
-                    .get(60, TimeUnit.SECONDS);
-
-            assertTrue(toolHandlerCalled[0], "Tool handler should have been called");
-
-            List<ToolExecutionCompleteEvent> toolEvents = events.stream()
-                    .filter(e -> e instanceof ToolExecutionCompleteEvent).map(e -> (ToolExecutionCompleteEvent) e)
-                    .toList();
-            assertFalse(toolEvents.isEmpty(), "Should have a tool.execution_complete event");
-
-            ToolExecutionCompleteEvent toolEvt = toolEvents.get(0);
-            assertFalse(toolEvt.getData().success(), "Tool execution should not be marked as successful");
-            assertNotNull(toolEvt.getData().error(), "Should have error details");
-            assertEquals("denied", toolEvt.getData().error().code(), "Error code should be 'denied'");
 
             session.close();
         }

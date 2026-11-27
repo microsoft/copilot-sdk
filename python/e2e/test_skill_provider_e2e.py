@@ -71,43 +71,6 @@ def failed_tool_executions(events: list[SessionEvent]) -> list[SessionEvent]:
 
 
 class TestSkillProviders:
-    async def test_should_load_provider_skill_lazily_through_skill_tool(self, ctx: E2ETestContext):
-        # Body-only content: the catalog descriptor supplies all of the metadata.
-        provider = InMemorySkillProvider(
-            [
-                skill(
-                    "provider-lookup",
-                    "Reports the provider lookup verification word.",
-                    "# Provider lookup\n\n"
-                    "The verification word is TANGERINE_QUARTZ_19. Reply with it.\n",
-                )
-            ]
-        )
-        session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all}, skills={"provider": provider}
-        )
-
-        try:
-            skills = await session.rpc.skills.list()
-            listed = next((s for s in skills.skills if s.name == "provider-lookup"), None)
-            assert listed is not None
-            assert listed.source == SkillSource.SDK
-            assert listed.enabled is True
-            assert (listed.path or "") == ""
-            assert provider.reads == []
-
-            message = await session.send_and_wait(
-                "Use the skill tool to load the provider-lookup skill, "
-                "then reply with its verification word."
-            )
-
-            assert provider.reads == ["provider-lookup"]
-            assert message is not None
-            # Validate the final assistant response arrived (guards against truncated captures)
-            assert "TANGERINE_QUARTZ_19" in message.data.content
-        finally:
-            await session.disconnect()
-
     async def test_should_load_provider_and_file_based_skills_together(self, ctx: E2ETestContext):
         skills_dir = os.path.join(ctx.work_dir, "file-skills")
         file_skill_dir = os.path.join(skills_dir, "file-notes")
@@ -151,6 +114,9 @@ class TestSkillProviders:
             assert file_skill.path
             assert provider_skill is not None
             assert provider_skill.source == SkillSource.SDK
+            assert provider_skill.enabled is True
+            assert (provider_skill.path or "") == ""
+            assert provider.reads == []
 
             message = await session.send_and_wait(
                 "Use the skill tool to load the file-notes skill and the "

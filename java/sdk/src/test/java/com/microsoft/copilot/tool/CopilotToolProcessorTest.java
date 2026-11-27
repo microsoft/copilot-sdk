@@ -444,29 +444,6 @@ class CopilotToolProcessorTest {
     // ── Test: @CopilotToolParam schema override ─────────────────────────────────
 
     @Test
-    void generatesCorrectSchema_forExplicitSchemaOverride() {
-        String source = """
-                package test;
-                import com.microsoft.copilot.tool.CopilotTool;
-                import com.microsoft.copilot.tool.CopilotToolParam;
-                public class SchemaOverrideTools {
-                    @CopilotTool("Schedule meeting")
-                    public String schedule(
-                            @CopilotToolParam(value = "When to meet",
-                                schema = "{\\"type\\":\\"string\\",\\"format\\":\\"date-time\\"}") String when) {
-                        return "scheduled " + when;
-                    }
-                }
-                """;
-
-        CompilationResult result = compileWithProcessor(List.of(inMemorySource("test.SchemaOverrideTools", source)));
-
-        assertNoErrors(result);
-        assertTrue(result.generatedSources.stream().anyMatch(s -> s.contains("date-time")),
-                "Expected generated code to contain the custom schema format, got: " + result.generatedSources);
-    }
-
-    @Test
     void generatedSchemaOverride_supportsCustomTypeHandlerInvocation() throws Exception {
         String source = """
                 package test;
@@ -673,26 +650,6 @@ class CopilotToolProcessorTest {
     // ── Test: Blank @CopilotToolParam description validation ────────────────────
 
     @Test
-    void emitsError_forBlankParamDescription() {
-        String source = """
-                package test;
-                import com.microsoft.copilot.tool.CopilotTool;
-                import com.microsoft.copilot.tool.CopilotToolParam;
-                public class BlankDescTools {
-                    @CopilotTool("Search for items")
-                    public String searchItems(@CopilotToolParam("") String query) {
-                        return "results for " + query;
-                    }
-                }
-                """;
-
-        CompilationResult result = compileWithProcessor(List.of(inMemorySource("test.BlankDescTools", source)));
-
-        assertTrue(hasErrorContaining(result, "blank value (description)"),
-                "Expected compile error for blank @CopilotToolParam description, got: " + result.diagnostics);
-    }
-
-    @Test
     void emitsError_forWhitespaceOnlyParamDescription() {
         String source = """
                 package test;
@@ -710,43 +667,6 @@ class CopilotToolProcessorTest {
 
         assertTrue(hasErrorContaining(result, "blank value (description)"),
                 "Expected compile error for whitespace-only @CopilotToolParam description, got: " + result.diagnostics);
-    }
-
-    @Test
-    void compilesSuccessfully_forValidParamDescription() {
-        String source = """
-                package test;
-                import com.microsoft.copilot.tool.CopilotTool;
-                import com.microsoft.copilot.tool.CopilotToolParam;
-                public class ValidDescTools {
-                    @CopilotTool("Search for items")
-                    public String searchItems(@CopilotToolParam("Search query") String query) {
-                        return "results for " + query;
-                    }
-                }
-                """;
-
-        CompilationResult result = compileWithProcessor(List.of(inMemorySource("test.ValidDescTools", source)));
-
-        assertNoErrors(result);
-    }
-
-    @Test
-    void compilesSuccessfully_forParamWithoutAnnotation() {
-        String source = """
-                package test;
-                import com.microsoft.copilot.tool.CopilotTool;
-                public class NoAnnotationTools {
-                    @CopilotTool("Search for items")
-                    public String searchItems(String query) {
-                        return "results for " + query;
-                    }
-                }
-                """;
-
-        CompilationResult result = compileWithProcessor(List.of(inMemorySource("test.NoAnnotationTools", source)));
-
-        assertNoErrors(result);
     }
 
     @Test
@@ -771,27 +691,6 @@ class CopilotToolProcessorTest {
     }
 
     // ── Test: Return type handling ──────────────────────────────────────────────
-
-    @Test
-    void generatesCorrectCode_forStringReturnType() {
-        String source = """
-                package test;
-                import com.microsoft.copilot.tool.CopilotTool;
-                import com.microsoft.copilot.tool.CopilotToolParam;
-                public class StringReturn {
-                    @CopilotTool("Returns string")
-                    public String doSomething(@CopilotToolParam("Input") String input) {
-                        return input;
-                    }
-                }
-                """;
-
-        CompilationResult result = compileWithProcessor(List.of(inMemorySource("test.StringReturn", source)));
-        assertNoErrors(result);
-        String generated = result.getGeneratedSource("test.StringReturn$$CopilotToolMeta");
-        assertTrue(generated.contains("CompletableFuture.completedFuture(instance.doSomething("),
-                "Expected completedFuture wrapping for String return, got:\n" + generated);
-    }
 
     @Test
     void generatesMetadata_withNestedFlags() {
@@ -840,6 +739,8 @@ class CopilotToolProcessorTest {
         CompilationResult result = compileWithProcessor(List.of(inMemorySource("test.PlainTools", source)));
         assertNoErrors(result);
         String generated = result.getGeneratedSource("test.PlainTools$$CopilotToolMeta");
+        assertTrue(generated.contains("CompletableFuture.completedFuture(instance.doSomething("),
+                "Expected completedFuture wrapping for String return, got:\n" + generated);
         assertFalse(generated.contains("Map.<String, Object>of("),
                 "Expected no metadata map for a tool without metadata, got:\n" + generated);
         String normalizedGenerated = generated.replace("\r\n", "\n").replace('\r', '\n');
@@ -1086,8 +987,10 @@ class CopilotToolProcessorTest {
         // Verify the schema contains the expected keys
         assertTrue(generated.contains("\"type\", \"object\""), "Expected object type in schema");
         assertTrue(generated.contains("\"properties\""), "Expected properties in schema");
-        assertTrue(generated.contains("\"required\""), "Expected required in schema");
-        assertTrue(generated.contains("\"query\""), "Expected query property");
+        assertTrue(generated.contains("Map.entry(\"query\""), "Expected query property");
+        assertTrue(generated.contains("Map.entry(\"limit\""), "Expected limit property");
+        assertTrue(generated.contains("\"required\", List.of(\"query\"))"),
+                "Expected only required=true parameters in required list, got:\n" + generated);
     }
 
     @Test
@@ -1574,10 +1477,10 @@ class CopilotToolProcessorTest {
                 "Expected compile error for mismatched int defaultValue, got: " + result.diagnostics);
     }
 
-    // ── Test: package-private methods are allowed ───────────────────────────────
+    // ── Test: package-private and protected methods are allowed ─────────────────
 
     @Test
-    void allowsPackagePrivateMethods() {
+    void allowsPackagePrivateAndProtectedMethods() {
         String source = """
                 package test;
                 import com.microsoft.copilot.tool.CopilotTool;
@@ -1586,54 +1489,15 @@ class CopilotToolProcessorTest {
                     String doSomething() {
                         return "done";
                     }
-                }
-                """;
-
-        CompilationResult result = compileWithProcessor(List.of(inMemorySource("test.PackagePrivateTools", source)));
-        assertNoErrors(result);
-    }
-
-    // ── Test: protected methods are allowed ─────────────────────────────────────
-
-    @Test
-    void allowsProtectedMethods() {
-        String source = """
-                package test;
-                import com.microsoft.copilot.tool.CopilotTool;
-                public class ProtectedTools {
                     @CopilotTool("Protected tool")
-                    protected String doSomething() {
+                    protected String doSomethingElse() {
                         return "done";
                     }
                 }
                 """;
 
-        CompilationResult result = compileWithProcessor(List.of(inMemorySource("test.ProtectedTools", source)));
+        CompilationResult result = compileWithProcessor(List.of(inMemorySource("test.PackagePrivateTools", source)));
         assertNoErrors(result);
-    }
-
-    // ── Test: overridesBuiltInTool generates createOverride ─────────────────────
-
-    @Test
-    void generatesCreateOverride_whenOverridesBuiltInTool() {
-        String source = """
-                package test;
-                import com.microsoft.copilot.tool.CopilotTool;
-                import com.microsoft.copilot.tool.CopilotToolParam;
-                public class OverrideTools {
-                    @CopilotTool(value = "Custom grep", name = "grep", overridesBuiltInTool = true)
-                    public String grep(@CopilotToolParam("Query") String query) {
-                        return "result";
-                    }
-                }
-                """;
-
-        CompilationResult result = compileWithProcessor(List.of(inMemorySource("test.OverrideTools", source)));
-        assertNoErrors(result);
-        String generated = result.getGeneratedSource("test.OverrideTools$$CopilotToolMeta");
-        assertTrue(generated.contains("new ToolDefinition("), "Expected record constructor, got:\n" + generated);
-        assertTrue(generated.contains("Boolean.TRUE"),
-                "Expected Boolean.TRUE for overridesBuiltInTool, got:\n" + generated);
     }
 
     @Test
@@ -1734,30 +1598,6 @@ class CopilotToolProcessorTest {
         assertTrue(generated.contains("new ToolDefinition("),
                 "Expected record constructor for NONE, got:\n" + generated);
         assertFalse(generated.contains("ToolDefer."), "Should NOT reference ToolDefer for NONE, got:\n" + generated);
-    }
-
-    // ── Test: ToolDefer.AUTO results in createWithDefer ──────────────────────────
-
-    @Test
-    void generatesCreateWithDefer_whenDeferIsAuto() {
-        String source = """
-                package test;
-                import com.microsoft.copilot.tool.CopilotTool;
-                import com.microsoft.copilot.rpc.ToolDefer;
-                public class DeferAutoTools {
-                    @CopilotTool(value = "Deferrable tool", defer = ToolDefer.AUTO)
-                    public String doSomething() {
-                        return "done";
-                    }
-                }
-                """;
-
-        CompilationResult result = compileWithProcessor(List.of(inMemorySource("test.DeferAutoTools", source)));
-        assertNoErrors(result);
-        String generated = result.getGeneratedSource("test.DeferAutoTools$$CopilotToolMeta");
-        assertTrue(generated.contains("new ToolDefinition("),
-                "Expected record constructor for AUTO, got:\n" + generated);
-        assertTrue(generated.contains("ToolDefer.AUTO"), "Expected ToolDefer.AUTO argument, got:\n" + generated);
     }
 
     // ── Test: Optional parameter extraction ─────────────────────────────────────

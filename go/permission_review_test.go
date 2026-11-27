@@ -626,118 +626,109 @@ func TestPermissionEnvelopeHandlerSelection(t *testing.T) {
 }
 
 func TestPermissionEnvelopeAndMCPAuthRuntimeRefresh(t *testing.T) {
-	for _, resume := range []bool{false, true} {
-		for _, envelopeEnabled := range []bool{false, true} {
-			for _, refreshEnabled := range []bool{false, true} {
-				t.Run(fmt.Sprintf("resume=%t/envelope=%t/refresh=%t", resume, envelopeEnabled, refreshEnabled), func(t *testing.T) {
-					t.Parallel()
-					authResults := make(chan json.RawMessage, 1)
-					client, peer, forwarded := newPermissionReviewClient(t, func(server *jsonrpc2.Client) {
-						server.SetRequestHandler("session.eventLog.registerInterest", func(json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
-							return json.RawMessage(`{}`), nil
-						})
-						server.SetRequestHandler("session.mcp.oauth.handlePendingRequest", func(params json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
-							authResults <- params
-							return json.RawMessage(`{}`), nil
-						})
+	// Resume registration and dispatch are owned by TestPermissionEnvelopeAndMCPAuthRuntimeRefreshComposition
+	// (cold and warm resume) and TestPermissionEnvelopeAndLegacyCallbacks (resume wire events).
+	for _, envelopeEnabled := range []bool{false, true} {
+		for _, refreshEnabled := range []bool{false, true} {
+			t.Run(fmt.Sprintf("envelope=%t/refresh=%t", envelopeEnabled, refreshEnabled), func(t *testing.T) {
+				t.Parallel()
+				authResults := make(chan json.RawMessage, 1)
+				client, peer, forwarded := newPermissionReviewClient(t, func(server *jsonrpc2.Client) {
+					server.SetRequestHandler("session.eventLog.registerInterest", func(json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
+						return json.RawMessage(`{}`), nil
 					})
-					permissionCalls := make(chan string, 1)
-					authCalls := make(chan string, 1)
-					sessionReady := make(chan *Session, 1)
-					forwardPermission := func(request any, sessionID string) (rpc.PermissionDecision, error) {
-						session := <-sessionReady
-						_, err := session.RPC.Permissions.ManagedReviewRequired(t.Context(), &rpc.SessionPermissionsManagedReviewRequiredRequest{Request: request})
-						permissionCalls <- sessionID
-						return &rpc.PermissionDecisionNoResult{}, err
+					server.SetRequestHandler("session.mcp.oauth.handlePendingRequest", func(params json.RawMessage) (json.RawMessage, *jsonrpc2.Error) {
+						authResults <- params
+						return json.RawMessage(`{}`), nil
+					})
+				})
+				permissionCalls := make(chan string, 1)
+				authCalls := make(chan string, 1)
+				sessionReady := make(chan *Session, 1)
+				forwardPermission := func(request any, sessionID string) (rpc.PermissionDecision, error) {
+					session := <-sessionReady
+					_, err := session.RPC.Permissions.ManagedReviewRequired(t.Context(), &rpc.SessionPermissionsManagedReviewRequiredRequest{Request: request})
+					permissionCalls <- sessionID
+					return &rpc.PermissionDecisionNoResult{}, err
+				}
+				legacyPermission := func(PermissionRequest, PermissionInvocation) (rpc.PermissionDecision, error) {
+					t.Error("legacy handler replaced the prompt or envelope handler")
+					return &rpc.PermissionDecisionNoResult{}, nil
+				}
+				promptPermission := func(request PermissionRequest, invocation PermissionHandlerInvocation) (rpc.PermissionDecision, error) {
+					if _, ok := request.(*PermissionRequestRead); !ok {
+						t.Errorf("legacy callback received a wrapper: %T", request)
 					}
-					legacyPermission := func(PermissionRequest, PermissionInvocation) (rpc.PermissionDecision, error) {
-						t.Error("legacy handler replaced the prompt or envelope handler")
-						return &rpc.PermissionDecisionNoResult{}, nil
-					}
-					promptPermission := func(request PermissionRequest, invocation PermissionHandlerInvocation) (rpc.PermissionDecision, error) {
-						if _, ok := request.(*PermissionRequestRead); !ok {
-							t.Errorf("legacy callback received a wrapper: %T", request)
-						}
+					return forwardPermission(request, invocation.SessionID)
+				}
+				var permission PermissionHandlerWithEnvelopeFunc
+				if envelopeEnabled {
+					permission = func(request *PermissionRequestEnvelope, invocation PermissionHandlerInvocation) (rpc.PermissionDecision, error) {
 						return forwardPermission(request, invocation.SessionID)
 					}
-					var permission PermissionHandlerWithEnvelopeFunc
-					if envelopeEnabled {
-						permission = func(request *PermissionRequestEnvelope, invocation PermissionHandlerInvocation) (rpc.PermissionDecision, error) {
-							return forwardPermission(request, invocation.SessionID)
+				}
+				var refresh MCPAuthRuntimeRefreshHandler
+				if refreshEnabled {
+					refresh = func(request MCPAuthRequest, invocation MCPAuthInvocation, supported bool) (*MCPAuthResult, error) {
+						if !supported || request.Reason != MCPOauthRequestReasonRefresh {
+							t.Errorf("runtime refresh capability lost: supported=%t request=%+v", supported, request)
 						}
+						authCalls <- "refresh:" + invocation.SessionID
+						return MCPAuthResultRuntimeRefresh(), nil
 					}
-					var refresh MCPAuthRuntimeRefreshHandler
-					if refreshEnabled {
-						refresh = func(request MCPAuthRequest, invocation MCPAuthInvocation, supported bool) (*MCPAuthResult, error) {
-							if !supported || request.Reason != MCPOauthRequestReasonRefresh {
-								t.Errorf("runtime refresh capability lost: supported=%t request=%+v", supported, request)
-							}
-							authCalls <- "refresh:" + invocation.SessionID
-							return MCPAuthResultRuntimeRefresh(), nil
-						}
-					}
-					legacyAuth := func(_ MCPAuthRequest, invocation MCPAuthInvocation) (*MCPAuthResult, error) {
-						authCalls <- "legacy:" + invocation.SessionID
-						return MCPAuthResultCancelled(), nil
-					}
-					var session *Session
-					var err error
-					if resume {
-						config := &ResumeSessionOptions{MCP: SessionMCPOptions{OnAuthRequest: legacyAuth}, Permissions: SessionPermissionOptions{OnRequest: legacyPermission, OnRequestWithPrompt: promptPermission}}
-						config.Permissions.OnRequestWithEnvelope = permission
-						config.MCP.OnAuthRuntimeRefresh = refresh
-						before := *config
-						session, err = client.ResumeSession(t.Context(), "review-session", config)
-						assertPermissionConfigUnchanged(t, before, *config)
-					} else {
-						config := &CreateSessionOptions{SessionID: "review-session", MCP: SessionMCPOptions{OnAuthRequest: legacyAuth}, Permissions: SessionPermissionOptions{OnRequest: legacyPermission, OnRequestWithPrompt: promptPermission}}
-						config.Permissions.OnRequestWithEnvelope = permission
-						config.MCP.OnAuthRuntimeRefresh = refresh
-						before := *config
-						session, err = client.CreateSession(t.Context(), config)
-						assertPermissionConfigUnchanged(t, before, *config)
-					}
-					if err != nil {
-						t.Fatal(err)
-					}
-					sessionReady <- session
-					original := json.RawMessage(`{"kind":"read","intention":"Read a file","path":"/workspace/file.txt","futureDetails":9007199254740993}`)
-					peer.notify("session.event", map[string]any{
-						"sessionId": session.SessionID,
-						"event": map[string]any{"type": "permission.requested", "data": map[string]any{
-							"requestId": "permission-1", "permissionRequest": original,
-						}},
-					})
-					want := original
-					if !envelopeEnabled {
-						want = json.RawMessage(`{"kind":"read","intention":"Read a file","path":"/workspace/file.txt"}`)
-					}
-					assertOriginalPermissionRequest(t, <-forwarded, want)
-					if got := <-permissionCalls; got != session.SessionID {
-						t.Fatalf("permission callback session=%s want=%s", got, session.SessionID)
-					}
-					peer.notify("session.event", map[string]any{
-						"sessionId": session.SessionID,
-						"event": map[string]any{"type": "mcp.oauth_required", "data": map[string]any{
-							"requestId": "auth-1", "serverName": "oauth-server", "serverUrl": "https://example.com/mcp",
-							"reason": "refresh", "runtimeRefreshSupported": true,
-						}},
-					})
-					wantKind, wantHandler := "cancelled", "legacy:"
-					if refreshEnabled {
-						wantKind, wantHandler = "runtimeRefresh", "refresh:"
-					}
-					assertOriginalPermissionRequest(t, <-authResults, json.RawMessage(fmt.Sprintf(`{"sessionId":"review-session","requestId":"auth-1","result":{"kind":%q}}`, wantKind)))
-					select {
-					case got := <-authCalls:
-						if got != wantHandler+session.SessionID {
-							t.Fatalf("MCP callback=%s want=%s", got, wantHandler+session.SessionID)
-						}
-					default:
-						t.Error("the runtime-refresh callback did not run on the permission-envelope session")
-					}
+				}
+				legacyAuth := func(_ MCPAuthRequest, invocation MCPAuthInvocation) (*MCPAuthResult, error) {
+					authCalls <- "legacy:" + invocation.SessionID
+					return MCPAuthResultCancelled(), nil
+				}
+				var session *Session
+				var err error
+				config := &CreateSessionOptions{SessionID: "review-session", MCP: SessionMCPOptions{OnAuthRequest: legacyAuth}, Permissions: SessionPermissionOptions{OnRequest: legacyPermission, OnRequestWithPrompt: promptPermission}}
+				config.Permissions.OnRequestWithEnvelope = permission
+				config.MCP.OnAuthRuntimeRefresh = refresh
+				before := *config
+				session, err = client.CreateSession(t.Context(), config)
+				assertPermissionConfigUnchanged(t, before, *config)
+				if err != nil {
+					t.Fatal(err)
+				}
+				sessionReady <- session
+				original := json.RawMessage(`{"kind":"read","intention":"Read a file","path":"/workspace/file.txt","futureDetails":9007199254740993}`)
+				peer.notify("session.event", map[string]any{
+					"sessionId": session.SessionID,
+					"event": map[string]any{"type": "permission.requested", "data": map[string]any{
+						"requestId": "permission-1", "permissionRequest": original,
+					}},
 				})
-			}
+				want := original
+				if !envelopeEnabled {
+					want = json.RawMessage(`{"kind":"read","intention":"Read a file","path":"/workspace/file.txt"}`)
+				}
+				assertOriginalPermissionRequest(t, <-forwarded, want)
+				if got := <-permissionCalls; got != session.SessionID {
+					t.Fatalf("permission callback session=%s want=%s", got, session.SessionID)
+				}
+				peer.notify("session.event", map[string]any{
+					"sessionId": session.SessionID,
+					"event": map[string]any{"type": "mcp.oauth_required", "data": map[string]any{
+						"requestId": "auth-1", "serverName": "oauth-server", "serverUrl": "https://example.com/mcp",
+						"reason": "refresh", "runtimeRefreshSupported": true,
+					}},
+				})
+				wantKind, wantHandler := "cancelled", "legacy:"
+				if refreshEnabled {
+					wantKind, wantHandler = "runtimeRefresh", "refresh:"
+				}
+				assertOriginalPermissionRequest(t, <-authResults, json.RawMessage(fmt.Sprintf(`{"sessionId":"review-session","requestId":"auth-1","result":{"kind":%q}}`, wantKind)))
+				select {
+				case got := <-authCalls:
+					if got != wantHandler+session.SessionID {
+						t.Fatalf("MCP callback=%s want=%s", got, wantHandler+session.SessionID)
+					}
+				default:
+					t.Error("the runtime-refresh callback did not run on the permission-envelope session")
+				}
+			})
 		}
 	}
 }

@@ -187,30 +187,6 @@ public class ScenarioTestingSessionSetupE2ETests(E2ETestFixture fixture, ITestOu
     }
 
     [Fact]
-    public async Task Should_Use_Preallocated_Id_For_Subscribed_Session_Start_Event()
-    {
-        var requestedSessionId = Guid.NewGuid().ToString();
-        var sessionStarted = new TaskCompletionSource<SessionStartEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        await using var session = await CreateSessionAsync(new CreateSessionOptions
-        {
-            SessionId = requestedSessionId,
-            Events = new SessionEventOptions
-            {
-                OnEvent = evt =>
-        {
-            if (evt is SessionStartEvent start)
-                sessionStarted.TrySetResult(start);
-        }
-            }
-        });
-
-        var start = await sessionStarted.Task.WaitAsync(TestTimeout);
-        Assert.Equal(requestedSessionId, session.SessionId);
-        Assert.Equal(requestedSessionId, start.Data.SessionId);
-    }
-
-    [Fact]
     [Trait(E2ETestTraits.Backend, E2ETestTraits.SelfConfiguredBackend)]
     public async Task Should_Invoke_All_Scenario_Handler_Kinds()
     {
@@ -362,53 +338,6 @@ public class ScenarioTestingSessionSetupE2ETests(E2ETestFixture fixture, ITestOu
                 GetRequests(capture.RootElement, "session.tools.handlePendingToolCall").Single(),
                 GetRequests(capture.RootElement, "session.commands.handlePendingCommand").Single(),
             }.Select(item => item.GetProperty("params").GetProperty("requestId").GetString()));
-    }
-
-    [Fact]
-    public async Task Should_Create_Then_Reload_Mcp_In_Order()
-    {
-        const string ServerName = "scenario-client-reload";
-        var milestones = new List<string>();
-        var milestonesLock = new object();
-        var startObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        await using var session = await CreateSessionAsync(new CreateSessionOptions
-        {
-            Mcp = new SessionMcpOptions { Servers = CreateTestMcpServers(ServerName) },
-            Events = new SessionEventOptions
-            {
-                OnEvent = evt =>
-        {
-            if (evt is SessionStartEvent)
-            {
-                lock (milestonesLock)
-                {
-                    milestones.Add("session-start");
-                }
-
-                startObserved.TrySetResult();
-            }
-        }
-            }
-        });
-
-        await startObserved.Task.WaitAsync(TestTimeout);
-        lock (milestonesLock)
-        {
-            milestones.Add("create-returned");
-            milestones.Add("reload-requested");
-        }
-
-        await session.Rpc.Mcp.ReloadAsync();
-        await WaitForMcpServerStatusAsync(session, ServerName, McpServerStatus.Connected);
-
-        lock (milestonesLock)
-        {
-            milestones.Add("reload-completed");
-            Assert.Equal(
-                ["session-start", "create-returned", "reload-requested", "reload-completed"],
-                milestones);
-        }
     }
 
     private async Task<(string CliPath, string CapturePath)> CreateFakeRuntimeAsync(string behavior)

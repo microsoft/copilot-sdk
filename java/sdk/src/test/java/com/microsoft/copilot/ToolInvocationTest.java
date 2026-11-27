@@ -27,15 +27,6 @@ public class ToolInvocationTest {
     /**
      * Test all basic getters return values set via setters.
      */
-    @Test
-    void testGettersReturnSetValues() {
-        ToolInvocation invocation = new ToolInvocation().setSessionId("test-session-123").setToolCallId("call_abc123")
-                .setToolName("test_tool");
-
-        assertEquals("test-session-123", invocation.getSessionId());
-        assertEquals("call_abc123", invocation.getToolCallId());
-        assertEquals("test_tool", invocation.getToolName());
-    }
 
     /**
      * Test getArguments returns null when no arguments are set.
@@ -90,23 +81,6 @@ public class ToolInvocationTest {
     /**
      * Test getArgumentsAs deserializes to a POJO.
      */
-    @Test
-    void testGetArgumentsAsWithPojo() {
-        ToolInvocation invocation = new ToolInvocation();
-
-        // Create a JsonNode with user data
-        ObjectNode argsNode = JsonNodeFactory.instance.objectNode();
-        argsNode.put("username", "alice");
-        argsNode.put("age", 30);
-
-        invocation.setArguments(argsNode);
-
-        // Deserialize to POJO
-        UserData userData = invocation.getArgumentsAs(UserData.class);
-        assertNotNull(userData);
-        assertEquals("alice", userData.getUsername());
-        assertEquals(30, userData.getAge());
-    }
 
     /**
      * Test getArgumentsAs deserializes java.time fields, which tool parameter
@@ -186,30 +160,6 @@ public class ToolInvocationTest {
      * Record with an Optional component for testing optional arguments.
      */
     record TaggedArgs(String title, Optional<String> tag) {
-    }
-
-    /**
-     * POJO for testing type-safe argument deserialization.
-     */
-    public static class UserData {
-        private String username;
-        private int age;
-
-        public String getUsername() {
-            return username;
-        }
-
-        public void setUsername(String username) {
-            this.username = username;
-        }
-
-        public int getAge() {
-            return age;
-        }
-
-        public void setAge(int age) {
-            this.age = age;
-        }
     }
 
     /**

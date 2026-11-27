@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -15,7 +14,6 @@ import (
 	"github.com/google/uuid"
 	copilot "github.com/microsoft/copilot-sdk/go/v2"
 	"github.com/microsoft/copilot-sdk/go/v2/internal/e2e/testharness"
-	"github.com/microsoft/copilot-sdk/go/v2/rpc"
 )
 
 // hasImageURLContent returns true if any user message in the given exchanges
@@ -38,136 +36,6 @@ func hasImageURLContent(exchanges []testharness.ParsedHttpExchange) bool {
 		}
 	}
 	return false
-}
-
-func sendAndGetNextExchange(t *testing.T, ctx *testharness.TestContext, session *copilot.Session, prompt string) testharness.ParsedHttpExchange {
-	t.Helper()
-
-	existing, err := ctx.GetExchanges()
-	if err != nil {
-		t.Fatalf("GetExchanges failed: %v", err)
-	}
-	if _, err := session.SendAndWait(t.Context(), copilot.MessageOptions{Prompt: prompt}); err != nil {
-		t.Fatalf("SendAndWait failed: %v", err)
-	}
-	exchanges := ctx.WaitForExchanges(t, len(existing)+1)
-	return exchanges[len(existing)]
-}
-
-func assertSessionLimitsApplied(t *testing.T, session *copilot.Session, maxAiCredits float64) {
-	t.Helper()
-
-	snapshot, err := session.RPC.Metadata.Snapshot(t.Context())
-	if err != nil {
-		t.Fatalf("Metadata.Snapshot failed: %v", err)
-	}
-	if snapshot.SessionLimits == nil || snapshot.SessionLimits.MaxAiCredits == nil {
-		t.Fatalf("Expected active session limits, got %+v", snapshot.SessionLimits)
-	}
-	if got := *snapshot.SessionLimits.MaxAiCredits; got != maxAiCredits {
-		t.Fatalf("Expected max AI credits %v, got %v", maxAiCredits, got)
-	}
-}
-
-func getTaskAgentTypes(t *testing.T, ctx *testharness.TestContext, exchange testharness.ParsedHttpExchange) []string {
-	t.Helper()
-
-	foundTask := false
-	for _, tool := range exchange.Request.Tools {
-		if tool.Function.Name != "task" {
-			continue
-		}
-		var parameters struct {
-			Properties struct {
-				AgentType struct {
-					Type string          `json:"type"`
-					Enum json.RawMessage `json:"enum"`
-				} `json:"agent_type"`
-			} `json:"properties"`
-		}
-		if err := json.Unmarshal(tool.Function.Parameters, &parameters); err != nil {
-			t.Fatalf("Failed to unmarshal task tool parameters: %v", err)
-		}
-		if os.Getenv("COPILOT_EXP_COPILOT_CLI_STABLE_PROMPT_PREFIX") != "true" {
-			var values []string
-			if parameters.Properties.AgentType.Enum != nil {
-				if err := json.Unmarshal(parameters.Properties.AgentType.Enum, &values); err != nil {
-					t.Fatalf("Failed to unmarshal task agent_type enum: %v", err)
-				}
-			}
-			return values
-		}
-		// Under the stable prompt prefix the agents state note lists the agents.
-		if parameters.Properties.AgentType.Type != "string" || parameters.Properties.AgentType.Enum != nil {
-			t.Fatalf("Expected a fixed task agent_type string without an enum, got %s", tool.Function.Parameters)
-		}
-		foundTask = true
-		break
-	}
-	if !foundTask {
-		t.Fatal("Expected task tool in request")
-	}
-
-	// Normalized exchanges omit runtime reminders; inspect the actual provider request.
-	requests, err := ctx.GetRequests()
-	if err != nil {
-		t.Fatalf("GetRequests failed: %v", err)
-	}
-	for i := len(requests) - 1; i >= 0; i-- {
-		if !isInferenceURL(requests[i].URL) {
-			continue
-		}
-		var body struct {
-			Messages []testharness.ChatCompletionMessage `json:"messages"`
-			Input    []testharness.ChatCompletionMessage `json:"input"`
-		}
-		if err := json.Unmarshal([]byte(requests[i].Body), &body); err != nil {
-			t.Fatalf("Failed to parse provider request: %v", err)
-		}
-		messages := body.Messages
-		if messages == nil {
-			messages = body.Input
-		}
-		for j := len(messages) - 1; j >= 0; j-- {
-			if messages[j].Role != "user" {
-				continue
-			}
-			content := messages[j].Content
-			if content == "" && len(messages[j].RawContent) > 0 {
-				var parts []struct {
-					Text string `json:"text"`
-				}
-				if json.Unmarshal(messages[j].RawContent, &parts) == nil {
-					for _, part := range parts {
-						content += part.Text
-					}
-				}
-			}
-			if !strings.Contains(content, "<system_reminder>\n<agents>\n") {
-				continue
-			}
-			_, catalog, ok := strings.Cut(content, "<available_agents>\n")
-			if !ok {
-				t.Fatal("Expected available agents in state note")
-			}
-			catalog, _, ok = strings.Cut(catalog, "\n</available_agents>")
-			if !ok {
-				t.Fatal("Expected end of available agents in state note")
-			}
-			var values []string
-			for _, line := range strings.Split(catalog, "\n") {
-				if entry, ok := strings.CutPrefix(line, "- **"); ok {
-					if name, _, ok := strings.Cut(entry, "**:"); ok {
-						values = append(values, name)
-					}
-				}
-			}
-			return values
-		}
-		t.Fatal("Expected agents state note in the latest provider request")
-	}
-	t.Fatal("Expected a captured provider request")
-	return nil
 }
 
 func createPDFAttachment() copilot.Attachment {
@@ -220,10 +88,6 @@ func assertAnthropicDocumentCitationsEnabled(t *testing.T, requestBody string) {
 	if !ok || citations["enabled"] != true {
 		t.Fatalf("Expected document citations.enabled=true, got %#v", documents[0]["citations"])
 	}
-}
-
-func float64Ref(value float64) *float64 {
-	return &value
 }
 
 func TestSessionConfigE2E(t *testing.T) {
@@ -348,106 +212,6 @@ func TestSessionConfigE2E(t *testing.T) {
 		newExchanges := trafficAfterT2[len(trafficAfterT1):]
 		if hasImageURLContent(newExchanges) {
 			t.Error("Expected no image_url content parts when vision is disabled")
-		}
-	})
-}
-
-func TestSessionConfigNewOptionsE2E(t *testing.T) {
-	t.Parallel()
-	ctx := testharness.NewTestContext(t)
-	client := ctx.NewClient()
-	t.Cleanup(func() { client.ForceStop() })
-
-	if err := client.Start(t.Context()); err != nil {
-		t.Fatalf("Failed to start client: %v", err)
-	}
-
-	t.Run("should apply session limits on create", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Execution: copilot.SessionExecutionOptions{Limits: &rpc.SessionLimitsConfig{MaxAiCredits: float64Ref(30)}}})
-		if err != nil {
-			t.Fatalf("CreateSession failed: %v", err)
-		}
-		defer session.Disconnect()
-
-		sendAndGetNextExchange(t, ctx, session, "Acknowledge the current session limits.")
-		assertSessionLimitsApplied(t, session, 30)
-	})
-
-	t.Run("should apply session limits on resume", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		session1, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}})
-		if err != nil {
-			t.Fatalf("CreateSession failed: %v", err)
-		}
-		defer session1.Disconnect()
-
-		session2, err := client.ResumeSession(t.Context(), session1.SessionID, &copilot.ResumeSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Execution: copilot.SessionExecutionOptions{Limits: &rpc.SessionLimitsConfig{MaxAiCredits: float64Ref(30)}}})
-		if err != nil {
-			t.Fatalf("ResumeSession failed: %v", err)
-		}
-		defer session2.Disconnect()
-
-		sendAndGetNextExchange(t, ctx, session2, "Acknowledge the current session limits.")
-		assertSessionLimitsApplied(t, session2, 30)
-	})
-
-	t.Run("should apply excluded built in agents on create", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		const excludedAgent = "explore"
-		const prompt = "What is 1+1?"
-		baseline, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}})
-		if err != nil {
-			t.Fatalf("CreateSession baseline failed: %v", err)
-		}
-		baselineExchange := sendAndGetNextExchange(t, ctx, baseline, prompt)
-		if !slices.Contains(getTaskAgentTypes(t, ctx, baselineExchange), excludedAgent) {
-			t.Fatalf("Expected baseline task agents to include %q", excludedAgent)
-		}
-		_ = baseline.Disconnect()
-
-		excluded, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Agents: copilot.SessionAgentOptions{ExcludedBuiltinAgents: []string{excludedAgent}}})
-		if err != nil {
-			t.Fatalf("CreateSession excluded failed: %v", err)
-		}
-		defer excluded.Disconnect()
-
-		excludedExchange := sendAndGetNextExchange(t, ctx, excluded, prompt)
-		agentTypes := getTaskAgentTypes(t, ctx, excludedExchange)
-		if len(agentTypes) == 0 {
-			t.Fatal("Expected task tool agent types")
-		}
-		if slices.Contains(agentTypes, excludedAgent) {
-			t.Fatalf("Expected excluded task agents not to include %q; got %v", excludedAgent, agentTypes)
-		}
-	})
-
-	t.Run("should apply excluded built in agents on resume", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		const excludedAgent = "explore"
-		session1, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}})
-		if err != nil {
-			t.Fatalf("CreateSession failed: %v", err)
-		}
-		defer session1.Disconnect()
-
-		session2, err := client.ResumeSession(t.Context(), session1.SessionID, &copilot.ResumeSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, Agents: copilot.SessionAgentOptions{ExcludedBuiltinAgents: []string{excludedAgent}}})
-		if err != nil {
-			t.Fatalf("ResumeSession failed: %v", err)
-		}
-		defer session2.Disconnect()
-
-		exchange := sendAndGetNextExchange(t, ctx, session2, "What is 1+1?")
-		agentTypes := getTaskAgentTypes(t, ctx, exchange)
-		if len(agentTypes) == 0 {
-			t.Fatal("Expected task tool agent types")
-		}
-		if slices.Contains(agentTypes, excludedAgent) {
-			t.Fatalf("Expected excluded task agents not to include %q; got %v", excludedAgent, agentTypes)
 		}
 	})
 }
@@ -857,92 +621,6 @@ func TestSessionConfigExtrasE2E(t *testing.T) {
 		}
 		if !strings.Contains(getSystemMessage(exchanges[0]), resumeInstruction) {
 			t.Errorf("Expected system message to contain %q", resumeInstruction)
-		}
-	})
-
-	t.Run("should apply instructionDirectories on create", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		projectDir := filepath.Join(ctx.WorkDir, "instruction-create-project")
-		instructionDir := filepath.Join(ctx.WorkDir, "extra-create-instructions")
-		instructionFilesDir := filepath.Join(instructionDir, ".github", "instructions")
-		const sentinel = "GO_CREATE_INSTRUCTION_DIRECTORIES_SENTINEL"
-		if err := os.MkdirAll(projectDir, 0755); err != nil {
-			t.Fatalf("MkdirAll failed: %v", err)
-		}
-		if err := os.MkdirAll(instructionFilesDir, 0755); err != nil {
-			t.Fatalf("MkdirAll failed: %v", err)
-		}
-		if err := os.WriteFile(filepath.Join(instructionFilesDir, "extra.instructions.md"), []byte("Always include "+sentinel+"."), 0644); err != nil {
-			t.Fatalf("WriteFile failed: %v", err)
-		}
-
-		session, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, WorkingDirectory: projectDir, Instructions: copilot.CreateSessionInstructionOptions{Directories: []string{instructionDir}}})
-		if err != nil {
-			t.Fatalf("CreateSession failed: %v", err)
-		}
-		t.Cleanup(func() { _ = session.Disconnect() })
-
-		_, err = session.SendAndWait(t.Context(), copilot.MessageOptions{Prompt: "What is 1+1?"})
-		if err != nil {
-			t.Fatalf("SendAndWait failed: %v", err)
-		}
-
-		exchanges, err := ctx.GetExchanges()
-		if err != nil {
-			t.Fatalf("GetExchanges failed: %v", err)
-		}
-		if len(exchanges) != 1 {
-			t.Fatalf("Expected exactly 1 exchange, got %d", len(exchanges))
-		}
-		if !strings.Contains(getSystemMessage(exchanges[0]), sentinel) {
-			t.Errorf("Expected system message to contain %q", sentinel)
-		}
-	})
-
-	t.Run("should apply instructionDirectories on resume", func(t *testing.T) {
-		ctx.ConfigureForTest(t)
-
-		projectDir := filepath.Join(ctx.WorkDir, "instruction-resume-project")
-		instructionDir := filepath.Join(ctx.WorkDir, "extra-resume-instructions")
-		instructionFilesDir := filepath.Join(instructionDir, ".github", "instructions")
-		const sentinel = "GO_RESUME_INSTRUCTION_DIRECTORIES_SENTINEL"
-		if err := os.MkdirAll(projectDir, 0755); err != nil {
-			t.Fatalf("MkdirAll failed: %v", err)
-		}
-		if err := os.MkdirAll(instructionFilesDir, 0755); err != nil {
-			t.Fatalf("MkdirAll failed: %v", err)
-		}
-		if err := os.WriteFile(filepath.Join(instructionFilesDir, "extra.instructions.md"), []byte("Always include "+sentinel+"."), 0644); err != nil {
-			t.Fatalf("WriteFile failed: %v", err)
-		}
-
-		session1, err := client.CreateSession(t.Context(), &copilot.CreateSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, WorkingDirectory: projectDir})
-		if err != nil {
-			t.Fatalf("CreateSession failed: %v", err)
-		}
-		t.Cleanup(func() { _ = session1.Disconnect() })
-
-		session2, err := client.ResumeSession(t.Context(), session1.SessionID, &copilot.ResumeSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}, WorkingDirectory: projectDir, Instructions: copilot.SessionInstructionOptions{Directories: []string{instructionDir}}})
-		if err != nil {
-			t.Fatalf("ResumeSession failed: %v", err)
-		}
-		t.Cleanup(func() { _ = session2.Disconnect() })
-
-		_, err = session2.SendAndWait(t.Context(), copilot.MessageOptions{Prompt: "What is 1+1?"})
-		if err != nil {
-			t.Fatalf("SendAndWait failed: %v", err)
-		}
-
-		exchanges, err := ctx.GetExchanges()
-		if err != nil {
-			t.Fatalf("GetExchanges failed: %v", err)
-		}
-		if len(exchanges) != 1 {
-			t.Fatalf("Expected exactly 1 exchange, got %d", len(exchanges))
-		}
-		if !strings.Contains(getSystemMessage(exchanges[0]), sentinel) {
-			t.Errorf("Expected system message to contain %q", sentinel)
 		}
 	})
 

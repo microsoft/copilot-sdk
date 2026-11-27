@@ -18,16 +18,6 @@ namespace Microsoft.Copilot.Test.Unit;
 public sealed class GitHubTelemetryTests
 {
     [Fact]
-    public void Entra_Option_Is_Experimental()
-    {
-        var property = typeof(CopilotClientOptions).GetProperty(nameof(CopilotClientOptions.Entra))!;
-        var attribute = Assert.Single(property.GetCustomAttributes(
-            typeof(System.Diagnostics.CodeAnalysis.ExperimentalAttribute), inherit: false));
-        Assert.Equal("MCPSDK001",
-            ((System.Diagnostics.CodeAnalysis.ExperimentalAttribute)attribute).DiagnosticId);
-    }
-
-    [Fact]
     public async Task Connect_Forwards_Entra_Configuration()
     {
         await using var server = await FakeTelemetryServer.StartAsync();
@@ -47,7 +37,6 @@ public sealed class GitHubTelemetryTests
     }
 
     [Theory]
-    [InlineData(false)]
     [InlineData(true)]
     public async Task BuiltinPluginDirectories_Default_Or_Empty_Does_Not_Call_Rpc(bool useEmpty)
     {
@@ -177,6 +166,7 @@ public sealed class GitHubTelemetryTests
         Assert.Equal(
             ["agent", "client", "shell"],
             connectParams.GetProperty("supportedTaskKinds").EnumerateArray().Select(kind => kind.GetString()));
+        Assert.False(connectParams.TryGetProperty("clientInfo", out _));
     }
 
     [Fact]
@@ -203,23 +193,6 @@ public sealed class GitHubTelemetryTests
         Assert.Equal("2.4.0", clientInfo.GetProperty("editorVersion").GetString());
         Assert.Equal("copilot-assistant", clientInfo.GetProperty("extensionName").GetString());
         Assert.Equal("1.5.0", clientInfo.GetProperty("extensionVersion").GetString());
-    }
-
-    [Fact]
-    public async Task Connect_Omits_ClientInfo_When_Unset()
-    {
-        await using var server = await FakeTelemetryServer.StartAsync();
-        await using var client = new CopilotClient(new CopilotClientOptions
-        {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForTcp(server.Host, server.Port)
-        });
-        await client.StartAsync();
-
-        var connectParams = server.LastConnectParams ?? throw new InvalidOperationException("connect was not captured.");
-        Assert.False(
-            connectParams.TryGetProperty("clientInfo", out _),
-            "connect request should omit clientInfo when none was declared");
     }
 
     [Fact]

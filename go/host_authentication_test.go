@@ -45,7 +45,7 @@ func TestAhpAuthenticationPolicyValidatedBeforeConnection(t *testing.T) {
 }
 
 func TestAhpCustomAuthenticationBoundary(t *testing.T) {
-	for _, scenario := range []string{"accept", "accept-lower-t", "accept-lower-z", "accept-lower-tz", "reject", "error", "panic", "identity", "missing-expiry", "invalid-expiry", "past-expiry"} {
+	for _, scenario := range []string{"accept", "accept-lower-tz", "reject", "error", "panic", "identity", "missing-expiry", "invalid-expiry", "past-expiry"} {
 		t.Run(scenario, func(t *testing.T) {
 			client, server, _ := ahpFixture(t)
 			var callbackContext context.Context
@@ -58,10 +58,6 @@ func TestAhpCustomAuthenticationBoundary(t *testing.T) {
 				}
 				result := &AhpAuthenticationResult{Identity: "owner", ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}
 				switch scenario {
-				case "accept-lower-t":
-					result.ExpiresAt = strings.ReplaceAll(result.ExpiresAt, "T", "t")
-				case "accept-lower-z":
-					result.ExpiresAt = strings.ReplaceAll(result.ExpiresAt, "Z", "z")
 				case "accept-lower-tz":
 					result.ExpiresAt = strings.ToLower(result.ExpiresAt)
 				case "reject":

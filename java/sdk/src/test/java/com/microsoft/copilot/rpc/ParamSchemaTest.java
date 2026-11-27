@@ -5,7 +5,6 @@
 package com.microsoft.copilot.rpc;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -17,6 +16,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZonedDateTime;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -43,19 +43,13 @@ class ParamSchemaTest {
     // ── buildSchema: empty / zero params ─────────────────────────────────────────
 
     @Test
-    void buildSchema_nullParams_returnsEmptySchema() {
-        Map<String, Object> schema = ParamSchema.buildSchema("tool", MAPPER, (Param<?>[]) null);
-        assertEquals("object", schema.get("type"));
-        assertTrue(((Map<?, ?>) schema.get("properties")).isEmpty());
-        assertTrue(((List<?>) schema.get("required")).isEmpty());
-    }
-
-    @Test
-    void buildSchema_emptyArray_returnsEmptySchema() {
-        Map<String, Object> schema = ParamSchema.buildSchema("tool", MAPPER);
-        assertEquals("object", schema.get("type"));
-        assertTrue(((Map<?, ?>) schema.get("properties")).isEmpty());
-        assertTrue(((List<?>) schema.get("required")).isEmpty());
+    void buildSchema_nullOrEmptyParams_returnsEmptySchema() {
+        for (Map<String, Object> schema : List.of(ParamSchema.buildSchema("tool", MAPPER, (Param<?>[]) null),
+                ParamSchema.buildSchema("tool", MAPPER))) {
+            assertEquals("object", schema.get("type"));
+            assertTrue(((Map<?, ?>) schema.get("properties")).isEmpty());
+            assertTrue(((List<?>) schema.get("required")).isEmpty());
+        }
     }
 
     // ── buildSchema: validation ──────────────────────────────────────────────────
@@ -79,24 +73,6 @@ class ParamSchemaTest {
     }
 
     // ── buildSchema: required / optional semantics ───────────────────────────────
-
-    @Test
-    void buildSchema_requiredParam_appearsInRequiredList() {
-        Param<String> p = Param.of(String.class, "query", "Search query");
-        Map<String, Object> schema = ParamSchema.buildSchema("search", MAPPER, p);
-        @SuppressWarnings("unchecked")
-        List<String> required = (List<String>) schema.get("required");
-        assertTrue(required.contains("query"));
-    }
-
-    @Test
-    void buildSchema_optionalParam_notInRequiredList() {
-        Param<Integer> p = Param.of(Integer.class, "limit", "Max results", false, "10");
-        Map<String, Object> schema = ParamSchema.buildSchema("list", MAPPER, p);
-        @SuppressWarnings("unchecked")
-        List<String> required = (List<String>) schema.get("required");
-        assertTrue(required.isEmpty());
-    }
 
     @Test
     void buildSchema_mixedRequiredAndOptional_onlyRequiredInList() {
@@ -123,36 +99,16 @@ class ParamSchemaTest {
     }
 
     @Test
-    void buildSchema_paramDefault_appearsInPropertySchema() {
-        Param<Integer> p = Param.of(Integer.class, "count", "Item count", false, "5");
-        Map<String, Object> schema = ParamSchema.buildSchema("items", MAPPER, p);
+    void buildSchema_paramDefaults_appearTypedInPropertySchema() {
+        Param<Integer> count = Param.of(Integer.class, "count", "Item count", false, "5");
+        Param<String> mode = Param.of(String.class, "mode", "Operating mode", false, "fast");
+        Param<Boolean> verbose = Param.of(Boolean.class, "verbose", "Verbose mode", false, "true");
+        Map<String, Object> schema = ParamSchema.buildSchema("items", MAPPER, count, mode, verbose);
         @SuppressWarnings("unchecked")
-        Map<String, Object> props = (Map<String, Object>) schema.get("properties");
-        @SuppressWarnings("unchecked")
-        Map<String, Object> countSchema = (Map<String, Object>) props.get("count");
-        assertEquals(5, countSchema.get("default"));
-    }
-
-    @Test
-    void buildSchema_stringDefault_appearsAsString() {
-        Param<String> p = Param.of(String.class, "mode", "Operating mode", false, "fast");
-        Map<String, Object> schema = ParamSchema.buildSchema("run", MAPPER, p);
-        @SuppressWarnings("unchecked")
-        Map<String, Object> props = (Map<String, Object>) schema.get("properties");
-        @SuppressWarnings("unchecked")
-        Map<String, Object> modeSchema = (Map<String, Object>) props.get("mode");
-        assertEquals("fast", modeSchema.get("default"));
-    }
-
-    @Test
-    void buildSchema_booleanDefault_appearsAsBoolean() {
-        Param<Boolean> p = Param.of(Boolean.class, "verbose", "Verbose mode", false, "true");
-        Map<String, Object> schema = ParamSchema.buildSchema("run", MAPPER, p);
-        @SuppressWarnings("unchecked")
-        Map<String, Object> props = (Map<String, Object>) schema.get("properties");
-        @SuppressWarnings("unchecked")
-        Map<String, Object> verboseSchema = (Map<String, Object>) props.get("verbose");
-        assertEquals(true, verboseSchema.get("default"));
+        Map<String, Map<String, Object>> props = (Map<String, Map<String, Object>>) schema.get("properties");
+        assertEquals(5, props.get("count").get("default"));
+        assertEquals("fast", props.get("mode").get("default"));
+        assertEquals(true, props.get("verbose").get("default"));
     }
 
     // ── buildSchema: multiple params preserve order ──────────────────────────────
@@ -182,48 +138,10 @@ class ParamSchemaTest {
         Map<String, Object> whenSchema = (Map<String, Object>) props.get("when");
         assertEquals("string", whenSchema.get("type"));
         assertEquals("date-time", whenSchema.get("format"));
-    }
-
-    @Test
-    void buildSchema_withSchemaOverride_preservesDescription() {
-        Param<String> p = Param.of(String.class, "when", "Meeting time")
-                .schema("{\"type\":\"string\",\"format\":\"date-time\"}");
-        Map<String, Object> schema = ParamSchema.buildSchema("schedule", MAPPER, p);
-        @SuppressWarnings("unchecked")
-        Map<String, Object> props = (Map<String, Object>) schema.get("properties");
-        @SuppressWarnings("unchecked")
-        Map<String, Object> whenSchema = (Map<String, Object>) props.get("when");
         assertEquals("Meeting time", whenSchema.get("description"));
-    }
-
-    @Test
-    void buildSchema_withSchemaOverride_respectsRequired() {
-        Param<String> p = Param.of(String.class, "when", "Meeting time")
-                .schema("{\"type\":\"string\",\"format\":\"date-time\"}");
-        Map<String, Object> schema = ParamSchema.buildSchema("schedule", MAPPER, p);
         @SuppressWarnings("unchecked")
         List<String> required = (List<String>) schema.get("required");
         assertTrue(required.contains("when"));
-    }
-
-    @Test
-    void buildSchema_mixedParams_overrideAndAuto() {
-        Param<String> pOverride = Param.of(String.class, "when", "Meeting time")
-                .schema("{\"type\":\"string\",\"format\":\"date-time\"}");
-        Param<String> pAuto = Param.of(String.class, "title", "Meeting title");
-        Map<String, Object> schema = ParamSchema.buildSchema("schedule", MAPPER, pOverride, pAuto);
-        @SuppressWarnings("unchecked")
-        Map<String, Object> props = (Map<String, Object>) schema.get("properties");
-
-        @SuppressWarnings("unchecked")
-        Map<String, Object> whenSchema = (Map<String, Object>) props.get("when");
-        assertEquals("date-time", whenSchema.get("format"));
-
-        @SuppressWarnings("unchecked")
-        Map<String, Object> titleSchema = (Map<String, Object>) props.get("title");
-        assertEquals("string", titleSchema.get("type"));
-        // Auto-generated should NOT have format
-        assertFalse(titleSchema.containsKey("format"));
     }
 
     @Test
@@ -252,184 +170,56 @@ class ParamSchemaTest {
         assertEquals(new BigDecimal("0.12345678901234567890"), valueSchema.get("multipleOf"));
     }
 
-    // ── forType: primitive and boxed integer types ───────────────────────────────
+    // ── forType: type-mapping table ──────────────────────────────────────────────
 
     @Test
-    void forType_int_returnsInteger() {
-        assertEquals(Map.of("type", "integer"), ParamSchema.forType(int.class));
+    void forType_mapsEachSupportedJavaTypeToItsJsonSchema() {
+        Map<String, Object> integer = Map.of("type", "integer");
+        Map<String, Object> number = Map.of("type", "number");
+        Map<String, Object> string = Map.of("type", "string");
+        Map<String, Object> array = Map.of("type", "array");
+        Map<String, Object> object = Map.of("type", "object");
+        // {type, exact expected schema}
+        Object[][] exact = {{int.class, integer}, {Integer.class, integer}, {long.class, integer},
+                {Long.class, integer}, {short.class, integer}, {Short.class, integer}, {byte.class, integer},
+                {Byte.class, integer}, {OptionalInt.class, integer}, {OptionalLong.class, integer},
+                {double.class, number}, {Double.class, number}, {float.class, number}, {Float.class, number},
+                {OptionalDouble.class, number}, {boolean.class, Map.of("type", "boolean")},
+                {Boolean.class, Map.of("type", "boolean")}, {char.class, string}, {Character.class, string},
+                {String.class, string}, {JsonNode.class, Map.of()}, {Object.class, Map.of()}, {List.class, array},
+                {Set.class, array}, {Collection.class, array}, {Map.class, object}, {TestRecord.class, object},
+                {TestPojo.class, object}};
+        // {type, expected "type", expected "format"}
+        Object[][] formatted = {{UUID.class, "string", "uuid"}, {OffsetDateTime.class, "string", "date-time"},
+                {LocalDateTime.class, "string", "date-time"}, {Instant.class, "string", "date-time"},
+                {ZonedDateTime.class, "string", "date-time"}, {LocalDate.class, "string", "date"},
+                {LocalTime.class, "string", "time"}};
+        // {array type, expected items "type"}
+        Object[][] arrays = {{String[].class, "string"}, {int[].class, "integer"}, {double[].class, "number"}};
+
+        List<String> mismatches = new ArrayList<>();
+        for (Object[] row : exact) {
+            Map<String, Object> actual = ParamSchema.forType((Class<?>) row[0]);
+            if (!row[1].equals(actual)) {
+                mismatches.add(row[0] + " -> " + actual);
+            }
+        }
+        for (Object[] row : formatted) {
+            Map<String, Object> actual = ParamSchema.forType((Class<?>) row[0]);
+            if (!row[1].equals(actual.get("type")) || !row[2].equals(actual.get("format"))) {
+                mismatches.add(row[0] + " -> " + actual);
+            }
+        }
+        for (Object[] row : arrays) {
+            Map<String, Object> actual = ParamSchema.forType((Class<?>) row[0]);
+            Object items = actual.get("items");
+            if (!"array".equals(actual.get("type")) || !(items instanceof Map<?, ?> m)
+                    || !row[1].equals(m.get("type"))) {
+                mismatches.add(row[0] + " -> " + actual);
+            }
+        }
+        assertEquals(List.of(), mismatches);
     }
-
-    @Test
-    void forType_Integer_returnsInteger() {
-        assertEquals(Map.of("type", "integer"), ParamSchema.forType(Integer.class));
-    }
-
-    @Test
-    void forType_long_returnsInteger() {
-        assertEquals(Map.of("type", "integer"), ParamSchema.forType(long.class));
-    }
-
-    @Test
-    void forType_Long_returnsInteger() {
-        assertEquals(Map.of("type", "integer"), ParamSchema.forType(Long.class));
-    }
-
-    @Test
-    void forType_short_returnsInteger() {
-        assertEquals(Map.of("type", "integer"), ParamSchema.forType(short.class));
-    }
-
-    @Test
-    void forType_Short_returnsInteger() {
-        assertEquals(Map.of("type", "integer"), ParamSchema.forType(Short.class));
-    }
-
-    @Test
-    void forType_byte_returnsInteger() {
-        assertEquals(Map.of("type", "integer"), ParamSchema.forType(byte.class));
-    }
-
-    @Test
-    void forType_Byte_returnsInteger() {
-        assertEquals(Map.of("type", "integer"), ParamSchema.forType(Byte.class));
-    }
-
-    // ── forType: floating-point types ────────────────────────────────────────────
-
-    @Test
-    void forType_double_returnsNumber() {
-        assertEquals(Map.of("type", "number"), ParamSchema.forType(double.class));
-    }
-
-    @Test
-    void forType_Double_returnsNumber() {
-        assertEquals(Map.of("type", "number"), ParamSchema.forType(Double.class));
-    }
-
-    @Test
-    void forType_float_returnsNumber() {
-        assertEquals(Map.of("type", "number"), ParamSchema.forType(float.class));
-    }
-
-    @Test
-    void forType_Float_returnsNumber() {
-        assertEquals(Map.of("type", "number"), ParamSchema.forType(Float.class));
-    }
-
-    // ── forType: boolean ─────────────────────────────────────────────────────────
-
-    @Test
-    void forType_boolean_returnsBoolean() {
-        assertEquals(Map.of("type", "boolean"), ParamSchema.forType(boolean.class));
-    }
-
-    @Test
-    void forType_Boolean_returnsBoolean() {
-        assertEquals(Map.of("type", "boolean"), ParamSchema.forType(Boolean.class));
-    }
-
-    // ── forType: char / Character ────────────────────────────────────────────────
-
-    @Test
-    void forType_char_returnsString() {
-        assertEquals(Map.of("type", "string"), ParamSchema.forType(char.class));
-    }
-
-    @Test
-    void forType_Character_returnsString() {
-        assertEquals(Map.of("type", "string"), ParamSchema.forType(Character.class));
-    }
-
-    // ── forType: String ──────────────────────────────────────────────────────────
-
-    @Test
-    void forType_String_returnsString() {
-        assertEquals(Map.of("type", "string"), ParamSchema.forType(String.class));
-    }
-
-    // ── forType: UUID ────────────────────────────────────────────────────────────
-
-    @Test
-    void forType_UUID_returnsStringWithUuidFormat() {
-        Map<String, Object> schema = ParamSchema.forType(UUID.class);
-        assertEquals("string", schema.get("type"));
-        assertEquals("uuid", schema.get("format"));
-    }
-
-    // ── forType: Optional primitive types ────────────────────────────────────────
-
-    @Test
-    void forType_OptionalInt_returnsInteger() {
-        assertEquals(Map.of("type", "integer"), ParamSchema.forType(OptionalInt.class));
-    }
-
-    @Test
-    void forType_OptionalLong_returnsInteger() {
-        assertEquals(Map.of("type", "integer"), ParamSchema.forType(OptionalLong.class));
-    }
-
-    @Test
-    void forType_OptionalDouble_returnsNumber() {
-        assertEquals(Map.of("type", "number"), ParamSchema.forType(OptionalDouble.class));
-    }
-
-    // ── forType: date-time types ─────────────────────────────────────────────────
-
-    @Test
-    void forType_OffsetDateTime_returnsDateTimeFormat() {
-        Map<String, Object> schema = ParamSchema.forType(OffsetDateTime.class);
-        assertEquals("string", schema.get("type"));
-        assertEquals("date-time", schema.get("format"));
-    }
-
-    @Test
-    void forType_LocalDateTime_returnsDateTimeFormat() {
-        Map<String, Object> schema = ParamSchema.forType(LocalDateTime.class);
-        assertEquals("string", schema.get("type"));
-        assertEquals("date-time", schema.get("format"));
-    }
-
-    @Test
-    void forType_Instant_returnsDateTimeFormat() {
-        Map<String, Object> schema = ParamSchema.forType(Instant.class);
-        assertEquals("string", schema.get("type"));
-        assertEquals("date-time", schema.get("format"));
-    }
-
-    @Test
-    void forType_ZonedDateTime_returnsDateTimeFormat() {
-        Map<String, Object> schema = ParamSchema.forType(ZonedDateTime.class);
-        assertEquals("string", schema.get("type"));
-        assertEquals("date-time", schema.get("format"));
-    }
-
-    @Test
-    void forType_LocalDate_returnsDateFormat() {
-        Map<String, Object> schema = ParamSchema.forType(LocalDate.class);
-        assertEquals("string", schema.get("type"));
-        assertEquals("date", schema.get("format"));
-    }
-
-    @Test
-    void forType_LocalTime_returnsTimeFormat() {
-        Map<String, Object> schema = ParamSchema.forType(LocalTime.class);
-        assertEquals("string", schema.get("type"));
-        assertEquals("time", schema.get("format"));
-    }
-
-    // ── forType: JsonNode / Object → any ─────────────────────────────────────────
-
-    @Test
-    void forType_JsonNode_returnsEmptySchema() {
-        assertTrue(ParamSchema.forType(JsonNode.class).isEmpty());
-    }
-
-    @Test
-    void forType_Object_returnsEmptySchema() {
-        assertTrue(ParamSchema.forType(Object.class).isEmpty());
-    }
-
-    // ── forType: enums ───────────────────────────────────────────────────────────
 
     @Test
     void forType_enum_returnsStringWithEnumValues() {
@@ -439,71 +229,6 @@ class ParamSchemaTest {
         List<String> values = (List<String>) schema.get("enum");
         assertNotNull(values);
         assertEquals(List.of("RED", "GREEN", "BLUE"), values);
-    }
-
-    // ── forType: collections ─────────────────────────────────────────────────────
-
-    @Test
-    void forType_List_returnsArray() {
-        assertEquals(Map.of("type", "array"), ParamSchema.forType(List.class));
-    }
-
-    @Test
-    void forType_Set_returnsArray() {
-        assertEquals(Map.of("type", "array"), ParamSchema.forType(Set.class));
-    }
-
-    @Test
-    void forType_Collection_returnsArray() {
-        assertEquals(Map.of("type", "array"), ParamSchema.forType(Collection.class));
-    }
-
-    // ── forType: arrays ──────────────────────────────────────────────────────────
-
-    @Test
-    void forType_stringArray_returnsArrayWithStringItems() {
-        Map<String, Object> schema = ParamSchema.forType(String[].class);
-        assertEquals("array", schema.get("type"));
-        @SuppressWarnings("unchecked")
-        Map<String, Object> items = (Map<String, Object>) schema.get("items");
-        assertEquals("string", items.get("type"));
-    }
-
-    @Test
-    void forType_intArray_returnsArrayWithIntegerItems() {
-        Map<String, Object> schema = ParamSchema.forType(int[].class);
-        assertEquals("array", schema.get("type"));
-        @SuppressWarnings("unchecked")
-        Map<String, Object> items = (Map<String, Object>) schema.get("items");
-        assertEquals("integer", items.get("type"));
-    }
-
-    @Test
-    void forType_doubleArray_returnsArrayWithNumberItems() {
-        Map<String, Object> schema = ParamSchema.forType(double[].class);
-        assertEquals("array", schema.get("type"));
-        @SuppressWarnings("unchecked")
-        Map<String, Object> items = (Map<String, Object>) schema.get("items");
-        assertEquals("number", items.get("type"));
-    }
-
-    // ── forType: Map ─────────────────────────────────────────────────────────────
-
-    @Test
-    void forType_Map_returnsObject() {
-        assertEquals(Map.of("type", "object"), ParamSchema.forType(Map.class));
-    }
-
-    // ── forType: POJO / record fallback ──────────────────────────────────────────
-
-    @Test
-    void forType_record_returnsObject() {
-        assertEquals(Map.of("type", "object"), ParamSchema.forType(TestRecord.class));
-    }
-
-    @Test
-    void forType_pojo_returnsObject() {
-        assertEquals(Map.of("type", "object"), ParamSchema.forType(TestPojo.class));
     }
 
     // ── Test helper types ────────────────────────────────────────────────────────

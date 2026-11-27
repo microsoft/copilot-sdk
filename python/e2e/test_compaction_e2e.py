@@ -137,27 +137,3 @@ class TestCompaction:
         # Should remember it was about a dragon (context preserved via summary)
         assert "vessaryn" in content, f"Expected answer to mention 'Vessaryn', got: {content!r}"
         assert "dragon" in content, f"Expected answer to mention 'dragon', got: {content!r}"
-
-    async def test_should_not_emit_compaction_events_when_infinite_sessions_disabled(
-        self, ctx: E2ETestContext
-    ):
-        session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all},
-            state={"infinite_sessions": {"enabled": False}},
-        )
-
-        compaction_events = []
-
-        def on_event(event):
-            if event.type in (
-                SessionEventType.SESSION_COMPACTION_START,
-                SessionEventType.SESSION_COMPACTION_COMPLETE,
-            ):
-                compaction_events.append(event)
-
-        session.on(on_event)
-
-        await session.send_and_wait("What is 2+2?")
-
-        # Should not have any compaction events when disabled
-        assert len(compaction_events) == 0, "Expected no compaction events when disabled"

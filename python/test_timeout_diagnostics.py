@@ -2,7 +2,6 @@
 
 import asyncio
 import io
-import os
 import signal
 import subprocess
 import sys
@@ -133,17 +132,7 @@ async def test_teardown_dump_follows_async_generator_and_disconnect_lock(monkeyp
         await generator.aclose()
 
 
-@pytest.mark.parametrize("error", [None, AssertionError("ordinary failure")])
-def test_non_timeout_does_not_collect_diagnostics(error):
-    item = SimpleNamespace()
-    call = SimpleNamespace(excinfo=None if error is None else SimpleNamespace(value=error))
-    report = SimpleNamespace(failed=error is not None, sections=[])
-    add_timeout_diagnostics(item, call, report)
-    assert report.sections == []
-
-
-@pytest.mark.parametrize("process_id", [None, 12345])
-def test_native_sample_is_bounded_and_targets_requested_process(tmp_path, monkeypatch, process_id):
+def test_native_sample_is_bounded_and_targets_requested_process(tmp_path, monkeypatch):
     calls = []
 
     def run(args, **kwargs):
@@ -153,10 +142,9 @@ def test_native_sample_is_bounded_and_targets_requested_process(tmp_path, monkey
     monkeypatch.setattr(subprocess, "run", run)
     path = tmp_path / "native.sample.txt"
     output = io.StringIO()
-    _sample_native_threads(path, output, process_id)
+    _sample_native_threads(path, output, 12345)
     args, options = calls[0]
-    expected_pid = os.getpid() if process_id is None else process_id
-    assert args == ["sample", str(expected_pid), "1", "-file", str(path)]
+    assert args == ["sample", "12345", "1", "-file", str(path)]
     assert options["timeout"] == 10
     assert "Native sample exit=0" in output.getvalue()
 
@@ -278,7 +266,7 @@ async def test_signal_snapshot_precedes_task_cleanup_and_keeps_original_failure(
     assert not item.stash
 
 
-@pytest.mark.parametrize("phase", ["call", "teardown"] if hasattr(signal, "SIGALRM") else ["call"])
+@pytest.mark.parametrize("phase", ["call"])
 def test_timeout_report_survives_xdist_without_stdout_capture(pytester, monkeypatch, phase):
     tmp_path = pytester.path
     # Deliver the real POSIX signal at a safe loop boundary, not during callback

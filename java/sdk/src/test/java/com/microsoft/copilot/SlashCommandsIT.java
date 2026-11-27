@@ -134,18 +134,6 @@ class SlashCommandsIT {
     }
 
     @Test
-    void listDirs() throws Exception {
-        SlashCommandInvocationResult result = session.getRpc().commands.invoke(SessionCommandsInvokeParams.builder()
-                .sessionId(null).name("list-dirs").input(null).origin(null).build()).get(15, TimeUnit.SECONDS);
-
-        String output = extractDisplayText(result);
-        assertTrue(Pattern.compile("(?s)^.*Total: [0-9]+ directories.*$").matcher(output).matches(),
-                "Expected /list-dirs output to include total directories count");
-        System.out.println("/list-dirs result:");
-        System.out.println(output);
-    }
-
-    @Test
     void addDir() throws Exception {
         String buildDirectory = System.getProperty("project.build.directory");
         assertNotNull(buildDirectory, "System property 'project.build.directory' must be set by failsafe");
@@ -158,6 +146,8 @@ class SlashCommandsIT {
                 .builder().sessionId(null).name("list-dirs").input(null).origin(null).build())
                 .get(15, TimeUnit.SECONDS);
         String beforeListOutput = extractDisplayText(beforeListResult);
+        assertTrue(Pattern.compile("(?s)^.*Total: [0-9]+ directories.*$").matcher(beforeListOutput).matches(),
+                "Expected /list-dirs output to include total directories count");
         System.out.println("/list-dirs (before /add-dir) result:");
         System.out.println(beforeListOutput);
 

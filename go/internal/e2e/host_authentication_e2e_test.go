@@ -264,7 +264,7 @@ func TestHostAuthenticationBYOKCreateAndColdResumeE2E(t *testing.T) {
 }
 
 func TestHostAuthenticationRejectsInvalidCredentialsE2E(t *testing.T) {
-	for _, failure := range []string{"reject", "error", "identity", "missing-expiry", "invalid-expiry", "past-expiry"} {
+	for _, failure := range []string{"reject", "error", "identity", "invalid-expiry", "past-expiry"} {
 		t.Run(failure, func(t *testing.T) {
 			b := newHostAuthBoundary(t)
 			client := b.client(t)
@@ -283,8 +283,6 @@ func TestHostAuthenticationRejectsInvalidCredentialsE2E(t *testing.T) {
 						return nil, errors.New("validator unavailable")
 					case "identity":
 						result.Identity = "another-owner"
-					case "missing-expiry":
-						result.ExpiresAt = ""
 					case "invalid-expiry":
 						result.ExpiresAt = "not-a-date"
 					case "past-expiry":

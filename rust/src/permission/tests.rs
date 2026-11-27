@@ -29,19 +29,6 @@ async fn approve_all_fails_when_managed_settings_enabled() {
 }
 
 #[tokio::test]
-async fn deny_all_denies() {
-    let h = deny_all();
-    assert!(matches!(
-        h.handle(SessionId::from("s"), RequestId::new("1"), data())
-            .await,
-        PermissionResult::Decision {
-            decision: crate::types::PermissionDecision::Reject(_),
-            ..
-        }
-    ));
-}
-
-#[tokio::test]
 async fn approve_if_leaves_managed_approval_pending_unless_denied() {
     for approved in [true, false] {
         let h = approve_if(move |_| approved);

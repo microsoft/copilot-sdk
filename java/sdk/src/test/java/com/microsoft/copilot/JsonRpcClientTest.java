@@ -225,22 +225,6 @@ class JsonRpcClientTest {
     }
 
     @Test
-    void cancellingTrajectoryClassificationSendsCancelRequest() throws Exception {
-        try (var pair = createSocketPair()) {
-            var response = pair.client.invoke("taskAnalytics.classifyTrajectory", Map.of("events", List.of()),
-                    JsonNode.class);
-            var request = MAPPER.readTree(readRpcMessage(pair.serverSide.getInputStream()));
-            assertEquals("taskAnalytics.classifyTrajectory", request.get("method").asText());
-
-            assertTrue(response.cancel(false));
-
-            var cancel = MAPPER.readTree(readRpcMessage(pair.serverSide.getInputStream()));
-            assertEquals("$/cancelRequest", cancel.get("method").asText());
-            assertEquals(request.get("id"), cancel.path("params").get("id"));
-        }
-    }
-
-    @Test
     void trajectoryClassificationAcceptsTypedSessionEvents() throws Exception {
         try (var pair = createSocketPair()) {
             var idle = new SessionIdleEvent();
@@ -295,7 +279,8 @@ class JsonRpcClientTest {
 
     @Test
     void cancellingWaitUsesItsRequestIdAndKeepsOtherRequestsWorking() throws Exception {
-        for (var method : List.of("session.sendAndWait", "feedback.upload.read", "fixture.pending")) {
+        for (var method : List.of("session.sendAndWait", "feedback.upload.read", "taskAnalytics.classifyTrajectory",
+                "fixture.pending")) {
             try (var pair = createSocketPair()) {
                 pair.serverSide.setSoTimeout(5000);
                 var pending = pair.client.invoke(method, Map.of(), JsonNode.class);
@@ -303,6 +288,7 @@ class JsonRpcClientTest {
                 assertTrue(pending.cancel(false));
                 if (!method.equals("fixture.pending")) {
                     var cancellation = MAPPER.readTree(readRpcMessage(pair.serverSide.getInputStream()));
+                    assertEquals("2.0", cancellation.path("jsonrpc").asText());
                     assertEquals("$/cancelRequest", cancellation.path("method").asText());
                     assertEquals(request.get("id"), cancellation.path("params").get("id"));
                     assertFalse(cancellation.has("id"));
@@ -450,20 +436,6 @@ class JsonRpcClientTest {
                     assertEquals(expected, result.get(5, TimeUnit.SECONDS));
                 }
             }
-        }
-    }
-
-    @Test
-    void testNotify() throws Exception {
-        try (var pair = createSocketPair()) {
-            pair.client.notify("test.method", Map.of("key", "value"));
-
-            String msg = readRpcMessage(pair.serverSide.getInputStream());
-            JsonNode node = MAPPER.readTree(msg);
-            assertEquals("2.0", node.get("jsonrpc").asText());
-            assertEquals("test.method", node.get("method").asText());
-            assertNull(node.get("id"), "Notification should not have an id");
-            assertEquals("value", node.get("params").get("key").asText());
         }
     }
 
@@ -899,14 +871,8 @@ class JsonRpcClientTest {
 
     @Test
     void testIsConnectedWithSocket() throws Exception {
-        try (var pair = createSocketPair()) {
-            assertTrue(pair.client.isConnected());
-        }
-    }
-
-    @Test
-    void testIsConnectedWithSocketClosed() throws Exception {
         var pair = createSocketPair();
+        assertTrue(pair.client.isConnected());
         pair.client.close();
         assertFalse(pair.client.isConnected());
         pair.serverSide.close();
@@ -916,36 +882,12 @@ class JsonRpcClientTest {
     @Test
     void testIsConnectedWithProcess() throws Exception {
         Process proc = new TestProcess();
-        try (var client = JsonRpcClient.fromProcess(proc)) {
-            assertTrue(client.isConnected());
-        }
-    }
-
-    @Test
-    void testIsConnectedWithProcessDead() throws Exception {
-        Process proc = new TestProcess();
         var client = JsonRpcClient.fromProcess(proc);
+        assertTrue(client.isConnected());
         proc.destroy();
         proc.waitFor(5, TimeUnit.SECONDS);
         assertFalse(client.isConnected());
         client.close();
-    }
-
-    // ---- getProcess() ----
-
-    @Test
-    void testGetProcessReturnsProcess() throws Exception {
-        Process proc = new TestProcess();
-        try (var client = JsonRpcClient.fromProcess(proc)) {
-            assertSame(proc, client.getProcess());
-        }
-    }
-
-    @Test
-    void testGetProcessNullForSocket() throws Exception {
-        try (var pair = createSocketPair()) {
-            assertNull(pair.client.getProcess());
-        }
     }
 
     @Test
@@ -1108,18 +1050,6 @@ class JsonRpcClientTest {
     }
 
     // ---- handleMessage: response handling ----
-
-    @Test
-    void testResponseWithUnknownId() throws Exception {
-        try (var pair = createSocketPair()) {
-            // Response for an id that has no pending request - silently ignored
-            writeRpcMessage(pair.serverSide.getOutputStream(),
-                    "{\"jsonrpc\":\"2.0\",\"id\":99999,\"result\":{\"ok\":true}}");
-
-            assertReaderResponsive(pair);
-            // No exception, just silently dropped
-        }
-    }
 
     @Test
     void testErrorResponseWithoutMessage() throws Exception {

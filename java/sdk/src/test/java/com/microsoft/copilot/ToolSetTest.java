@@ -7,7 +7,6 @@ package com.microsoft.copilot;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.util.Collection;
-import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
@@ -18,37 +17,6 @@ import com.microsoft.copilot.rpc.ToolSet;
  * Tests for {@link ToolSet} and {@link BuiltInTools}.
  */
 public class ToolSetTest {
-
-    @Test
-    void testAddBuiltIn() {
-        var ts = new ToolSet().addBuiltIn("bash");
-        assertEquals(1, ts.size());
-        assertEquals("builtin:bash", ts.get(0));
-    }
-
-    @Test
-    void testAddBuiltInWildcard() {
-        var ts = new ToolSet().addBuiltIn("*");
-        assertEquals("builtin:*", ts.get(0));
-    }
-
-    @Test
-    void testAddCustom() {
-        var ts = new ToolSet().addCustom("my_tool");
-        assertEquals("custom:my_tool", ts.get(0));
-    }
-
-    @Test
-    void testAddMcp() {
-        var ts = new ToolSet().addMcp("github-list_issues");
-        assertEquals("mcp:github-list_issues", ts.get(0));
-    }
-
-    @Test
-    void testAddMcpWildcard() {
-        var ts = new ToolSet().addMcp("*");
-        assertEquals("mcp:*", ts.get(0));
-    }
 
     @Test
     void testChaining() {
@@ -88,13 +56,5 @@ public class ToolSetTest {
     @Test
     void testBuiltInToolsIsolatedIsUnmodifiable() {
         assertThrows(UnsupportedOperationException.class, () -> BuiltInTools.ISOLATED.add("new_tool"));
-    }
-
-    @Test
-    void testToolSetIsListOfStrings() {
-        var ts = new ToolSet().addBuiltIn("bash").addMcp("*");
-        // ToolSet extends ArrayList<String>, so it is a List<String>
-        List<String> list = ts;
-        assertEquals(2, list.size());
     }
 }

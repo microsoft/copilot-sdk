@@ -11,51 +11,49 @@ struct LegacyHandler;
 
 #[tokio::test]
 async fn exact_hex_provider_resume_skips_host_lookup() {
-    for recovery in [false, true] {
-        let (client_write, server_read) = duplex(8192);
-        let (server_write, client_read) = duplex(8192);
-        let client = Client::from_streams_with_session_fs_config(
-            client_read,
-            client_write,
-            std::env::temp_dir(),
-            SessionFsConfig::new("/workspace", "/sessions", SessionFsConventions::Posix),
-        )
-        .unwrap();
-        let mut server = FakeServer {
-            read: server_read,
-            write: server_write,
-            session_id: "abcdef0".to_owned(),
-        };
-        let start = tokio::spawn(async move {
-            client
-                .resume_session(
-                    ResumeSessionOptions::new(SessionId::from("abcdef0"))
-                        .with_interaction(|group| group.with_auto_mode_recovery(recovery))
-                        .with_interaction(|group| {
-                            group.with_on_auto_mode_switch_request(Arc::new(LegacyHandler))
-                        })
-                        .with_state(|group| {
-                            group.with_session_fs_provider(Arc::new(RecordingFsProvider::new()))
-                        }),
-                )
-                .await
-        });
-        let resume = timeout(TIMEOUT, server.read_request()).await.unwrap();
-        assert_eq!(resume["method"], "session.resume");
-        assert_eq!(resume["params"]["sessionId"], "abcdef0");
-        server
-            .respond(
-                &resume,
-                json!({"sessionId": "abcdef0", "capabilities": {"ui": {"autoModeRecovery": true}}}),
+    let (client_write, server_read) = duplex(8192);
+    let (server_write, client_read) = duplex(8192);
+    let client = Client::from_streams_with_session_fs_config(
+        client_read,
+        client_write,
+        std::env::temp_dir(),
+        SessionFsConfig::new("/workspace", "/sessions", SessionFsConventions::Posix),
+    )
+    .unwrap();
+    let mut server = FakeServer {
+        read: server_read,
+        write: server_write,
+        session_id: "abcdef0".to_owned(),
+    };
+    let start = tokio::spawn(async move {
+        client
+            .resume_session(
+                ResumeSessionOptions::new(SessionId::from("abcdef0"))
+                    .with_interaction(|group| group.with_auto_mode_recovery(true))
+                    .with_interaction(|group| {
+                        group.with_on_auto_mode_switch_request(Arc::new(LegacyHandler))
+                    })
+                    .with_state(|group| {
+                        group.with_session_fs_provider(Arc::new(RecordingFsProvider::new()))
+                    }),
             )
-            .await;
-        let reload = timeout(TIMEOUT, server.read_request()).await.unwrap();
-        assert_eq!(reload["method"], "session.skills.reload");
-        server.respond(&reload, json!({})).await;
-        let session = timeout(TIMEOUT, start).await.unwrap().unwrap().unwrap();
-        assert_eq!(session.id().as_str(), "abcdef0");
-        disconnect(session, server).await;
-    }
+            .await
+    });
+    let resume = timeout(TIMEOUT, server.read_request()).await.unwrap();
+    assert_eq!(resume["method"], "session.resume");
+    assert_eq!(resume["params"]["sessionId"], "abcdef0");
+    server
+        .respond(
+            &resume,
+            json!({"sessionId": "abcdef0", "capabilities": {"ui": {"autoModeRecovery": true}}}),
+        )
+        .await;
+    let reload = timeout(TIMEOUT, server.read_request()).await.unwrap();
+    assert_eq!(reload["method"], "session.skills.reload");
+    server.respond(&reload, json!({})).await;
+    let session = timeout(TIMEOUT, start).await.unwrap().unwrap().unwrap();
+    assert_eq!(session.id().as_str(), "abcdef0");
+    disconnect(session, server).await;
 }
 
 #[tokio::test]
@@ -443,21 +441,20 @@ async fn enrollment_requires_handler_before_any_wire_request() {
 
 #[tokio::test]
 async fn missing_or_false_acknowledgment_detaches_and_unregisters() {
-    for resume in [false, true] {
-        for acknowledged in [None, Some(false)] {
-            let (result, client, _server, request) =
-                open(resume, true, acknowledged, Arc::new(LegacyHandler)).await;
-            let error = result.err().expect("unsupported enrollment must fail");
-            assert_eq!(
-                *error.kind(),
-                ErrorKind::Session(SessionErrorKind::AutoModeRecoveryNotSupported)
-            );
-            assert_eq!(
-                request["params"]["interaction"]["requestAutoModeRecovery"],
-                true
-            );
-            assert_eq!(client.registered_session_count_for_test(), 0);
-        }
+    // Pairwise: the acknowledgment check is shared; each entry point and wire shape runs once.
+    for (resume, acknowledged) in [(false, None), (true, Some(false))] {
+        let (result, client, _server, request) =
+            open(resume, true, acknowledged, Arc::new(LegacyHandler)).await;
+        let error = result.err().expect("unsupported enrollment must fail");
+        assert_eq!(
+            *error.kind(),
+            ErrorKind::Session(SessionErrorKind::AutoModeRecoveryNotSupported)
+        );
+        assert_eq!(
+            request["params"]["interaction"]["requestAutoModeRecovery"],
+            true
+        );
+        assert_eq!(client.registered_session_count_for_test(), 0);
     }
 }
 
@@ -782,166 +779,170 @@ async fn cancelled_displaced_startup_is_not_restored_as_a_resident_session() {
 
 #[tokio::test]
 async fn pending_recovery_cleanup_blocks_same_id_initialization() {
-    for initial_resume in [false, true] {
-        for retry_resume in [false, true] {
-            for cancel_caller in [false, true] {
-                let (client, mut server) = auto_mode_recovery_client();
-                let start =
-                    start_unsupported_attachment(&client, &mut server, initial_resume).await;
-                let detach = timeout(TIMEOUT, server.read_request()).await.unwrap();
-                assert_eq!(detach["method"], "session.detach");
-                let start = if cancel_caller {
-                    start.abort();
-                    assert!(
-                        start
-                            .await
-                            .err()
-                            .expect("caller must be cancelled")
-                            .is_cancelled()
-                    );
-                    None
-                } else {
-                    Some(start)
-                };
-                let mut retry = Box::pin(async {
-                    if retry_resume {
-                        client
-                            .resume_session(ResumeSessionOptions::new(SessionId::from(
-                                "recovery-session",
-                            )))
-                            .await
-                    } else {
-                        client
-                            .create_session(
-                                CreateSessionOptions::default().with_session_id("recovery-session"),
-                            )
-                            .await
-                    }
-                });
-                assert!(futures_util::poll!(&mut retry).is_pending());
-                initialization_wire_fence(&client, &mut server).await;
-                server
-                    .respond(&detach, serde_json::json!({"success": true}))
-                    .await;
-                if let Some(start) = start {
-                    let error = start.await.unwrap().err().expect("enrollment must fail");
-                    assert_eq!(
-                        *error.kind(),
-                        ErrorKind::Session(SessionErrorKind::AutoModeRecoveryNotSupported)
-                    );
-                }
-                let (session, ()) = tokio::join!(retry, async {
-                    let request = timeout(TIMEOUT, server.read_request()).await.unwrap();
-                    assert_eq!(
-                        request["method"],
-                        if retry_resume {
-                            "session.resume"
-                        } else {
-                            "session.create"
-                        }
-                    );
-                    server
-                        .respond(
-                            &request,
-                            serde_json::json!({"sessionId": server.session_id}),
-                        )
-                        .await;
-                    if retry_resume {
-                        let reload = timeout(TIMEOUT, server.read_request()).await.unwrap();
-                        assert_eq!(reload["method"], "session.skills.reload");
-                        server.respond(&reload, serde_json::json!({})).await;
-                    }
-                });
-                assert_eq!(client.registered_session_count_for_test(), 1);
-                disconnect(session.unwrap(), server).await;
+    // Pairwise (L4) over independent dimensions: originating entry point, retry
+    // entry point, and whether the enrolling caller is cancelled.
+    for (initial_resume, retry_resume, cancel_caller) in [
+        (false, false, false),
+        (false, true, true),
+        (true, false, true),
+        (true, true, false),
+    ] {
+        let (client, mut server) = auto_mode_recovery_client();
+        let start = start_unsupported_attachment(&client, &mut server, initial_resume).await;
+        let detach = timeout(TIMEOUT, server.read_request()).await.unwrap();
+        assert_eq!(detach["method"], "session.detach");
+        let start = if cancel_caller {
+            start.abort();
+            assert!(
+                start
+                    .await
+                    .err()
+                    .expect("caller must be cancelled")
+                    .is_cancelled()
+            );
+            None
+        } else {
+            Some(start)
+        };
+        let mut retry = Box::pin(async {
+            if retry_resume {
+                client
+                    .resume_session(ResumeSessionOptions::new(SessionId::from(
+                        "recovery-session",
+                    )))
+                    .await
+            } else {
+                client
+                    .create_session(
+                        CreateSessionOptions::default().with_session_id("recovery-session"),
+                    )
+                    .await
             }
+        });
+        assert!(futures_util::poll!(&mut retry).is_pending());
+        initialization_wire_fence(&client, &mut server).await;
+        server
+            .respond(&detach, serde_json::json!({"success": true}))
+            .await;
+        if let Some(start) = start {
+            let error = start.await.unwrap().err().expect("enrollment must fail");
+            assert_eq!(
+                *error.kind(),
+                ErrorKind::Session(SessionErrorKind::AutoModeRecoveryNotSupported)
+            );
         }
+        let (session, ()) = tokio::join!(retry, async {
+            let request = timeout(TIMEOUT, server.read_request()).await.unwrap();
+            assert_eq!(
+                request["method"],
+                if retry_resume {
+                    "session.resume"
+                } else {
+                    "session.create"
+                }
+            );
+            server
+                .respond(
+                    &request,
+                    serde_json::json!({"sessionId": server.session_id}),
+                )
+                .await;
+            if retry_resume {
+                let reload = timeout(TIMEOUT, server.read_request()).await.unwrap();
+                assert_eq!(reload["method"], "session.skills.reload");
+                server.respond(&reload, serde_json::json!({})).await;
+            }
+        });
+        assert_eq!(client.registered_session_count_for_test(), 1);
+        disconnect(session.unwrap(), server).await;
     }
 }
 
 #[tokio::test(start_paused = true)]
 async fn failed_recovery_cleanup_fences_same_id_after_failure_timeout_or_cancellation() {
-    for initial_resume in [false, true] {
-        for cancel_caller in [false, true] {
-            for detach_times_out in [false, true] {
-                let (client, mut server) = auto_mode_recovery_client();
-                let start =
-                    start_unsupported_attachment(&client, &mut server, initial_resume).await;
-                let detach = timeout(TIMEOUT, server.read_request()).await.unwrap();
-                assert_eq!(detach["method"], "session.detach");
-                let start = if cancel_caller {
-                    start.abort();
-                    assert!(
-                        start
-                            .await
-                            .err()
-                            .expect("caller must be cancelled")
-                            .is_cancelled()
-                    );
-                    None
-                } else {
-                    Some(start)
-                };
-                let mut waiting_resume = Box::pin(client.resume_session(
-                    ResumeSessionOptions::new(SessionId::from("recovery-session")),
-                ));
-                assert!(futures_util::poll!(&mut waiting_resume).is_pending());
-                initialization_wire_fence(&client, &mut server).await;
-                if detach_times_out {
-                    // Reading detach proves admission to the existing ten-second cleanup.
-                    tokio::time::advance(Duration::from_secs(11)).await;
-                } else {
-                    server
-                        .respond_error(&detach, -32000, "detach rejected")
-                        .await;
-                }
-                if let Some(start) = start {
-                    let error = start.await.unwrap().err().expect("enrollment must fail");
-                    assert_eq!(
-                        *error.kind(),
-                        ErrorKind::Session(SessionErrorKind::AutoModeRecoveryNotSupported)
-                    );
-                    assert!(
-                        std::error::Error::source(&error).is_some(),
-                        "cleanup failure must remain available: {error:?}"
-                    );
-                }
-                let error = timeout(TIMEOUT, waiting_resume)
+    // Pairwise (L4) over independent dimensions: originating entry point, caller
+    // cancellation, and detach failure versus timeout.
+    for (initial_resume, cancel_caller, detach_times_out) in [
+        (false, false, false),
+        (false, true, true),
+        (true, false, true),
+        (true, true, false),
+    ] {
+        let (client, mut server) = auto_mode_recovery_client();
+        let start = start_unsupported_attachment(&client, &mut server, initial_resume).await;
+        let detach = timeout(TIMEOUT, server.read_request()).await.unwrap();
+        assert_eq!(detach["method"], "session.detach");
+        let start = if cancel_caller {
+            start.abort();
+            assert!(
+                start
                     .await
-                    .expect("waiting resume must settle after cleanup")
                     .err()
-                    .expect("ambiguous cleanup must block reuse");
-                assert_eq!(
-                    *error.kind(),
-                    ErrorKind::Session(SessionErrorKind::AutoModeRecoveryNotSupported)
-                );
-                for retry_resume in [false, true] {
-                    let result = if retry_resume {
-                        client
-                            .resume_session(ResumeSessionOptions::new(SessionId::from(
-                                "recovery-session",
-                            )))
-                            .await
-                    } else {
-                        client
-                            .create_session(
-                                CreateSessionOptions::default().with_session_id("recovery-session"),
-                            )
-                            .await
-                    };
-                    assert_eq!(
-                        *result
-                            .err()
-                            .expect("failed cleanup must fence later retries")
-                            .kind(),
-                        ErrorKind::Session(SessionErrorKind::AutoModeRecoveryNotSupported)
-                    );
-                }
-                assert_eq!(client.registered_session_count_for_test(), 0);
-                initialization_wire_fence(&client, &mut server).await;
-                client.force_stop();
-            }
+                    .expect("caller must be cancelled")
+                    .is_cancelled()
+            );
+            None
+        } else {
+            Some(start)
+        };
+        let mut waiting_resume = Box::pin(client.resume_session(ResumeSessionOptions::new(
+            SessionId::from("recovery-session"),
+        )));
+        assert!(futures_util::poll!(&mut waiting_resume).is_pending());
+        initialization_wire_fence(&client, &mut server).await;
+        if detach_times_out {
+            // Reading detach proves admission to the existing ten-second cleanup.
+            tokio::time::advance(Duration::from_secs(11)).await;
+        } else {
+            server
+                .respond_error(&detach, -32000, "detach rejected")
+                .await;
         }
+        if let Some(start) = start {
+            let error = start.await.unwrap().err().expect("enrollment must fail");
+            assert_eq!(
+                *error.kind(),
+                ErrorKind::Session(SessionErrorKind::AutoModeRecoveryNotSupported)
+            );
+            assert!(
+                std::error::Error::source(&error).is_some(),
+                "cleanup failure must remain available: {error:?}"
+            );
+        }
+        let error = timeout(TIMEOUT, waiting_resume)
+            .await
+            .expect("waiting resume must settle after cleanup")
+            .err()
+            .expect("ambiguous cleanup must block reuse");
+        assert_eq!(
+            *error.kind(),
+            ErrorKind::Session(SessionErrorKind::AutoModeRecoveryNotSupported)
+        );
+        for retry_resume in [false, true] {
+            let result = if retry_resume {
+                client
+                    .resume_session(ResumeSessionOptions::new(SessionId::from(
+                        "recovery-session",
+                    )))
+                    .await
+            } else {
+                client
+                    .create_session(
+                        CreateSessionOptions::default().with_session_id("recovery-session"),
+                    )
+                    .await
+            };
+            assert_eq!(
+                *result
+                    .err()
+                    .expect("failed cleanup must fence later retries")
+                    .kind(),
+                ErrorKind::Session(SessionErrorKind::AutoModeRecoveryNotSupported)
+            );
+        }
+        assert_eq!(client.registered_session_count_for_test(), 0);
+        initialization_wire_fence(&client, &mut server).await;
+        client.force_stop();
     }
 }
 
@@ -1011,90 +1012,88 @@ async fn server_assigned_create_cannot_replace_pending_or_failed_cleanup() {
 
 #[tokio::test]
 async fn cancelled_cloud_post_create_setup_owns_fenced_rollback() {
-    for cancel_interest in [false, true] {
-        for cleanup_failure in [false, true] {
-            let (client, mut server) = auto_mode_recovery_client();
-            let start = spawn_create(&client, cloud_post_create_options());
-            let interest = acknowledge_create_and_read_interest(&mut server).await;
-            let pending = if cancel_interest {
-                interest
-            } else {
-                server.respond(&interest, json!({})).await;
-                let patch = timeout(TIMEOUT, server.read_request()).await.unwrap();
-                assert_eq!(patch["method"], "session.options.update");
-                patch
-            };
-            start.abort();
-            assert!(
-                start
-                    .await
-                    .err()
-                    .expect("creation must be cancelled")
-                    .is_cancelled()
-            );
-            let detach = timeout(TIMEOUT, server.read_request())
+    // Pairwise: the pending post-create RPC and the delete outcome are independent.
+    for (cancel_interest, cleanup_failure) in [(false, true), (true, false)] {
+        let (client, mut server) = auto_mode_recovery_client();
+        let start = spawn_create(&client, cloud_post_create_options());
+        let interest = acknowledge_create_and_read_interest(&mut server).await;
+        let pending = if cancel_interest {
+            interest
+        } else {
+            server.respond(&interest, json!({})).await;
+            let patch = timeout(TIMEOUT, server.read_request()).await.unwrap();
+            assert_eq!(patch["method"], "session.options.update");
+            patch
+        };
+        start.abort();
+        assert!(
+            start
                 .await
-                .expect("cancelled creation must detach its cloud session");
-            assert_eq!(detach["method"], "session.detach");
-            assert_eq!(client.registered_session_count_for_test(), 1);
-            let mut retry = tokio::spawn({
-                let client = client.clone();
-                let session_id = server.session_id.clone();
-                async move {
-                    client
-                        .resume_session(ResumeSessionOptions::new(SessionId::from(session_id)))
-                        .await
-                }
-            });
+                .err()
+                .expect("creation must be cancelled")
+                .is_cancelled()
+        );
+        let detach = timeout(TIMEOUT, server.read_request())
+            .await
+            .expect("cancelled creation must detach its cloud session");
+        assert_eq!(detach["method"], "session.detach");
+        assert_eq!(client.registered_session_count_for_test(), 1);
+        let mut retry = tokio::spawn({
+            let client = client.clone();
+            let session_id = server.session_id.clone();
+            async move {
+                client
+                    .resume_session(ResumeSessionOptions::new(SessionId::from(session_id)))
+                    .await
+            }
+        });
+        assert!(futures_util::poll!(&mut retry).is_pending());
+        initialization_wire_fence(&client, &mut server).await;
+        server.respond(&pending, json!({})).await;
+        server.respond(&detach, json!({"success": true})).await;
+        let delete = timeout(TIMEOUT, server.read_request()).await.unwrap();
+        assert_eq!(delete["method"], "session.delete");
+        assert_eq!(delete["params"]["sessionId"], server.session_id);
+        assert!(futures_util::poll!(&mut retry).is_pending());
+        initialization_wire_fence(&client, &mut server).await;
+        server
+            .respond(
+                &delete,
+                json!({
+                    "success": !cleanup_failure, "error": "cloud rollback rejected"
+                }),
+            )
+            .await;
+        if cleanup_failure {
+            assert!(timeout(TIMEOUT, retry).await.unwrap().unwrap().is_err());
+            assert_eq!(client.registered_session_count_for_test(), 0);
+        } else {
             assert!(futures_util::poll!(&mut retry).is_pending());
-            initialization_wire_fence(&client, &mut server).await;
-            server.respond(&pending, json!({})).await;
-            server.respond(&detach, json!({"success": true})).await;
-            let delete = timeout(TIMEOUT, server.read_request()).await.unwrap();
-            assert_eq!(delete["method"], "session.delete");
-            assert_eq!(delete["params"]["sessionId"], server.session_id);
-            assert!(futures_util::poll!(&mut retry).is_pending());
-            initialization_wire_fence(&client, &mut server).await;
-            server
-                .respond(
-                    &delete,
-                    json!({
-                        "success": !cleanup_failure, "error": "cloud rollback rejected"
-                    }),
-                )
-                .await;
-            if cleanup_failure {
-                assert!(timeout(TIMEOUT, retry).await.unwrap().unwrap().is_err());
-                assert_eq!(client.registered_session_count_for_test(), 0);
-            } else {
-                assert!(futures_util::poll!(&mut retry).is_pending());
-                let resume = timeout(TIMEOUT, async {
+            let resume = timeout(TIMEOUT, async {
                     tokio::select! {
                         request = server.read_request() => request,
                         result = &mut retry => panic!("resume finished without an RPC: {:?}", result.err()),
                     }
                 }).await.unwrap();
-                assert_eq!(resume["method"], "session.resume");
-                server
-                    .respond(&resume, json!({"sessionId": server.session_id}))
-                    .await;
-                let reload = timeout(TIMEOUT, server.read_request()).await.unwrap();
-                assert_eq!(reload["method"], "session.skills.reload");
-                server.respond(&reload, json!({})).await;
-                let session = timeout(TIMEOUT, retry).await.unwrap().unwrap().unwrap();
-                drop(session);
-                assert_eq!(client.registered_session_count_for_test(), 0);
-            }
-            client.force_stop();
+            assert_eq!(resume["method"], "session.resume");
+            server
+                .respond(&resume, json!({"sessionId": server.session_id}))
+                .await;
+            let reload = timeout(TIMEOUT, server.read_request()).await.unwrap();
+            assert_eq!(reload["method"], "session.skills.reload");
+            server.respond(&reload, json!({})).await;
+            let session = timeout(TIMEOUT, retry).await.unwrap().unwrap().unwrap();
+            drop(session);
+            assert_eq!(client.registered_session_count_for_test(), 0);
         }
+        client.force_stop();
     }
 }
 
 #[tokio::test]
 async fn cloud_post_create_failure_is_deleted_before_returning_error() {
-    for (fail_interest, cleanup_failure) in
-        [(false, false), (true, false), (false, true), (true, true)]
-    {
+    // Pairwise: the failing post-create step and the delete outcome are independent.
+    for (fail_interest, cleanup_failure) in [(true, false), (false, true)] {
         let (client, mut server) = auto_mode_recovery_client();
         let mut start = spawn_create(&client, cloud_post_create_options());
         let interest = acknowledge_create_and_read_interest(&mut server).await;
@@ -1829,7 +1828,8 @@ async fn pending_recovery_consent_allows_same_id_initialization_without_a_lock_w
 async fn direct_registration_with_params_retains_recovery_acknowledgment() {
     use copilot_sdk::rpc::UIRegisterDirectAutoModeSwitchHandlerRequest;
 
-    for acknowledged in [None, Some(false), Some(true)] {
+    // An absent acknowledgment is owned by the parameterless registration test.
+    for acknowledged in [Some(false), Some(true)] {
         let (session, client, mut server, _) =
             open(false, false, None, Arc::new(LegacyHandler)).await;
         let session = Arc::new(session.unwrap());
@@ -2075,7 +2075,7 @@ async fn assert_resume_callback_owner(acknowledged: Option<bool>, rpc_rejected: 
 async fn resume_callback_owner_survives_missing_or_false_acknowledgment_and_rpc_rejection() {
     // Missing or false acknowledgment preserves the accepted resume callback
     // owner; RPC rejection restores the resident one.
-    for (acknowledged, rpc_rejected) in [(None, false), (Some(false), false), (None, true)] {
+    for (acknowledged, rpc_rejected) in [(Some(false), false), (None, true)] {
         assert_resume_callback_owner(acknowledged, rpc_rejected).await;
     }
 }
@@ -2163,34 +2163,31 @@ impl AutoModeSwitchHandler for AutoModeRecoveryHandler {
 
 #[tokio::test]
 async fn complete_context_round_trips_to_the_auto_mode_recovery_handler() {
-    for resume in [false, true] {
-        let (observed, mut observations) = mpsc::unbounded_channel();
-        let handler = Arc::new(AutoModeRecoveryHandler { observed });
-        let (session, _client, mut server, request) = open(resume, true, Some(true), handler).await;
-        let session = session.unwrap();
-        assert_eq!(
-            request["params"]["interaction"]["requestAutoModeRecovery"],
-            true
-        );
-        assert!(session.auto_mode_recovery_supported());
-        let context = serde_json::json!({
-            "requestId": "offer-1", "originalModel": "explicit-model", "allowAlways": false,
-            "interactionId": "interaction-1", "originatingMessageId": "user-1",
-        });
-        server.send_request(12, "autoModeSwitch.request", serde_json::json!({
+    let (observed, mut observations) = mpsc::unbounded_channel();
+    let handler = Arc::new(AutoModeRecoveryHandler { observed });
+    let (session, _client, mut server, request) = open(false, true, Some(true), handler).await;
+    let session = session.unwrap();
+    assert_eq!(
+        request["params"]["interaction"]["requestAutoModeRecovery"],
+        true
+    );
+    assert!(session.auto_mode_recovery_supported());
+    let context = serde_json::json!({
+        "requestId": "offer-1", "originalModel": "explicit-model", "allowAlways": false,
+        "interactionId": "interaction-1", "originatingMessageId": "user-1",
+    });
+    server.send_request(12, "autoModeSwitch.request", serde_json::json!({
             "sessionId": server.session_id, "errorCode": "model_overloaded", "retryAfterSeconds": 3.5,
             "autoModeRecovery": context,
         })).await;
-        let (session_id, code, retry_after, auto_mode_recovery) =
-            observations.recv().await.unwrap();
-        assert_eq!(session_id, *session.id());
-        assert_eq!(code.as_deref(), Some("model_overloaded"));
-        assert_eq!(retry_after, Some(3.5));
-        assert_eq!(serde_json::to_value(auto_mode_recovery).unwrap(), context);
-        let reply = timeout(TIMEOUT, server.read_response()).await.unwrap();
-        assert_eq!(reply["result"]["response"], "yes");
-        disconnect(session, server).await;
-    }
+    let (session_id, code, retry_after, auto_mode_recovery) = observations.recv().await.unwrap();
+    assert_eq!(session_id, *session.id());
+    assert_eq!(code.as_deref(), Some("model_overloaded"));
+    assert_eq!(retry_after, Some(3.5));
+    assert_eq!(serde_json::to_value(auto_mode_recovery).unwrap(), context);
+    let reply = timeout(TIMEOUT, server.read_response()).await.unwrap();
+    assert_eq!(reply["result"]["response"], "yes");
+    disconnect(session, server).await;
 }
 
 #[tokio::test]

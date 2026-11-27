@@ -105,50 +105,6 @@ func TestStructuredOutputE2E(t *testing.T) {
 		}
 	})
 
-	t.Run("typed_wait_returns_stop_hook_correction", func(t *testing.T) {
-		harness.ConfigureForTest(t)
-		ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
-		defer cancel()
-		var stops atomic.Int32
-		config := structuredSessionConfig(harness.ProxyURL)
-		config.Hooks.Handlers = &copilot.SessionHooks{OnAgentStop: func(_ copilot.AgentStopHookInput, _ copilot.HookInvocation) (*copilot.AgentStopHookOutput, error) {
-			if stops.Add(1) == 1 {
-				return &copilot.AgentStopHookOutput{Decision: "block", Reason: "Correct the answer to 99, not 42. Do not use tools."}, nil
-			}
-			return nil, nil
-		}}
-		session, err := client.CreateSession(ctx, config)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var mu sync.Mutex
-		var replies []*copilot.AssistantMessageData
-		unsubscribe := session.On(func(event copilot.SessionEvent) {
-			if reply, ok := event.Data.(*copilot.AssistantMessageData); ok && (event.AgentID == nil || *event.AgentID == "") {
-				mu.Lock()
-				replies = append(replies, reply)
-				mu.Unlock()
-			}
-		})
-		defer unsubscribe()
-		result, err := copilot.SendAndWait[outputAnswer](ctx, session, copilot.MessageOptions{Prompt: "What is 19 + 23? Do not use tools."})
-		if err != nil || result.Answer != 99 || stops.Load() != 2 {
-			t.Fatalf("result %+v, stops %d, error %v", result, stops.Load(), err)
-		}
-		mu.Lock()
-		defer mu.Unlock()
-		if len(replies) != 2 || replies[0].OriginatingMessageID == nil || *replies[0].OriginatingMessageID == "" ||
-			replies[1].OriginatingMessageID == nil || *replies[0].OriginatingMessageID != *replies[1].OriginatingMessageID {
-			t.Fatalf("expected two replies with the same nonempty origin: %+v", replies)
-		}
-		for i, expected := range []int{42, 99} {
-			var answer outputAnswer
-			if err := json.Unmarshal([]byte(replies[i].Content), &answer); err != nil || answer.Answer != expected {
-				t.Fatalf("reply %d: %+v, error %v", i, answer, err)
-			}
-		}
-	})
-
 	t.Run("send_selects_correlated_response_after_idle", func(t *testing.T) {
 		harness.ConfigureForTest(t)
 		ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
@@ -385,11 +341,33 @@ func TestStructuredOutputE2E(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		var mu sync.Mutex
+		var answers []*copilot.AssistantMessageData
+		unsubscribe := session.On(func(event copilot.SessionEvent) {
+			if reply, ok := event.Data.(*copilot.AssistantMessageData); ok && (event.AgentID == nil || *event.AgentID == "") && len(reply.ToolRequests) == 0 {
+				mu.Lock()
+				answers = append(answers, reply)
+				mu.Unlock()
+			}
+		})
+		defer unsubscribe()
 		result, err := copilot.SendAndWait[outputAnswer](ctx, session, copilot.MessageOptions{
 			Prompt: "Call lookup_number exactly once, then add 5 to the returned number. Do not guess its result.",
 		})
 		if err != nil || result.Answer != 99 || calls.Load() != 1 || stops.Load() != 2 {
 			t.Fatalf("result %+v, calls %d, stops %d, error %v", result, calls.Load(), stops.Load(), err)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if len(answers) != 2 || answers[0].OriginatingMessageID == nil || *answers[0].OriginatingMessageID == "" ||
+			answers[1].OriginatingMessageID == nil || *answers[0].OriginatingMessageID != *answers[1].OriginatingMessageID {
+			t.Fatalf("expected two answers with the same nonempty origin: %+v", answers)
+		}
+		for i, expected := range []int{63, 99} {
+			var answer outputAnswer
+			if err := json.Unmarshal([]byte(answers[i].Content), &answer); err != nil || answer.Answer != expected {
+				t.Fatalf("answer %d: %+v, error %v", i, answer, err)
+			}
 		}
 	})
 

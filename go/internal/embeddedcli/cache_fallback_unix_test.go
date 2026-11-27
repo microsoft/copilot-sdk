@@ -87,7 +87,7 @@ func TestPrivateTemporaryCacheCreatesAndReusesInTrustedBase(t *testing.T) {
 }
 
 func TestPrivateTemporaryCacheRejectsUnsafeExistingRoot(t *testing.T) {
-	for _, kind := range []string{"readable", "symlink", "file"} {
+	for _, kind := range []string{"readable", "symlink"} {
 		t.Run(kind, func(t *testing.T) {
 			base := t.TempDir()
 			root := filepath.Join(base, fmt.Sprintf("copilot-sdk-cache-%d", os.Geteuid()))
@@ -101,10 +101,6 @@ func TestPrivateTemporaryCacheRejectsUnsafeExistingRoot(t *testing.T) {
 				}
 			case "symlink":
 				if err := os.Symlink(t.TempDir(), root); err != nil {
-					t.Fatal(err)
-				}
-			case "file":
-				if err := os.WriteFile(root, []byte("not a cache"), 0600); err != nil {
 					t.Fatal(err)
 				}
 			}

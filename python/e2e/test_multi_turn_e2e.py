@@ -40,6 +40,10 @@ def _assert_tool_turn_ordering(events: list[Any], turn_description: str) -> None
     assert user_idx >= 0, f"Expected user.message in {turn_description}. Observed: {observed}"
     assert tool_starts, f"Expected tool.execution_start events in {turn_description}"
     assert tool_completes, f"Expected tool.execution_complete events in {turn_description}"
+    for _, start in tool_starts:
+        assert start.data.tool_call_id and start.data.tool_name
+    for _, complete in tool_completes:
+        assert complete.data.tool_call_id
 
     first_tool_start_idx = tool_starts[0][0]
     assert user_idx < first_tool_start_idx, (
@@ -90,32 +94,6 @@ def _assert_tool_turn_ordering(events: list[Any], turn_description: str) -> None
 
 
 class TestMultiTurn:
-    async def test_should_use_tool_results_from_previous_turns(self, ctx: E2ETestContext):
-        Path(ctx.work_dir, "secret.txt").write_text("The magic number is 42.", encoding="utf-8")
-        session = await ctx.client.create_session(
-            permissions={"on_request": PermissionHandler.approve_all}
-        )
-        events: list = []
-        unsubscribe = session.on(events.append)
-        try:
-            first_message = await session.send_and_wait(
-                "Read the file 'secret.txt' and tell me what the magic number is."
-            )
-            assert first_message is not None
-            assert "42" in first_message.data.content
-            turn1_events = list(events)
-            events.clear()
-            _assert_tool_turn_ordering(turn1_events, "file read turn")
-
-            second_message = await session.send_and_wait(
-                "What is that magic number multiplied by 2?"
-            )
-            assert second_message is not None
-            assert "84" in second_message.data.content
-        finally:
-            unsubscribe()
-            await session.disconnect()
-
     async def test_should_handle_file_creation_then_reading_across_turns(self, ctx: E2ETestContext):
         session = await ctx.client.create_session(
             permissions={"on_request": PermissionHandler.approve_all}

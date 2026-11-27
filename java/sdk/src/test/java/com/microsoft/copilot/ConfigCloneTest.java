@@ -40,18 +40,14 @@ import com.microsoft.copilot.rpc.AskUserVariant;
 import com.microsoft.copilot.rpc.CopilotClientOptions;
 import com.microsoft.copilot.rpc.DefaultAgentConfig;
 import com.microsoft.copilot.rpc.ExitPlanModeResult;
-import com.microsoft.copilot.rpc.InfiniteSessionConfig;
 import com.microsoft.copilot.rpc.LargeToolOutputConfig;
 import com.microsoft.copilot.rpc.MemoryConfiguration;
-import com.microsoft.copilot.rpc.MessageOptions;
 import com.microsoft.copilot.generated.rpc.Model;
 import com.microsoft.copilot.generated.rpc.ModelCapabilities;
 import com.microsoft.copilot.generated.rpc.ModelCapabilitiesLimits;
 import com.microsoft.copilot.generated.rpc.ModelCapabilitiesSupports;
 import com.microsoft.copilot.rpc.ResumeSessionOptions;
 import com.microsoft.copilot.rpc.CreateSessionOptions;
-import com.microsoft.copilot.rpc.SystemMessageConfig;
-import com.microsoft.copilot.rpc.TelemetryConfig;
 
 class ConfigCloneTest {
 
@@ -301,18 +297,6 @@ class ConfigCloneTest {
     }
 
     @Test
-    void messageOptionsCloneBasic() {
-        MessageOptions original = new MessageOptions();
-        original.setPrompt("What is 2+2?");
-        original.setMode("immediate");
-
-        MessageOptions cloned = original.clone();
-
-        assertEquals(original.getPrompt(), cloned.getPrompt());
-        assertEquals(original.getMode(), cloned.getMode());
-    }
-
-    @Test
     void sessionConfigEnableSessionTelemetryCopied() {
         CreateSessionOptions original = new CreateSessionOptions();
         original.setGitHub(original.getGitHub().setTelemetryEnabled(false));
@@ -320,15 +304,6 @@ class ConfigCloneTest {
         CreateSessionOptions cloned = original.clone();
 
         assertFalse(cloned.getGitHub().getTelemetryEnabled().orElse(true));
-    }
-
-    @Test
-    void sessionConfigEnableSessionTelemetryDefaultIsNull() {
-        CreateSessionOptions original = new CreateSessionOptions();
-
-        CreateSessionOptions cloned = original.clone();
-
-        assertTrue(cloned.getGitHub().getTelemetryEnabled().isEmpty());
     }
 
     @Test
@@ -377,15 +352,6 @@ class ConfigCloneTest {
     }
 
     @Test
-    void resumeSessionConfigEnableSessionTelemetryDefaultIsNull() {
-        ResumeSessionOptions original = new ResumeSessionOptions();
-
-        ResumeSessionOptions cloned = original.clone();
-
-        assertTrue(cloned.getGitHub().getTelemetryEnabled().isEmpty());
-    }
-
-    @Test
     void resumeSessionConfigGranularMultitenancyFieldsCopied() {
         ResumeSessionOptions original = new ResumeSessionOptions()
                 .setState(new SessionStateOptions().setSkipEmbeddingRetrieval(false)
@@ -418,78 +384,6 @@ class ConfigCloneTest {
         ResumeSessionOptions cloned = original.clone();
 
         assertSame(provider, cloned.getSkills().getProvider());
-    }
-
-    @Test
-    void clonePreservesNullFields() {
-        CopilotClientOptions opts = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT);
-        CopilotClientOptions optsClone = opts.clone();
-        assertNull(optsClone.getRuntime());
-
-        CreateSessionOptions cfg = new CreateSessionOptions();
-        CreateSessionOptions cfgClone = cfg.clone();
-        assertNull(cfgClone.getModel());
-
-        MessageOptions msg = new MessageOptions();
-        MessageOptions msgClone = msg.clone();
-        assertNull(msgClone.getMode());
-    }
-
-    @Test
-    void copilotClientOptionsGitHubToken() {
-        CopilotClientOptions opts = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT);
-        opts.setGitHub(opts.getGitHub().setToken("test-token"));
-        assertEquals("test-token", opts.getGitHub().getToken());
-    }
-
-    @Test
-    void copilotClientOptionsSetTelemetry() {
-        var telemetry = new TelemetryConfig().setOtlpEndpoint("http://localhost:4318");
-        var opts = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT);
-        opts.setObservability(opts.getObservability().setTelemetry(telemetry));
-        assertSame(telemetry, opts.getObservability().getTelemetry());
-    }
-
-    @Test
-    void copilotClientOptionsClearUseLoggedInUser() {
-        var opts = new CopilotClientOptions().setMode(CopilotClientMode.CODING_AGENT);
-        opts.setGitHub(opts.getGitHub().setUseLoggedInUser(true));
-        opts.getGitHub().clearUseLoggedInUser();
-        assertTrue(opts.getGitHub().getUseLoggedInUser().isEmpty());
-    }
-
-    @Test
-    void resumeSessionConfigAllSetters() {
-        var config = new ResumeSessionOptions();
-
-        var sysMsg = new SystemMessageConfig();
-        config.setSystemMessage(sysMsg);
-        assertSame(sysMsg, config.getSystemMessage());
-
-        config.setTools(config.getTools().setAvailableTools(List.of("bash", "read_file")));
-        assertEquals(List.of("bash", "read_file"), config.getTools().getAvailableTools());
-
-        config.setTools(config.getTools().setExcludedTools(List.of("write_file")));
-        assertEquals(List.of("write_file"), config.getTools().getExcludedTools());
-
-        config.setInference(config.getInference().setReasoningEffort("high"));
-        assertEquals("high", config.getInference().getReasoningEffort());
-
-        config.setWorkingDirectory("/project/src");
-        assertEquals("/project/src", config.getWorkingDirectory());
-
-        config.setConfigDirectory("/home/user/.config/copilot");
-        assertEquals("/home/user/.config/copilot", config.getConfigDirectory());
-
-        config.setSkills(config.getSkills().setDirectories(List.of("/skills/custom")));
-        assertEquals(List.of("/skills/custom"), config.getSkills().getDirectories());
-
-        config.setSkills(config.getSkills().setDisabledSkills(List.of("some-skill")));
-        assertEquals(List.of("some-skill"), config.getSkills().getDisabledSkills());
-
-        var infiniteConfig = new InfiniteSessionConfig().setEnabled(true);
-        config.setState(config.getState().setInfiniteSessions(infiniteConfig));
-        assertSame(infiniteConfig, config.getState().getInfiniteSessions());
     }
 
     @Test

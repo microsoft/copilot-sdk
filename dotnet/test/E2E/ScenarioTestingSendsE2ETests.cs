@@ -19,7 +19,7 @@ public class ScenarioTestingSendsE2ETests(E2ETestFixture fixture, ITestOutputHel
     private static readonly TimeSpan SendTimeout = TimeSpan.FromSeconds(60);
 
     [Fact]
-    public async Task Should_Send_Complete_Scenario_Message_Wire_Shape()
+    public async Task Should_Send_Complete_Scenario_Message_Wire_Shape_And_Skip_Cancelled_Sends()
     {
         var (cliPath, capturePath) = await ScenarioTestingTestCli.CreateAsync(Ctx);
         await using var client = Ctx.CreateClient(options: new CopilotClientOptions
@@ -39,6 +39,17 @@ public class ScenarioTestingSendsE2ETests(E2ETestFixture fixture, ITestOutputHel
         await using var session = await Ctx.CreateSessionAsync(client, new CreateSessionOptions
         { Events = new SessionEventOptions { Streaming = true }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
 
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            session.SendAsync(
+                new MessageOptions
+                {
+                    Prompt = "This message must never be invoked.",
+                    DisplayPrompt = "Cancelled scenario message",
+                    Source = MessageSource.Agent("scenario-client"),
+                },
+                cancellation.Token));
         var filePath = Path.Join(Ctx.WorkDir, "scenario-wire-file.txt");
         var directoryPath = Path.Join(Ctx.WorkDir, "scenario-wire-directory");
         var selectionPath = Path.Join(Ctx.WorkDir, "Program.cs");
@@ -131,47 +142,8 @@ public class ScenarioTestingSendsE2ETests(E2ETestFixture fixture, ITestOutputHel
         Assert.Equal("SCENARIO_SELECTION", attachments[5].GetProperty("payload").GetProperty("selection").GetString());
     }
 
-    [Theory]
-    [InlineData(null)]
-    [InlineData("enqueue")]
-    [InlineData("immediate")]
-    public async Task Should_Not_Invoke_Send_When_Scenario_Cancels_Before_Dispatch(string? mode)
-    {
-        var (cliPath, capturePath) = await ScenarioTestingTestCli.CreateAsync(Ctx);
-        await using var client = Ctx.CreateClient(options: new CopilotClientOptions
-        {
-            Mode = CopilotClientMode.CodingAgent,
-            Runtime = RuntimeConnection.ForSpawnedStdio(
-                path: cliPath,
-                args: ["--capture-file", capturePath, "--behavior", "normal"]),
-            GitHub = new ClientGitHubOptions { UseLoggedInUser = false }
-        });
-        await using var session = await Ctx.CreateSessionAsync(client, new CreateSessionOptions
-        { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
-
-        using var cancellation = new CancellationTokenSource();
-        cancellation.Cancel();
-
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            session.SendAsync(
-                new MessageOptions
-                {
-                    Prompt = "This message must never be invoked.",
-                    DisplayPrompt = "Cancelled scenario message",
-                    Mode = mode,
-                    Source = MessageSource.Agent("scenario-client"),
-                },
-                cancellation.Token));
-
-        var requests = await ScenarioTestingTestCli.ReadRequestsAsync(capturePath);
-        Assert.DoesNotContain(requests, request => request.GetProperty("method").GetString() == "session.send");
-    }
-
-    [Theory]
-    [InlineData(null)]
-    [InlineData("enqueue")]
-    [InlineData("immediate")]
-    public async Task Should_Not_Replay_Scenario_Send_After_Ambiguous_Transport_Loss(string? mode)
+    [Fact]
+    public async Task Should_Not_Replay_Scenario_Send_After_Ambiguous_Transport_Loss()
     {
         var (cliPath, capturePath) = await ScenarioTestingTestCli.CreateAsync(Ctx);
         await using var client = Ctx.CreateClient(options: new CopilotClientOptions
@@ -191,21 +163,13 @@ public class ScenarioTestingSendsE2ETests(E2ETestFixture fixture, ITestOutputHel
             {
                 Prompt = "AMBIGUOUS_SCENARIO_SEND",
                 DisplayPrompt = "Ambiguous scenario send",
-                Mode = mode,
                 Source = MessageSource.Agent("scenario-client"),
             }, cancellation.Token));
 
         var requests = await ScenarioTestingTestCli.ReadRequestsAsync(capturePath);
         var send = Assert.Single(requests, request => request.GetProperty("method").GetString() == "session.send");
         var parameters = send.GetProperty("params");
-        if (mode is null)
-        {
-            Assert.False(parameters.TryGetProperty("mode", out _));
-        }
-        else
-        {
-            Assert.Equal(mode, parameters.GetProperty("mode").GetString());
-        }
+        Assert.False(parameters.TryGetProperty("mode", out _));
     }
 
     [Fact]

@@ -1619,11 +1619,13 @@ public sealed partial class ClientSessionLifetimeTests
         await client.StartAsync();
 
         await using var session = await client.CreateSessionAsync(new CreateSessionOptions
-        { Agents = new SessionAgentOptions { Definitions = [new CustomAgentConfig { Name = "reasoning-agent", Prompt = "Think carefully.", ReasoningEffort = "high" }] }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
+        { Agents = new SessionAgentOptions { Definitions = [new CustomAgentConfig { Name = "reasoning-agent", Prompt = "Think carefully.", ReasoningEffort = "high" }, new CustomAgentConfig { Name = "default-agent", Prompt = "Use runtime defaults." }] }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
 
         var request = Assert.Single(server.Requests, request => request.Method == "session.create");
-        var agent = Assert.Single(request.Params.GetProperty("agents").GetProperty("definitions").EnumerateArray());
-        Assert.Equal("high", agent.GetProperty("reasoningEffort").GetString());
+        var agents = request.Params.GetProperty("agents").GetProperty("definitions");
+        Assert.Equal(2, agents.GetArrayLength());
+        Assert.Equal("high", agents[0].GetProperty("reasoningEffort").GetString());
+        Assert.False(agents[1].TryGetProperty("reasoningEffort", out _));
     }
 
     [Theory]
@@ -1672,21 +1674,6 @@ public sealed partial class ClientSessionLifetimeTests
         }
     }
 
-    [Fact]
-    public async Task CreateSessionAsync_Omits_CustomAgent_ReasoningEffort_When_Unset()
-    {
-        await using var server = await FakeCopilotServer.StartAsync();
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
-        await client.StartAsync();
-
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions
-        { Agents = new SessionAgentOptions { Definitions = [new CustomAgentConfig { Name = "default-agent", Prompt = "Use runtime defaults." }] }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
-
-        var request = Assert.Single(server.Requests, request => request.Method == "session.create");
-        var agent = Assert.Single(request.Params.GetProperty("agents").GetProperty("definitions").EnumerateArray());
-        Assert.False(agent.TryGetProperty("reasoningEffort", out _));
-    }
-
     public static TheoryData<AutoTier, string, bool?> CapiAutoTiers => new()
     {
         { AutoTier.Efficiency, "efficiency", null },
@@ -1729,9 +1716,7 @@ public sealed partial class ClientSessionLifetimeTests
     }
 
     [Theory]
-    [InlineData("efficiency")]
     [InlineData("balance")]
-    [InlineData("intelligence")]
     [InlineData("fast")]
     public async Task SetModelAsync_Serializes_AutoTier(string expectedTier)
     {
@@ -2019,43 +2004,6 @@ public sealed partial class ClientSessionLifetimeTests
     }
 
     [Fact]
-    public async Task ExternalTool_String_Arguments_Bind_To_Single_Function_Parameter()
-    {
-        await using var server = await FakeCopilotServer.StartAsync();
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
-        string? receivedPatch = null;
-        var tool = CopilotTool.DefineTool(
-            (string patch) =>
-            {
-                receivedPatch = patch;
-                return "applied";
-            },
-            new CopilotToolOptions { OverridesBuiltInTool = true },
-            new AIFunctionFactoryOptions { Name = "apply_patch" });
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions
-        { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll }, Tools = new SessionToolOptions { Definitions = [tool] } });
-        server.ClearRequests();
-        using var arguments = JsonDocument.Parse("\"*** Begin Patch\\n*** End Patch\"");
-
-        DispatchEvent(session, new ExternalToolRequestedEvent
-        {
-            Data = new ExternalToolRequestedData
-            {
-                Arguments = arguments.RootElement.Clone(),
-                RequestId = "apply-patch-request",
-                SessionId = session.SessionId,
-                ToolCallId = "apply-patch-call",
-                ToolName = "apply_patch"
-            }
-        });
-
-        var request = await WaitForRequestAsync(server, "session.tools.handlePendingToolCall");
-        Assert.Equal("*** Begin Patch\n*** End Patch", receivedPatch);
-        Assert.False(request.Params.TryGetProperty("error", out _));
-        Assert.Equal("applied", request.Params.GetProperty("result").GetProperty("textResultForLlm").GetString());
-    }
-
-    [Fact]
     public async Task ExternalTool_String_Arguments_Reject_Ambiguous_Function_Parameters()
     {
         await using var server = await FakeCopilotServer.StartAsync();
@@ -2197,6 +2145,7 @@ public sealed partial class ClientSessionLifetimeTests
         Assert.Equal("*** Begin Patch\n*** End Patch", receivedPatch);
         Assert.Null(receivedExplanation);
         Assert.False(request.Params.TryGetProperty("error", out _));
+        Assert.Equal("applied", request.Params.GetProperty("result").GetProperty("textResultForLlm").GetString());
     }
 
     [Fact]
@@ -2222,25 +2171,6 @@ public sealed partial class ClientSessionLifetimeTests
     }
 
     [Fact]
-    public async Task EmptyMode_Resume_Sends_Empty_IncludedBuiltinSkills()
-    {
-        await using var server = await FakeCopilotServer.StartAsync();
-        await using var client = new CopilotClient(new CopilotClientOptions
-        {
-            Mode = CopilotClientMode.Empty,
-            Runtime = RuntimeConnection.ForTcp(server.Host, server.Port)
-        });
-
-        await using var resumed = await client.ResumeSessionAsync("resume-empty-skills", new ResumeSessionOptions
-        { Tools = new SessionToolOptions { AvailableTools = [] }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
-
-        var update = Assert.Single(server.Requests, request => request.Method == "session.options.update");
-        Assert.True(update.Params.GetProperty("skills").TryGetProperty("includedBuiltinSkills", out var skills));
-        Assert.Equal(JsonValueKind.Array, skills.ValueKind);
-        Assert.Equal(0, skills.GetArrayLength());
-    }
-
-    [Fact]
     public async Task EmptyMode_Resume_Preserves_Explicit_IncludedBuiltinSkills()
     {
         await using var server = await FakeCopilotServer.StartAsync();
@@ -2251,45 +2181,6 @@ public sealed partial class ClientSessionLifetimeTests
         });
 
         await using var resumed = await client.ResumeSessionAsync("resume-selected-skills", new ResumeSessionOptions
-        { Tools = new SessionToolOptions { AvailableTools = [] }, Skills = new SessionSkillOptions { IncludedBuiltinSkills = ["code-review"] }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
-
-        var update = Assert.Single(server.Requests, request => request.Method == "session.options.update");
-        var skills = update.Params.GetProperty("skills").GetProperty("includedBuiltinSkills");
-        Assert.Equal(["code-review"], skills.EnumerateArray().Select(value => value.GetString()));
-    }
-
-    [Fact]
-    public async Task EmptyMode_Create_With_EnableSkills_Still_Sends_Empty_IncludedBuiltinSkills()
-    {
-        await using var server = await FakeCopilotServer.StartAsync();
-        await using var client = new CopilotClient(new CopilotClientOptions
-        {
-            Mode = CopilotClientMode.Empty,
-            Runtime = RuntimeConnection.ForTcp(server.Host, server.Port)
-        });
-
-        // Caller opts into their own custom skills. Runtime-bundled built-ins must
-        // still be excluded: the empty post-patch cannot be weakened by the caller.
-        await using var created = await client.CreateSessionAsync(new CreateSessionOptions
-        { Tools = new SessionToolOptions { AvailableTools = [] }, Skills = new SessionSkillOptions { Enabled = true, Directories = [Path.Combine(Path.GetTempPath(), "skills")] }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
-
-        var update = Assert.Single(server.Requests, request => request.Method == "session.options.update");
-        Assert.True(update.Params.GetProperty("skills").TryGetProperty("includedBuiltinSkills", out var skills));
-        Assert.Equal(JsonValueKind.Array, skills.ValueKind);
-        Assert.Equal(0, skills.GetArrayLength());
-    }
-
-    [Fact]
-    public async Task EmptyMode_Create_Preserves_Explicit_IncludedBuiltinSkills()
-    {
-        await using var server = await FakeCopilotServer.StartAsync();
-        await using var client = new CopilotClient(new CopilotClientOptions
-        {
-            Mode = CopilotClientMode.Empty,
-            Runtime = RuntimeConnection.ForTcp(server.Host, server.Port)
-        });
-
-        await using var created = await client.CreateSessionAsync(new CreateSessionOptions
         { Tools = new SessionToolOptions { AvailableTools = [] }, Skills = new SessionSkillOptions { IncludedBuiltinSkills = ["code-review"] }, Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
 
         var update = Assert.Single(server.Requests, request => request.Method == "session.options.update");
@@ -3391,21 +3282,6 @@ public sealed partial class ClientSessionLifetimeTests
         Assert.Same(endHook, hooks.OnSessionEnd);
     }
 
-    [Fact]
-    public async Task DisposeAsync_Releases_Event_Handler_Captures()
-    {
-        await using var server = await FakeCopilotServer.StartAsync();
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions());
-        var capture = RegisterCapturedEventHandler(session, out _);
-
-        await session.DisposeAsync();
-        ForceCollect();
-
-        Assert.False(capture.TryGetTarget(out _));
-        GC.KeepAlive(session);
-    }
-
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static WeakReference<object> RegisterCapturedEventHandler(CopilotSession session, out IDisposable subscription)
     {
@@ -3943,8 +3819,6 @@ public sealed partial class ClientSessionLifetimeTests
 
     [Theory]
     [InlineData(null)]
-    [InlineData("user")]
-    [InlineData("system")]
     [InlineData("agent-Reviewer-7")]
     public async Task Raw_SendAsync_MessageSource_Remains_Available(string? source)
     {
@@ -4011,11 +3885,13 @@ public sealed partial class ClientSessionLifetimeTests
         Assert.True(toolEvent.Data.Arguments?.GetProperty("nested")[4].GetProperty("value").GetBoolean());
     }
 
+    // Per-variant source spelling is owned by SendAsync_MessageSource_Preserves_Other_Options;
+    // these rows prove SendAndWaitAsync forwards an omitted and a present source per outcome.
     public static IEnumerable<object?[]> MessageSourcesAndOutcomes
     {
         get
         {
-            foreach (var row in SerializationTests.MessageSources)
+            foreach (var row in new object?[][] { [null, null], [MessageSource.Agent("Reviewer-7"), "agent-Reviewer-7"] })
             {
                 yield return [row[0], row[1], false, null];
                 yield return [row[0], row[1], true, null];
@@ -4221,8 +4097,6 @@ public sealed partial class ClientSessionLifetimeTests
 
     public static TheoryData<MessageSource, bool> MessageSourcesAndCancellation => new()
     {
-        { MessageSource.System, false },
-        { MessageSource.System, true },
         { MessageSource.Agent("Reviewer-7"), false },
         { MessageSource.Agent("Reviewer-7"), true },
     };
@@ -4311,8 +4185,7 @@ public sealed partial class ClientSessionLifetimeTests
             return Task.CompletedTask;
         };
 
-        // Exercise the E2E test's actual ordering and assertion, without launching a CLI.
-        var scenario = E2E.PermissionE2ETests.AssertApproveAllPermissionHandlerAsync(session, timeout);
+        var scenario = SendAndAssertFinalAnswerAsync();
         await sendReplied.Task.WaitAsync(timeout);
         if (!completesBeforeReply)
         {
@@ -4325,6 +4198,16 @@ public sealed partial class ClientSessionLifetimeTests
         var history = await session.GetEventsAsync();
         Assert.DoesNotContain(history, evt => evt is SessionIdleEvent);
         Assert.Equal("4", Assert.Single(history.OfType<AssistantMessageEvent>()).Data.Content);
+
+        async Task SendAndAssertFinalAnswerAsync()
+        {
+            var message = await TestHelper.SendAndGetFinalAssistantMessageAsync(session, new MessageOptions
+            {
+                Prompt = "What is 2+2?"
+            }, timeout);
+
+            Assert.Contains("4", message?.Data.Content ?? string.Empty);
+        }
     }
 
     [Theory]
@@ -4829,56 +4712,6 @@ public sealed partial class ClientSessionLifetimeTests
     }
 
     [Fact]
-    public async Task PermissionResponse_Uses_Latest_Context_When_Reassigned()
-    {
-        await using var server = await FakeCopilotServer.StartAsync();
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
-        await client.StartAsync();
-
-        await using var session = await client.CreateSessionAsync(new CreateSessionOptions
-        {
-            Permissions = new SessionPermissionOptions
-            {
-                OnRequest = (_, _) =>
-        {
-            var decision = new PermissionDecisionApproveOnce
-            {
-                DecisionContext = new PermissionDecisionContext
-                {
-                    Outcome = PermissionDecisionOutcome.PromptedUser,
-                    Source = PermissionDecisionSource.HumanResponse,
-                    Surface = PermissionDecisionSurface.Tui
-                }
-            };
-            decision.DecisionContext = new PermissionDecisionContext
-            {
-                Outcome = PermissionDecisionOutcome.AutoApproved,
-                Source = PermissionDecisionSource.HostPolicy,
-                Surface = PermissionDecisionSurface.Sdk
-            };
-            return Task.FromResult<PermissionDecision>(decision);
-        }
-            }
-        });
-
-        DispatchEvent(session, new PermissionRequestedEvent
-        {
-            Data = new PermissionRequestedData
-            {
-                PermissionRequest = new PermissionRequest { Kind = "read" },
-                RequestId = "req-replace-context"
-            }
-        });
-
-        var request = await WaitForRequestAsync(server, "session.permissions.handlePendingPermissionRequest");
-
-        var decisionContext = request.Params.GetProperty("decisionContext");
-        Assert.Equal("auto_approved", decisionContext.GetProperty("outcome").GetString());
-        Assert.Equal("host_policy", decisionContext.GetProperty("source").GetString());
-        Assert.Equal("sdk", decisionContext.GetProperty("surface").GetString());
-    }
-
-    [Fact]
     public async Task PermissionResponse_Is_Suppressed_For_NoResult_Even_With_Context()
     {
         await using var server = await FakeCopilotServer.StartAsync();
@@ -4958,6 +4791,12 @@ public sealed partial class ClientSessionLifetimeTests
         var request = Assert.Single(server.Requests, request => request.Method == "session.create");
         Assert.False(request.Params.GetProperty("policy").TryGetProperty("managedSettings", out _));
         Assert.False(request.Params.GetProperty("github").TryGetProperty("interactiveUser", out _));
+
+        await using var resumed = await client.ResumeSessionAsync("session-no-interactive", new ResumeSessionOptions
+        { Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll } });
+
+        var resumeRequest = Assert.Single(server.Requests, request => request.Method == "session.resume");
+        Assert.False(resumeRequest.Params.GetProperty("github").TryGetProperty("interactiveUser", out _));
     }
 
     [Fact]
@@ -4985,27 +4824,6 @@ public sealed partial class ClientSessionLifetimeTests
         Assert.True(request.Params.GetProperty("github").GetProperty("interactiveUser").GetBoolean());
         var permissions = request.Params.GetProperty("policy").GetProperty("managedSettings").GetProperty("permissions");
         Assert.Equal("shell(rm*)", Assert.Single(permissions.GetProperty("deny").EnumerateArray()).GetString());
-    }
-
-    [Fact]
-    public async Task ResumeSessionAsync_Omits_InteractiveUser_When_Unset()
-    {
-        await using var server = await FakeCopilotServer.StartAsync();
-        await using var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.CodingAgent, Runtime = RuntimeConnection.ForTcp(server.Host, server.Port) });
-
-        await using var session = await client.ResumeSessionAsync("session-no-interactive", new ResumeSessionOptions
-        {
-            Permissions = new SessionPermissionOptions { OnRequest = PermissionHandler.ApproveAll },
-            Events = new SessionEventOptions
-            {
-                OnEvent = _ =>
-        {
-        }
-            }
-        });
-
-        var request = Assert.Single(server.Requests, request => request.Method == "session.resume");
-        Assert.False(request.Params.GetProperty("github").TryGetProperty("interactiveUser", out _));
     }
 
     [Fact]

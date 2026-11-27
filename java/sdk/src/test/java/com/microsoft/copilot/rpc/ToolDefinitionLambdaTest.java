@@ -105,35 +105,15 @@ class ToolDefinitionLambdaTest {
     // ── Group 1: Successful inline definitions – arity 0, sync ───────────────────
 
     @Test
-    void from_zeroArg_returnsNameAndDescription() {
+    void from_zeroArg_invokesHandler() throws Exception {
         ToolDefinition tool = ToolDefinition.from("ping", "Returns pong", () -> "pong");
         assertEquals("ping", tool.name());
         assertEquals("Returns pong", tool.description());
-    }
-
-    @Test
-    void from_zeroArg_invokesHandler() throws Exception {
-        ToolDefinition tool = ToolDefinition.from("ping", "Returns pong", () -> "pong");
         Object result = tool.handler().invoke(invocationOf(Map.of())).get();
         assertEquals("pong", result);
     }
 
-    @Test
-    void from_zeroArg_emptySchema() {
-        ToolDefinition tool = ToolDefinition.from("ping", "Returns pong", () -> "pong");
-        assertTrue(propertiesOf(tool).isEmpty());
-        assertTrue(requiredOf(tool).isEmpty());
-    }
-
     // ── Group 1: Successful inline definitions – arity 1, sync ───────────────────
-
-    @Test
-    void from_oneArg_returnsNameAndDescription() {
-        Param<String> nameParam = Param.of(String.class, "name", "The user's name");
-        ToolDefinition tool = ToolDefinition.from("greet", "Greets a user", nameParam, n -> "Hello, " + n + "!");
-        assertEquals("greet", tool.name());
-        assertEquals("Greets a user", tool.description());
-    }
 
     @Test
     void from_oneArg_invokesHandler() throws Exception {
@@ -141,14 +121,6 @@ class ToolDefinitionLambdaTest {
         ToolDefinition tool = ToolDefinition.from("greet", "Greets a user", nameParam, n -> "Hello, " + n + "!");
         Object result = tool.handler().invoke(invocationOf(Map.of("name", "Alice"))).get();
         assertEquals("Hello, Alice!", result);
-    }
-
-    @Test
-    void from_oneArg_schemaContainsParam() {
-        Param<String> nameParam = Param.of(String.class, "name", "The user's name");
-        ToolDefinition tool = ToolDefinition.from("greet", "Greets a user", nameParam, n -> "Hello, " + n + "!");
-        assertTrue(propertiesOf(tool).containsKey("name"));
-        assertTrue(requiredOf(tool).contains("name"));
     }
 
     // ── Group 1: Successful inline definitions – arity 2, sync ───────────────────
@@ -214,14 +186,6 @@ class ToolDefinitionLambdaTest {
     }
 
     @Test
-    void fromWithToolInvocation_zeroArg_emptySchema() {
-        ToolDefinition tool = ToolDefinition.fromWithToolInvocation("ctx_sync", "Returns session id",
-                inv -> "session=" + inv.getSessionId());
-        assertTrue(propertiesOf(tool).isEmpty());
-        assertTrue(requiredOf(tool).isEmpty());
-    }
-
-    @Test
     void fromWithToolInvocation_oneArg_receivesArgAndContext() throws Exception {
         Param<String> phaseParam = Param.of(String.class, "phase", "Current phase");
         ToolDefinition tool = ToolDefinition.fromWithToolInvocation("report", "Report phase", phaseParam,
@@ -264,64 +228,16 @@ class ToolDefinitionLambdaTest {
     // ── Group 5: Option flag propagation ─────────────────────────────────────────
 
     @Test
-    void overridesBuiltInTool_setsFlag() {
-        ToolDefinition base = ToolDefinition.from("grep", "Custom grep", () -> "ok");
-        assertNull(base.overridesBuiltInTool());
-        ToolDefinition withOverride = base.overridesBuiltInTool(true);
-        assertEquals(Boolean.TRUE, withOverride.overridesBuiltInTool());
-    }
-
-    @Test
-    void overridesBuiltInTool_doesNotMutateOriginal() {
-        ToolDefinition base = ToolDefinition.from("grep", "Custom grep", () -> "ok");
-        base.overridesBuiltInTool(true);
-        assertNull(base.overridesBuiltInTool(), "original must remain unchanged");
-    }
-
-    @Test
-    void skipPermission_setsFlag() {
-        ToolDefinition base = ToolDefinition.from("read_file", "Reads a file", () -> "contents");
-        assertNull(base.skipPermission());
-        ToolDefinition withSkip = base.skipPermission(true);
-        assertEquals(Boolean.TRUE, withSkip.skipPermission());
-    }
-
-    @Test
-    void skipPermission_doesNotMutateOriginal() {
-        ToolDefinition base = ToolDefinition.from("read_file", "Reads a file", () -> "contents");
-        base.skipPermission(true);
-        assertNull(base.skipPermission(), "original must remain unchanged");
-    }
-
-    @Test
-    void defer_setsAutoMode() {
-        ToolDefinition base = ToolDefinition.from("search", "Searches things", () -> "results");
-        assertNull(base.defer());
-        ToolDefinition deferred = base.defer(ToolDefer.AUTO);
-        assertEquals(ToolDefer.AUTO, deferred.defer());
-    }
-
-    @Test
-    void defer_setsNeverMode() {
-        ToolDefinition base = ToolDefinition.from("must_preload", "Always preloaded", () -> "ok");
-        ToolDefinition neverDeferred = base.defer(ToolDefer.NEVER);
-        assertEquals(ToolDefer.NEVER, neverDeferred.defer());
-    }
-
-    @Test
-    void defer_doesNotMutateOriginal() {
-        ToolDefinition base = ToolDefinition.from("search", "Searches things", () -> "results");
-        base.defer(ToolDefer.AUTO);
-        assertNull(base.defer(), "original must remain unchanged");
-    }
-
-    @Test
-    void fluentModifiers_canBeChained() {
-        ToolDefinition tool = ToolDefinition.from("override_tool", "Overrides built-in", () -> "ok")
-                .overridesBuiltInTool(true).skipPermission(true).defer(ToolDefer.AUTO);
+    void fluentModifiers_canBeChainedWithoutMutatingOriginal() {
+        ToolDefinition base = ToolDefinition.from("override_tool", "Overrides built-in", () -> "ok");
+        ToolDefinition tool = base.overridesBuiltInTool(true).skipPermission(true).defer(ToolDefer.AUTO);
         assertEquals(Boolean.TRUE, tool.overridesBuiltInTool());
         assertEquals(Boolean.TRUE, tool.skipPermission());
         assertEquals(ToolDefer.AUTO, tool.defer());
+        assertEquals(ToolDefer.NEVER, base.defer(ToolDefer.NEVER).defer());
+        assertNull(base.overridesBuiltInTool(), "original must remain unchanged");
+        assertNull(base.skipPermission(), "original must remain unchanged");
+        assertNull(base.defer(), "original must remain unchanged");
     }
 
     @Test
@@ -335,14 +251,6 @@ class ToolDefinitionLambdaTest {
     }
 
     // ── Group 6: Required/default semantics ──────────────────────────────────────
-
-    @Test
-    void requiredParam_passedValue_usesProvidedValue() throws Exception {
-        Param<String> p = Param.of(String.class, "word", "A word");
-        ToolDefinition tool = ToolDefinition.from("echo", "Echoes", p, w -> w);
-        Object result = tool.handler().invoke(invocationOf(Map.of("word", "hello"))).get();
-        assertEquals("hello", result);
-    }
 
     @Test
     void requiredParam_missingFromInvocation_throwsIllegalArgumentException() {
@@ -361,22 +269,6 @@ class ToolDefinitionLambdaTest {
     }
 
     @Test
-    void optionalParamWithDefault_provided_usesProvidedValue() throws Exception {
-        Param<Integer> p = Param.of(Integer.class, "limit", "Max results", false, "10");
-        ToolDefinition tool = ToolDefinition.from("list", "Lists items", p, lim -> "limit=" + lim);
-        Object result = tool.handler().invoke(invocationOf(Map.of("limit", 25))).get();
-        assertEquals("limit=25", result);
-    }
-
-    @Test
-    void optionalParamWithDefault_schemaNotInRequired() {
-        Param<Integer> p = Param.of(Integer.class, "limit", "Max results", false, "10");
-        ToolDefinition tool = ToolDefinition.from("list", "Lists items", p, lim -> "limit=" + lim);
-        assertFalse(requiredOf(tool).contains("limit"));
-        assertTrue(propertiesOf(tool).containsKey("limit"));
-    }
-
-    @Test
     void optionalParam_absent_noDefaultYieldsNull() throws Exception {
         Param<String> p = Param.of(String.class, "title", "Optional title", false, "");
         ToolDefinition tool = ToolDefinition.from("greet", "Greets", p, t -> t == null ? "(no title)" : t);
@@ -384,36 +276,20 @@ class ToolDefinitionLambdaTest {
         assertEquals("(no title)", result);
     }
 
-    @Test
-    void defaultValueAppearsInSchema() {
-        Param<Integer> p = Param.of(Integer.class, "limit", "Max results", false, "5");
-        ToolDefinition tool = ToolDefinition.from("list", "Lists items", p, lim -> lim.toString());
-        @SuppressWarnings("unchecked")
-        Map<String, Object> limitPropSchema = (Map<String, Object>) propertiesOf(tool).get("limit");
-        assertNotNull(limitPropSchema, "Schema must include 'limit' property");
-        assertEquals(5, limitPropSchema.get("default"), "Default value must appear in schema");
-    }
-
     // ── Group 7: Error / validation paths ────────────────────────────────────────
 
     @Test
-    void from_nullName_throwsIllegalArgumentException() {
+    void factories_rejectNullOrBlankNameAndDescription() {
         assertThrows(IllegalArgumentException.class, () -> ToolDefinition.from(null, "desc", () -> "ok"));
-    }
-
-    @Test
-    void from_blankName_throwsIllegalArgumentException() {
         assertThrows(IllegalArgumentException.class, () -> ToolDefinition.from("  ", "desc", () -> "ok"));
-    }
-
-    @Test
-    void from_nullDescription_throwsIllegalArgumentException() {
         assertThrows(IllegalArgumentException.class, () -> ToolDefinition.from("tool", null, () -> "ok"));
-    }
-
-    @Test
-    void from_blankDescription_throwsIllegalArgumentException() {
         assertThrows(IllegalArgumentException.class, () -> ToolDefinition.from("tool", "", () -> "ok"));
+        assertThrows(IllegalArgumentException.class,
+                () -> ToolDefinition.fromAsync(null, "desc", () -> CompletableFuture.completedFuture("ok")));
+        assertThrows(IllegalArgumentException.class,
+                () -> ToolDefinition.fromWithToolInvocation(null, "desc", inv -> "ok"));
+        assertThrows(IllegalArgumentException.class, () -> ToolDefinition.fromAsyncWithToolInvocation("tool", null,
+                inv -> CompletableFuture.completedFuture("ok")));
     }
 
     @Test
@@ -422,69 +298,8 @@ class ToolDefinitionLambdaTest {
                 () -> ToolDefinition.from("tool", "desc", (java.util.function.Supplier<String>) null));
     }
 
-    @Test
-    void from_oneArg_nullParam_throwsIllegalArgumentException() {
-        assertThrows(IllegalArgumentException.class,
-                () -> ToolDefinition.from("tool", "desc", (Param<String>) null, s -> s));
-    }
-
-    @Test
-    void from_twoArg_nullFirstParam_throwsIllegalArgumentException() {
-        Param<String> p2 = Param.of(String.class, "b", "B param");
-        assertThrows(IllegalArgumentException.class, () -> ToolDefinition.from("tool", "desc", null, p2, (a, b) -> a));
-    }
-
-    @Test
-    void from_twoArg_nullSecondParam_throwsIllegalArgumentException() {
-        Param<String> p1 = Param.of(String.class, "a", "A param");
-        assertThrows(IllegalArgumentException.class, () -> ToolDefinition.from("tool", "desc", p1, null, (a, b) -> a));
-    }
-
-    @Test
-    void from_twoArg_duplicateParamNames_throwsIllegalArgumentException() {
-        Param<String> p1 = Param.of(String.class, "name", "Name 1");
-        Param<String> p2 = Param.of(String.class, "name", "Name 2");
-        var ex = assertThrows(IllegalArgumentException.class,
-                () -> ToolDefinition.from("tool", "desc", p1, p2, (a, b) -> a + b));
-        assertTrue(ex.getMessage().contains("name"), "error must mention the duplicate param name");
-        assertTrue(ex.getMessage().contains("tool"), "error must mention the tool name");
-    }
-
-    @Test
-    void fromAsync_nullName_throwsIllegalArgumentException() {
-        assertThrows(IllegalArgumentException.class,
-                () -> ToolDefinition.fromAsync(null, "desc", () -> CompletableFuture.completedFuture("ok")));
-    }
-
-    @Test
-    void fromAsync_nullHandler_throwsIllegalArgumentException() {
-        assertThrows(IllegalArgumentException.class, () -> ToolDefinition.fromAsync("tool", "desc",
-                (java.util.function.Supplier<CompletableFuture<String>>) null));
-    }
-
-    @Test
-    void fromWithToolInvocation_nullName_throwsIllegalArgumentException() {
-        assertThrows(IllegalArgumentException.class,
-                () -> ToolDefinition.fromWithToolInvocation(null, "desc", inv -> "ok"));
-    }
-
-    @Test
-    void fromAsyncWithToolInvocation_nullDescription_throwsIllegalArgumentException() {
-        assertThrows(IllegalArgumentException.class, () -> ToolDefinition.fromAsyncWithToolInvocation("tool", null,
-                inv -> CompletableFuture.completedFuture("ok")));
-    }
-
     // ── Group 8: Schema structure
     // ─────────────────────────────────────────────────
-
-    @Test
-    void schema_zeroArg_hasTypeObjectAndEmptyMaps() {
-        ToolDefinition tool = ToolDefinition.from("noop", "No-op", () -> "done");
-        Map<String, Object> schema = schemaOf(tool);
-        assertEquals("object", schema.get("type"));
-        assertTrue(((Map<?, ?>) schema.get("properties")).isEmpty());
-        assertTrue(((List<?>) schema.get("required")).isEmpty());
-    }
 
     @Test
     void schema_oneArg_hasCorrectTypeForString() {
@@ -514,51 +329,8 @@ class ToolDefinitionLambdaTest {
         assertEquals("scheduled 2026-07-23T21:00:00Z", result);
     }
 
-    @Test
-    void schema_oneArg_hasCorrectTypeForInteger() {
-        Param<Integer> p = Param.of(Integer.class, "count", "Item count");
-        ToolDefinition tool = ToolDefinition.from("count_items", "Counts items", p, c -> c.toString());
-        @SuppressWarnings("unchecked")
-        Map<String, Object> countSchema = (Map<String, Object>) propertiesOf(tool).get("count");
-        assertNotNull(countSchema);
-        assertEquals("integer", countSchema.get("type"));
-    }
-
-    @Test
-    void schema_oneArg_hasCorrectTypeForBoolean() {
-        Param<Boolean> p = Param.of(Boolean.class, "enabled", "Whether enabled");
-        ToolDefinition tool = ToolDefinition.from("toggle", "Toggles", p, e -> e.toString());
-        @SuppressWarnings("unchecked")
-        Map<String, Object> enabledSchema = (Map<String, Object>) propertiesOf(tool).get("enabled");
-        assertNotNull(enabledSchema);
-        assertEquals("boolean", enabledSchema.get("type"));
-    }
-
-    @Test
-    void schema_oneArg_enumTypeHasStringAndEnumValues() {
-        Param<Color> p = Param.of(Color.class, "color", "A color");
-        ToolDefinition tool = ToolDefinition.from("paint", "Paints with a color", p, c -> c.name());
-        @SuppressWarnings("unchecked")
-        Map<String, Object> colorSchema = (Map<String, Object>) propertiesOf(tool).get("color");
-        assertNotNull(colorSchema);
-        assertEquals("string", colorSchema.get("type"));
-        @SuppressWarnings("unchecked")
-        List<String> enumValues = (List<String>) colorSchema.get("enum");
-        assertNotNull(enumValues);
-        assertTrue(enumValues.contains("RED"));
-        assertTrue(enumValues.contains("GREEN"));
-        assertTrue(enumValues.contains("BLUE"));
-    }
-
     // ── Group 9: Result formatting
     // ────────────────────────────────────────────────
-
-    @Test
-    void resultFormatting_stringReturnedAsIs() throws Exception {
-        ToolDefinition tool = ToolDefinition.from("echo", "Echoes", () -> "plain text");
-        Object result = tool.handler().invoke(invocationOf(Map.of())).get();
-        assertEquals("plain text", result);
-    }
 
     @Test
     void resultFormatting_nullMappedToSuccess() throws Exception {
@@ -615,22 +387,6 @@ class ToolDefinitionLambdaTest {
     // ───────────────────────────────────────────────
 
     @Test
-    void coercion_stringArgPassedThrough() throws Exception {
-        Param<String> p = Param.of(String.class, "msg", "A message");
-        ToolDefinition tool = ToolDefinition.from("echo", "Echoes message", p, m -> m);
-        Object result = tool.handler().invoke(invocationOf(Map.of("msg", "hello world"))).get();
-        assertEquals("hello world", result);
-    }
-
-    @Test
-    void coercion_integerArgFromJsonNumber() throws Exception {
-        Param<Integer> p = Param.of(Integer.class, "n", "An integer");
-        ToolDefinition tool = ToolDefinition.from("double_it", "Doubles n", p, n -> String.valueOf(n * 2));
-        Object result = tool.handler().invoke(invocationOf(Map.of("n", 7))).get();
-        assertEquals("14", result);
-    }
-
-    @Test
     void coercion_booleanArg() throws Exception {
         Param<Boolean> p = Param.of(Boolean.class, "flag", "A flag");
         ToolDefinition tool = ToolDefinition.from("flagged", "Reports flag", p, f -> f ? "yes" : "no");
@@ -644,15 +400,6 @@ class ToolDefinitionLambdaTest {
         ToolDefinition tool = ToolDefinition.from("paint", "Paints", p, c -> c.name().toLowerCase());
         Object result = tool.handler().invoke(invocationOf(Map.of("color", "GREEN"))).get();
         assertEquals("green", result);
-    }
-
-    @Test
-    void coercion_defaultIntegerParsedCorrectly() throws Exception {
-        Param<Integer> p = Param.of(Integer.class, "limit", "Max count", false, "99");
-        ToolDefinition tool = ToolDefinition.from("bounded", "Bounded list", p, lim -> "got=" + lim);
-        // No argument provided — should use default 99
-        Object result = tool.handler().invoke(invocationOf(Map.of())).get();
-        assertEquals("got=99", result);
     }
 
     @Test

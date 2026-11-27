@@ -23,7 +23,12 @@ from copilot import (
     RuntimeConnection,
     define_tool,
 )
-from copilot._generated.rpc import ServerRpc, TaskAnalyticsClassifyTrajectoryRequest
+from copilot._generated.rpc import (
+    PermissionDecisionApproved,
+    ProviderTokenAcquireRequest,
+    ServerRpc,
+    TaskAnalyticsClassifyTrajectoryRequest,
+)
 from copilot._jsonrpc import JsonRpcClient, JsonRpcError, ProcessExitedError
 from copilot.session import (
     Attachment,
@@ -356,34 +361,18 @@ async def test_event_waiter_preserves_caller_error_policy(fail_on_session_error)
     session.on.return_value.assert_called_once()
 
 
-@pytest.mark.asyncio
-async def test_send_omits_source_for_plain_human_prompt(monkeypatch):
-    monkeypatch.setattr("copilot.session.get_trace_context", lambda: {})
-    client = Mock()
-    client.request = AsyncMock(return_value={"messageId": "message-1"})
-    session = CopilotSession("session-1", client)
-
-    assert await session.send("hello") == "message-1"
-    client.request.assert_awaited_once_with(
-        "session.send", {"sessionId": "session-1", "prompt": "hello"}
-    )
-
-
 @pytest.mark.parametrize(("source", "wire"), MESSAGE_SOURCE_CASES)
-@pytest.mark.parametrize("mode", [None, "enqueue", "immediate"])
 @pytest.mark.asyncio
-async def test_send_source_is_optional(source: MessageSource | None, wire, mode, monkeypatch):
+async def test_send_source_is_optional(source: MessageSource | None, wire, monkeypatch):
     monkeypatch.setattr("copilot.session.get_trace_context", lambda: {})
     client = Mock()
     client.request = AsyncMock(return_value={"messageId": "message-1"})
     session = CopilotSession("session-1", client)
 
-    assert await session.send("hello", source=source, mode=mode) == "message-1"
+    assert await session.send("hello", source=source) == "message-1"
     expected = {"sessionId": "session-1", "prompt": "hello"}
     if source is not None:
         expected["source"] = wire
-    if mode is not None:
-        expected["mode"] = mode
     client.request.assert_awaited_once_with("session.send", expected)
 
 
@@ -428,10 +417,9 @@ async def test_send_source_preserves_other_options(source: MessageSource | None,
 
 
 @pytest.mark.parametrize(("source", "wire"), MESSAGE_SOURCE_CASES)
-@pytest.mark.parametrize("mode", [None, "enqueue", "immediate"])
 @pytest.mark.asyncio
 async def test_send_and_wait_source_allows_idle_without_assistant(
-    source: MessageSource | None, wire, mode, monkeypatch
+    source: MessageSource | None, wire, monkeypatch
 ):
     monkeypatch.setattr("copilot.session.get_trace_context", lambda: {})
     client = Mock()
@@ -442,17 +430,13 @@ async def test_send_and_wait_source_allows_idle_without_assistant(
         expected = {"sessionId": "session-1", "prompt": "context updated"}
         if source is not None:
             expected["source"] = wire
-        if mode is not None:
-            expected["mode"] = mode
         assert params == expected
         idle = _event(SessionIdleData(), SessionEventType.SESSION_IDLE)
         session._dispatch_event(idle)
         return {"messageId": "message-1", "aborted": False, "completionEventId": str(idle.id)}
 
     client.request = AsyncMock(side_effect=respond)
-    assert (
-        await session.send_and_wait("context updated", source=source, mode=mode, timeout=1) is None
-    )
+    assert await session.send_and_wait("context updated", source=source, timeout=1) is None
 
 
 @pytest.mark.asyncio
@@ -1681,14 +1665,8 @@ def test_capabilities_changed_keeps_capabilities_the_event_does_not_name():
     _capabilities_changed(session, CapabilitiesChangedUI(elicitation=False))
     assert session.capabilities == {"ui": {"mcpApps": True, "elicitation": False}}
 
-
-def test_capabilities_changed_applies_mcp_apps():
-    session = CopilotSession("sess-1", client=None)
-    session._set_capabilities({"ui": {"elicitation": True}})
-
-    _capabilities_changed(session, CapabilitiesChangedUI(mcp_apps=True))
-
-    assert session.capabilities == {"ui": {"elicitation": True, "mcpApps": True}}
+    _capabilities_changed(session, CapabilitiesChangedUI(mcp_apps=False))
+    assert session.capabilities == {"ui": {"mcpApps": False, "elicitation": False}}
 
 
 def test_capabilities_changed_without_ui_leaves_capabilities_unchanged():
@@ -1973,33 +1951,16 @@ async def test_cancelling_permission_or_mcp_auth_dispatch_cancels_handler_withou
         await asyncio.gather(dispatch, return_exceptions=True)
 
 
-class _HostAbort(BaseException):
-    """A host-defined BaseException that is not an Exception, like pytest's ``Failed``."""
-
-
-BASE_EXCEPTION_HANDLER_SHAPES = [
-    pytest.param("custom", id="custom-base-exception"),
-    pytest.param("pytest-fail", id="pytest-fail"),
-]
-
-
-def _base_exception_handler(shape: str) -> Callable[..., Any]:
-    """A handler that fails with a BaseException that is not an Exception."""
-
-    async def handler(*_args: Any) -> Any:
-        if shape == "pytest-fail":
-            pytest.fail("handler assertion failed")
-        raise _HostAbort("handler assertion failed")
-
-    return handler
+async def _base_exception_handler(*_args: Any) -> Any:
+    """A handler that fails with a BaseException that is not an Exception (pytest's ``Failed``)."""
+    pytest.fail("handler assertion failed")
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("shape", BASE_EXCEPTION_HANDLER_SHAPES)
-async def test_tool_handler_raising_base_exception_answers_the_call_with_an_error(shape: str):
+async def test_tool_handler_raising_base_exception_answers_the_call_with_an_error():
     client = Mock(request=AsyncMock(return_value={"success": True}))
     session = CopilotSession("session-1", client)
-    session._register_tools([Tool("fetch_data", "Fetches", _base_exception_handler(shape))])
+    session._register_tools([Tool("fetch_data", "Fetches", _base_exception_handler)])
 
     session._dispatch_event(_external_tool_request("fetch_data"))
 
@@ -2011,13 +1972,10 @@ async def test_tool_handler_raising_base_exception_answers_the_call_with_an_erro
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("shape", BASE_EXCEPTION_HANDLER_SHAPES)
-async def test_command_handler_raising_base_exception_answers_the_command(shape: str):
+async def test_command_handler_raising_base_exception_answers_the_command():
     client = Mock(request=AsyncMock(return_value={"success": True}))
     session = CopilotSession("session-1", client)
-    session._register_commands(
-        [CommandDefinition(name="deploy", handler=_base_exception_handler(shape))]
-    )
+    session._register_commands([CommandDefinition(name="deploy", handler=_base_exception_handler)])
 
     await asyncio.create_task(
         session._execute_command_and_respond("command-1", "deploy", "/deploy prod", "prod")
@@ -2030,11 +1988,10 @@ async def test_command_handler_raising_base_exception_answers_the_command(shape:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("shape", BASE_EXCEPTION_HANDLER_SHAPES)
-async def test_elicitation_handler_raising_base_exception_sends_cancel(shape: str):
+async def test_elicitation_handler_raising_base_exception_sends_cancel():
     client = Mock(request=AsyncMock(return_value={"success": True}))
     session = CopilotSession("session-1", client)
-    session._register_elicitation_handler(_base_exception_handler(shape))
+    session._register_elicitation_handler(_base_exception_handler)
 
     await asyncio.create_task(
         session._handle_elicitation_request(
@@ -2138,3 +2095,394 @@ async def test_tool_can_stop_its_client_without_interrupting_cleanup(
             task.cancel()
         await asyncio.gather(*pending, return_exceptions=True)
         await client.force_stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "ownership", ["direct", "task", "gather", "wait_for_gather", "scheduled", "scheduled_gather"]
+)
+async def test_tool_shutdown_preserves_cleanup_when_detach_fails(monkeypatch, tmp_path, ownership):
+    monkeypatch.setattr(
+        CopilotClient, "_resolve_inprocess_runtime", lambda self: str(tmp_path / "runtime.so")
+    )
+    client = CopilotClient(mode="coding-agent", runtime=RuntimeConnection.for_inprocess())
+    rpc_client = Mock(request=AsyncMock(return_value={"success": False}), stop=AsyncMock())
+    client._client = rpc_client
+    shutdown_runtime = AsyncMock()
+    client._rpc = Mock(runtime=Mock(shutdown=shutdown_runtime))
+    host = Mock()
+    client._ffi_host = host
+    session = CopilotSession("session-1", rpc_client)
+    client._register_session(session)
+    unrelated_started = asyncio.Event()
+    unrelated_stopped = asyncio.Event()
+    handler_finished = asyncio.Event()
+    handler_cancelled = asyncio.Event()
+    independent_work = asyncio.Event()
+    shutdown_tasks = []
+
+    async def unrelated(_invocation):
+        unrelated_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            unrelated_stopped.set()
+
+    async def shutdown_handler(_invocation):
+        async def shutdown_client():
+            with pytest.raises(ExceptionGroup) as raised:
+                if ownership in ("gather", "scheduled_gather"):
+                    await asyncio.gather(client.stop())
+                elif ownership == "wait_for_gather":
+                    await asyncio.wait_for(asyncio.gather(client.stop()), timeout=1)
+                elif ownership == "task":
+                    await asyncio.create_task(client.stop())
+                else:
+                    await client.stop()
+            assert [str(error) for error in raised.value.exceptions] == [
+                "Failed to disconnect session session-1: "
+                "Failed to detach session session-1: unknown error"
+            ]
+
+        try:
+            if ownership in ("scheduled", "scheduled_gather"):
+                shutdown_tasks.append(asyncio.create_task(shutdown_client()))
+                await independent_work.wait()
+            else:
+                await shutdown_client()
+            handler_finished.set()
+            return ToolResult(text_result_for_llm="stopped")
+        except asyncio.CancelledError:
+            handler_cancelled.set()
+            raise
+
+    session._register_tools(
+        [Tool("unrelated", "", unrelated), Tool("shutdown", "", shutdown_handler)]
+    )
+    session._dispatch_event(_external_tool_request("unrelated", "unrelated-request"))
+    unrelated_dispatch = session._pending_external_tools["unrelated-request"]
+    shutdown_dispatch = None
+    try:
+        await asyncio.wait_for(unrelated_started.wait(), timeout=1)
+        session._dispatch_event(_external_tool_request("shutdown", "shutdown-request"))
+        shutdown_dispatch = session._pending_external_tools["shutdown-request"]
+        scheduled = ownership in ("scheduled", "scheduled_gather")
+        if scheduled:
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(shutdown_dispatch, timeout=1)
+        else:
+            await asyncio.wait_for(shutdown_dispatch, timeout=1)
+        await asyncio.gather(*shutdown_tasks)
+        with pytest.raises(asyncio.CancelledError):
+            await unrelated_dispatch
+
+        assert handler_finished.is_set() == (not scheduled)
+        assert handler_cancelled.is_set() == scheduled
+        assert unrelated_stopped.is_set()
+        host.dispose.assert_called_once()
+        rpc_client.stop.assert_awaited_once()
+        rpc_client.request.assert_awaited_once_with("session.detach", {"sessionId": "session-1"})
+        assert client._ffi_host is None
+        assert client._client is None
+        assert client._state == "disconnected"
+    finally:
+        independent_work.set()
+        pending = [unrelated_dispatch]
+        if shutdown_dispatch is not None:
+            pending.append(shutdown_dispatch)
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        await asyncio.gather(*shutdown_tasks, return_exceptions=True)
+        await client.force_stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("interrupt", ["connection-close", "tool-completed"])
+async def test_handler_owned_shutdown_finishes_after_external_cancellation(
+    monkeypatch, tmp_path, interrupt
+):
+    monkeypatch.setattr(
+        CopilotClient, "_resolve_inprocess_runtime", lambda self: str(tmp_path / "runtime.so")
+    )
+    client = CopilotClient(mode="coding-agent", runtime=RuntimeConnection.for_inprocess())
+    detach_started = asyncio.Event()
+    finish_detach = asyncio.Event()
+    handler_finished = asyncio.Event()
+
+    async def request(method, params):
+        assert method == "session.detach"
+        assert params == {"sessionId": "session-1"}
+        detach_started.set()
+        await finish_detach.wait()
+        return {"success": True}
+
+    rpc_client = Mock(
+        request=AsyncMock(side_effect=request),
+        stop=AsyncMock(),
+        _loop=asyncio.get_running_loop(),
+    )
+    client._client = rpc_client
+    host = Mock()
+    client._ffi_host = host
+    session = CopilotSession("session-1", rpc_client)
+    client._register_session(session)
+
+    async def handler(_invocation):
+        await client.stop()
+        handler_finished.set()
+        return ToolResult(text_result_for_llm="stopped")
+
+    session._register_tools([Tool("shutdown", "", handler)])
+    session._dispatch_event(_external_tool_request("shutdown", "shutdown-request"))
+    dispatch = session._pending_external_tools["shutdown-request"]
+    try:
+        await detach_started.wait()
+        if interrupt == "connection-close":
+            await asyncio.to_thread(client._handle_connection_close)
+        else:
+            session._dispatch_event(
+                _event(
+                    ExternalToolCompletedData(request_id="shutdown-request"),
+                    SessionEventType.EXTERNAL_TOOL_COMPLETED,
+                )
+            )
+        finish_detach.set()
+        await dispatch
+        assert handler_finished.is_set()
+        rpc_client.stop.assert_awaited_once()
+        host.dispose.assert_called_once()
+        assert client._client is None
+        assert client._ffi_host is None
+    finally:
+        finish_detach.set()
+        dispatch.cancel()
+        await asyncio.gather(dispatch, return_exceptions=True)
+        await client.force_stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("join", ["task-group", "wait"])
+async def test_handler_can_rejoin_shutdown_after_a_gather_sibling_fails(
+    monkeypatch, tmp_path, join
+):
+    monkeypatch.setattr(
+        CopilotClient, "_resolve_inprocess_runtime", lambda self: str(tmp_path / "runtime.so")
+    )
+    client = CopilotClient(mode="coding-agent", runtime=RuntimeConnection.for_inprocess())
+    detach_started = asyncio.Event()
+    finish_detach = asyncio.Event()
+    shutdown_started = asyncio.Event()
+    finish_shutdown = asyncio.Event()
+    rejoined = asyncio.Event()
+    handler_finished = asyncio.Event()
+    shutdown_tasks = []
+
+    async def request(method, params):
+        assert method == "session.detach"
+        assert params == {"sessionId": "session-1"}
+        detach_started.set()
+        await finish_detach.wait()
+        return {"success": True}
+
+    async def shutdown_runtime(**_kwargs):
+        shutdown_started.set()
+        await finish_shutdown.wait()
+
+    rpc_client = Mock(request=AsyncMock(side_effect=request), stop=AsyncMock())
+    client._client = rpc_client
+    client._rpc = Mock(runtime=Mock(shutdown=AsyncMock(side_effect=shutdown_runtime)))
+    host = Mock()
+    client._ffi_host = host
+    session = CopilotSession("session-1", rpc_client)
+    client._register_session(session)
+
+    async def fail():
+        await detach_started.wait()
+        raise RuntimeError("gather child failed")
+
+    async def shutdown_client():
+        shutdown_tasks.append(asyncio.current_task())
+        await client.stop()
+
+    async def rejoin():
+        rejoined.set()
+        await shutdown_tasks[0]
+
+    async def handler(_invocation):
+        with pytest.raises(RuntimeError, match="gather child failed"):
+            await asyncio.gather(fail(), shutdown_client())
+        if join == "task-group":
+            async with asyncio.TaskGroup() as group:
+                group.create_task(rejoin())
+        else:
+            rejoined.set()
+            await asyncio.wait(shutdown_tasks)
+            await shutdown_tasks[0]
+        handler_finished.set()
+        return ToolResult(text_result_for_llm="stopped")
+
+    session._register_tools([Tool("shutdown", "", handler)])
+    session._dispatch_event(_external_tool_request("shutdown", "shutdown-request"))
+    dispatch = session._pending_external_tools["shutdown-request"]
+    try:
+        await rejoined.wait()
+        finish_detach.set()
+        await shutdown_started.wait()
+        finish_shutdown.set()
+        await dispatch
+        await asyncio.gather(*shutdown_tasks)
+
+        assert handler_finished.is_set()
+        assert dispatch.cancelling() == 0
+        rpc_client.stop.assert_awaited_once()
+        host.dispose.assert_called_once()
+        assert client._client is None
+        assert client._ffi_host is None
+        assert client._state == "disconnected"
+    finally:
+        finish_detach.set()
+        finish_shutdown.set()
+        dispatch.cancel()
+        await asyncio.gather(dispatch, *shutdown_tasks, return_exceptions=True)
+        await client.force_stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("callback_kind", "dispatch_owner"),
+    [
+        ("tool", "stopped-client"),
+        ("tool", "surviving-client"),
+        ("permission", "stopped-client"),
+        ("permission", "surviving-client"),
+        ("bearer-token", "stopped-client"),
+        ("transform-successor", "stopped-client"),
+    ],
+)
+async def test_gather_failing_during_unsuccessful_detach_cancels_independent_handler_work(
+    monkeypatch, tmp_path, dispatch_owner, callback_kind
+):
+    monkeypatch.setattr(
+        CopilotClient, "_resolve_inprocess_runtime", lambda self: str(tmp_path / "runtime.so")
+    )
+    client = CopilotClient(mode="coding-agent", runtime=RuntimeConnection.for_inprocess())
+    detach_started = asyncio.Event()
+    finish_detach = asyncio.Event()
+
+    async def request(method, params):
+        assert method == "session.detach"
+        assert params == {"sessionId": "session-1"}
+        detach_started.set()
+        await finish_detach.wait()
+        return {"success": False}
+
+    rpc_client = Mock(request=AsyncMock(side_effect=request), stop=AsyncMock())
+    client._client = rpc_client
+    host = Mock()
+    client._ffi_host = host
+    session = CopilotSession("session-1", rpc_client)
+    client._register_session(session)
+    surviving_client = None
+    handler_session = session
+    if dispatch_owner == "surviving-client":
+        surviving_client = CopilotClient(
+            mode="coding-agent", runtime=RuntimeConnection.for_inprocess()
+        )
+        surviving_client._client = Mock(
+            request=AsyncMock(return_value={"success": True}), stop=AsyncMock()
+        )
+        handler_session = CopilotSession("surviving-session", surviving_client._client)
+        surviving_client._register_session(handler_session)
+    shutdown_finished = asyncio.Event()
+    independent_started = asyncio.Event()
+    independent_work = asyncio.Event()
+    handler_stopped = asyncio.Event()
+    shutdown_tasks = []
+
+    async def fail():
+        await detach_started.wait()
+        raise RuntimeError("gather child failed")
+
+    async def shutdown_client():
+        task = asyncio.current_task()
+        assert task is not None
+        shutdown_tasks.append(task)
+        with pytest.raises(ExceptionGroup, match=r"errors during CopilotClient\.stop"):
+            await client.stop()
+        shutdown_finished.set()
+
+    async def handler(*_args):
+        try:
+            with pytest.raises(RuntimeError, match="gather child failed"):
+                await asyncio.gather(fail(), shutdown_client())
+            if callback_kind == "transform-successor":
+                return "fallback"
+            independent_started.set()
+            await independent_work.wait()
+            if callback_kind == "permission":
+                return PermissionDecisionApproved()
+            if callback_kind == "bearer-token":
+                return "released-token"
+            return ToolResult(text_result_for_llm="released")
+        finally:
+            handler_stopped.set()
+
+    if callback_kind == "tool":
+        handler_session._register_tools([Tool("shutdown", "", handler)])
+        handler_session._dispatch_event(_external_tool_request("shutdown", "shutdown-request"))
+        dispatch = handler_session._pending_external_tools["shutdown-request"]
+    elif callback_kind == "permission":
+        dispatch = asyncio.create_task(
+            _dispatch_permission_or_mcp_auth(handler_session, "permission", handler)
+        )
+    elif callback_kind == "bearer-token":
+        handler_session._register_bearer_token_providers({"provider": handler})
+        dispatch = asyncio.create_task(
+            handler_session._client_session_apis.provider_token.get_token(
+                ProviderTokenAcquireRequest("provider", handler_session.session_id)
+            )
+        )
+    else:
+
+        async def successor(_content):
+            independent_started.set()
+            await shutdown_tasks[0]
+            return "successor"
+
+        handler_session._register_transform_callbacks({"first": handler, "second": successor})
+        dispatch = asyncio.create_task(
+            handler_session._handle_system_message_transform(
+                {"first": {"content": "first"}, "second": {"content": "second"}}
+            )
+        )
+    try:
+        await asyncio.wait_for(independent_started.wait(), timeout=1)
+        finish_detach.set()
+        if callback_kind != "transform-successor":
+            await asyncio.wait_for(shutdown_finished.wait(), timeout=1)
+        await asyncio.gather(*shutdown_tasks)
+        assert shutdown_finished.is_set()
+        if callback_kind == "transform-successor":
+            assert await dispatch == {
+                "sections": {"first": {"content": "fallback"}, "second": {"content": "successor"}}
+            }
+            assert dispatch.cancelling() == 0, "shutdown cancelled its successor callback"
+        elif surviving_client is None:
+            assert dispatch.cancelling() > 0, "shutdown left independent handler work uncancelled"
+            with pytest.raises(asyncio.CancelledError):
+                await dispatch
+        else:
+            assert dispatch.cancelling() == 0, "shutdown cancelled another client's handler"
+            independent_work.set()
+            await dispatch
+            surviving_client._client.request.assert_awaited_once()
+        assert handler_stopped.is_set()
+    finally:
+        finish_detach.set()
+        independent_work.set()
+        dispatch.cancel()
+        await asyncio.gather(dispatch, *shutdown_tasks, return_exceptions=True)
+        await client.force_stop()
+        if surviving_client is not None:
+            await surviving_client.force_stop()
