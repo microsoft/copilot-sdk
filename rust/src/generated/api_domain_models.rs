@@ -607,6 +607,23 @@ pub struct ModelProviderStatus {
 }
 crate::record_serde::wire_record!(ModelProviderStatus { instance: "instance", outcome: "outcome", status: "status", version: "version" if is_none });
 
+/// Input for utility-model prompt refinement without a conversation turn.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ModelRefinePromptRequest {
+    /// Original authenticated local attachment, when the in-process CLI refines an attached draft.
+    pub attach_id: Option<i64>,
+    /// Draft text to refine. The runtime does not add it to conversation history.
+    pub text: String,
+}
+crate::record_serde::wire_record!(ModelRefinePromptRequest { attach_id: "attachId" if is_none, text: "text" });
+
 /// Host-supplied exact model selection IDs to allow for this running session. CAPI IDs are intersected with repository `.github/allowed_models.txt` policy; provider-qualified IDs remain exempt from repository-only policy but are restricted by this host list. Omit or pass null to clear the host restriction; an explicit empty or disjoint list is rejected. Validation and pre-selection fallback failures preserve the previous restriction. Failures after a fallback selection commits retain the new restriction and selected model; callers should inspect current session state after such an error.
 ///
 /// <div class="warning">

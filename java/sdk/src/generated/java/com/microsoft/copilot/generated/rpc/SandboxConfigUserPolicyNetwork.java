@@ -31,7 +31,9 @@ public record SandboxConfigUserPolicyNetwork(
     /** Whether host-local destinations, including loopback and unspecified addresses, are allowed. Private networks follow outbound and host rules. Host rules still apply. */
     @JsonProperty("allowLocalNetwork") Boolean allowLocalNetwork,
     /** HTTP(S) proxy for sandboxed traffic. This is the built-in local proxy's upstream: every sandboxed command reaches it through a loopback listener, so credentials stay in the runtime and never reach the child. On Windows the sandbox also needs local network access, because it reaches that listener over host loopback. Configure credentials in the separate username/password fields. The transient local listener URL is never persisted. */
-    @JsonProperty("proxy") SandboxConfigUserPolicyNetworkProxy proxy
+    @JsonProperty("proxy") SandboxConfigUserPolicyNetworkProxy proxy,
+    /** Absolute paths of PEM files holding public CA certificates to trust, in addition to the system roots, for sandboxed traffic that passes through the built-in proxy. Use this for a local developer proxy that intercepts TLS. The proxy verifies its upstream proxy and the destinations behind it against these certificates, and sandboxed commands receive a trust bundle that includes them through NODE_EXTRA_CA_CERTS, SSL_CERT_FILE, REQUESTS_CA_BUNDLE, CURL_CA_BUNDLE and GIT_SSL_CAINFO. Each file must contain at least one CA certificate and no private key; an unreadable, relative or invalid entry stops the launch. A listed CA can vouch for any destination, so add only CAs you trust. Applies only when the built-in proxy is active. */
+    @JsonProperty("extraCaCertificates") List<String> extraCaCertificates
 ) {
 
     /**
@@ -58,6 +60,7 @@ public record SandboxConfigUserPolicyNetwork(
         private Boolean allowOutbound;
         private Boolean allowLocalNetwork;
         private SandboxConfigUserPolicyNetworkProxy proxy;
+        private List<String> extraCaCertificates;
 
         /**
          * Sets the {@code allowedHosts} property.
@@ -115,13 +118,24 @@ public record SandboxConfigUserPolicyNetwork(
         }
 
         /**
+         * Sets the {@code extraCaCertificates} property.
+         * @param value the property value
+         * @return this builder
+         * @since 2.0.0
+         */
+        public Builder extraCaCertificates(List<String> value) {
+            this.extraCaCertificates = value;
+            return this;
+        }
+
+        /**
          * Builds a record after checking required property presence.
          * @return a new record
          * @throws IllegalStateException if a required property is missing
          * @since 2.0.0
          */
         public SandboxConfigUserPolicyNetwork build() {
-            return new SandboxConfigUserPolicyNetwork(allowedHosts, blockedHosts, allowOutbound, allowLocalNetwork, proxy);
+            return new SandboxConfigUserPolicyNetwork(allowedHosts, blockedHosts, allowOutbound, allowLocalNetwork, proxy, extraCaCertificates);
         }
     }
 }

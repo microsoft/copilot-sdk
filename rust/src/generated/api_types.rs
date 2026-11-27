@@ -1108,6 +1108,8 @@ pub mod rpc_methods {
     pub const SESSION_NAME_SET: &str = "session.name.set";
     /// `session.name.setAuto`
     pub const SESSION_NAME_SETAUTO: &str = "session.name.setAuto";
+    /// `session.model.refinePrompt`
+    pub(crate) const SESSION_MODEL_REFINEPROMPT: &str = "session.model.refinePrompt";
     /// `session.model.generateBranchSlug`
     pub(crate) const SESSION_MODEL_GENERATEBRANCHSLUG: &str = "session.model.generateBranchSlug";
     /// `session.model.getCurrent`
@@ -2760,8 +2762,9 @@ pub(crate) use sdk_api_session::{
     SessionMcpOauthTryRefreshTokensParams, SessionMcpSourceIdeClientParams,
     SessionModelClearStartupSeedParams, SessionModelClearStartupSeedResult,
     SessionModelGenerateBranchSlugParams, SessionModelGenerateBranchSlugResult,
-    SessionNameGenerateParams, SessionNameGenerateResult, SessionPersistenceBarrierRequest,
-    SessionPersistenceBarrierResult, SessionPersistenceFlushParams, SessionPersistenceFlushRequest,
+    SessionModelRefinePromptParams, SessionModelRefinePromptResult, SessionNameGenerateParams,
+    SessionNameGenerateResult, SessionPersistenceBarrierRequest, SessionPersistenceBarrierResult,
+    SessionPersistenceFlushParams, SessionPersistenceFlushRequest,
     SessionPluginInspectExtensionContributionsRequest,
     SessionPluginInspectExtensionContributionsResult, SessionPluginInventoryResult,
     SessionPluginsInspectExtensionContributionsResult, SessionPluginsInspectInventoryResult,
@@ -3103,7 +3106,7 @@ pub use sdk_api_models::{
 };
 pub(crate) use sdk_api_models::{
     ModelClearStartupSeedRequest, ModelClearStartupSeedResult, ModelGenerateBranchSlugRequest,
-    ModelGenerateBranchSlugResult,
+    ModelGenerateBranchSlugResult, ModelRefinePromptRequest,
 };
 
 #[path = "api_domain_host.rs"]

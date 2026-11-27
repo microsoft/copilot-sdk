@@ -95,6 +95,7 @@ pub const SESSION_METHOD_PATHS: &[(&str, &[&str])] = &[
     ("session.name.get", &["name", "get"]),
     ("session.name.set", &["name", "set"]),
     ("session.name.setAuto", &["name", "setAuto"]),
+    ("session.model.refinePrompt", &["model", "refinePrompt"]),
     (
         "session.model.generateBranchSlug",
         &["model", "generateBranchSlug"],
@@ -24264,6 +24265,37 @@ pub struct SessionRpcModel<'a> {
 }
 
 impl<'a> SessionRpcModel<'a> {
+    /// Refines draft text with the original session's utility-model policy and renewable credentials. Does not send a conversation turn, run tools, or change history.
+    ///
+    /// Wire method: `session.model.refinePrompt`.
+    ///
+    /// # Parameters
+    ///
+    /// * `params` - Input for utility-model prompt refinement without a conversation turn.
+    ///
+    /// # Returns
+    ///
+    /// Utility generation outcome under the session's model and credential policy.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This API is part of an experimental wire-protocol surface
+    /// and may change or be removed in future SDK or CLI releases. Pin both the
+    /// SDK and CLI versions if your code depends on it.
+    ///
+    /// </div>
+    pub(crate) async fn refine_prompt(
+        &self,
+        params: SessionModelRefinePromptParams,
+    ) -> Result<UtilityPromptResult, Error> {
+        let mut wire_params = serde_json::to_value(params)?;
+        wire_params["sessionId"] = serde_json::Value::String(self.session.id().to_string());
+        self.session
+            .client()
+            .call_typed(rpc_methods::SESSION_MODEL_REFINEPROMPT, Some(wire_params))
+            .await
+    }
+
     /// Generates a branch slug with the original session's model policy and renewable credentials, including its established derived-name fallback.
     ///
     /// Wire method: `session.model.generateBranchSlug`.

@@ -21736,6 +21736,19 @@ type ModelProviderWarning struct {
 	Message string `json:"message"`
 }
 
+// Input for utility-model prompt refinement without a conversation turn.
+// Experimental: ModelRefinePromptRequest is part of an experimental API and may change or
+// be removed.
+// Internal: ModelRefinePromptRequest is an internal SDK API and is not part of the public
+// surface.
+type ModelRefinePromptRequest struct {
+	// Original authenticated local attachment, when the in-process CLI refines an attached
+	// draft.
+	AttachID *int64 `json:"attachId,omitempty"`
+	// Draft text to refine. The runtime does not add it to conversation history.
+	Text string `json:"text"`
+}
+
 // Policy from cached and registered models without a network request.
 // Experimental: ModelSelectionPolicy is part of an experimental API and may change or be
 // removed.
@@ -28484,6 +28497,16 @@ type SandboxConfigUserPolicyNetwork struct {
 	// *.example.com matches strict subdomains, and * denies every host. With upstream-owned
 	// DNS, address denials cannot constrain remotely resolved names.
 	BlockedHosts []string `json:"blockedHosts,omitzero"`
+	// Absolute paths of PEM files holding public CA certificates to trust, in addition to the
+	// system roots, for sandboxed traffic that passes through the built-in proxy. Use this for
+	// a local developer proxy that intercepts TLS. The proxy verifies its upstream proxy and
+	// the destinations behind it against these certificates, and sandboxed commands receive a
+	// trust bundle that includes them through NODE_EXTRA_CA_CERTS, SSL_CERT_FILE,
+	// REQUESTS_CA_BUNDLE, CURL_CA_BUNDLE and GIT_SSL_CAINFO. Each file must contain at least
+	// one CA certificate and no private key; an unreadable, relative or invalid entry stops the
+	// launch. A listed CA can vouch for any destination, so add only CAs you trust. Applies
+	// only when the built-in proxy is active.
+	ExtraCaCertificates []string `json:"extraCaCertificates,omitzero"`
 	// HTTP(S) proxy for sandboxed traffic. This is the built-in local proxy's upstream: every
 	// sandboxed command reaches it through a loopback listener, so credentials stay in the
 	// runtime and never reach the child. On Windows the sandbox also needs local network
@@ -32719,6 +32742,35 @@ type SessionModelPriceCategory struct {
 	ID string `json:"id"`
 	// Cost category assigned to the model.
 	PriceCategory ModelPickerPriceCategory `json:"priceCategory"`
+}
+
+// Input for utility-model prompt refinement without a conversation turn.
+// Experimental: SessionModelRefinePromptRequest is part of an experimental API and may
+// change or be removed.
+// Internal: SessionModelRefinePromptRequest is an internal SDK API and is not part of the
+// public surface.
+type SessionModelRefinePromptRequest struct {
+	// Original authenticated local attachment, when the in-process CLI refines an attached
+	// draft.
+	AttachID *int64 `json:"attachId,omitempty"`
+	// Draft text to refine. The runtime does not add it to conversation history.
+	Text string `json:"text"`
+}
+
+// Utility generation outcome under the session's model and credential policy.
+// Experimental: SessionModelRefinePromptResult is part of an experimental API and may
+// change or be removed.
+// Internal: SessionModelRefinePromptResult is an internal SDK API and is not part of the
+// public surface.
+type SessionModelRefinePromptResult struct {
+	// Whether generation produced a value.
+	// Internal: Kind is part of the SDK's internal API surface and is not intended for external
+	// use.
+	Kind UtilityPromptResultKind `json:"kind"`
+	// User-facing explanation, when the requested operation needs one.
+	Message *string `json:"message,omitempty"`
+	// Generated value, or absent when the utility model is unavailable.
+	Value *string `json:"value,omitempty"`
 }
 
 // Input for utility-model session name generation.
@@ -74385,6 +74437,35 @@ func (a *InternalModelAPI) GenerateBranchSlug(ctx context.Context, params *Sessi
 		return nil, err
 	}
 	var result SessionModelGenerateBranchSlugResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// RefinePrompt refines draft text with the original session's utility-model policy and
+// renewable credentials. Does not send a conversation turn, run tools, or change history.
+//
+// RPC method: session.model.refinePrompt.
+//
+// Parameters: Input for utility-model prompt refinement without a conversation turn.
+//
+// Returns: Utility generation outcome under the session's model and credential policy.
+// Internal: RefinePrompt is part of the SDK's internal handshake/plumbing; external callers
+// should not use it.
+func (a *InternalModelAPI) RefinePrompt(ctx context.Context, params *SessionModelRefinePromptRequest) (*SessionModelRefinePromptResult, error) {
+	req := map[string]any{"sessionId": a.sessionID}
+	if params != nil {
+		if params.AttachID != nil {
+			req["attachId"] = *params.AttachID
+		}
+		req["text"] = params.Text
+	}
+	raw, err := a.client.Request(ctx, "session.model.refinePrompt", req)
+	if err != nil {
+		return nil, err
+	}
+	var result SessionModelRefinePromptResult
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return nil, err
 	}

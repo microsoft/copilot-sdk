@@ -11034,6 +11034,43 @@ pub struct SessionNameSetAutoResult {
 }
 crate::record_serde::wire_record!(SessionNameSetAutoResult { applied: "applied" });
 
+/// Input for utility-model prompt refinement without a conversation turn.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub(crate) struct SessionModelRefinePromptParams {
+    /// Draft text to refine. The runtime does not add it to conversation history.
+    pub text: String,
+    /// Original authenticated local attachment, when the in-process CLI refines an attached draft.
+    pub attach_id: Option<i64>,
+}
+crate::record_serde::wire_record!(SessionModelRefinePromptParams { text: "text", attach_id: "attachId" if is_none });
+
+/// Utility generation outcome under the session's model and credential policy.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is part of an experimental wire-protocol surface
+/// and may change or be removed in future SDK or CLI releases.
+///
+/// </div>
+#[derive(Debug, Clone, Default)]
+pub(crate) struct SessionModelRefinePromptResult {
+    /// Whether generation produced a value.
+    #[doc(hidden)]
+    pub(crate) kind: UtilityPromptResultKind,
+    /// User-facing explanation, when the requested operation needs one.
+    pub message: Option<String>,
+    /// Generated value, or absent when the utility model is unavailable.
+    pub value: Option<String>,
+}
+crate::record_serde::wire_record!(SessionModelRefinePromptResult { kind: "kind", message: "message" if is_none, value: "value" if is_none });
+
 /// Conversation and changes for a utility-model branch slug.
 ///
 /// <div class="warning">

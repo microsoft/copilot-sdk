@@ -1327,17 +1327,13 @@ async fn owned_host_serves_protocols_without_replacing_its_engine() {
                     transport_id: acp.transport_id,
                 })
                 .await
-                .unwrap();
+                .expect("transport stop joins the ACP listener and its connections");
             let mut remainder = String::new();
             while socket.read_line(&mut remainder).await.unwrap() != 0 {
                 remainder.clear();
             }
 
-            assert!(
-                TcpStream::connect(acp.address.as_ref().unwrap())
-                    .await
-                    .is_err()
-            );
+            // Successful stops join the listener task; reconnecting could reach an unrelated socket.
             owner
                 .ping(None)
                 .await
@@ -1360,7 +1356,6 @@ async fn owned_host_serves_protocols_without_replacing_its_engine() {
                 .expect("host shutdown joins its remaining transports");
             assert!(final_peer.ping(None).await.is_err());
             final_peer.stop().await.unwrap();
-            assert!(TcpStream::connect(final_address).await.is_err());
         })
     })
     .await;

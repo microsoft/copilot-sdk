@@ -536,8 +536,8 @@ FFI uses [purego](https://github.com/ebitengine/purego). Linux `CGO_ENABLED=0` b
 - `GetLastSessionID(ctx context.Context) (*string, error)` - Get the ID of the most recently updated session
 - `Ping(ctx context.Context, message string) (*PingResponse, error)` - Ping the server
 - `RuntimePort() int` - TCP port the runtime is listening on (0 if stdio)
-- `GetForegroundSessionID(ctx context.Context) (*string, error)` - Get the session ID currently displayed in TUI (TUI+server mode only)
-- `SetForegroundSessionID(ctx context.Context, sessionID string) error` - Request TUI to display a specific session (TUI+server mode only)
+- `GetForegroundSessionID(ctx context.Context) (*string, error)` - Get the displayed session's ID; the server must have a foreground UI or an SDK host callback
+- `SetForegroundSessionID(ctx context.Context, sessionID string) error` - Ask the host UI or SDK callback to display the specified session
 - `On(handler SessionLifecycleHandler) func()` - Subscribe to all lifecycle events; returns unsubscribe function
 - `OnEventType(eventType SessionLifecycleEventType, handler SessionLifecycleHandler) func()` - Subscribe to specific lifecycle event type
 

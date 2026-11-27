@@ -5878,10 +5878,12 @@ pub struct SandboxConfigUserPolicyNetwork {
     pub allow_outbound: Option<bool>,
     /// Destinations denied by the built-in sandbox proxy. Deny overrides allowedHosts, including CIDR denials against allowed names and their resolved addresses. Supports exact IPs and IPv4/IPv6 CIDRs with zero host bits. A denied domain also denies its subdomains; *.example.com matches strict subdomains, and * denies every host. With upstream-owned DNS, address denials cannot constrain remotely resolved names.
     pub blocked_hosts: Option<Vec<String>>,
+    /// Absolute paths of PEM files holding public CA certificates to trust, in addition to the system roots, for sandboxed traffic that passes through the built-in proxy. Use this for a local developer proxy that intercepts TLS. The proxy verifies its upstream proxy and the destinations behind it against these certificates, and sandboxed commands receive a trust bundle that includes them through NODE_EXTRA_CA_CERTS, SSL_CERT_FILE, REQUESTS_CA_BUNDLE, CURL_CA_BUNDLE and GIT_SSL_CAINFO. Each file must contain at least one CA certificate and no private key; an unreadable, relative or invalid entry stops the launch. A listed CA can vouch for any destination, so add only CAs you trust. Applies only when the built-in proxy is active.
+    pub extra_ca_certificates: Option<Vec<String>>,
     /// HTTP(S) proxy for sandboxed traffic. This is the built-in local proxy's upstream: every sandboxed command reaches it through a loopback listener, so credentials stay in the runtime and never reach the child. On Windows the sandbox also needs local network access, because it reaches that listener over host loopback. Configure credentials in the separate username/password fields. The transient local listener URL is never persisted.
     pub proxy: Option<SandboxConfigUserPolicyNetworkProxy>,
 }
-crate::record_serde::wire_record!(SandboxConfigUserPolicyNetwork { allowed_hosts: "allowedHosts" if is_none, allow_local_network: "allowLocalNetwork" if is_none, allow_outbound: "allowOutbound" if is_none, blocked_hosts: "blockedHosts" if is_none, proxy: "proxy" if is_none });
+crate::record_serde::wire_record!(SandboxConfigUserPolicyNetwork { allowed_hosts: "allowedHosts" if is_none, allow_local_network: "allowLocalNetwork" if is_none, allow_outbound: "allowOutbound" if is_none, blocked_hosts: "blockedHosts" if is_none, extra_ca_certificates: "extraCaCertificates" if is_none, proxy: "proxy" if is_none });
 
 /// macOS seatbelt-specific options.
 ///

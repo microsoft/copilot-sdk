@@ -37448,6 +37448,24 @@ export interface ModelProviderStatus {
   version?: string;
 }
 /**
+ * Input for utility-model prompt refinement without a conversation turn.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "ModelRefinePromptRequest".
+ */
+/** @experimental */
+/** @internal */
+export interface ModelRefinePromptRequest {
+  /**
+   * Draft text to refine. The runtime does not add it to conversation history.
+   */
+  text: string;
+  /**
+   * Original authenticated local attachment, when the in-process CLI refines an attached draft.
+   */
+  attachId?: number;
+}
+/**
  * Policy from cached and registered models without a network request.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
@@ -44618,6 +44636,10 @@ export interface SandboxConfigUserPolicyNetwork {
    * HTTP(S) proxy for sandboxed traffic. This is the built-in local proxy's upstream: every sandboxed command reaches it through a loopback listener, so credentials stay in the runtime and never reach the child. On Windows the sandbox also needs local network access, because it reaches that listener over host loopback. Configure credentials in the separate username/password fields. The transient local listener URL is never persisted.
    */
   proxy?: SandboxConfigUserPolicyNetworkProxy;
+  /**
+   * Absolute paths of PEM files holding public CA certificates to trust, in addition to the system roots, for sandboxed traffic that passes through the built-in proxy. Use this for a local developer proxy that intercepts TLS. The proxy verifies its upstream proxy and the destinations behind it against these certificates, and sandboxed commands receive a trust bundle that includes them through NODE_EXTRA_CA_CERTS, SSL_CERT_FILE, REQUESTS_CA_BUNDLE, CURL_CA_BUNDLE and GIT_SSL_CAINFO. Each file must contain at least one CA certificate and no private key; an unreadable, relative or invalid entry stops the launch. A listed CA can vouch for any destination, so add only CAs you trust. Applies only when the built-in proxy is active.
+   */
+  extraCaCertificates?: string[];
 }
 /**
  * HTTP proxy configuration for sandboxed traffic.
@@ -62129,6 +62151,46 @@ export interface SessionNameGenerateRequest {
   manual?: boolean;
 }
 /**
+ * Utility generation outcome under the session's model and credential policy.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "SessionModelRefinePromptResult".
+ */
+/** @experimental */
+/** @internal */
+export interface SessionModelRefinePromptResult {
+  /**
+   * Whether generation produced a value.
+   */
+  kind: UtilityPromptResultKind;
+  /**
+   * Generated value, or absent when the utility model is unavailable.
+   */
+  value?: string;
+  /**
+   * User-facing explanation, when the requested operation needs one.
+   */
+  message?: string;
+}
+/**
+ * Input for utility-model prompt refinement without a conversation turn.
+ *
+ * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
+ * via the `definition` "SessionModelRefinePromptRequest".
+ */
+/** @experimental */
+/** @internal */
+export interface SessionModelRefinePromptRequest {
+  /**
+   * Draft text to refine. The runtime does not add it to conversation history.
+   */
+  text: string;
+  /**
+   * Original authenticated local attachment, when the in-process CLI refines an attached draft.
+   */
+  attachId?: number;
+}
+/**
  * A generated or derived branch slug.
  *
  * This interface was referenced by `_RpcSchemaRoot`'s JSON-Schema
@@ -72416,6 +72478,15 @@ export function createInternalSessionRpc(connection: MessageConnection, sessionI
         },
         /** @experimental */
         model: {
+            /**
+             * Refines draft text with the original session's utility-model policy and renewable credentials. Does not send a conversation turn, run tools, or change history.
+             *
+             * @param params Input for utility-model prompt refinement without a conversation turn.
+             *
+             * @returns Utility generation outcome under the session's model and credential policy.
+             */
+            refinePrompt: async (params: SessionModelRefinePromptRequest): Promise<SessionModelRefinePromptResult> =>
+                connection.sendRequest("session.model.refinePrompt", { ...params, sessionId }),
             /**
              * Generates a branch slug with the original session's model policy and renewable credentials, including its established derived-name fallback.
              *

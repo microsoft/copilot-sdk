@@ -9075,6 +9075,11 @@ public sealed class SandboxConfigUserPolicyNetwork
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IList<string>? BlockedHosts { get; set; }
 
+    /// <summary>Absolute paths of PEM files holding public CA certificates to trust, in addition to the system roots, for sandboxed traffic that passes through the built-in proxy. Use this for a local developer proxy that intercepts TLS. The proxy verifies its upstream proxy and the destinations behind it against these certificates, and sandboxed commands receive a trust bundle that includes them through NODE_EXTRA_CA_CERTS, SSL_CERT_FILE, REQUESTS_CA_BUNDLE, CURL_CA_BUNDLE and GIT_SSL_CAINFO. Each file must contain at least one CA certificate and no private key; an unreadable, relative or invalid entry stops the launch. A listed CA can vouch for any destination, so add only CAs you trust. Applies only when the built-in proxy is active.</summary>
+    [JsonPropertyName("extraCaCertificates")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IList<string>? ExtraCaCertificates { get; set; }
+
     /// <summary>HTTP(S) proxy for sandboxed traffic. This is the built-in local proxy's upstream: every sandboxed command reaches it through a loopback listener, so credentials stay in the runtime and never reach the child. On Windows the sandbox also needs local network access, because it reaches that listener over host loopback. Configure credentials in the separate username/password fields. The transient local listener URL is never persisted.</summary>
     [JsonPropertyName("proxy")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -31184,6 +31189,43 @@ internal sealed class NameSetAutoRequest
     /// <summary>Auto-generated session summary. Empty/whitespace-only values are ignored; values are trimmed before persisting.</summary>
     [JsonPropertyName("summary")]
     public string Summary { get; set; } = string.Empty;
+}
+
+/// <summary>Utility generation outcome under the session's model and credential policy.</summary>
+[Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+internal sealed class SessionModelRefinePromptResult
+{
+    /// <summary>Whether generation produced a value.</summary>
+    [JsonPropertyName("kind")]
+    public UtilityPromptResultKind Kind { get; set; }
+
+    /// <summary>User-facing explanation, when the requested operation needs one.</summary>
+    [JsonPropertyName("message")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Message { get; set; }
+
+    /// <summary>Generated value, or absent when the utility model is unavailable.</summary>
+    [JsonPropertyName("value")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Value { get; set; }
+}
+
+/// <summary>Input for utility-model prompt refinement without a conversation turn.</summary>
+[Experimental(global::Microsoft.Copilot.Diagnostics.Experimental)]
+internal sealed class SessionModelRefinePromptRequest
+{
+    /// <summary>Original authenticated local attachment, when the in-process CLI refines an attached draft.</summary>
+    [JsonPropertyName("attachId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? AttachId { get; set; }
+
+    /// <summary>Target session identifier.</summary>
+    [JsonPropertyName("sessionId")]
+    public string SessionId { get; set; } = string.Empty;
+
+    /// <summary>Draft text to refine. The runtime does not add it to conversation history.</summary>
+    [JsonPropertyName("text")]
+    public string Text { get; set; } = string.Empty;
 }
 
 /// <summary>A generated or derived branch slug.</summary>
@@ -86670,6 +86712,20 @@ public sealed class ModelApi
         _session = session;
     }
 
+    /// <summary>Refines draft text with the original session's utility-model policy and renewable credentials. Does not send a conversation turn, run tools, or change history.</summary>
+    /// <param name="text">Draft text to refine. The runtime does not add it to conversation history.</param>
+    /// <param name="attachId">Original authenticated local attachment, when the in-process CLI refines an attached draft.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>Utility generation outcome under the session's model and credential policy.</returns>
+    internal async Task<SessionModelRefinePromptResult> RefinePromptAsync(string text, long? attachId = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        _session.ThrowIfDisposed();
+
+        var request = new SessionModelRefinePromptRequest { SessionId = _session.SessionId, Text = text, AttachId = attachId };
+        return await CopilotClient.InvokeRpcAsync<SessionModelRefinePromptResult>(_session.Rpc, "session.model.refinePrompt", [request], cancellationToken);
+    }
+
     /// <summary>Generates a branch slug with the original session's model policy and renewable credentials, including its established derived-name fallback.</summary>
     /// <param name="conversation">Conversation messages in their original order.</param>
     /// <param name="changeSummary">Summary of the changes the branch will contain.</param>
@@ -95851,6 +95907,8 @@ internal static class ClientGlobalApiRegistration
 [JsonSerializable(typeof(SessionModelListRequest))]
 [JsonSerializable(typeof(SessionModelListRequestWithSession))]
 [JsonSerializable(typeof(SessionModelPriceCategory))]
+[JsonSerializable(typeof(SessionModelRefinePromptRequest))]
+[JsonSerializable(typeof(SessionModelRefinePromptResult))]
 [JsonSerializable(typeof(SessionNameGenerateRequest))]
 [JsonSerializable(typeof(SessionNameGenerateResult))]
 [JsonSerializable(typeof(SessionNameGetRequest))]
