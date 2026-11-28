@@ -465,6 +465,12 @@ def sdk_targets(name = "platform_dirs_srcs"):
         }),
         crate_name = "copilot_sdk",
         crate_root = "src/lib.rs",
+        # This SDK's standalone metadata pass costs nearly as much as its archive.
+        # AHP and CLI crates can use the metadata in the archive itself.
+        pipeline_nonincremental = select({
+            "//src/runtime:pipeline_nonincremental_archive_first_on_linux": True,
+            "//conditions:default": False,
+        }),
         proc_macro_deps = ["@vendor__async-trait-0.1.92//:async_trait"],
         rustc_cpu = 2,
         rustc_flags = [

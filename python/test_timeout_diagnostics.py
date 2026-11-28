@@ -5,8 +5,10 @@ import io
 import signal
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
+from xml.etree import ElementTree
 
 import pytest
 
@@ -269,11 +271,15 @@ async def test_signal_snapshot_precedes_task_cleanup_and_keeps_original_failure(
 @pytest.mark.parametrize("phase", ["call"])
 def test_timeout_report_survives_xdist_without_stdout_capture(pytester, monkeypatch, phase):
     tmp_path = pytester.path
+    retained_artifact = (
+        Path(__file__).parent / ".pytest-diagnostics" / f"xdist-{uuid.uuid4().hex}.txt"
+    )
     # Deliver the real POSIX signal at a safe loop boundary, not during callback
     # queue mutation. Windows emulates the exception because thread timeouts exit.
     (tmp_path / "conftest.py").write_text(
         f"""
 import sys
+from pathlib import Path
 import pytest
 
 sys.path.insert(0, {str(Path(__file__).parent.resolve())!r})
@@ -283,7 +289,13 @@ from e2e.timeout_diagnostics import pytest_timeout_set_timer as pytest_timeout_s
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     outcome = yield
-    add_timeout_diagnostics(item, call, outcome.get_result())
+    report = outcome.get_result()
+    add_timeout_diagnostics(item, call, report)
+    for heading, text in report.sections:
+        if heading == "Async timeout diagnostics":
+            artifact = Path({str(retained_artifact)!r})
+            artifact.parent.mkdir(exist_ok=True)
+            artifact.write_text(text, encoding="utf-8")
 """,
         encoding="utf-8",
     )
@@ -350,6 +362,8 @@ def test_stalled(runner, cleanup):
         "-n",
         "1",
         "--dist=loadfile",
+        "--junitxml",
+        str(retained_artifact.with_suffix(".xml")),
         "--basetemp",
         str(tmp_path / "workers"),
         "--rootdir",
@@ -365,3 +379,10 @@ def test_stalled(runner, cleanup):
     assert "awaiting FutureIter" in stdout
     (artifact,) = (tmp_path / ".pytest-diagnostics").glob("*.txt")
     assert "stalled_rpc" in artifact.read_text(encoding="utf-8")
+    assert retained_artifact.read_text(encoding="utf-8") == artifact.read_text(encoding="utf-8")
+    assert (
+        ElementTree.parse(retained_artifact.with_suffix(".xml")).find(
+            ".//testcase[@name='test_stalled']/failure"
+        )
+        is not None
+    )
